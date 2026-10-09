@@ -59,8 +59,8 @@ export function syncNextReceiptKey(
   ].map(encodePart).join('')}`;
 }
 
-/** Oldest attempted sparse receipt first, with a stable exact-receipt tie break. */
-export function compareSyncNextSparseAttempts(
+/** Oldest pending retry first, with a stable exact-receipt tie break. */
+export function compareSyncNextRetryOrder(
   left: SyncNextLinkIdentity & SyncNextSourceReceipt & { lastAttemptAt: string },
   right: SyncNextLinkIdentity & SyncNextSourceReceipt & { lastAttemptAt: string },
 ): number {

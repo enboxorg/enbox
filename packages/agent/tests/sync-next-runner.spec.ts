@@ -1,7 +1,7 @@
 import type { GenericMessage, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
-import type { SyncNextWorkPumpOperations } from '../src/sync-next/work-pump.js';
+import type { SyncNextRunnerOperations } from '../src/sync-next/runner.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { Level } from 'level';
@@ -9,9 +9,9 @@ import { Message } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
-import { SyncNextWorkPump } from '../src/sync-next/work-pump.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
+import { SyncNextRunner } from '../src/sync-next/runner.js';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -61,23 +61,23 @@ function token(position: number, messageCid = `cid-${position}`): ProgressToken 
 }
 
 function operations(
-  overrides: Partial<SyncNextWorkPumpOperations> = {},
-): SyncNextWorkPumpOperations {
+  overrides: Partial<SyncNextRunnerOperations> = {},
+): SyncNextRunnerOperations {
   return {
     deliveryRetry : async () => ({ kind: 'empty' }),
     pullPage      : async () => ({
-      handledCids    : [],
-      handledThrough : token(1),
-      hasMore        : false,
-      kind           : 'committed',
-      quarantined    : 0,
+      handledCids : [],
+      checkpoint  : token(1),
+      feedDrained : true,
+      kind        : 'committed',
+      quarantined : 0,
     }),
     pushPage: async () => ({
-      acknowledged   : 0,
-      handledThrough : token(1),
-      hasMore        : false,
-      kind           : 'committed',
-      retained       : 0,
+      acknowledged : 0,
+      checkpoint   : token(1),
+      feedDrained  : true,
+      kind         : 'committed',
+      retained     : 0,
     }),
     quarantineRetry: async () => ({ kind: 'empty' }),
     ...overrides,
@@ -95,17 +95,17 @@ function protocolMessage(name: string): GenericMessage {
   } as GenericMessage;
 }
 
-describe('SyncNextWorkPump', () => {
+describe('SyncNextRunner', () => {
   let db: Level<string, string>;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
 
   beforeAll(() => {
-    db = new Level<string, string>('__TESTDATA__/sync-next-work-pump-spec');
-    ledger = new SyncNextLedgerStore(db, 'sync-next-work-pump-spec');
+    db = new Level<string, string>('__TESTDATA__/sync-next-runner-spec');
+    progressStore = new SyncNextProgressStore(db, 'sync-next-runner-spec');
   });
 
   afterEach(async () => {
-    await ledger.clear();
+    await progressStore.clear();
   });
 
   afterAll(async () => {
@@ -113,7 +113,7 @@ describe('SyncNextWorkPump', () => {
   });
 
   async function retainQuarantine(syncTarget: SyncTarget): Promise<void> {
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -121,10 +121,10 @@ describe('SyncNextWorkPump', () => {
     const message = protocolMessage('pending');
     const messageCid = await Message.getCid(message);
     const source = token(1, messageCid);
-    expect(await ledger.commitPullPage(link, {
-      handledThrough : source,
-      pageReceipts   : [{ messageCid, source }],
-      quarantine     : [{
+    expect(await progressStore.commitPullPage(link, {
+      checkpoint   : source,
+      pageReceipts : [{ messageCid, source }],
+      quarantine   : [{
         entry: { isLatestBaseState: true, message, messageCid, seq: source.position },
         messageCid,
         source,
@@ -134,9 +134,9 @@ describe('SyncNextWorkPump', () => {
   }
 
   it('runs ordinary pull and push to completion', async () => {
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations());
-    const pull = await pump.run([target()], 'pull');
-    const push = await pump.run([target()], 'push');
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations());
+    const pull = await runner.run([target()], 'pull');
+    const push = await runner.run([target()], 'push');
 
     expect(pull).toMatchObject({
       failures      : [],
@@ -152,23 +152,23 @@ describe('SyncNextWorkPump', () => {
     const syncTarget = roleTarget();
     let pulled: SyncTarget | undefined;
     let pushes = 0;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (syncTarget) => {
         pulled = syncTarget;
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
       pushPage: async () => {
         pushes++;
         return {
-          acknowledged: 0, handledThrough: token(1), hasMore: false, kind: 'committed', retained: 0,
+          acknowledged: 0, checkpoint: token(1), feedDrained: true, kind: 'committed', retained: 0,
         };
       },
     }));
 
-    const push = await pump.run([syncTarget], 'push');
-    const pull = await pump.run([syncTarget], 'pull');
+    const push = await runner.run([syncTarget], 'push');
+    const pull = await runner.run([syncTarget], 'pull');
 
     expect(pulled?.authorization).toEqual(syncTarget.authorization);
     expect(pushes).toBe(0);
@@ -179,7 +179,7 @@ describe('SyncNextWorkPump', () => {
   it('serializes logical requests made through one endpoint permit', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         await Promise.all([0, 1].map(() => runRemoteRequest(async () => {
           inFlight++;
@@ -188,36 +188,36 @@ describe('SyncNextWorkPump', () => {
           inFlight--;
         })));
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
     }));
 
-    const result = await pump.run([target()], 'pull');
+    const result = await runner.run([target()], 'pull');
 
     expect(maxInFlight).toBe(1);
     expect(result.remoteRequests).toBe(2);
   });
 
-  it('gives links sharing an endpoint one page each per turn', async () => {
+  it('gives links sharing an endpoint one page each per run', async () => {
     const first = target({ did: 'did:example:first' });
     const second = target({ did: 'did:example:second' });
     const order: string[] = [];
     let firstPages = 0;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (syncTarget) => {
         order.push(syncTarget.did);
         return {
-          handledCids    : [],
-          handledThrough : token(order.length),
-          hasMore        : syncTarget.did === first.did && firstPages++ === 0,
-          kind           : 'committed',
-          quarantined    : 0,
+          handledCids : [],
+          checkpoint  : token(order.length),
+          feedDrained : syncTarget.did !== first.did || firstPages++ !== 0,
+          kind        : 'committed',
+          quarantined : 0,
         };
       },
     }));
 
-    const result = await pump.run([first, second], 'pull');
+    const result = await runner.run([first, second], 'pull');
 
     expect(order).toEqual([first.did, second.did]);
     expect(result.workRemaining).toBe(true);
@@ -227,7 +227,7 @@ describe('SyncNextWorkPump', () => {
     const offline = target({ endpoint: 'https://offline.example.com' });
     const healthy = target({ endpoint: 'https://healthy.example.com' });
     const pulled: string[] = [];
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
         pulled.push(syncTarget.dwnUrl);
         await runRemoteRequest(async () => {
@@ -236,12 +236,12 @@ describe('SyncNextWorkPump', () => {
           }
         });
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
     }));
 
-    const result = await pump.run([offline, healthy], 'pull');
+    const result = await runner.run([offline, healthy], 'pull');
 
     expect(pulled).toHaveLength(2);
     expect(pulled).toContain(offline.dwnUrl);
@@ -254,18 +254,18 @@ describe('SyncNextWorkPump', () => {
     expect(result.workRemaining).toBe(true);
   });
 
-  it('keeps a local ledger failure scoped to its target', async () => {
+  it('keeps a local progress-store failure scoped to its target', async () => {
     const full = target({ did: 'did:example:full', projectionId: 'full' });
     const healthy = target({ did: 'did:example:healthy', projectionId: 'healthy' });
     await retainQuarantine(healthy);
     let healthyReads = 0;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (syncTarget) => {
         if (syncTarget.did === full.did) {
-          throw new Error('SyncNextLedgerStore: tenant quarantine entry capacity 1 exceeded.');
+          throw new Error('SyncNextProgressStore: tenant quarantine entry capacity 1 exceeded.');
         }
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
       quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
@@ -276,23 +276,23 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    const result = await pump.run([full, healthy], 'pull');
+    const result = await runner.run([full, healthy], 'pull');
 
     expect(healthyReads).toBe(1);
     expect(result.failures).toEqual([{
-      message : 'SyncNextLedgerStore: tenant quarantine entry capacity 1 exceeded.',
+      message : 'SyncNextProgressStore: tenant quarantine entry capacity 1 exceeded.',
       target  : syncNextLinkIdentity(full),
       work    : 'pullPage',
     }]);
   });
 
-  it('allows only one active quarantine retry for a logical target', async () => {
+  it('allows only one active quarantine retry for a projection', async () => {
     const first = target({ endpoint: 'https://first.example.com' });
     const second = target({ endpoint: 'https://second.example.com' });
     await retainQuarantine(first);
     let active = 0;
     let maxActive = 0;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       quarantineRetry: async () => {
         active++;
         maxActive = Math.max(maxActive, active);
@@ -302,7 +302,7 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    await pump.run([first, second], 'pull');
+    await runner.run([first, second], 'pull');
 
     expect(maxActive).toBe(1);
   });
@@ -312,7 +312,7 @@ describe('SyncNextWorkPump', () => {
     const healthy = target({ endpoint: 'https://healthy.example.com' });
     await retainQuarantine(offline);
     let retriedAt: string | undefined;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
         await runRemoteRequest(async () => {
           if (syncTarget.dwnUrl === offline.dwnUrl) {
@@ -324,7 +324,7 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    await pump.run([offline, healthy], 'pull');
+    await runner.run([offline, healthy], 'pull');
 
     expect(retriedAt).toBe(healthy.dwnUrl);
   });
@@ -333,12 +333,12 @@ describe('SyncNextWorkPump', () => {
     const syncTarget = target();
     await retainQuarantine(syncTarget);
     const order: string[] = [];
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         order.push('pullPage');
         await runRemoteRequest(async () => {});
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
       quarantineRetry: async (_target, _shouldContinue, runRemoteRequest) => {
@@ -350,7 +350,7 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    const result = await pump.run([syncTarget], 'pull', { maxRemoteRequests: 3 });
+    const result = await runner.run([syncTarget], 'pull', { maxRemoteRequests: 3 });
 
     expect(order).toEqual(['pullPage', 'quarantine']);
     expect(result).toMatchObject({ failures: [], remoteRequests: 3, workRemaining: true });
@@ -358,22 +358,22 @@ describe('SyncNextWorkPump', () => {
 
   it('requires a fixed budget that can fund page and role recovery', async () => {
     const syncTarget = target();
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations());
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations());
 
-    await expect(pump.run([syncTarget], 'pull', { maxRemoteRequests: 2 }))
+    await expect(runner.run([syncTarget], 'pull', { maxRemoteRequests: 2 }))
       .rejects.toThrow('request budget must be an integer of at least 3');
-    expect(await ledger.getLink(syncNextLinkIdentity(syncTarget))).toBeUndefined();
+    expect(await progressStore.getLink(syncNextLinkIdentity(syncTarget))).toBeUndefined();
   });
 
   it('reserves both split reads needed by role recovery', async () => {
     const syncTarget = roleTarget();
     await retainQuarantine(syncTarget);
     const requests: string[] = [];
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         await runRemoteRequest(async () => { requests.push('page'); });
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
       quarantineRetry: async (_target, _shouldContinue, runRemoteRequest) => {
@@ -383,7 +383,7 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    expect(await pump.run([syncTarget], 'pull', { maxRemoteRequests: 3 }))
+    expect(await runner.run([syncTarget], 'pull', { maxRemoteRequests: 3 }))
       .toMatchObject({ failures: [], remoteRequests: 3 });
     expect(requests).toEqual(['page', 'support', 'body']);
   });
@@ -394,11 +394,11 @@ describe('SyncNextWorkPump', () => {
     await retainQuarantine(first);
     await retainQuarantine(second);
     const completed = new Set<string>();
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         await runRemoteRequest(async () => {});
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
       quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
@@ -412,11 +412,11 @@ describe('SyncNextWorkPump', () => {
       },
     }));
 
-    expect(await pump.run([first, second], 'pull', { maxRemoteRequests: 4 }))
+    expect(await runner.run([first, second], 'pull', { maxRemoteRequests: 4 }))
       .toMatchObject({ failures: [], remoteRequests: 4 });
     expect(completed.size).toBe(1);
 
-    expect(await pump.run([first, second], 'pull', { maxRemoteRequests: 4 }))
+    expect(await runner.run([first, second], 'pull', { maxRemoteRequests: 4 }))
       .toMatchObject({ failures: [], remoteRequests: 4 });
     expect(completed).toEqual(new Set([first.did, second.did]));
   });
@@ -438,7 +438,7 @@ describe('SyncNextWorkPump', () => {
       await retainQuarantine(role);
       const ownerPageAttempted = deferred<void>();
       const attempts: string[] = [];
-      const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+      const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
         pullPage: async (syncTarget, _shouldContinue, runRemoteRequest) => {
           if (syncTarget.did === owned.did) {
             try {
@@ -451,12 +451,12 @@ describe('SyncNextWorkPump', () => {
             await runRemoteRequest(async () => {});
           }
           return {
-            handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+            handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
           };
         },
         quarantineRetry: async (syncTarget, _shouldContinue, runRemoteRequest) => {
           attempts.push(syncTarget.did);
-          const [entry] = await ledger.getQuarantineForLogicalTarget(syncTarget.did, syncTarget.projectionId);
+          const [entry] = await progressStore.getQuarantineForProjection(syncTarget.did, syncTarget.projectionId);
           if (entry === undefined) {
             return { kind: 'empty' };
           }
@@ -465,12 +465,12 @@ describe('SyncNextWorkPump', () => {
             return { kind: 'pending' };
           }
           await runRemoteRequest(async () => {});
-          await ledger.settleQuarantineForLogicalTarget(syncTarget.did, syncTarget.projectionId, entry.messageCid);
+          await progressStore.settleQuarantineForProjection(syncTarget.did, syncTarget.projectionId, entry.messageCid);
           return { kind: 'settled', appliedEntries: [] };
         },
       }));
 
-      const result = await pump.run([owned, role], 'pull', { maxRemoteRequests: 3 });
+      const result = await runner.run([owned, role], 'pull', { maxRemoteRequests: 3 });
 
       expect(result).toMatchObject({ remoteRequests: 3, workRemaining: true });
       expect(result.failures).toEqual([{
@@ -479,8 +479,8 @@ describe('SyncNextWorkPump', () => {
         work    : 'pullPage',
       }]);
       expect(attempts).toEqual([owned.did, role.did]);
-      expect(await ledger.getQuarantineForLogicalTarget(owned.did, owned.projectionId)).toHaveLength(1);
-      expect(await ledger.getQuarantineForLogicalTarget(role.did, role.projectionId)).toEqual([]);
+      expect(await progressStore.getQuarantineForProjection(owned.did, owned.projectionId)).toHaveLength(1);
+      expect(await progressStore.getQuarantineForProjection(role.did, role.projectionId)).toEqual([]);
     } finally {
       clock.restore();
     }
@@ -488,16 +488,16 @@ describe('SyncNextWorkPump', () => {
 
   it('passes no signal by default so eligible RPCs retain socket routing', async () => {
     let receivedSignal: AbortSignal | undefined;
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         await runRemoteRequest(async (signal) => { receivedSignal = signal; });
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
     }));
 
-    await pump.run([target()], 'pull');
+    await runner.run([target()], 'pull');
 
     expect(receivedSignal).toBeUndefined();
   });
@@ -505,18 +505,18 @@ describe('SyncNextWorkPump', () => {
   it('preserves work when caller cancellation interrupts an active request', async () => {
     const controller = new AbortController();
     const started = deferred<void>();
-    const pump = new SyncNextWorkPump({} as EnboxPlatformAgent, ledger, operations({
+    const runner = new SyncNextRunner({} as EnboxPlatformAgent, progressStore, operations({
       pullPage: async (_target, _shouldContinue, runRemoteRequest) => {
         await runRemoteRequest(async (signal) => new Promise<void>((_resolve, reject) => {
           started.resolve();
           signal?.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
         }));
         return {
-          handledCids: [], handledThrough: token(1), hasMore: false, kind: 'committed', quarantined: 0,
+          handledCids: [], checkpoint: token(1), feedDrained: true, kind: 'committed', quarantined: 0,
         };
       },
     }));
-    const running = pump.run([target()], 'pull', { signal: controller.signal });
+    const running = runner.run([target()], 'pull', { signal: controller.signal });
     await started.promise;
     controller.abort();
 

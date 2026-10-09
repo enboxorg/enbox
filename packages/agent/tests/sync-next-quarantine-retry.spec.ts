@@ -11,9 +11,9 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type { SyncNextLink, SyncNextQuarantineEntry } from '../src/sync-next/types.js';
 
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { SyncWorkInterruptedError } from '../src/sync-messages.js';
-import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/progress-key.js';
 
 function target(endpoint = 'https://dwn.example.com'): SyncTarget {
   return {
@@ -132,16 +132,16 @@ function fakeAgent(): {
 
 describe('retryOneQuarantinedRoot', () => {
   let db: Level<string, string>;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
 
   beforeAll(() => {
     db = new Level<string, string>('__TESTDATA__/sync-next-quarantine-retry-spec');
-    ledger = new SyncNextLedgerStore(db, 'sync-next-quarantine-retry-spec');
+    progressStore = new SyncNextProgressStore(db, 'sync-next-quarantine-retry-spec');
   });
 
   afterEach(async () => {
     sinon.restore();
-    await ledger.clear();
+    await progressStore.clear();
   });
 
   afterAll(async () => {
@@ -149,7 +149,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   async function retain(syncTarget: SyncTarget, entries: MessagesQueryReplyEntry[]): Promise<SyncNextLink> {
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -158,11 +158,11 @@ describe('retryOneQuarantinedRoot', () => {
       messageCid : entry.messageCid,
       source     : token(Number(entry.seq), entry.messageCid),
     }));
-    await ledger.commitPullPage(link, {
-      handledThrough : token(Number(entries.at(-1)!.seq), entries.at(-1)!.messageCid),
-      pageReceipts   : receipts,
-      quarantine     : entries.map((entry, index) => ({ entry, ...receipts[index] })),
-      settled        : [],
+    await progressStore.commitPullPage(link, {
+      checkpoint   : token(Number(entries.at(-1)!.seq), entries.at(-1)!.messageCid),
+      pageReceipts : receipts,
+      quarantine   : entries.map((entry, index) => ({ entry, ...receipts[index] })),
+      settled      : [],
     });
     return link;
   }
@@ -171,7 +171,7 @@ describe('retryOneQuarantinedRoot', () => {
     entry: SyncNextQuarantineEntry,
     changes: Record<string, unknown>,
   ): Promise<void> {
-    const quarantine = (ledger as unknown as {
+    const quarantine = (progressStore as unknown as {
       _quarantine: { put(key: string, value: string): Promise<void> };
     })._quarantine;
     await quarantine.put(syncNextReceiptKey(entry, entry), JSON.stringify({ ...entry, ...changes }));
@@ -182,12 +182,12 @@ describe('retryOneQuarantinedRoot', () => {
 
     expect(await retryOneQuarantinedRoot({
       agent  : fixture.agent,
-      ledger,
+      progressStore,
       target : target(),
     })).toEqual({ kind: 'empty' });
     expect(await retryOneQuarantinedRoot({
       agent          : fixture.agent,
-      ledger,
+      progressStore,
       shouldContinue : (): boolean => false,
       target         : target(),
     })).toEqual({ kind: 'aborted' });
@@ -200,16 +200,16 @@ describe('retryOneQuarantinedRoot', () => {
     const fixture = fakeAgent();
     await retain(target(), [first, second]);
     await retain(target('https://second.example.com'), [{ ...first, seq: '1' }]);
-    for (const row of await ledger.getQuarantineForLogicalTarget(target().did, target().projectionId)) {
+    for (const row of await progressStore.getQuarantineForProjection(target().did, target().projectionId)) {
       await rewriteQuarantine(row, { lastAttemptAt: 'invalid' });
     }
 
-    const result = await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() });
+    const result = await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() });
 
     expect(result).toMatchObject({ kind: 'settled' });
     expect(fixture.apply.calledOnce).toBe(true);
     expect(await Message.getCid(fixture.apply.firstCall.args[1])).toBe(first.messageCid);
-    expect(await ledger.getQuarantineForLogicalTarget(target().did, target().projectionId)).toMatchObject([{
+    expect(await progressStore.getQuarantineForProjection(target().did, target().projectionId)).toMatchObject([{
       messageCid: second.messageCid,
     }]);
   });
@@ -222,15 +222,15 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(target('https://second.example.com'), [{ ...entry }]);
 
     const results = await Promise.all([
-      retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }),
-      retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target('https://second.example.com') }),
+      retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }),
+      retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target('https://second.example.com') }),
     ]);
 
     expect(results.map(result => result.kind)).toEqual(['settled', 'settled']);
     const applied = results.flatMap(result => result.kind === 'settled' ? result.appliedEntries : []);
     expect(applied).toEqual([{ message: entry.message, messageCid: entry.messageCid }]);
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getQuarantineForLogicalTarget(target().did, target().projectionId)).toEqual([]);
+    expect(await progressStore.getQuarantineForProjection(target().did, target().projectionId)).toEqual([]);
   });
 
   it('rotates a malformed oldest row and attempts its healthy peer next', async () => {
@@ -238,7 +238,7 @@ describe('retryOneQuarantinedRoot', () => {
     const second = await feedEntry(protocolMessage('second'), 2);
     const fixture = fakeAgent();
     await retain(target(), [first, second]);
-    const rows = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const rows = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
     const poisoned = rows.find(row => row.messageCid === first.messageCid)!;
     const poisonedEntry = { ...poisoned.entry, messageCid: 'different-cid' };
     await rewriteQuarantine(poisoned, {
@@ -247,9 +247,9 @@ describe('retryOneQuarantinedRoot', () => {
       lastAttemptAt : 'invalid',
     });
 
-    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .rejects.toThrow('does not match its durable receipt');
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toMatchObject({ kind: 'settled' });
     expect(await Message.getCid(fixture.apply.firstCall.args[1])).toBe(second.messageCid);
   });
@@ -262,11 +262,11 @@ describe('retryOneQuarantinedRoot', () => {
     };
     const fixture = fakeAgent();
     await retain(target(), [entry]);
-    const [before] = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const [before] = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
 
-    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .rejects.toThrow('data CID');
-    const [after] = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const [after] = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
     expect(after.lastAttemptAt > before.lastAttemptAt).toBe(true);
     expect(fixture.apply.notCalled).toBe(true);
   });
@@ -281,12 +281,12 @@ describe('retryOneQuarantinedRoot', () => {
     const fixture = fakeAgent();
     await retain(target(), [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled', appliedEntries: [{ message: entry.message, messageCid: entry.messageCid }] });
     expect(fixture.prepare.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
     expect(await DataStream.toBytes(fixture.apply.firstCall.args[2].dataStream)).toEqual(generated.dataBytes!);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   const unavailableConfirmationCases: [string, JsonRpcErrorCodes, string][] = [
@@ -309,7 +309,7 @@ describe('retryOneQuarantinedRoot', () => {
     });
     await retain(delegateTarget(), [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: delegateTarget() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: delegateTarget() }))
       .toMatchObject({ kind: 'settled' });
     expect(fixture.prepare.calledOnce).toBe(true);
     expect(fixture.prepare.firstCall.args[0]).toMatchObject({
@@ -319,7 +319,7 @@ describe('retryOneQuarantinedRoot', () => {
     expect(fixture.send.calledOnce).toBe(true);
     expect(fixture.apply.firstCall.args[2]).toEqual({ includeMaterializationConfirmation: true });
     expect(fixture.apply.secondCall.args[2].dataStream).toBeDefined();
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(delegateTarget()))).toEqual([]);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(delegateTarget()))).toEqual([]);
   });
 
   it('keeps an ancestry receipt until the later completion receipt supplies its body', async () => {
@@ -352,16 +352,16 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(target(), [ancestryEntry]);
     await retain(target(), [completionEntry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'pending' });
     expect(fixture.apply.firstCall.args[2].dataStream).toBeUndefined();
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(2);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(2);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toMatchObject({ kind: 'settled' });
     expect(fixture.apply.lastCall.args[2].dataStream).toBeDefined();
     expect(fixture.send.calledOnce).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   it.each(['Duplicate', 'Superseded'] as const)('keeps an unavailable or unconfirmed %s body pending', async (kind) => {
@@ -371,7 +371,7 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.send.resolves({ status: { code: 404, detail: 'Not Found' } });
     await retain(target(), [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'pending' });
     expect(fixture.apply.calledOnceWithExactly(target().did, entry.message, {
       includeMaterializationConfirmation: true,
@@ -385,9 +385,9 @@ describe('retryOneQuarantinedRoot', () => {
       status: { code: 200, detail: 'OK' },
     });
     fixture.apply.resolves({ kind });
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'pending' });
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
   it.each(['owner', 'delegate'] as const)(
@@ -400,14 +400,14 @@ describe('retryOneQuarantinedRoot', () => {
       fixture.apply.resolves({ kind: 'Superseded', currentWriteMaterialized: true });
       await retain(syncTarget, [entry]);
 
-      expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: syncTarget }))
+      expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: syncTarget }))
         .toEqual({ kind: 'settled', appliedEntries: [] });
       expect(fixture.apply.calledOnceWithExactly(syncTarget.did, entry.message, {
         includeMaterializationConfirmation: true,
       })).toBe(true);
       expect(fixture.prepare.notCalled).toBe(true);
       expect(fixture.send.notCalled).toBe(true);
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
     },
   );
 
@@ -421,11 +421,11 @@ describe('retryOneQuarantinedRoot', () => {
     const fixture = fakeAgent();
     await retain(scopedTarget, [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: scopedTarget }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: scopedTarget }))
       .toEqual({ kind: 'pending' });
     expect(fixture.apply.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(scopedTarget))).toHaveLength(1);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(scopedTarget))).toHaveLength(1);
   });
 
   it('does not mask a different local confirmation rejection', async () => {
@@ -435,10 +435,10 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.apply.onFirstCall().rejects(new DwnRpcError(JsonRpcErrorCodes.Forbidden, 'tenant not registered'));
     await retain(target(), [entry]);
 
-    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .rejects.toThrow('tenant not registered');
     expect(fixture.send.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
   it('replays safely after local apply succeeds but settlement fails', async () => {
@@ -466,20 +466,20 @@ describe('retryOneQuarantinedRoot', () => {
       return Promise.resolve({ kind: 'Applied' });
     });
     await retain(target(), [entry]);
-    const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
+    const settle = sinon.stub(progressStore, 'settleQuarantineForProjection');
     settle.onFirstCall().rejects(new Error('injected settlement failure'));
     settle.callThrough();
 
-    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .rejects.toThrow('injected settlement failure');
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
     fixture.send.rejects(new Error('source offline'));
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled', appliedEntries: [] });
     expect(fixture.apply.calledThrice).toBe(true);
     expect(fixture.send.calledOnce).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   it('keeps a dataless parent\'s receipt while retrying its child', async () => {
@@ -527,18 +527,18 @@ describe('retryOneQuarantinedRoot', () => {
         status  : { code: 200, detail: 'OK' },
       });
     await retain(target(), [childEntry, parentEntry]);
-    const childRow = (await ledger.getQuarantineForLink(syncNextLinkIdentity(target())))
+    const childRow = (await progressStore.getQuarantineForLink(syncNextLinkIdentity(target())))
       .find(row => row.messageCid === childEntry.messageCid)!;
     await rewriteQuarantine(childRow, { lastAttemptAt: 'invalid' });
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toMatchObject({ kind: 'settled' });
     expect(fixture.query.calledOnce).toBe(true);
     expect(fixture.prepare.calledTwice).toBe(true);
     expect(fixture.send.callCount).toBe(3);
     expect(fixture.apply.callCount).toBe(4);
     expect(fixture.apply.thirdCall.args[2].dataStream).toBeUndefined();
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid: parentEntry.messageCid,
     }]);
   });
@@ -549,9 +549,9 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.apply.resolves({ kind: 'Invalid', reason: 'invalid signature' });
     await retain(target(), [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'pending' });
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
   it('settles role quarantine from confirmed local current state without remote reads', async () => {
@@ -566,21 +566,21 @@ describe('retryOneQuarantinedRoot', () => {
     fixture.apply.resolves({ kind: 'Superseded', currentWriteMaterialized: true });
     await retain(roleTarget(), [entry]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: roleTarget() }))
       .toEqual({ kind: 'settled', appliedEntries: [] });
     expect(fixture.apply.calledOnceWithExactly(roleTarget().did, entry.message, {
       includeMaterializationConfirmation: true,
     })).toBe(true);
     expect(fixture.prepare.notCalled).toBe(true);
     expect(fixture.send.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(roleTarget()))).toEqual([]);
+    expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(roleTarget()))).toEqual([]);
   });
 
   it('keeps role rows pending without owner-shaped reads', async () => {
     const fixture = fakeAgent();
     await retain(roleTarget(), [await feedEntry(protocolMessage('role'), 1)]);
 
-    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() }))
+    expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: roleTarget() }))
       .toEqual({ kind: 'pending' });
     expect(fixture.apply.notCalled).toBe(true);
     expect(fixture.prepare.notCalled).toBe(true);
@@ -595,10 +595,10 @@ describe('retryOneQuarantinedRoot', () => {
     await retain(roleTarget(), [first]);
     clock.tick(1);
     await retain(roleTarget(), [second]);
-    const update = sinon.spy(ledger, 'updateQuarantine');
+    const update = sinon.spy(progressStore, 'updateQuarantine');
     try {
-      await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() });
-      await retryOneQuarantinedRoot({ agent: fixture.agent, ledger, target: roleTarget() });
+      await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: roleTarget() });
+      await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: roleTarget() });
       expect(update.firstCall.args[0].messageCid).toBe(first.messageCid);
       expect(update.secondCall.args[0].messageCid).toBe(second.messageCid);
     } finally {
@@ -606,14 +606,14 @@ describe('retryOneQuarantinedRoot', () => {
     }
   });
 
-  it('rotates a budget-interrupted row so another quarantined root gets a turn', async () => {
+  it('rotates a budget-interrupted row so another quarantined root gets the next retry', async () => {
     const firstWrite = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1]) });
     const secondWrite = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([2]) });
     const first = await feedEntry(firstWrite.message, 1);
     const second = await feedEntry(secondWrite.message, 2);
     const fixture = fakeAgent();
     await retain(target(), [first, second]);
-    const rows = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const rows = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
     const firstRow = rows.find(row => row.messageCid === first.messageCid)!;
     const secondRow = rows.find(row => row.messageCid === second.messageCid)!;
     await rewriteQuarantine(firstRow, { lastAttemptAt: '2026-01-01T00:00:00.000Z' });
@@ -624,18 +624,18 @@ describe('retryOneQuarantinedRoot', () => {
 
     expect(await retryOneQuarantinedRoot({
       agent            : fixture.agent,
-      ledger,
+      progressStore,
       runRemoteRequest : budgetYield,
       target           : target(),
     })).toEqual({ kind: 'aborted' });
     expect(await Message.getCid(fixture.apply.firstCall.args[1])).toBe(first.messageCid);
-    const afterFirst = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const afterFirst = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
     expect(afterFirst.find(row => row.messageCid === first.messageCid)!.lastAttemptAt > secondRow.lastAttemptAt)
       .toBe(true);
 
     expect(await retryOneQuarantinedRoot({
       agent            : fixture.agent,
-      ledger,
+      progressStore,
       runRemoteRequest : budgetYield,
       target           : target(),
     })).toEqual({ kind: 'aborted' });
@@ -651,15 +651,15 @@ describe('retryOneQuarantinedRoot', () => {
       return { kind: 'Applied' };
     });
     await retain(target(), [entry]);
-    const [before] = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const [before] = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
 
     expect(await retryOneQuarantinedRoot({
       agent          : fixture.agent,
-      ledger,
+      progressStore,
       shouldContinue : (): boolean => current,
       target         : target(),
     })).toEqual({ kind: 'aborted' });
-    const [after] = await ledger.getQuarantineForLink(syncNextLinkIdentity(target()));
+    const [after] = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
     expect(after.lastAttemptAt).toBe(before.lastAttemptAt);
   });
 });

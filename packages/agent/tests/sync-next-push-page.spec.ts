@@ -6,8 +6,8 @@ import type { SyncTarget } from '../src/sync-target-resolver.js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
 import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
@@ -128,16 +128,16 @@ function fakeAgent(reply: MessagesQueryReply): {
 
 describe('SyncNextPushPage', () => {
   let db: Level<string, string>;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
 
   beforeAll(() => {
     db = new Level<string, string>('__TESTDATA__/sync-next-push-page-spec');
-    ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-spec');
+    progressStore = new SyncNextProgressStore(db, 'sync-next-push-page-spec');
   });
 
   afterEach(async () => {
     sinon.restore();
-    await ledger.clear();
+    await progressStore.clear();
   });
 
   afterAll(async () => {
@@ -145,7 +145,7 @@ describe('SyncNextPushPage', () => {
   });
 
   async function createLink(syncTarget = target()): Promise<SyncNextLink> {
-    return ledger.getOrCreateLink({
+    return progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -159,18 +159,18 @@ describe('SyncNextPushPage', () => {
     fixture.apply.onFirstCall().resolves({ kind: 'Invalid', reason: 'invalid signature' });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
-      hasMore      : false,
+      feedDrained  : true,
       kind         : 'committed',
       retained     : 1,
     });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid : rejected.messageCid,
       outcome    : { reason: 'remote-rejected' },
     }]);
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('2');
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint?.position).toBe('2');
   });
 
   it('should let only a handled current update cover an older same-page failure', async () => {
@@ -194,27 +194,27 @@ describe('SyncNextPushPage', () => {
     fixture.apply.onFirstCall().resolves({ kind: 'Deferred', reason: 'record-data-unavailable' });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 0,
     });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
 
-    await ledger.clear();
+    await progressStore.clear();
     await createLink();
     const nonLatestFixture = fakeAgent(page([
       firstEntry,
       { ...secondEntry, isLatestBaseState: false },
     ]));
     nonLatestFixture.apply.onFirstCall().resolves({ kind: 'Deferred', reason: 'record-data-unavailable' });
-    expect(await new SyncNextPushPage(nonLatestFixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(nonLatestFixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 1,
     });
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid    : firstEntry.messageCid,
       writeRecordId : first.message.recordId,
     }]);
@@ -233,13 +233,13 @@ describe('SyncNextPushPage', () => {
     });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 1,
     });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid : blocked.messageCid,
       outcome    : { reason: 'dependency' },
     }]);
@@ -255,13 +255,13 @@ describe('SyncNextPushPage', () => {
     }).onSecondCall().resolves({ kind: 'Applied' });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 1,
     });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid : rejected.messageCid,
       outcome    : { reason: 'remote-rejected' },
     }]);
@@ -277,14 +277,14 @@ describe('SyncNextPushPage', () => {
     fixture.apply.rejects(new TypeError('offline'));
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       blocked      : { blockScope: 'endpoint', reason: 'transport' },
       acknowledged : 0,
       kind         : 'committed',
       retained     : 3,
     });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
       messageCid : entry.messageCid,
       outcome    : { blockScope: 'endpoint', reason: 'transport' },
     })));
@@ -303,14 +303,14 @@ describe('SyncNextPushPage', () => {
     ));
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       blocked      : { blockScope: 'link', reason: 'quota' },
       acknowledged : 0,
       kind         : 'committed',
       retained     : 2,
     });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
       messageCid : entry.messageCid,
       outcome    : { blockScope: 'link', reason: 'quota' },
     })));
@@ -325,14 +325,14 @@ describe('SyncNextPushPage', () => {
     fixture.apply.resolves({ kind: 'Deferred', reason: 'storage' });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       blocked      : { blockScope: 'link', reason: 'remote-incomplete' },
       acknowledged : 0,
       kind         : 'committed',
       retained     : 2,
     });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
       messageCid : entry.messageCid,
       outcome    : { blockScope: 'link', reason: 'remote-incomplete' },
     })));
@@ -352,13 +352,13 @@ describe('SyncNextPushPage', () => {
     }).onSecondCall().resolves({ kind: 'Applied' });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 1,
     });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid : unavailable.messageCid,
       outcome    : { reason: 'remote-incomplete' },
     }]);
@@ -375,7 +375,7 @@ describe('SyncNextPushPage', () => {
     });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       blocked      : { blockScope: 'link', reason: 'authorization-unresolved' },
       acknowledged : 0,
       kind         : 'committed',
@@ -383,7 +383,7 @@ describe('SyncNextPushPage', () => {
     });
     expect(fixture.query.calledTwice).toBe(true);
     expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
       messageCid : entry.messageCid,
       outcome    : { blockScope: 'link', reason: 'authorization-unresolved' },
     })));
@@ -400,7 +400,7 @@ describe('SyncNextPushPage', () => {
     });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 0,
       blocked      : { blockScope: 'link', reason: 'transport' },
       kind         : 'committed',
@@ -408,7 +408,7 @@ describe('SyncNextPushPage', () => {
     });
     expect(fixture.query.calledTwice).toBe(true);
     expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject(entries.map(entry => ({
       messageCid : entry.messageCid,
       outcome    : { blockScope: 'link', reason: 'transport' },
     })));
@@ -432,14 +432,14 @@ describe('SyncNextPushPage', () => {
     });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
       acknowledged : 1,
       kind         : 'committed',
       retained     : 1,
     });
     expect(fixture.query.callCount).toBe(3);
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toMatchObject([{
       messageCid : unavailable.messageCid,
       outcome    : { reason: 'dependency' },
     }]);
@@ -453,26 +453,26 @@ describe('SyncNextPushPage', () => {
       fixture.apply.resolves({ kind });
       await createLink();
 
-      expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
+      expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
         acknowledged : 1,
         kind         : 'committed',
         retained     : 0,
       });
-      expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
+      expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
     },
   );
 
-  it('should consume exactly one non-drained local page', async () => {
+  it('should process exactly one non-drained local page', async () => {
     const entry = await feedEntry(protocolMessage('one-page'), 1);
     const fixture = fakeAgent(page([entry], false));
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toMatchObject({
-      hasMore : true,
-      kind    : 'committed',
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toMatchObject({
+      feedDrained : false,
+      kind        : 'committed',
     });
     expect(fixture.query.calledOnce).toBe(true);
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('1');
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint?.position).toBe('1');
   });
 
   it('should commit a handled prefix when the request budget stops before the page tail', async () => {
@@ -487,28 +487,28 @@ describe('SyncNextPushPage', () => {
 
     const result = await new SyncNextPushPage(
       fixture.agent,
-      ledger,
+      progressStore,
       async (request) => {
         if (remainingRequests-- === 0) {
           throw new SyncWorkInterruptedError();
         }
         return request();
       },
-    ).consume(target());
+    ).run(target());
 
-    expect(result).toMatchObject({ handledThrough: { position: '1' }, hasMore: true, kind: 'committed' });
+    expect(result).toMatchObject({ checkpoint: { position: '1' }, feedDrained: false, kind: 'committed' });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('1');
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint?.position).toBe('1');
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toEqual([]);
   });
 
   it('should not query when its link is absent or its caller is already stale', async () => {
     const fixture = fakeAgent(page([]));
-    const processor = new SyncNextPushPage(fixture.agent, ledger);
+    const processor = new SyncNextPushPage(fixture.agent, progressStore);
 
-    expect(await processor.consume(target())).toEqual({ kind: 'stale' });
+    expect(await processor.run(target())).toEqual({ kind: 'stale' });
     await createLink();
-    expect(await processor.consume(target(), (): boolean => false)).toEqual({ kind: 'aborted' });
+    expect(await processor.run(target(), (): boolean => false)).toEqual({ kind: 'aborted' });
     expect(fixture.query.notCalled).toBe(true);
   });
 
@@ -517,7 +517,7 @@ describe('SyncNextPushPage', () => {
     const fixture = fakeAgent(page([]));
     await createLink(syncTarget);
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(syncTarget)).toMatchObject({
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(syncTarget)).toMatchObject({
       kind: 'committed',
     });
     expect(fixture.query.calledOnce).toBe(true);
@@ -534,10 +534,10 @@ describe('SyncNextPushPage', () => {
     const fixture = fakeAgent(page([entry]));
     await createLink();
 
-    await expect(new SyncNextPushPage(fixture.agent, ledger).consume(target()))
+    await expect(new SyncNextPushPage(fixture.agent, progressStore).run(target()))
       .rejects.toThrow('failed CID verification');
     expect(fixture.apply.notCalled).toBe(true);
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint).toBeUndefined();
   });
 
   it('should leave progress unchanged when the link is retired after remote delivery', async () => {
@@ -545,31 +545,31 @@ describe('SyncNextPushPage', () => {
     const fixture = fakeAgent(page([entry]));
     const link = await createLink();
     fixture.apply.callsFake(async () => {
-      await ledger.retireLink(link);
+      await progressStore.retireLink(link);
       return { kind: 'Applied' };
     });
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target())).toEqual({ kind: 'stale' });
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target())).toEqual({ kind: 'stale' });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getLink(syncNextLinkIdentity(target()))).toBeUndefined();
+    expect(await progressStore.getLink(syncNextLinkIdentity(target()))).toBeUndefined();
   });
 
-  it('should safely replay remote delivery after the first ledger commit fails', async () => {
+  it('should safely replay remote delivery after the first progress-store commit fails', async () => {
     const entry = await feedEntry(protocolMessage('crash-replay'), 1);
     const fixture = fakeAgent(page([entry]));
     fixture.apply.onFirstCall().resolves({ kind: 'Applied' }).onSecondCall().resolves({ kind: 'Duplicate' });
     await createLink();
-    const commit = sinon.stub(ledger, 'commitPushPage');
-    commit.onFirstCall().rejects(new Error('injected ledger failure'));
+    const commit = sinon.stub(progressStore, 'commitPushPage');
+    commit.onFirstCall().rejects(new Error('injected progress-store failure'));
     commit.callThrough();
-    const processor = new SyncNextPushPage(fixture.agent, ledger);
+    const processor = new SyncNextPushPage(fixture.agent, progressStore);
 
-    await expect(processor.consume(target())).rejects.toThrow('injected ledger failure');
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough).toBeUndefined();
+    await expect(processor.run(target())).rejects.toThrow('injected progress-store failure');
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint).toBeUndefined();
 
-    expect(await processor.consume(target())).toMatchObject({ acknowledged: 1, kind: 'committed' });
+    expect(await processor.run(target())).toMatchObject({ acknowledged: 1, kind: 'committed' });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough?.position).toBe('1');
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint?.position).toBe('1');
   });
 
   it('should abort without committing when cancellation follows remote delivery', async () => {
@@ -582,15 +582,15 @@ describe('SyncNextPushPage', () => {
     });
     await createLink();
 
-    expect(await new SyncNextPushPage(fixture.agent, ledger).consume(target(), (): boolean => current))
+    expect(await new SyncNextPushPage(fixture.agent, progressStore).run(target(), (): boolean => current))
       .toEqual({ kind: 'aborted' });
-    expect((await ledger.getLink(syncNextLinkIdentity(target())))?.pushHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(syncNextLinkIdentity(target())))?.pushCheckpoint).toBeUndefined();
   });
 
   it('should reject role-authorized push without querying or mutating state', async () => {
     const fixture = fakeAgent(page([]));
 
-    await expect(new SyncNextPushPage(fixture.agent, ledger).consume(roleTarget()))
+    await expect(new SyncNextPushPage(fixture.agent, progressStore).run(roleTarget()))
       .rejects.toThrow('role-authorized targets are pull-only');
     expect(fixture.query.notCalled).toBe(true);
     expect(fixture.apply.notCalled).toBe(true);

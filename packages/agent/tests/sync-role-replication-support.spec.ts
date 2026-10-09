@@ -17,8 +17,8 @@ import type {
 import { Level } from 'level';
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import sinon from 'sinon';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 
 import { beforeAll, describe, expect, it } from 'bun:test';
@@ -139,27 +139,27 @@ describe('readRoleReplicationSupport', () => {
     });
     const target = roleRetryTarget(oldRoot.message, fixture.role.message.recordId);
     const db = new Level<string, string>(`__TESTDATA__/sync-next-role-retry-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'sync-next-role-retry');
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-role-retry');
     try {
-      await retainRoleRoot(ledger, target, oldRoot.message);
+      await retainRoleRoot(progressStore, target, oldRoot.message);
 
       const staleTarget: SyncTarget = {
         ...target,
         authorization: { ...target.authorization, roleRecordId: 'replaced-role' },
       };
-      await expect(retryOneQuarantinedRoot({ agent, ledger, target: staleTarget }))
+      await expect(retryOneQuarantinedRoot({ agent, progressStore, target: staleTarget }))
         .rejects.toBeInstanceOf(RoleReplicationSupportError);
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
 
-      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
         .toMatchObject({ kind: 'settled' });
       expect(appliedCids.has(configureCid)).toBe(true);
       expect(appliedCids.has(roleCid)).toBe(true);
       expect(currentMaterialized).toBe(true);
       expect(agent.rpc.sendDwnRequest.callCount).toBe(4);
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
     } finally {
-      await ledger.clear();
+      await progressStore.clear();
       await db.close();
     }
   });
@@ -211,16 +211,16 @@ describe('readRoleReplicationSupport', () => {
       return result;
     });
     const db = new Level<string, string>(`__TESTDATA__/sync-next-exact-role-retry-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'sync-next-exact-role-retry');
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-exact-role-retry');
     try {
-      await retainRoleRoot(ledger, target, fixture.root.message);
-      const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
+      await retainRoleRoot(progressStore, target, fixture.root.message);
+      const settle = sinon.stub(progressStore, 'settleQuarantineForProjection');
       settle.onFirstCall().rejects(new Error('injected settlement failure'));
       settle.callThrough();
 
-      await expect(retryOneQuarantinedRoot({ agent, ledger, target }))
+      await expect(retryOneQuarantinedRoot({ agent, progressStore, target }))
         .rejects.toThrow('injected settlement failure');
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
 
       const read = await RecordsRead.create({
         filter : { recordId: fixture.root.message.recordId },
@@ -230,12 +230,12 @@ describe('readRoleReplicationSupport', () => {
       expect(readReply.status.code).toBe(200);
       expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(fixture.rootData);
 
-      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
         .toEqual({ kind: 'settled', appliedEntries: [] });
       expect(rootResults.at(-1)).toEqual({ kind: 'Duplicate', materialized: true });
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
     } finally {
-      await ledger.clear();
+      await progressStore.clear();
       await db.close();
       await dataStore.clear();
       await messageStore.clear();
@@ -272,16 +272,16 @@ describe('readRoleReplicationSupport', () => {
     });
     const target = roleRetryTarget(fixture.root.message, fixture.role.message.recordId);
     const db = new Level<string, string>(`__TESTDATA__/sync-next-role-cancel-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'sync-next-role-cancel');
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-role-cancel');
     try {
-      await retainRoleRoot(ledger, target, fixture.root.message);
+      await retainRoleRoot(progressStore, target, fixture.root.message);
 
-      expect(await retryOneQuarantinedRoot({ agent, ledger, target })).toEqual({ kind: 'pending' });
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target })).toEqual({ kind: 'pending' });
       expect(bodiesCreated).toBe(1);
       expect(bodyCancelled).toBe(true);
-      expect(await ledger.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
     } finally {
-      await ledger.clear();
+      await progressStore.clear();
       await db.close();
     }
   });
@@ -976,23 +976,23 @@ describe('readRoleReplicationSupport', () => {
   }
 
   async function retainRoleRoot(
-    ledger: SyncNextLedgerStore,
+    progressStore: SyncNextProgressStore,
     target: SyncTarget,
     message: RecordsWriteMessage,
   ): Promise<void> {
     const messageCid = await Message.getCid(message);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(target),
       authorization : target.authorization,
       scope         : target.scope,
     });
     const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
     const entry = { isLatestBaseState: true, message, messageCid, seq: '1' };
-    expect(await ledger.commitPullPage(link, {
-      handledThrough : source,
-      pageReceipts   : [{ messageCid, source }],
-      quarantine     : [{ entry, messageCid, source }],
-      settled        : [],
+    expect(await progressStore.commitPullPage(link, {
+      checkpoint   : source,
+      pageReceipts : [{ messageCid, source }],
+      quarantine   : [{ entry, messageCid, source }],
+      settled      : [],
     })).toBe(true);
   }
 

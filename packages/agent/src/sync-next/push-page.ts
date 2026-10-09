@@ -1,7 +1,7 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { PushResult } from '../types/sync.js';
-import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
+import type { SyncNextProgressStore } from './progress-store.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { GenericMessage, MessagesQueryReply, ProgressToken } from '@enbox/dwn-sdk-js';
@@ -18,7 +18,7 @@ import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
 import { prepareSyncNextFeedPage, sliceSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
 import { queryLocalMessageFeed, RemoteApplyPushContext, SyncWorkInterruptedError } from '../sync-messages.js';
-import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './ledger-key.js';
+import { syncNextLinkIdentity, syncNextSourceAtOrBefore } from './progress-key.js';
 
 type ClassifiedPushPage = {
   acknowledged: number;
@@ -34,8 +34,8 @@ export type SyncNextPushPageResult =
   | {
       kind: 'committed';
       acknowledged: number;
-      handledThrough: ProgressToken;
-      hasMore: boolean;
+      checkpoint: ProgressToken;
+      feedDrained: boolean;
       retained: number;
       /** Link/endpoint-wide outcome that stopped further requests in this page. */
       blocked?: SyncNextDeliveryOutcome;
@@ -45,18 +45,18 @@ export type SyncNextPushPageResult =
 export class SyncNextPushPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
-    private readonly _ledger: SyncNextLedgerStore,
+    private readonly _progressStore: SyncNextProgressStore,
     private readonly _runRemoteRequest?: SyncRemoteRequestRunner,
   ) {}
 
-  public async consume(
+  public async run(
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
   ): Promise<SyncNextPushPageResult> {
     if (target.authorization.kind === 'role') {
       throw new Error('SyncNextPushPage: role-authorized targets are pull-only.');
     }
-    const link = await this._ledger.getLink(syncNextLinkIdentity(target));
+    const link = await this._progressStore.getLink(syncNextLinkIdentity(target));
     if (link === undefined) {
       return { kind: 'stale' };
     }
@@ -64,13 +64,13 @@ export class SyncNextPushPage {
       return { kind: 'aborted' };
     }
 
-    const reply = await this.query(target, link.pushHandledThrough);
+    const reply = await this.query(target, link.pushCheckpoint);
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     const page = await prepareSyncNextFeedPage({
       label    : 'SyncNextPushPage',
-      previous : link.pushHandledThrough,
+      previous : link.pushCheckpoint,
       reply,
       target   : `local query for ${target.did} -> ${target.dwnUrl}`,
     });
@@ -83,12 +83,12 @@ export class SyncNextPushPage {
       return { kind: 'aborted' };
     }
 
-    const committed = await this._ledger.commitPushPage(link, {
-      delivery       : classified.delivery,
-      handledThrough : handledPage.handledThrough,
-      handledWrites  : classified.handledWrites,
-      pageReceipts   : handledPage.pageReceipts,
-      settled        : classified.settled,
+    const committed = await this._progressStore.commitPushPage(link, {
+      checkpoint    : handledPage.checkpoint,
+      delivery      : classified.delivery,
+      handledWrites : classified.handledWrites,
+      pageReceipts  : handledPage.pageReceipts,
+      settled       : classified.settled,
     });
     if (!committed) {
       return { kind: 'stale' };
@@ -96,11 +96,11 @@ export class SyncNextPushPage {
 
     return {
       ...(classified.blocked === undefined ? {} : { blocked: classified.blocked }),
-      acknowledged   : classified.acknowledged,
-      handledThrough : handledPage.handledThrough,
-      hasMore        : !handledPage.drained,
-      kind           : 'committed',
-      retained       : classified.delivery.length,
+      acknowledged : classified.acknowledged,
+      checkpoint   : handledPage.checkpoint,
+      feedDrained  : handledPage.drained,
+      kind         : 'committed',
+      retained     : classified.delivery.length,
     };
   }
 

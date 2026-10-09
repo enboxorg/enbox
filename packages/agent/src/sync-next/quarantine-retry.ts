@@ -3,14 +3,14 @@ import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncAppliedEntry } from '../sync-admit-closure.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
-import type { SyncNextLedgerStore } from './ledger-store.js';
+import type { SyncNextProgressStore } from './progress-store.js';
 import type { SyncNextQuarantineEntry } from './types.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 
 import { admitClosure } from '../sync-admit-closure.js';
 import { classifySyncMessageScope } from '../sync-scope-acceptance.js';
-import { compareSyncNextSparseAttempts } from './ledger-key.js';
+import { compareSyncNextRetryOrder } from './progress-key.js';
 import { recordsWriteRequiresData } from '../sync-fetch-helpers.js';
 import { Cid, DataStream, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
@@ -29,13 +29,13 @@ type RetryAttempt = {
 /** Select and retry one retained root without owning scheduling or pagination. */
 export async function retryOneQuarantinedRoot({
   agent,
-  ledger,
+  progressStore,
   target,
   runRemoteRequest,
   shouldContinue = (): boolean => true,
 }: {
   agent: EnboxPlatformAgent;
-  ledger: SyncNextLedgerStore;
+  progressStore: SyncNextProgressStore;
   target: SyncTarget;
   runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
@@ -43,11 +43,11 @@ export async function retryOneQuarantinedRoot({
   if (!shouldContinue()) {
     return { kind: 'aborted' };
   }
-  const entries = await ledger.getQuarantineForLogicalTarget(target.did, target.projectionId);
+  const entries = await progressStore.getQuarantineForProjection(target.did, target.projectionId);
   if (!shouldContinue()) {
     return { kind: 'aborted' };
   }
-  entries.sort(compareSyncNextSparseAttempts);
+  entries.sort(compareSyncNextRetryOrder);
   const selected = entries[0];
   if (selected === undefined) {
     return { kind: 'empty' };
@@ -59,27 +59,27 @@ export async function retryOneQuarantinedRoot({
       return { kind: 'aborted' };
     }
     if (attempt.kind === 'settled') {
-      await ledger.settleQuarantineForLogicalTarget(
+      await progressStore.settleQuarantineForProjection(
         target.did,
         target.projectionId,
         selected.messageCid,
       );
     } else {
-      await ledger.updateQuarantine(selected);
+      await progressStore.updateQuarantine(selected);
       return { kind: 'pending' };
     }
     return { kind: 'settled', appliedEntries: attempt.appliedEntries };
   } catch (error: unknown) {
     if (error instanceof SyncWorkInterruptedError) {
       if (error.reason === 'budget' && shouldContinue()) {
-        await ledger.updateQuarantine(selected);
+        await progressStore.updateQuarantine(selected);
       }
       return { kind: 'aborted' };
     }
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
-    await ledger.updateQuarantine(selected);
+    await progressStore.updateQuarantine(selected);
     throw error;
   }
 }
@@ -176,7 +176,7 @@ async function retryRoleRoot(
       did                     : target.did,
       dwnUrl                  : target.dwnUrl,
       delegateDid             : target.delegateDid,
-      fetchReplicationSupport : async () => support,
+      fetchReplicationSupport : () => Promise.resolve(support),
       permissionGrantIds      : target.permissionGrantIds,
       permissionsApi          : agent.permissions,
       prefetched              : [...support.dependencies, support.root],

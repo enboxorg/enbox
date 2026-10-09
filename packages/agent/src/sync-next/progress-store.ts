@@ -27,12 +27,12 @@ import {
   syncNextReceiptKey,
   syncNextSourceAtOrBefore,
   syncNextTenantRange,
-} from './ledger-key.js';
+} from './progress-key.js';
 
 type LevelKey = string | Buffer | Uint8Array;
 type SyncNextDatabase = AbstractLevel<LevelKey>;
 type SyncNextBatchOperation = AbstractBatchOperation<SyncNextDatabase, string, string>;
-type SyncNextSparseEntry = SyncNextDeliveryObligation | SyncNextQuarantineEntry;
+type SyncNextPendingEntry = SyncNextDeliveryObligation | SyncNextQuarantineEntry;
 type PreparedQuarantineInput = SyncNextQuarantineInput & { entrySize: number };
 
 const SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK = 10_000;
@@ -40,19 +40,19 @@ const SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_TENANT = 64 * 1024 * 1024;
 const SYNC_NEXT_DEFAULT_MAX_QUARANTINE_PER_TENANT = 10_000;
 const SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES = 1024 * 1024;
 
-type SyncNextLedgerStoreOptions = {
+type SyncNextProgressStoreOptions = {
   maxDeliveryPerLink?: number;
   maxQuarantineBytesPerTenant?: number;
   maxQuarantinePerTenant?: number;
 };
 
 /**
- * Isolated `syncNextV1` durable ledger.
+ * Isolated `syncNextV1` durable progress store.
  *
  * Successful outcomes are compressed into link progress. Only quarantine and
- * delivery obligations occupy sparse rows.
+ * delivery obligations occupy pending rows.
  */
-export class SyncNextLedgerStore {
+export class SyncNextProgressStore {
   private readonly _compatibleQuarantineLinks = new Set<string>();
   private readonly _delivery: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
   private readonly _links: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
@@ -65,7 +65,7 @@ export class SyncNextLedgerStore {
   public constructor(
     private readonly _db: SyncNextDatabase,
     lockNamespace = 'default',
-    options: SyncNextLedgerStoreOptions = {},
+    options: SyncNextProgressStoreOptions = {},
   ) {
     this._delivery = _db.sublevel('syncNextV1Delivery');
     this._links = _db.sublevel('syncNextV1Links');
@@ -83,7 +83,7 @@ export class SyncNextLedgerStore {
     return this.runMutation(async (): Promise<SyncNextLink> => {
       const existing = await this.getValue<SyncNextLink>(this._links, key);
       if (existing !== undefined) {
-        SyncNextLedgerStore.assertSameLinkDefinition(existing, normalizedInput);
+        SyncNextProgressStore.assertSameLinkDefinition(existing, normalizedInput);
         return existing;
       }
 
@@ -114,7 +114,7 @@ export class SyncNextLedgerStore {
     return this.readValues(this._links.iterator());
   }
 
-  /** Retire an obsolete binding while preserving inbound recovery input owned by its logical target. */
+  /** Retire an obsolete binding while preserving inbound recovery input owned by its projection. */
   public async retireLink(queriedLink: SyncNextLink): Promise<void> {
     const key = syncNextLinkKey(queriedLink);
     await this.runMutation(async (): Promise<void> => {
@@ -130,8 +130,8 @@ export class SyncNextLedgerStore {
     });
   }
 
-  /** Explicitly remove one current link and all sparse state owned by that exact link. */
-  public async deleteLinkAndSparse(queriedLink: SyncNextLink): Promise<void> {
+  /** Explicitly remove one current link and all pending work owned by that exact link. */
+  public async deleteLinkAndPendingWork(queriedLink: SyncNextLink): Promise<void> {
     const key = syncNextLinkKey(queriedLink);
     await this.runMutation(async (): Promise<void> => {
       const current = await this.getValue<SyncNextLink>(this._links, key);
@@ -149,13 +149,13 @@ export class SyncNextLedgerStore {
     });
   }
 
-  /** Atomically retain pull exceptions and advance the remote handled-through token. */
+  /** Atomically retain pull exceptions and advance the pull checkpoint. */
   public async commitPullPage(
     queriedLink: SyncNextLink,
     commit: SyncNextPullPageCommit,
   ): Promise<boolean> {
-    SyncNextLedgerStore.assertValidToken(commit.handledThrough, 'pull handled-through token');
-    const preparedQuarantine = commit.quarantine.map(SyncNextLedgerStore.prepareQuarantineInput);
+    SyncNextProgressStore.assertValidToken(commit.checkpoint, 'pull checkpoint');
+    const preparedQuarantine = commit.quarantine.map(SyncNextProgressStore.prepareQuarantineInput);
     const key = syncNextLinkKey(queriedLink);
     return this.runMutation(async (): Promise<boolean> => {
       const link = await this.getValue<SyncNextLink>(this._links, key);
@@ -163,21 +163,21 @@ export class SyncNextLedgerStore {
         return false;
       }
       await this.assertCompatibleQuarantine(link);
-      if (!SyncNextLedgerStore.sameToken(link.pullHandledThrough, queriedLink.pullHandledThrough)) {
+      if (!SyncNextProgressStore.sameToken(link.pullCheckpoint, queriedLink.pullCheckpoint)) {
         return false;
       }
-      if (!SyncNextLedgerStore.canAdvance(link.pullHandledThrough, commit.handledThrough)) {
-        return SyncNextLedgerStore.isEmptyReplay(
-          link.pullHandledThrough, commit.handledThrough, commit.pageReceipts, commit.quarantine, commit.settled,
+      if (!SyncNextProgressStore.canAdvance(link.pullCheckpoint, commit.checkpoint)) {
+        return SyncNextProgressStore.isEmptyReplay(
+          link.pullCheckpoint, commit.checkpoint, commit.pageReceipts, commit.quarantine, commit.settled,
         );
       }
-      SyncNextLedgerStore.validatePageCommit(
-        commit.handledThrough, commit.pageReceipts, commit.quarantine, commit.settled,
-        link.pullHandledThrough, 'pull',
+      SyncNextProgressStore.validatePageCommit(
+        commit.checkpoint, commit.pageReceipts, commit.quarantine, commit.settled,
+        link.pullCheckpoint, 'pull',
       );
 
       const operations: SyncNextBatchOperation[] = [];
-      const quarantined = preparedQuarantine.map(input => this.nextSparseState(link, input, {
+      const quarantined = preparedQuarantine.map(input => this.createPendingEntry(link, input, {
         entry     : input.entry,
         entrySize : input.entrySize,
       }));
@@ -202,39 +202,39 @@ export class SyncNextLedgerStore {
         operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(link, settled)));
       }
 
-      const updated = SyncNextLedgerStore.withProgress(link, 'pull', commit.handledThrough);
+      const updated = SyncNextProgressStore.withCheckpoint(link, 'pull', commit.checkpoint);
       operations.push(this.putOperation(this._links, key, updated));
       await this._db.batch(operations);
       return true;
     });
   }
 
-  /** Atomically retain outbound exceptions and advance the local handled-through token. */
+  /** Atomically retain outbound exceptions and advance the push checkpoint. */
   public async commitPushPage(
     queriedLink: SyncNextLink,
     commit: SyncNextPushPageCommit,
   ): Promise<boolean> {
-    SyncNextLedgerStore.assertValidToken(commit.handledThrough, 'push handled-through token');
+    SyncNextProgressStore.assertValidToken(commit.checkpoint, 'push checkpoint');
     const key = syncNextLinkKey(queriedLink);
     return this.runMutation(async (): Promise<boolean> => {
       const link = await this.getValue<SyncNextLink>(this._links, key);
       if (link?.lifetimeId !== queriedLink.lifetimeId) {
         return false;
       }
-      if (!SyncNextLedgerStore.sameToken(link.pushHandledThrough, queriedLink.pushHandledThrough)) {
+      if (!SyncNextProgressStore.sameToken(link.pushCheckpoint, queriedLink.pushCheckpoint)) {
         return false;
       }
-      if (!SyncNextLedgerStore.canAdvance(link.pushHandledThrough, commit.handledThrough)) {
-        return commit.handledWrites.length === 0 && SyncNextLedgerStore.isEmptyReplay(
-          link.pushHandledThrough, commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
+      if (!SyncNextProgressStore.canAdvance(link.pushCheckpoint, commit.checkpoint)) {
+        return commit.handledWrites.length === 0 && SyncNextProgressStore.isEmptyReplay(
+          link.pushCheckpoint, commit.checkpoint, commit.pageReceipts, commit.delivery, commit.settled,
         );
       }
-      SyncNextLedgerStore.validatePageCommit(
-        commit.handledThrough, commit.pageReceipts, commit.delivery, commit.settled,
-        link.pushHandledThrough, 'push',
+      SyncNextProgressStore.validatePageCommit(
+        commit.checkpoint, commit.pageReceipts, commit.delivery, commit.settled,
+        link.pushCheckpoint, 'push',
       );
-      SyncNextLedgerStore.validateDeliveryInputs(commit.delivery);
-      const handledWrites = SyncNextLedgerStore.validateHandledWrites(commit.handledWrites, commit.settled);
+      SyncNextProgressStore.validateDeliveryInputs(commit.delivery);
+      const handledWrites = SyncNextProgressStore.validateHandledWrites(commit.handledWrites, commit.settled);
 
       const operations: SyncNextBatchOperation[] = [];
       const existingDelivery = await this.getDeliveryForLink(link);
@@ -242,17 +242,17 @@ export class SyncNextLedgerStore {
         entry => syncNextReceiptKey(link, entry)
       ));
       for (const entry of existingDelivery) {
-        if (SyncNextLedgerStore.deliveryIsCovered(entry, handledWrites)) {
+        if (SyncNextProgressStore.deliveryIsCovered(entry, handledWrites)) {
           const receiptKey = syncNextReceiptKey(link, entry);
           retained.delete(receiptKey);
           operations.push(this.deleteOperation(this._delivery, receiptKey));
         }
       }
       for (const input of commit.delivery) {
-        if (SyncNextLedgerStore.deliveryIsCovered(input, handledWrites)) {
+        if (SyncNextProgressStore.deliveryIsCovered(input, handledWrites)) {
           continue;
         }
-        const state = this.nextSparseState(link, input, {
+        const state = this.createPendingEntry(link, input, {
           outcome            : structuredClone(input.outcome),
           ...(input.writeRecordId === undefined ? {} : { writeRecordId: input.writeRecordId }),
           wasLatestBaseState : input.wasLatestBaseState,
@@ -267,11 +267,11 @@ export class SyncNextLedgerStore {
       }
       if (retained.size > this._maxDeliveryPerLink) {
         throw new Error(
-          `SyncNextLedgerStore: delivery obligation capacity ${this._maxDeliveryPerLink} exceeded.`,
+          `SyncNextProgressStore: delivery obligation capacity ${this._maxDeliveryPerLink} exceeded.`,
         );
       }
 
-      const updated = SyncNextLedgerStore.withProgress(link, 'push', commit.handledThrough);
+      const updated = SyncNextProgressStore.withCheckpoint(link, 'push', commit.checkpoint);
       operations.push(this.putOperation(this._links, key, updated));
       await this._db.batch(operations);
       return true;
@@ -303,8 +303,8 @@ export class SyncNextLedgerStore {
     });
   }
 
-  /** Sparse scan used after one CID materializes locally to settle duplicate source receipts. */
-  public async getQuarantineForLogicalTarget(
+  /** Pending-work scan used after one CID materializes locally to settle duplicate source receipts. */
+  public async getQuarantineForProjection(
     tenantDid: string,
     projectionId: string,
   ): Promise<SyncNextQuarantineEntry[]> {
@@ -312,18 +312,18 @@ export class SyncNextLedgerStore {
   }
 
   public updateQuarantine(entry: SyncNextQuarantineEntry): Promise<void> {
-    return this.runMutation((): Promise<void> => this.updateSparse(this._quarantine, entry));
+    return this.runMutation((): Promise<void> => this.updatePendingEntry(this._quarantine, entry));
   }
 
   /** Settle every exact-source receipt satisfied by one verified local materialization. */
-  public async settleQuarantineForLogicalTarget(
+  public async settleQuarantineForProjection(
     tenantDid: string,
     projectionId: string,
     messageCids: string | readonly string[],
   ): Promise<void> {
     await this.runMutation(async (): Promise<void> => {
       const cids = new Set(typeof messageCids === 'string' ? [messageCids] : messageCids);
-      const entries = (await this.getQuarantineForLogicalTarget(tenantDid, projectionId))
+      const entries = (await this.getQuarantineForProjection(tenantDid, projectionId))
         .filter(entry => cids.has(entry.messageCid));
       await Promise.all(entries.map((entry): Promise<void> =>
         this._quarantine.del(syncNextReceiptKey(entry, entry))
@@ -366,7 +366,7 @@ export class SyncNextLedgerStore {
       } else {
         await this._delivery.put(receiptKey, JSON.stringify({
           ...current,
-          lastAttemptAt : SyncNextLedgerStore.nextAttemptAt(current.lastAttemptAt),
+          lastAttemptAt : SyncNextProgressStore.nextAttemptAt(current.lastAttemptAt),
           outcome       : structuredClone(outcome),
         }));
       }
@@ -382,7 +382,7 @@ export class SyncNextLedgerStore {
     });
   }
 
-  private nextSparseState<T extends object>(
+  private createPendingEntry<T extends object>(
     link: SyncNextLink,
     receipt: SyncNextSourceReceipt,
     state: T,
@@ -406,26 +406,26 @@ export class SyncNextLedgerStore {
     try {
       return JSON.parse(await store.get(key)) as T;
     } catch (error: unknown) {
-      if (SyncNextLedgerStore.isNotFound(error)) {
+      if (SyncNextProgressStore.isNotFound(error)) {
         return undefined;
       }
       throw error;
     }
   }
 
-  private async updateSparse(
+  private async updatePendingEntry(
     store: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>,
-    entry: SyncNextSparseEntry,
+    entry: SyncNextPendingEntry,
     outcome?: SyncNextDeliveryOutcome,
   ): Promise<void> {
     const key = syncNextReceiptKey(entry, entry);
-    const current = await this.getValue<SyncNextSparseEntry>(store, key);
+    const current = await this.getValue<SyncNextPendingEntry>(store, key);
     if (current === undefined) {
       return;
     }
     await store.put(key, JSON.stringify({
       ...current,
-      lastAttemptAt: SyncNextLedgerStore.nextAttemptAt(current.lastAttemptAt),
+      lastAttemptAt: SyncNextProgressStore.nextAttemptAt(current.lastAttemptAt),
       ...(outcome === undefined ? {} : { outcome: structuredClone(outcome) }),
     }));
   }
@@ -448,11 +448,11 @@ export class SyncNextLedgerStore {
 
   private static validateDeliveryInputs(delivery: readonly SyncNextDeliveryInput[]): void {
     if (delivery.some(input => typeof input.wasLatestBaseState !== 'boolean')) {
-      throw new TypeError('SyncNextLedgerStore: delivery source state must be a boolean.');
+      throw new TypeError('SyncNextProgressStore: delivery source state must be a boolean.');
     }
     if (delivery.some(input => input.writeRecordId !== undefined &&
       (typeof input.writeRecordId !== 'string' || input.writeRecordId.length === 0))) {
-      throw new TypeError('SyncNextLedgerStore: delivery write record ID must be a non-empty string.');
+      throw new TypeError('SyncNextProgressStore: delivery write record ID must be a non-empty string.');
     }
   }
 
@@ -460,13 +460,13 @@ export class SyncNextLedgerStore {
     handledWrites: readonly SyncNextHandledWrite[],
     settled: readonly SyncNextSourceReceipt[],
   ): Map<string, SyncNextHandledWrite> {
-    const settledReceipts = new Set(settled.map(SyncNextLedgerStore.receiptIdentity));
+    const settledReceipts = new Set(settled.map(SyncNextProgressStore.receiptIdentity));
     const byRecordId = new Map<string, SyncNextHandledWrite>();
     for (const handled of handledWrites) {
       if (typeof handled.recordId !== 'string' || handled.recordId.length === 0 ||
-          !settledReceipts.has(SyncNextLedgerStore.receiptIdentity(handled.receipt)) ||
+          !settledReceipts.has(SyncNextProgressStore.receiptIdentity(handled.receipt)) ||
           byRecordId.has(handled.recordId)) {
-        throw new TypeError('SyncNextLedgerStore: handled write state is invalid.');
+        throw new TypeError('SyncNextProgressStore: handled write state is invalid.');
       }
       byRecordId.set(handled.recordId, handled);
     }
@@ -498,7 +498,7 @@ export class SyncNextLedgerStore {
 
   private async readQuarantine(entries: AsyncIterable<[string, string]>): Promise<SyncNextQuarantineEntry[]> {
     const rows = await this.readValues<unknown>(entries);
-    return rows.map(SyncNextLedgerStore.validateQuarantineAccounting);
+    return rows.map(SyncNextProgressStore.validateQuarantineAccounting);
   }
 
   /** One-time format check prevents an old encrypted row from outliving its checkpoint. */
@@ -510,10 +510,10 @@ export class SyncNextLedgerStore {
     }
   }
 
-  /** Serialize ledger mutations that must not interleave with reset. */
+  /** Serialize progress-store mutations that must not interleave with reset. */
   private runMutation<T>(operation: () => Promise<T>): Promise<T> {
     return runWithCrossContextLock(
-      `enbox:sync-next-ledger:${this._lockNamespace}`,
+      `enbox:sync-next-progress:${this._lockNamespace}`,
       operation,
     );
   }
@@ -527,12 +527,12 @@ export class SyncNextLedgerStore {
     }
     if (count > this._maxQuarantinePerTenant) {
       throw new Error(
-        `SyncNextLedgerStore: tenant quarantine entry capacity ${this._maxQuarantinePerTenant} exceeded.`,
+        `SyncNextProgressStore: tenant quarantine entry capacity ${this._maxQuarantinePerTenant} exceeded.`,
       );
     }
     if (bytes > this._maxQuarantineBytesPerTenant) {
       throw new Error(
-        `SyncNextLedgerStore: tenant quarantine byte capacity ${this._maxQuarantineBytesPerTenant} exceeded.`,
+        `SyncNextProgressStore: tenant quarantine byte capacity ${this._maxQuarantineBytesPerTenant} exceeded.`,
       );
     }
   }
@@ -540,23 +540,23 @@ export class SyncNextLedgerStore {
   private static prepareQuarantineInput(input: SyncNextQuarantineInput): PreparedQuarantineInput {
     const entry = structuredClone(input.entry);
     if (entry.messageCid !== input.messageCid) {
-      throw new Error('SyncNextLedgerStore: quarantine entry CID does not match its receipt.');
+      throw new Error('SyncNextProgressStore: quarantine entry CID does not match its receipt.');
     }
     if (entry.seq !== input.source.position) {
-      throw new Error('SyncNextLedgerStore: quarantine entry position does not match its receipt.');
+      throw new Error('SyncNextProgressStore: quarantine entry position does not match its receipt.');
     }
-    return { ...input, entry, entrySize: SyncNextLedgerStore.serializedEntrySize(entry) };
+    return { ...input, entry, entrySize: SyncNextProgressStore.serializedEntrySize(entry) };
   }
 
-  /** Validate only fields used by the ledger; retry owns payload validation. */
+  /** Validate only fields used by the progress store; retry owns payload validation. */
   private static validateQuarantineAccounting(value: unknown): SyncNextQuarantineEntry {
     if (typeof value === 'object' && value !== null && 'encryptedPayload' in value) {
       throw new Error(
-        'SyncNextLedgerStore: encrypted quarantine rows are obsolete; clear the complete sync-next ledger.',
+        'SyncNextProgressStore: encrypted quarantine rows are obsolete; clear the complete sync-next progress store.',
       );
     }
     if (typeof value !== 'object' || value === null) {
-      throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
+      throw new TypeError('SyncNextProgressStore: quarantine row has an invalid schema.');
     }
     const row = value as Partial<SyncNextQuarantineEntry>;
     const source = row.source as Partial<ProgressToken> | undefined;
@@ -567,7 +567,7 @@ export class SyncNextLedgerStore {
     if (!strings.every(item => typeof item === 'string') ||
         typeof row.entrySize !== 'number' || !Number.isSafeInteger(row.entrySize) ||
         row.entrySize < 0 || row.entrySize > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
-      throw new TypeError('SyncNextLedgerStore: quarantine row has an invalid schema.');
+      throw new TypeError('SyncNextProgressStore: quarantine row has an invalid schema.');
     }
     return row as SyncNextQuarantineEntry;
   }
@@ -576,39 +576,39 @@ export class SyncNextLedgerStore {
     const size = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
     if (size > SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES) {
       throw new Error(
-        `SyncNextLedgerStore: quarantine entry exceeds ${SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES} bytes.`,
+        `SyncNextProgressStore: quarantine entry exceeds ${SYNC_NEXT_MAX_QUARANTINE_ENTRY_BYTES} bytes.`,
       );
     }
     return size;
   }
 
   private static validatePageCommit(
-    handledThrough: ProgressToken,
+    checkpoint: ProgressToken,
     pageReceipts: SyncNextSourceReceipt[],
     pending: SyncNextSourceReceipt[],
     settled: SyncNextSourceReceipt[],
     previous: ProgressToken | undefined,
     direction: 'pull' | 'push',
   ): void {
-    SyncNextLedgerStore.assertValidToken(handledThrough, `${direction} handled-through token`);
-    const page = SyncNextLedgerStore.validatePageReceipts(
-      handledThrough, pageReceipts, previous, direction,
+    SyncNextProgressStore.assertValidToken(checkpoint, `${direction} checkpoint`);
+    const page = SyncNextProgressStore.validatePageReceipts(
+      checkpoint, pageReceipts, previous, direction,
     );
-    const seen = SyncNextLedgerStore.validatePageDispositions(
-      handledThrough, page, pending, settled, direction,
+    const seen = SyncNextProgressStore.validatePageDispositions(
+      checkpoint, page, pending, settled, direction,
     );
     if (seen.size !== page.size) {
-      throw new Error(`SyncNextLedgerStore: ${direction} page has a source without a disposition.`);
+      throw new Error(`SyncNextProgressStore: ${direction} page has a source without a disposition.`);
     }
-    if (handledThrough.messageCid !== undefined && !pageReceipts.some(receipt =>
-      receipt.source.position === handledThrough.position && receipt.messageCid === handledThrough.messageCid
+    if (checkpoint.messageCid !== undefined && !pageReceipts.some(receipt =>
+      receipt.source.position === checkpoint.position && receipt.messageCid === checkpoint.messageCid
     )) {
-      throw new Error(`SyncNextLedgerStore: ${direction} cursor CID does not match its page entry.`);
+      throw new Error(`SyncNextProgressStore: ${direction} cursor CID does not match its page entry.`);
     }
   }
 
   private static validatePageReceipts(
-    handledThrough: ProgressToken,
+    checkpoint: ProgressToken,
     pageReceipts: SyncNextSourceReceipt[],
     previous: ProgressToken | undefined,
     direction: 'pull' | 'push',
@@ -616,17 +616,17 @@ export class SyncNextLedgerStore {
     const page = new Set<string>();
     const positions = new Set<string>();
     for (const receipt of pageReceipts) {
-      SyncNextLedgerStore.assertReceiptWithinPage(receipt, handledThrough, direction);
+      SyncNextProgressStore.assertReceiptWithinPage(receipt, checkpoint, direction);
       if (previous !== undefined && compareSyncNextPosition(receipt.source, previous) <= 0) {
-        throw new Error(`SyncNextLedgerStore: ${direction} source is behind its previous checkpoint.`);
+        throw new Error(`SyncNextProgressStore: ${direction} source is behind its previous checkpoint.`);
       }
-      const key = SyncNextLedgerStore.receiptIdentity(receipt);
+      const key = SyncNextProgressStore.receiptIdentity(receipt);
       if (page.has(key)) {
-        throw new Error(`SyncNextLedgerStore: ${direction} page repeats source ${key}.`);
+        throw new Error(`SyncNextProgressStore: ${direction} page repeats source ${key}.`);
       }
       if (positions.has(receipt.source.position)) {
         throw new Error(
-          `SyncNextLedgerStore: ${direction} page assigns more than one CID to position ` +
+          `SyncNextProgressStore: ${direction} page assigns more than one CID to position ` +
           `${receipt.source.position}.`,
         );
       }
@@ -637,7 +637,7 @@ export class SyncNextLedgerStore {
   }
 
   private static validatePageDispositions(
-    handledThrough: ProgressToken,
+    checkpoint: ProgressToken,
     page: Set<string>,
     pending: SyncNextSourceReceipt[],
     settled: SyncNextSourceReceipt[],
@@ -646,14 +646,14 @@ export class SyncNextLedgerStore {
     const seen = new Set<string>();
     for (const receipts of [pending, settled]) {
       for (const receipt of receipts) {
-        SyncNextLedgerStore.assertReceiptWithinPage(receipt, handledThrough, direction);
-        const key = SyncNextLedgerStore.receiptIdentity(receipt);
+        SyncNextProgressStore.assertReceiptWithinPage(receipt, checkpoint, direction);
+        const key = SyncNextProgressStore.receiptIdentity(receipt);
         if (!page.has(key)) {
-          throw new Error(`SyncNextLedgerStore: ${direction} source ${key} is not in the page.`);
+          throw new Error(`SyncNextProgressStore: ${direction} source ${key} is not in the page.`);
         }
         if (seen.has(key)) {
           throw new Error(
-            `SyncNextLedgerStore: ${direction} source ${key} has more than one page disposition.`,
+            `SyncNextProgressStore: ${direction} source ${key} has more than one page disposition.`,
           );
         }
         seen.add(key);
@@ -664,24 +664,24 @@ export class SyncNextLedgerStore {
 
   private static assertReceiptWithinPage(
     receipt: SyncNextSourceReceipt,
-    handledThrough: ProgressToken,
+    checkpoint: ProgressToken,
     direction: 'pull' | 'push',
   ): void {
-    SyncNextLedgerStore.assertValidToken(receipt.source, `${direction} source token`);
+    SyncNextProgressStore.assertValidToken(receipt.source, `${direction} source token`);
     if (receipt.messageCid.length === 0) {
-      throw new Error('SyncNextLedgerStore: source message CID must not be empty.');
+      throw new Error('SyncNextProgressStore: source message CID must not be empty.');
     }
     if (
-      receipt.source.streamId !== handledThrough.streamId ||
-      receipt.source.epoch !== handledThrough.epoch
+      receipt.source.streamId !== checkpoint.streamId ||
+      receipt.source.epoch !== checkpoint.epoch
     ) {
       throw new Error(
-        `SyncNextLedgerStore: ${direction} source token does not match its page domain.`,
+        `SyncNextProgressStore: ${direction} source token does not match its page domain.`,
       );
     }
-    if (compareSyncNextPosition(receipt.source, handledThrough) > 0) {
+    if (compareSyncNextPosition(receipt.source, checkpoint) > 0) {
       throw new Error(
-        `SyncNextLedgerStore: ${direction} source position exceeds its page checkpoint.`,
+        `SyncNextProgressStore: ${direction} source position exceeds its page checkpoint.`,
       );
     }
     if (
@@ -689,14 +689,14 @@ export class SyncNextLedgerStore {
       receipt.source.messageCid !== receipt.messageCid
     ) {
       throw new Error(
-        `SyncNextLedgerStore: ${direction} source token CID does not match its receipt CID.`,
+        `SyncNextProgressStore: ${direction} source token CID does not match its receipt CID.`,
       );
     }
   }
 
   private static assertValidToken(token: ProgressToken, label: string): void {
     if (!isValidSyncNextToken(token)) {
-      throw new Error(`SyncNextLedgerStore: ${label} is invalid.`);
+      throw new Error(`SyncNextProgressStore: ${label} is invalid.`);
     }
   }
 
@@ -709,7 +709,7 @@ export class SyncNextLedgerStore {
     }
     if (current.streamId !== incoming.streamId || current.epoch !== incoming.epoch) {
       throw new Error(
-        'SyncNextLedgerStore: progress token domain changed without an explicit reset.',
+        'SyncNextProgressStore: progress token domain changed without an explicit reset.',
       );
     }
     return compareSyncNextPosition(incoming, current) > 0;
@@ -728,20 +728,20 @@ export class SyncNextLedgerStore {
     pending: SyncNextSourceReceipt[],
     settled: SyncNextSourceReceipt[],
   ): boolean {
-    return current !== undefined && SyncNextLedgerStore.sameToken(current, incoming) &&
+    return current !== undefined && SyncNextProgressStore.sameToken(current, incoming) &&
       pageReceipts.length === 0 && pending.length === 0 && settled.length === 0;
   }
 
-  private static withProgress(
+  private static withCheckpoint(
     link: SyncNextLink,
     direction: 'pull' | 'push',
     token: ProgressToken,
   ): SyncNextLink {
     const updated = structuredClone(link);
     if (direction === 'pull') {
-      updated.pullHandledThrough = structuredClone(token);
+      updated.pullCheckpoint = structuredClone(token);
     } else {
-      updated.pushHandledThrough = structuredClone(token);
+      updated.pushCheckpoint = structuredClone(token);
     }
     updated.updatedAt = new Date().toISOString();
     return updated;
@@ -761,7 +761,7 @@ export class SyncNextLedgerStore {
       canonicalJsonStringify(existing.scope) !== canonicalJsonStringify(input.scope) ||
       canonicalJsonStringify(existing.authorization) !== canonicalJsonStringify(input.authorization)
     ) {
-      throw new Error('SyncNextLedgerStore: exact link key resolves to a different durable definition.');
+      throw new Error('SyncNextProgressStore: exact link key resolves to a different durable definition.');
     }
   }
 

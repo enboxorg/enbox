@@ -20,8 +20,8 @@ import { AgentDwnApi } from '../src/dwn-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
@@ -154,30 +154,30 @@ describe('Agent remote mode integration', () => {
       projectionId       : await computeProjectionId(alice.did.uri, scope),
       scope,
     };
-    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/quarantine-ledger-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'quarantine-confirmation');
+    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/quarantine-progress-${crypto.randomUUID()}`);
+    const progressStore = new SyncNextProgressStore(db, 'quarantine-confirmation');
     try {
-      const link = await ledger.getOrCreateLink({
+      const link = await progressStore.getOrCreateLink({
         ...syncNextLinkIdentity(target),
         authorization,
         scope,
       });
       const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
       const entry = { isLatestBaseState: true, message: write, messageCid, seq: '1' };
-      await ledger.commitPullPage(link, {
-        handledThrough : source,
-        pageReceipts   : [{ messageCid, source }],
-        quarantine     : [{ entry, messageCid, source }],
-        settled        : [],
+      await progressStore.commitPullPage(link, {
+        checkpoint   : source,
+        pageReceipts : [{ messageCid, source }],
+        quarantine   : [{ entry, messageCid, source }],
+        settled      : [],
       });
-      const settle = sinon.stub(ledger, 'settleQuarantineForLogicalTarget');
+      const settle = sinon.stub(progressStore, 'settleQuarantineForProjection');
       settle.onFirstCall().rejects(new Error('injected settlement failure'));
       settle.callThrough();
 
-      await expect(retryOneQuarantinedRoot({ agent, ledger, target }))
+      await expect(retryOneQuarantinedRoot({ agent, progressStore, target }))
         .rejects.toThrow('injected settlement failure');
       expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
-      expect(await ledger.getQuarantineForLink(link)).toHaveLength(1);
+      expect(await progressStore.getQuarantineForLink(link)).toHaveLength(1);
 
       const newerData = textEncoder.encode('newer local body');
       const newerWrite = await RecordsWrite.createFrom({
@@ -190,10 +190,10 @@ describe('Agent remote mode integration', () => {
       })).toMatchObject({ kind: 'Applied' });
 
       const send = sinon.stub(agent.rpc, 'sendDwnRequest').rejects(new Error('source offline'));
-      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
         .toEqual({ kind: 'settled', appliedEntries: [] });
       expect(send.notCalled).toBe(true);
-      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+      expect(await progressStore.getQuarantineForLink(link)).toEqual([]);
       send.restore();
       expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe('newer local body');
     } finally {
@@ -220,24 +220,24 @@ describe('Agent remote mode integration', () => {
       projectionId       : await computeProjectionId(alice.did.uri, scope),
       scope,
     };
-    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/ordinary-ledger-${crypto.randomUUID()}`);
-    const ledger = new SyncNextLedgerStore(db, 'ordinary-quarantine');
+    const db = new Level<string, string>(`__TESTDATA__/remote-mode-integration/ordinary-progress-${crypto.randomUUID()}`);
+    const progressStore = new SyncNextProgressStore(db, 'ordinary-quarantine');
     try {
-      const link = await ledger.getOrCreateLink({
+      const link = await progressStore.getOrCreateLink({
         ...syncNextLinkIdentity(target),
         authorization: target.authorization,
         scope,
       });
       const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
-      await ledger.commitPullPage(link, {
-        handledThrough : source,
-        pageReceipts   : [{ messageCid, source }],
-        quarantine     : [{ entry: { isLatestBaseState: true, message: write, messageCid, seq: '1' }, messageCid, source }],
-        settled        : [],
+      await progressStore.commitPullPage(link, {
+        checkpoint   : source,
+        pageReceipts : [{ messageCid, source }],
+        quarantine   : [{ entry: { isLatestBaseState: true, message: write, messageCid, seq: '1' }, messageCid, source }],
+        settled      : [],
       });
 
       const fetchSpy = sinon.spy(globalThis, 'fetch');
-      expect(await retryOneQuarantinedRoot({ agent, ledger, target }))
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
         .toMatchObject({ kind: 'settled' });
 
       let confirmationPosts = 0;
@@ -254,7 +254,7 @@ describe('Agent remote mode integration', () => {
       }
       expect(confirmationPosts).toBe(1);
       expect(await readLocalRecordText(agent, alice.did.uri, write.recordId)).toBe(body);
-      expect(await ledger.getQuarantineForLink(link)).toEqual([]);
+      expect(await progressStore.getQuarantineForLink(link)).toEqual([]);
     } finally {
       await db.close();
     }
