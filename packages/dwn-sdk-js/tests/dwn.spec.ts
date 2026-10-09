@@ -278,7 +278,7 @@ export function testDwnClass(): void {
           .toEqual({ kind: 'Duplicate' });
       });
 
-      it('confirms a body-bearing duplicate with one local body lookup', async () => {
+      it('marks an ordinary body-bearing duplicate materialized with one local body lookup', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -289,8 +289,7 @@ export function testDwnClass(): void {
         const replayStream = DataStream.fromBytes(data);
         const cancelSpy = sinon.spy(replayStream, 'cancel');
         expect(await dwn.applyReplicatedMessage(alice.did, message, {
-          dataStream                         : replayStream,
-          includeMaterializationConfirmation : true,
+          dataStream: replayStream,
         })).toEqual({ kind: 'Duplicate', materialized: true });
         expect(getSpy.calledOnce).toBe(true);
         expect(cancelSpy.calledOnce).toBe(true);
@@ -455,7 +454,7 @@ export function testDwnClass(): void {
         expect((await messageStore.logRead(alice.did, { cursor: ancestry.position })).events).toHaveLength(1);
       });
 
-      it('does not complete an ancestry write superseded by a newer write', async () => {
+      it('confirms a newer materialized write without completing superseded ancestry', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
         const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -463,7 +462,7 @@ export function testDwnClass(): void {
           .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
 
         await Time.minimalSleep();
-        const updateData = TestDataGenerator.randomBytes(32);
+        const updateData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const update = await RecordsWrite.createFrom({
           recordsWriteMessage : initial.message,
           data                : updateData,
@@ -473,10 +472,18 @@ export function testDwnClass(): void {
           dataStream: DataStream.fromBytes(updateData),
         })).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
+        // Ordinary replay does not need to inspect the unrelated current body.
+        const bodyRead = sinon.stub(dataStore, 'get').rejects(new Error('newer body unavailable'));
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
-          dataStream                         : DataStream.fromBytes(initial.dataBytes!),
-          includeMaterializationConfirmation : true,
+          dataStream: DataStream.fromBytes(initial.dataBytes!),
         })).toEqual({ kind: 'Duplicate' });
+        expect(bodyRead.notCalled).toBe(true);
+        bodyRead.restore();
+
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message)).toEqual({ kind: 'Duplicate' });
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
+          includeMaterializationConfirmation: true,
+        })).toEqual({ kind: 'Superseded', currentWriteMaterialized: true });
 
         const read = await RecordsRead.create({
           filter : { recordId: initial.message.recordId },
@@ -484,6 +491,30 @@ export function testDwnClass(): void {
         });
         const reply = await dwn.processMessage(alice.did, read.message);
         expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(updateData);
+
+        await dataStore.delete(alice.did, update.message.recordId, update.message.descriptor.dataCid);
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
+          includeMaterializationConfirmation: true,
+        })).toEqual({ kind: 'Duplicate' });
+      });
+
+      it('does not mistake a missing newer write for materialized supersession', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
+        expect(await dwn.applyReplicatedMessage(alice.did, initial.message, { dataStream: initial.dataStream }))
+          .toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+        const updateData = TestDataGenerator.randomBytes(32);
+        const update = await RecordsWrite.createFrom({
+          recordsWriteMessage : initial.message,
+          data                : updateData,
+          signer              : Jws.createSigner(alice),
+        });
+        expect(await dwn.applyReplicatedMessage(alice.did, update.message, {
+          dataStream                         : DataStream.fromBytes(updateData),
+          includeMaterializationConfirmation : true,
+        })).toEqual(expect.objectContaining({ kind: 'Applied' }));
       });
 
       it('does not complete an ancestry write after the record is deleted', async () => {

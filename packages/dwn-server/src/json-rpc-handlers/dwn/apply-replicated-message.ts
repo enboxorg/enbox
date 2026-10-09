@@ -6,7 +6,7 @@ import log from 'loglevel';
 import { invokeMessageProcessedHooks } from './message-processed-hooks.js';
 import { requestDataBytesTotal } from '../../metrics.js';
 import { createJsonRpcErrorResponse, createJsonRpcSuccessResponse, JsonRpcErrorCodes } from '@enbox/dwn-clients';
-import { DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnError, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { enforceQuota, enforceTenantRateLimit, validateInboundDwnMessageTransport } from './inbound-message.js';
 
 /** `stored` adds no body bytes; it does not imply that the write is queryable. */
@@ -75,8 +75,14 @@ export const handleDwnApplyReplicatedMessage: JsonRpcHandler = async (
       return encodedDataResult;
     }
 
-    const storedReplayState = await getStoredReplayState(context, target, message, hasInboundData);
-    if (storedReplayState === 'superseded') {
+    const storedReplayState = await getStoredReplayState(
+      context,
+      target,
+      message,
+      hasInboundData,
+      includeMaterializationConfirmation === true,
+    );
+    if (storedReplayState === 'superseded' && includeMaterializationConfirmation !== true) {
       await dataStream?.cancel().catch((): void => {
         // A proven obsolete replay does not need its inbound body.
       });
@@ -293,7 +299,7 @@ async function enforceApplyReplicatedMessageQuota({
   message: GenericMessage;
   target: string;
 }): Promise<ReturnType<typeof validateInboundDwnMessageTransport>> {
-  if (storedReplayState === 'stored') {
+  if (storedReplayState === 'stored' || storedReplayState === 'superseded') {
     return undefined;
   }
 
@@ -320,11 +326,14 @@ async function getStoredReplayState(
   target: string,
   message: GenericMessage,
   hasInboundData: boolean,
+  includeMaterializationConfirmation: boolean,
 ): Promise<StoredReplayState> {
   const messageCid = await Message.getCid(message);
   const existingMessage = await context.dwn.storage.messageStore.get(target, messageCid);
   if (existingMessage === undefined) {
-    return 'not-stored';
+    return includeMaterializationConfirmation
+      ? classifyUnstoredConfirmation(context, target, message)
+      : 'not-stored';
   }
 
   if (!hasInboundData) {
@@ -332,6 +341,26 @@ async function getStoredReplayState(
   }
 
   return classifyStoredReplayWithData(context, target, existingMessage, messageCid);
+}
+
+/** A displaced update cannot add ancestry once a newer current message already wins. */
+async function classifyUnstoredConfirmation(
+  context: Parameters<JsonRpcHandler>[1],
+  tenant: string,
+  message: GenericMessage,
+): Promise<StoredReplayState> {
+  if (!Records.isRecordsWrite(message) || await RecordsWrite.isInitialWrite(message)) {
+    return 'not-stored';
+  }
+
+  const { messages } = await context.dwn.storage.messageStore.query(tenant, [{
+    interface         : DwnInterfaceName.Records,
+    isLatestBaseState : true,
+    recordId          : message.recordId,
+  }], undefined, { limit: 2 });
+  return messages.length === 1 && await Message.isOlder(message, messages[0])
+    ? 'superseded'
+    : 'not-stored';
 }
 
 /** Distinguishes a completable ancestry write from committed or superseded state. */
