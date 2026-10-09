@@ -11,8 +11,8 @@ import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 import { Jws, Message, Records, RecordsWrite, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
+import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/progress-key.js';
 
 function target(endpoint = 'https://dwn.example.com'): SyncTarget {
   return {
@@ -79,16 +79,16 @@ function fakeAgent(): {
 
 describe('retryOneDeliveryObligation', () => {
   let db: Level<string, string>;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
 
   beforeAll(() => {
     db = new Level<string, string>('__TESTDATA__/sync-next-delivery-retry-spec');
-    ledger = new SyncNextLedgerStore(db, 'sync-next-delivery-retry-spec');
+    progressStore = new SyncNextProgressStore(db, 'sync-next-delivery-retry-spec');
   });
 
   afterEach(async () => {
     sinon.restore();
-    await ledger.clear();
+    await progressStore.clear();
   });
 
   afterAll(async () => {
@@ -101,7 +101,7 @@ describe('retryOneDeliveryObligation', () => {
     wasLatestBaseState = true,
     startPosition = 1,
   ): Promise<SyncNextLink> {
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -117,25 +117,25 @@ describe('retryOneDeliveryObligation', () => {
         wasLatestBaseState,
       };
     }));
-    expect(await ledger.commitPushPage(link, {
+    expect(await progressStore.commitPushPage(link, {
       delivery,
-      handledThrough : delivery.at(-1)!.source,
-      handledWrites  : [],
-      pageReceipts   : delivery,
-      settled        : [],
+      checkpoint    : delivery.at(-1)!.source,
+      handledWrites : [],
+      pageReceipts  : delivery,
+      settled       : [],
     })).toBe(true);
     return link;
   }
 
   it('should return empty, stale, or aborted without sending', async () => {
     const fixture = fakeAgent();
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'stale' });
-    await ledger.getOrCreateLink({ ...syncNextLinkIdentity(target()), authorization: { kind: 'owner' }, scope: target().scope });
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    await progressStore.getOrCreateLink({ ...syncNextLinkIdentity(target()), authorization: { kind: 'owner' }, scope: target().scope });
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'empty' });
     expect(await retryOneDeliveryObligation({
-      agent: fixture.agent, ledger, target: target(), shouldContinue: (): boolean => false,
+      agent: fixture.agent, progressStore, target: target(), shouldContinue: (): boolean => false,
     })).toEqual({ kind: 'aborted' });
     expect(fixture.apply.notCalled).toBe(true);
   });
@@ -150,15 +150,15 @@ describe('retryOneDeliveryObligation', () => {
     fixture.localMessages.set(await Message.getCid(message), message);
     fixture.apply.onFirstCall().rejects(new TypeError('offline')).onSecondCall().resolves({ kind: 'Applied' });
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: first })).toEqual({
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: first })).toEqual({
       kind    : 'pending',
       outcome : { blockScope: 'endpoint', reason: 'transport' },
     });
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: first }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: first }))
       .toEqual({ kind: 'settled' });
-    expect(await ledger.getDeliveryForLink(firstLink)).toEqual([]);
-    expect(await ledger.getDeliveryForLink(secondLink)).toHaveLength(1);
-    expect((await ledger.getLink(firstLink))?.pushHandledThrough).toEqual(token(1, await Message.getCid(message)));
+    expect(await progressStore.getDeliveryForLink(firstLink)).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(secondLink)).toHaveLength(1);
+    expect((await progressStore.getLink(firstLink))?.pushCheckpoint).toEqual(token(1, await Message.getCid(message)));
   });
 
   it('should rotate a quota-blocked receipt behind another retained root', async () => {
@@ -174,21 +174,21 @@ describe('retryOneDeliveryObligation', () => {
       { code: 'TenantStorageQuotaExceeded' },
     )).onSecondCall().resolves({ kind: 'Applied' });
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() })).toEqual({
       kind    : 'pending',
       outcome : { blockScope: 'link', reason: 'quota' },
     });
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
-    expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid))
+    expect((await progressStore.getDeliveryForLink(link)).map(entry => entry.messageCid))
       .toEqual([await Message.getCid(messages[0])]);
   });
 
   it('should rotate a malformed oldest row so a healthy receipt can retry next', async () => {
     const messages = [protocolMessage('malformed'), protocolMessage('healthy')];
     const link = await retain(target(), messages);
-    const [oldest] = await ledger.getDeliveryForLink(link);
-    const delivery = (ledger as unknown as {
+    const [oldest] = await progressStore.getDeliveryForLink(link);
+    const delivery = (progressStore as unknown as {
       _delivery: { put(key: string, value: string): Promise<void> };
     })._delivery;
     await delivery.put(syncNextReceiptKey(link, oldest), JSON.stringify({
@@ -200,15 +200,15 @@ describe('retryOneDeliveryObligation', () => {
       fixture.localMessages.set(await Message.getCid(message), message);
     }
 
-    await expect(retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .rejects.toThrow('retained source state is missing');
-    const [rotated] = await ledger.getDeliveryForLink(link);
+    const [rotated] = await progressStore.getDeliveryForLink(link);
     expect(Date.parse(rotated.lastAttemptAt)).toBeGreaterThan(Date.parse(oldest.lastAttemptAt));
     expect(fixture.apply.notCalled).toBe(true);
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
-    expect((await ledger.getDeliveryForLink(link)).map(entry => entry.messageCid))
+    expect((await progressStore.getDeliveryForLink(link)).map(entry => entry.messageCid))
       .toEqual([oldest.messageCid]);
   });
 
@@ -231,15 +231,15 @@ describe('retryOneDeliveryObligation', () => {
         : { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/dependency', messageCid: dependencyCid }] };
     });
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() })).toEqual({
       kind    : 'pending',
       outcome : { reason: 'dependency' },
     });
     fixture.localMessages.set(dependencyCid, dependency);
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
     expect(dependencyDelivered).toBe(true);
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
   });
 
   it('should not acknowledge a current write after its local body disappears', async () => {
@@ -248,12 +248,12 @@ describe('retryOneDeliveryObligation', () => {
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(write.message), write.message);
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() })).toEqual({
       kind    : 'pending',
       outcome : { reason: 'dependency' },
     });
     expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+    expect(await progressStore.getDeliveryForLink(link)).toHaveLength(1);
   });
 
   it('should not let a current delete settle an older unreadable write', async () => {
@@ -266,13 +266,13 @@ describe('retryOneDeliveryObligation', () => {
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(recordsDelete.message), recordsDelete.message);
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() })).toEqual({
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() })).toEqual({
       kind    : 'pending',
       outcome : { reason: 'dependency' },
     });
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
-    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(link)).toMatchObject([{
       messageCid    : await Message.getCid(initial.message),
       writeRecordId : initial.message.recordId,
     }]);
@@ -316,22 +316,22 @@ describe('retryOneDeliveryObligation', () => {
     const fixture = fakeAgent();
     fixture.localMessages.set(secondCid, second.message);
     fixture.localData.set(secondCid, secondData);
-    const firstBeforeRetry = (await ledger.getDeliveryForLink(primaryLink))
+    const firstBeforeRetry = (await progressStore.getDeliveryForLink(primaryLink))
       .find(entry => entry.messageCid === firstCid)!;
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: primary }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: primary }))
       .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
-    const firstAfterRetry = (await ledger.getDeliveryForLink(primaryLink))
+    const firstAfterRetry = (await progressStore.getDeliveryForLink(primaryLink))
       .find(entry => entry.messageCid === firstCid)!;
     expect(Date.parse(firstAfterRetry.lastAttemptAt)).toBeGreaterThan(Date.parse(firstBeforeRetry.lastAttemptAt));
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: primary }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: primary }))
       .toEqual({ kind: 'settled' });
-    expect((await ledger.getDeliveryForLink(primaryLink)).map(entry => entry.messageCid)).toEqual([
+    expect((await progressStore.getDeliveryForLink(primaryLink)).map(entry => entry.messageCid)).toEqual([
       await Message.getCid(unrelated.message),
       await Message.getCid(later.message),
     ]);
-    expect((await ledger.getDeliveryForLink(siblingLink)).map(entry => entry.messageCid))
+    expect((await progressStore.getDeliveryForLink(siblingLink)).map(entry => entry.messageCid))
       .toEqual([firstCid, secondCid]);
     expect(fixture.apply.calledOnce).toBe(true);
   });
@@ -343,10 +343,10 @@ describe('retryOneDeliveryObligation', () => {
     fixture.localMessages.set(await Message.getCid(write.message), write.message);
     fixture.apply.resolves({ ancestryOnly: true, kind: 'Applied' });
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
     expect(fixture.apply.firstCall.args[0]).toMatchObject({ ancestryOnly: true });
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
   });
 
   it('should not let an old retry alter a replacement link with the same identity', async () => {
@@ -355,14 +355,14 @@ describe('retryOneDeliveryObligation', () => {
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(message), message);
     fixture.apply.callsFake(async () => {
-      await ledger.retireLink(oldLink);
+      await progressStore.retireLink(oldLink);
       await retain(target(), [message]);
       return { kind: 'Applied' };
     });
 
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'stale' });
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(target()))).toHaveLength(1);
   });
 
   it('should leave the receipt intact when the caller is cancelled after remote delivery', async () => {
@@ -377,26 +377,26 @@ describe('retryOneDeliveryObligation', () => {
     });
 
     expect(await retryOneDeliveryObligation({
-      agent: fixture.agent, ledger, target: target(), shouldContinue: (): boolean => active,
+      agent: fixture.agent, progressStore, target: target(), shouldContinue: (): boolean => active,
     })).toEqual({ kind: 'aborted' });
-    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+    expect(await progressStore.getDeliveryForLink(link)).toHaveLength(1);
   });
 
-  it('should replay an acknowledged remote message after a failed ledger settlement', async () => {
+  it('should replay an acknowledged remote message after failed progress-store settlement', async () => {
     const message = protocolMessage('crash');
     const link = await retain(target(), [message]);
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(message), message);
     fixture.apply.onFirstCall().resolves({ kind: 'Applied' }).onSecondCall().resolves({ kind: 'Duplicate' });
-    const finish = sinon.stub(ledger, 'finishDeliveryAttempt');
-    finish.onFirstCall().rejects(new Error('injected ledger failure'));
+    const finish = sinon.stub(progressStore, 'finishDeliveryAttempt');
+    finish.onFirstCall().rejects(new Error('injected progress-store failure'));
     finish.callThrough();
 
-    await expect(retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
-      .rejects.toThrow('injected ledger failure');
-    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
-    expect(await retryOneDeliveryObligation({ agent: fixture.agent, ledger, target: target() }))
+    await expect(retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
+      .rejects.toThrow('injected progress-store failure');
+    expect(await progressStore.getDeliveryForLink(link)).toHaveLength(1);
+    expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() }))
       .toEqual({ kind: 'settled' });
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
   });
 });

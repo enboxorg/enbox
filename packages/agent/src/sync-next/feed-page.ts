@@ -9,7 +9,7 @@ import type { SyncNextSourceReceipt } from './types.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
 
-import { compareSyncNextPosition, isValidSyncNextToken } from './ledger-key.js';
+import { compareSyncNextPosition, isValidSyncNextToken } from './progress-key.js';
 
 export const SYNC_NEXT_PAGE_SIZE = 100;
 
@@ -33,7 +33,7 @@ export type SyncNextPreparedFeedEntry = {
 export type SyncNextPreparedFeedPage = {
   drained: boolean;
   entries: SyncNextPreparedFeedEntry[];
-  handledThrough: ProgressToken;
+  checkpoint: ProgressToken;
   pageReceipts: SyncNextSourceReceipt[];
 };
 
@@ -46,15 +46,15 @@ export function sliceSyncNextFeedPage(
     return page;
   }
   const pageReceipts = page.pageReceipts.slice(0, entryCount);
-  const handledThrough = pageReceipts.at(-1)?.source;
-  if (handledThrough === undefined) {
+  const checkpoint = pageReceipts.at(-1)?.source;
+  if (checkpoint === undefined) {
     return undefined;
   }
 
   return {
     drained : false,
     entries : page.entries.slice(0, entryCount),
-    handledThrough,
+    checkpoint,
     pageReceipts,
   };
 }
@@ -72,17 +72,17 @@ export async function prepareSyncNextFeedPage({
   target: string;
 }): Promise<SyncNextPreparedFeedPage> {
   const { drained, entries } = successfulPage(reply, label, target);
-  const handledThrough = reply.cursor;
-  if (handledThrough === undefined) {
+  const checkpoint = reply.cursor;
+  if (checkpoint === undefined) {
     throw new Error(`${label}: ${target} returned no cursor for a successful page.`);
   }
-  assertCursorProgress(previous, handledThrough, drained, entries.length, label);
+  assertCursorProgress(previous, checkpoint, drained, entries.length, label);
 
   const positions = new Set<string>();
   const preparedEntries: SyncNextPreparedFeedEntry[] = [];
   const pageReceipts: SyncNextSourceReceipt[] = [];
   for (const entry of entries) {
-    const receipt = sourceReceipt(previous, handledThrough, entry, positions, label);
+    const receipt = sourceReceipt(previous, checkpoint, entry, positions, label);
     const priorReceipt = pageReceipts.at(-1);
     if (priorReceipt !== undefined && compareSyncNextPosition(receipt.source, priorReceipt.source) <= 0) {
       throw new Error(`${label}: feed entries are not in ascending source order.`);
@@ -94,9 +94,9 @@ export async function prepareSyncNextFeedPage({
     pageReceipts.push(receipt);
     preparedEntries.push({ entry, message, receipt });
   }
-  assertCursorReceipt(previous, handledThrough, pageReceipts, label);
+  assertCursorReceipt(previous, checkpoint, pageReceipts, label);
 
-  return { drained, entries: preparedEntries, handledThrough, pageReceipts };
+  return { drained, entries: preparedEntries, checkpoint, pageReceipts };
 }
 
 function successfulPage(

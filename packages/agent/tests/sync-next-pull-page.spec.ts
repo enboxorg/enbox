@@ -14,8 +14,8 @@ import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { SyncNextLinkIdentity } from '../src/sync-next/types.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { SyncNextPullPage } from '../src/sync-next/pull-page.js';
 
 function target(): SyncTarget {
@@ -135,16 +135,16 @@ function fakeAgent(reply: MessagesQueryReply): {
 
 describe('SyncNextPullPage', () => {
   let db: Level<string, string>;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
 
   beforeAll(() => {
     db = new Level<string, string>('__TESTDATA__/sync-next-pull-page-spec');
-    ledger = new SyncNextLedgerStore(db, 'sync-next-pull-page-spec');
+    progressStore = new SyncNextProgressStore(db, 'sync-next-pull-page-spec');
   });
 
   afterEach(async () => {
     sinon.restore();
-    await ledger.clear();
+    await progressStore.clear();
   });
 
   afterAll(async () => {
@@ -152,7 +152,7 @@ describe('SyncNextPullPage', () => {
   });
 
   async function createLink(syncTarget = target()): Promise<void> {
-    await ledger.getOrCreateLink({
+    await progressStore.getOrCreateLink({
       ...linkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -163,12 +163,12 @@ describe('SyncNextPullPage', () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
     const independent = await feedEntry(protocolMessage('independent'), 2);
     const fixture = fakeAgent(page([missingBody, independent]));
-    const commit = sinon.spy(ledger, 'commitPullPage');
+    const commit = sinon.spy(progressStore, 'commitPullPage');
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
-    expect(result).toMatchObject({ kind: 'committed', hasMore: false, quarantined: 1 });
+    expect(result).toMatchObject({ kind: 'committed', feedDrained: true, quarantined: 1 });
     if (result.kind !== 'committed') {
       throw new Error('expected the pull page to commit');
     }
@@ -180,12 +180,12 @@ describe('SyncNextPullPage', () => {
       { messageCid: missingBody.messageCid, source: { position: '1' } },
       { messageCid: independent.messageCid, source: { position: '2' } },
     ]);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toMatchObject([{
       entry      : missingBody,
       messageCid : missingBody.messageCid,
       source     : { position: '1' },
     }]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('2');
   });
 
   it('should quarantine a missing dependency without issuing a point read', async () => {
@@ -200,13 +200,13 @@ describe('SyncNextPullPage', () => {
       .onSecondCall().resolves({ kind: 'Applied' });
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
     expect(result).toMatchObject({ kind: 'committed', quarantined: 1 });
     expect(fixture.send.calledOnce).toBe(true);
     expect(fixture.prepare.calledOnce).toBe(true);
     expect(fixture.apply.calledTwice).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toMatchObject([{
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toMatchObject([{
       messageCid: blocked.messageCid,
     }]);
   });
@@ -230,35 +230,35 @@ describe('SyncNextPullPage', () => {
     });
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
     expect(result).toMatchObject({ kind: 'committed', quarantined: 0 });
     expect(admissionOrder).toEqual(['parent', 'child']);
     expect(fixture.send.calledOnce).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('2');
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('2');
   });
 
-  it('should consume one non-drained page and report trailing work', async () => {
+  it('should process one non-drained page and report trailing work', async () => {
     const fixture = fakeAgent(page([await feedEntry(protocolMessage('first'), 1)], false));
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
-    expect(result).toMatchObject({ kind: 'committed', hasMore: true });
+    expect(result).toMatchObject({ kind: 'committed', feedDrained: false });
     expect(fixture.send.calledOnce).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('1');
   });
 
   it('should checkpoint an empty filtered page at its scanned high water', async () => {
     const fixture = fakeAgent(page([], true, '7'));
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
-    expect(result).toMatchObject({ kind: 'committed', hasMore: false, quarantined: 0 });
+    expect(result).toMatchObject({ kind: 'committed', feedDrained: true, quarantined: 0 });
     expect(fixture.apply.notCalled).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toMatchObject({ position: '7' });
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toMatchObject({ position: '7' });
   });
 
   it('should validate the whole page before applying any entry', async () => {
@@ -268,12 +268,12 @@ describe('SyncNextPullPage', () => {
     const fixture = fakeAgent(page([valid, tampered]));
     await createLink();
 
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+    await expect(new SyncNextPullPage(fixture.agent, progressStore).run(target()))
       .rejects.toThrow('failed CID verification');
 
     expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject malformed source accounting before applying any entry', async () => {
@@ -285,7 +285,7 @@ describe('SyncNextPullPage', () => {
     delete missingLatest.isLatestBaseState;
     const fixture = fakeAgent(page([]));
     await createLink();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
     const cases: Array<{ detail: string; reply: MessagesQueryReply }> = [
       {
         detail : 'invalid cursor',
@@ -314,12 +314,12 @@ describe('SyncNextPullPage', () => {
 
     for (const testCase of cases) {
       fixture.send.resolves(testCase.reply);
-      await expect(processor.consume(target())).rejects.toThrow(testCase.detail);
+      await expect(processor.run(target())).rejects.toThrow(testCase.detail);
     }
 
     expect(fixture.apply.notCalled).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject invalid inline data before retaining it', async () => {
@@ -328,20 +328,20 @@ describe('SyncNextPullPage', () => {
     const fixture = fakeAgent(page([entry]));
     await createLink();
 
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+    await expect(new SyncNextPullPage(fixture.agent, progressStore).run(target()))
       .rejects.toThrow('data CID');
 
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
 
     const nonRecord = await feedEntry(protocolMessage('unexpected-data'), 1);
     nonRecord.encodedData = Buffer.from('unexpected').toString('base64url');
     fixture.send.resolves(page([nonRecord]));
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+    await expect(new SyncNextPullPage(fixture.agent, progressStore).run(target()))
       .rejects.toThrow('non-RecordsWrite');
 
     expect(fixture.apply.notCalled).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should admit inline data only after verifying its signed CID and size', async () => {
@@ -354,30 +354,30 @@ describe('SyncNextPullPage', () => {
     const fixture = fakeAgent(page([entry]));
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target());
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
 
     expect(result).toMatchObject({ kind: 'committed', quarantined: 0 });
     expect(fixture.apply.calledOnce).toBe(true);
     expect(fixture.apply.firstCall.args[2].dataStream).toBeInstanceOf(ReadableStream);
   });
 
-  it('should replay local admission if the ledger batch fails', async () => {
+  it('should replay local admission if the progress-store batch fails', async () => {
     const root = await feedEntry(protocolMessage('replay'), 1);
     const fixture = fakeAgent(page([root]));
     await createLink();
-    const commit = sinon.stub(ledger, 'commitPullPage');
+    const commit = sinon.stub(progressStore, 'commitPullPage');
     commit.onFirstCall().rejects(new Error('injected batch failure'));
     commit.callThrough();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
 
-    await expect(processor.consume(target())).rejects.toThrow('injected batch failure');
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    await expect(processor.run(target())).rejects.toThrow('injected batch failure');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
 
     fixture.apply.resolves({ kind: 'Duplicate' });
-    const replay = await processor.consume(target());
+    const replay = await processor.run(target());
     expect(replay).toMatchObject({ kind: 'committed', handledCids: [root.messageCid] });
     expect(fixture.apply.calledTwice).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('1');
   });
 
   it('should stop after the query when its caller is no longer current', async () => {
@@ -390,14 +390,14 @@ describe('SyncNextPullPage', () => {
       return page([root]);
     });
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(
       target(),
       (): boolean => current,
     );
 
     expect(result).toEqual({ kind: 'aborted' });
     expect(fixture.apply.notCalled).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should stop after local admission without committing when its caller becomes stale', async () => {
@@ -411,36 +411,36 @@ describe('SyncNextPullPage', () => {
       return { kind: 'Applied' };
     });
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(
       target(),
       (): boolean => current,
     );
 
     expect(result).toEqual({ kind: 'aborted' });
     expect(fixture.apply.calledOnce).toBe(true);
-    expect(await ledger.getQuarantineForLink(linkIdentity())).toEqual([]);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should return stale when its exact link is absent or replaced before commit', async () => {
     const root = await feedEntry(protocolMessage('stale'), 1);
     const fixture = fakeAgent(page([root]));
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
 
-    expect(await processor.consume(target())).toEqual({ kind: 'stale' });
+    expect(await processor.run(target())).toEqual({ kind: 'stale' });
     expect(fixture.send.notCalled).toBe(true);
 
     await createLink();
-    sinon.stub(ledger, 'commitPullPage').resolves(false);
-    expect(await processor.consume(target())).toEqual({ kind: 'stale' });
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    sinon.stub(progressStore, 'commitPullPage').resolves(false);
+    expect(await processor.run(target())).toEqual({ kind: 'stale' });
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should stop before querying when its caller is already stale', async () => {
     const fixture = fakeAgent(page([]));
     await createLink();
 
-    const result = await new SyncNextPullPage(fixture.agent, ledger).consume(target(), (): boolean => false);
+    const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target(), (): boolean => false);
 
     expect(result).toEqual({ kind: 'aborted' });
     expect(fixture.send.notCalled).toBe(true);
@@ -459,10 +459,10 @@ describe('SyncNextPullPage', () => {
     const fixture = fakeAgent({ ...page([]), roleRecordId: 'different-role' });
     await createLink(syncTarget);
 
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(syncTarget))
+    await expect(new SyncNextPullPage(fixture.agent, progressStore).run(syncTarget))
       .rejects.toThrow('different-role instead of expected-role');
 
-    expect((await ledger.getLink(linkIdentity(syncTarget)))?.pullHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(linkIdentity(syncTarget)))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject a successful response without a checkpoint cursor', async () => {
@@ -473,9 +473,9 @@ describe('SyncNextPullPage', () => {
     });
     await createLink();
 
-    await expect(new SyncNextPullPage(fixture.agent, ledger).consume(target()))
+    await expect(new SyncNextPullPage(fixture.agent, progressStore).run(target()))
       .rejects.toThrow('returned no cursor');
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject malformed or oversized successful pages before admission', async () => {
@@ -485,15 +485,15 @@ describe('SyncNextPullPage', () => {
       status  : { code: 200, detail: 'OK' },
     });
     await createLink();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
 
-    await expect(processor.consume(target())).rejects.toThrow('omitted its entries array');
+    await expect(processor.run(target())).rejects.toThrow('omitted its entries array');
 
     fixture.send.resolves({ ...page([]), drained: undefined });
-    await expect(processor.consume(target())).rejects.toThrow('requires a boolean drained value');
+    await expect(processor.run(target())).rejects.toThrow('requires a boolean drained value');
 
     fixture.send.resolves({ ...page([]), drained: 'true' } as unknown as MessagesQueryReply);
-    await expect(processor.consume(target())).rejects.toThrow('requires a boolean drained value');
+    await expect(processor.run(target())).rejects.toThrow('requires a boolean drained value');
 
     const oversized = Array.from({ length: 101 }, (_, index): MessagesQueryReplyEntry => ({
       isLatestBaseState : true,
@@ -502,48 +502,48 @@ describe('SyncNextPullPage', () => {
       seq               : String(index + 1),
     }));
     fixture.send.resolves(page(oversized));
-    await expect(processor.consume(target())).rejects.toThrow('101 entries; maximum is 100');
+    await expect(processor.run(target())).rejects.toThrow('101 entries; maximum is 100');
 
     expect(fixture.apply.notCalled).toBe(true);
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough).toBeUndefined();
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject failed queries and invalid cursor movement without changing progress', async () => {
     const first = await feedEntry(protocolMessage('first'), 1);
     const fixture = fakeAgent(page([first]));
     await createLink();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
-    await processor.consume(target());
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
+    await processor.run(target());
 
     fixture.send.resolves({ status: { code: 503, detail: 'Unavailable' } });
-    await expect(processor.consume(target())).rejects.toThrow('503 Unavailable');
+    await expect(processor.run(target())).rejects.toThrow('503 Unavailable');
 
     fixture.send.resolves({
       ...page([], true, '2'),
       cursor: { epoch: 'replacement', position: '2', streamId: 'remote-stream' },
     });
-    await expect(processor.consume(target())).rejects.toThrow('changed progress-token domain');
+    await expect(processor.run(target())).rejects.toThrow('changed progress-token domain');
 
     fixture.send.resolves(page([], true, '0'));
-    await expect(processor.consume(target())).rejects.toThrow('cursor regressed');
+    await expect(processor.run(target())).rejects.toThrow('cursor regressed');
 
     fixture.send.resolves(page([], false, '1'));
-    await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
+    await expect(processor.run(target())).rejects.toThrow('cursor did not advance');
 
     fixture.send.resolves(page([first], true, '2'));
-    await expect(processor.consume(target())).rejects.toThrow('behind its checkpoint');
+    await expect(processor.run(target())).rejects.toThrow('behind its checkpoint');
 
     fixture.send.resolves(page([first], true));
-    await expect(processor.consume(target())).rejects.toThrow('cursor did not advance');
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+    await expect(processor.run(target())).rejects.toThrow('cursor did not advance');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('1');
   });
 
   it('should accept an empty drained replay of the exact current cursor', async () => {
     const first = await feedEntry(protocolMessage('first'), 1);
     const fixture = fakeAgent(page([first]));
     await createLink();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
-    expect(await processor.consume(target())).toMatchObject({ kind: 'committed' });
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
+    expect(await processor.run(target())).toMatchObject({ kind: 'committed' });
     fixture.send.resolves({
       ...page([], true, '1'),
       cursor: {
@@ -554,11 +554,11 @@ describe('SyncNextPullPage', () => {
       },
     });
 
-    expect(await processor.consume(target())).toMatchObject({ kind: 'committed', hasMore: false });
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('1');
+    expect(await processor.run(target())).toMatchObject({ kind: 'committed', feedDrained: true });
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('1');
   });
 
-  it('should consume 579 roots in six page queries without point reads', async () => {
+  it('should process 579 roots in six page queries without point reads', async () => {
     const entries = await Promise.all(Array.from({ length: 579 }, (_, index) =>
       feedEntry(protocolMessage(`page-scaled-${index}`), index + 1)
     ));
@@ -568,15 +568,15 @@ describe('SyncNextPullPage', () => {
       fixture.send.onCall(query).resolves(page(chunk, offset + chunk.length === entries.length));
     }
     await createLink();
-    const processor = new SyncNextPullPage(fixture.agent, ledger);
-    let hasMore = true;
+    const processor = new SyncNextPullPage(fixture.agent, progressStore);
+    let feedDrained = false;
 
-    while (hasMore) {
-      const result = await processor.consume(target());
+    while (!feedDrained) {
+      const result = await processor.run(target());
       if (result.kind !== 'committed') {
         throw new Error(`expected a committed page, received ${result.kind}`);
       }
-      hasMore = result.hasMore;
+      feedDrained = result.feedDrained;
     }
 
     expect(fixture.send.callCount).toBe(6);
@@ -587,6 +587,6 @@ describe('SyncNextPullPage', () => {
       cursor : { position: '100' },
       limit  : 100,
     });
-    expect((await ledger.getLink(linkIdentity()))?.pullHandledThrough?.position).toBe('579');
+    expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint?.position).toBe('579');
   }, 30_000);
 });

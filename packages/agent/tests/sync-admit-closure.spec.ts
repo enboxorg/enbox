@@ -142,6 +142,7 @@ describe('admitClosure', () => {
     });
 
     expect(outcome).toMatchObject({ kind: 'admitted', handledCids: [rootCid] });
+    expect(outcome.kind === 'admitted' ? outcome.rootResult : undefined).toEqual({ kind: 'Duplicate' });
     expect(freshCidsOf(outcome)).toEqual([]);
   });
 

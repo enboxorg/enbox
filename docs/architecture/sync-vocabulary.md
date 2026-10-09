@@ -16,10 +16,12 @@ the code, not an entry missing from this table.
 | The periodic pass that reconciles durable feeds *and* re-initializes orphaned links | **settle check** — `runSettleCheck`, `SETTLE_CHECK_TIMER` | `runLiveIntegrityCheck`, `SYNC_INTERVAL_TIMER` |
 | Browser online and visibility recovery, which probes the transport; verified reconnection reopens cursorless live subscriptions and requests durable passes from persisted checkpoints | **wake health check** — `checkHealth`, `checkAllConnections` | agent-level convergence or integrity check |
 | Reconciling one target's durable feeds | **`reconcileTarget`** | `syncTargetWithDurableFeeds` |
+| One request-bounded next-engine run for one direction across resolved targets | **sync runner** — `SyncNextRunner` | work pump, pass runner, reconciler |
 | Runtime identifier of a replication link | **`linkKey`** — `buildLinkKey`, `LINK_KEY_SEPARATOR` | `buildLinkId`, `LINK_ID_SEPARATOR` |
 | Endpoint-independent link identity | **`durableLinkIdentityKey`** | — |
 | Identity proving that a durable link belongs to the current target plan | **`currentLinkIdentityKey`** — endpoint-specific for role-authorized foreign contexts, endpoint-independent for owned projections | using `durableLinkIdentityKey` as foreign-authority endpoint proof |
 | Durable replication-link store | **`replicationLinkStore`** | `getLinkStore`, `ledger` |
+| Next-engine durable store for exact links, checkpoints, quarantine, and delivery obligations | **sync progress store** — `SyncNextProgressStore` | ledger, queue store |
 | Authoritative in-engine owner of one active link object, both wake subscriptions, its link executor, replication generation, repair, and reconciliation | **replication session** — currently `SyncLinkController` | independent live and reconciler link copies |
 | Per-link subscription and reconciliation fence — ONE generation for the subscription pair and link executor | **`replicationGeneration`** / `expectedReplicationGeneration` | `pullGeneration`, `pullEpoch`, `openGeneration`, `expectedGeneration`, `subscriptionPullEpoch` |
 | Target-plan version | **`topologyGeneration`** / `expectedTopologyGeneration` | bare `generation`, `expectedGeneration` |
@@ -38,10 +40,12 @@ the code, not an entry missing from this table.
 | A remote subscription event received before baseline, during recovery, or without complete admission metadata | **durable pull wake** — `executor.request('pull')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | the normal complete-event path |
 | Whether the active replication session has established its pull baseline and all accepted remote pull work is settled | **pull currentness** — `isPullCurrent`, `markPullPending`, `markPullCurrent`, `pull:currentness-change` | transport connectivity, feed convergence, link status, or checkpoint progress |
 | A local subscription event or transport-reconnected notification that says the durable local feed may have advanced; bursts request one trailing pass, and the pass always resumes from `link.push.contiguousAppliedToken` | **durable push wake** — `executor.request('push')` followed by `SyncLinkRecoveryCoordinator.resume` when eligible | per-event push job, delivery acknowledgement, or checkpoint evidence |
-| Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken` | transport acknowledgement or an unprocessed subscription cursor |
+| Durable resume point for one direction of one replication link | **direction checkpoint** — `DirectionCheckpoint.contiguousAppliedToken`, `SyncNextLink.pullCheckpoint`, `SyncNextLink.pushCheckpoint` | transport acknowledgement, handled-through token, or an unprocessed subscription cursor |
 | Namespace in which progress-token positions can be compared | **token domain** — exact `(streamId, epoch)` pair | stream alone, epoch alone, or a globally ordered position |
 | Folding a push result into quota state | **push result outcome** — `applyPushResult`, `SyncQuotaPushResultOutcome` | `transitionPushResult`, push transition |
 | Temporarily unadmittable remote root that must hold the pull page | **deferred pull** — `SyncDeferredPullState`, `SyncDeferredPullStoreLevel` | dead letter, retryable push failure |
+| Remote feed receipt retained after a next-engine pull checkpoint advances | **quarantine entry** — `SyncNextQuarantineEntry` | deferred pull, accepted-message list |
+| Endpoint-specific local feed receipt retained after a next-engine push checkpoint advances | **delivery obligation** — `SyncNextDeliveryObligation` | sent-message list, global outbound queue |
 | Endpoint-local, bounded hint that prevents immediate transfer echoes | **echo suppression** — `SyncEchoSuppressor` | checkpoint evidence, durable acknowledgement |
 | Active durable record of a remote quota rejection | **quota block** — `SyncQuotaBlockState` without `supersededAt` | dead letter, generic retryable failure |
 | Direct retry of a due quota block, independent of feed progress | **quota probe** — `probeQuotaBlocksForTarget`, `probeBlocksForTarget`, `probeBlock` | repair pass |
@@ -51,7 +55,7 @@ the code, not an entry missing from this table.
 | Ordering and supervision of start/stop, exclusive work, and background tasks | **lifecycle coordination** — `SyncLifecycleCoordinator`, `SyncTaskGroup` | timer ownership, which belongs to `SyncRuntime` |
 | Public engine observability notification | **sync event** — `SyncEvent`, `SyncEngine.on(listener)` | DWN subscription `MessageEvent`, transport lifecycle message |
 | Dependency-aware topological ordering of messages before DWN processing | **admission order** — `orderMessagesForAdmission` | feed order, direction reconciliation order |
-| Positive local observation that an exact duplicate `RecordsWrite` is current and has data; absence is inconclusive | **materialization confirmation** — `includeMaterializationConfirmation` requests `materialized: true` | materialization proof |
+| Positive local observation that the exact duplicate `RecordsWrite`, or a newer current write for the same record, has data; absence is inconclusive | **materialization confirmation** — `includeMaterializationConfirmation` requests `Duplicate.materialized: true` or `Superseded.currentWriteMaterialized: true` | materialization proof |
 | Closure messages accounted for as `Applied`, `Duplicate`, or `Superseded` | **handled CIDs** — `handledCids` | materialized CIDs |
 | Closure messages whose DWN outcome was `Applied` | **applied entries** — `SyncAppliedEntry`, `appliedEntries` | fresh entries |
 | Permanently-failed message record | **dead letter** — `DeadLetterEntry`, `getDeadLetters`, `recordDeadLetter`, `hasDeadLetter` | `getFailedMessages`, `clearFailedMessage`, `clearAllFailedMessages`, `hasAdmissionDeadLetter` |

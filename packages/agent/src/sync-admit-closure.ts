@@ -64,6 +64,8 @@ export type AdmitOutcome =
        * without re-reading the store.
        */
       appliedEntries: SyncAppliedEntry[];
+      /** Final DWN disposition for the closure root. */
+      rootResult: ReplicationApplyResult;
     }
   | { kind: 'deferred'; rootCid: string; detail?: string }
   | { kind: 'failed'; rootCid: string; reason: 'invalid' | 'terminal'; detail?: string };
@@ -125,6 +127,7 @@ class AdmitClosureContext {
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly prefetchedEntries: SyncMessageEntry[];
   private replicationSupportAttempted = false;
+  private rootResult: ReplicationApplyResult | undefined;
 
   public constructor(private readonly deps: AdmitClosureDeps) {
     this.prefetchedEntries = deps.prefetched ?? [];
@@ -151,9 +154,13 @@ class AdmitClosureContext {
       pending = await dedupeSyncMessageEntries(passResult.retry);
     }
 
-    return pending.length === 0
-      ? { kind: 'admitted', handledCids, appliedEntries }
-      : { kind: 'deferred', rootCid, detail: 'dependency admission pass budget exhausted' };
+    if (pending.length > 0) {
+      return { kind: 'deferred', rootCid, detail: 'dependency admission pass budget exhausted' };
+    }
+    if (this.rootResult === undefined) {
+      throw new Error(`AdmitClosure: root '${rootCid}' completed without a DWN disposition.`);
+    }
+    return { kind: 'admitted', handledCids, appliedEntries, rootResult: this.rootResult };
   }
 
   private async admitPass(rootCid: string, pending: SyncMessageEntry[]): Promise<AdmissionPassResult> {
@@ -210,7 +217,11 @@ class AdmitClosureContext {
 
     try {
       this.deps.onBeforeApply?.(cid);
-      return this.admissionResultFromApply(rootCid, entry, cid, await this.applyEntry(entry, dataStream));
+      const result = await this.applyEntry(entry, dataStream);
+      if (cid === rootCid) {
+        this.rootResult = result;
+      }
+      return this.admissionResultFromApply(rootCid, entry, cid, result);
     } catch (error: any) {
       if (error instanceof SyncDataSizeLimitExceededError) {
         return {

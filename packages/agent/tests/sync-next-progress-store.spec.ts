@@ -14,8 +14,8 @@ import type {
   SyncNextSourceReceipt,
 } from '../src/sync-next/types.js';
 
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/ledger-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
+import { syncNextLinkIdentity, syncNextReceiptKey } from '../src/sync-next/progress-key.js';
 
 function token(position: number, domain = 'one', messageCid?: string): ProgressToken {
   return {
@@ -79,41 +79,41 @@ function serializedSize(entry: MessagesQueryReplyEntry): number {
 }
 
 async function commitPull(
-  ledger: SyncNextLedgerStore,
+  progressStore: SyncNextProgressStore,
   create: SyncNextLinkCreate,
   commit: Omit<SyncNextPullPageCommit, 'pageReceipts'>,
 ): Promise<boolean> {
-  const link = await ledger.getLink(identity(create));
+  const link = await progressStore.getLink(identity(create));
   if (link === undefined) { throw new Error('Expected a link before committing a pull page.'); }
-  return ledger.commitPullPage(link, {
+  return progressStore.commitPullPage(link, {
     ...commit,
     pageReceipts: pageReceipts(commit.quarantine, commit.settled),
   });
 }
 
 async function commitPush(
-  ledger: SyncNextLedgerStore,
+  progressStore: SyncNextProgressStore,
   create: SyncNextLinkCreate,
   commit: Omit<SyncNextPushPageCommit, 'handledWrites' | 'pageReceipts'> & {
     handledWrites?: SyncNextPushPageCommit['handledWrites'];
   },
 ): Promise<boolean> {
-  const link = await ledger.getLink(identity(create));
+  const link = await progressStore.getLink(identity(create));
   if (link === undefined) { throw new Error('Expected a link before committing a push page.'); }
-  return ledger.commitPushPage(link, {
+  return progressStore.commitPushPage(link, {
     ...commit,
     handledWrites : commit.handledWrites ?? [],
     pageReceipts  : pageReceipts(commit.delivery, commit.settled),
   });
 }
 
-describe('SyncNextLedgerStore', () => {
+describe('SyncNextProgressStore', () => {
   let db: Level<string, string>;
-  let store: SyncNextLedgerStore;
+  let store: SyncNextProgressStore;
 
   beforeAll(() => {
-    db = new Level<string, string>('__TESTDATA__/sync-next-ledger-store-spec');
-    store = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec');
+    db = new Level<string, string>('__TESTDATA__/sync-next-progress-store-spec');
+    store = new SyncNextProgressStore(db, 'sync-next-progress-store-spec');
   });
 
   afterEach(async () => {
@@ -136,18 +136,18 @@ describe('SyncNextLedgerStore', () => {
     expect(await db.sublevel('syncNextV1Links').iterator().all()).toHaveLength(2);
   });
 
-  it('should atomically retain quarantine and advance pull handled-through progress', async () => {
+  it('should atomically retain quarantine and advance the pull checkpoint', async () => {
     const create = linkCreate();
     await store.getOrCreateLink(create);
     const source = token(1, 'pull', 'cid-1');
 
     expect(await commitPull(store, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [quarantineInput({ messageCid: 'cid-1', source })],
-      settled        : [{ messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') }],
+      checkpoint : token(2, 'pull'),
+      quarantine : [quarantineInput({ messageCid: 'cid-1', source })],
+      settled    : [{ messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') }],
     })).toBe(true);
 
-    expect((await store.getLink(identity(create)))?.pullHandledThrough).toEqual(token(2, 'pull'));
+    expect((await store.getLink(identity(create)))?.pullCheckpoint).toEqual(token(2, 'pull'));
     const [retained] = await store.getQuarantineForLink(identity(create));
     expect(retained).toMatchObject({ entry: { messageCid: 'cid-1' }, messageCid: 'cid-1', source });
     expect(retained.entrySize).toBe(serializedSize(retained.entry));
@@ -174,17 +174,17 @@ describe('SyncNextLedgerStore', () => {
 
     for (const testCase of cases) {
       await expect(commitPull(store, create, {
-        handledThrough : token(1, 'pull', 'cid-1'),
-        quarantine     : [testCase.input],
-        settled        : [],
+        checkpoint : token(1, 'pull', 'cid-1'),
+        quarantine : [testCase.input],
+        settled    : [],
       })).rejects.toThrow(testCase.detail);
     }
 
-    expect((await store.getLink(identity(create)))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(identity(create)))?.pullCheckpoint).toBeUndefined();
     expect(await store.getQuarantineForLink(identity(create))).toEqual([]);
   });
 
-  it('should retain delivery obligations while advancing push handled-through progress', async () => {
+  it('should retain delivery obligations while advancing the push checkpoint', async () => {
     const create = linkCreate();
     await store.getOrCreateLink(create);
     const source = token(1, 'push', 'cid-1');
@@ -196,22 +196,22 @@ describe('SyncNextLedgerStore', () => {
         source,
         wasLatestBaseState : true,
       }],
-      handledThrough : token(2, 'push'),
-      settled        : [{ messageCid: 'cid-2', source: token(2, 'push', 'cid-2') }],
+      checkpoint : token(2, 'push'),
+      settled    : [{ messageCid: 'cid-2', source: token(2, 'push', 'cid-2') }],
     })).toBe(true);
 
-    expect((await store.getLink(identity(create)))?.pushHandledThrough).toEqual(token(2, 'push'));
+    expect((await store.getLink(identity(create)))?.pushCheckpoint).toEqual(token(2, 'push'));
     expect(await store.getDeliveryForLink(identity(create))).toMatchObject([{
       messageCid: 'cid-1',
       source,
     }]);
     const current = (await store.getLink(identity(create)))!;
     expect(await store.commitPushPage(current, {
-      delivery       : [],
-      handledThrough : current.pushHandledThrough!,
-      handledWrites  : [],
-      pageReceipts   : [],
-      settled        : [],
+      delivery      : [],
+      checkpoint    : current.pushCheckpoint!,
+      handledWrites : [],
+      pageReceipts  : [],
+      settled       : [],
     })).toBe(true);
     expect(await store.getLink(identity(create))).toEqual(current);
   });
@@ -228,8 +228,8 @@ describe('SyncNextLedgerStore', () => {
         { ...oldRecord, outcome: { reason: 'transport' }, writeRecordId: 'record-1', wasLatestBaseState: true },
         { ...unrelated, outcome: { reason: 'transport' }, writeRecordId: 'record-2', wasLatestBaseState: true },
       ],
-      handledThrough : unrelated.source,
-      settled        : [],
+      checkpoint : unrelated.source,
+      settled    : [],
     })).toBe(true);
     expect(await commitPush(store, sibling, {
       delivery: [{
@@ -238,8 +238,8 @@ describe('SyncNextLedgerStore', () => {
         writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
-      handledThrough : oldRecord.source,
-      settled        : [],
+      checkpoint : oldRecord.source,
+      settled    : [],
     })).toBe(true);
 
     const handled = { messageCid: 'same-record', source: token(3, 'push', 'same-record') };
@@ -251,9 +251,9 @@ describe('SyncNextLedgerStore', () => {
         writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
-      handledWrites  : [{ recordId: 'record-1', receipt: handled }],
-      handledThrough : later.source,
-      settled        : [handled],
+      handledWrites : [{ recordId: 'record-1', receipt: handled }],
+      checkpoint    : later.source,
+      settled       : [handled],
     })).toBe(true);
 
     expect(await store.getDeliveryForLink(identity(create))).toMatchObject([
@@ -277,11 +277,11 @@ describe('SyncNextLedgerStore', () => {
         writeRecordId      : 'record-1',
         wasLatestBaseState : true,
       }],
-      handledWrites  : [{ recordId: 'record-1', receipt: pending }],
-      handledThrough : pending.source,
-      settled        : [],
+      handledWrites : [{ recordId: 'record-1', receipt: pending }],
+      checkpoint    : pending.source,
+      settled       : [],
     })).rejects.toThrow('handled write state is invalid');
-    expect((await store.getLink(identity(create)))?.pushHandledThrough).toBeUndefined();
+    expect((await store.getLink(identity(create)))?.pushCheckpoint).toBeUndefined();
     expect(await store.getDeliveryForLink(identity(create))).toEqual([]);
   });
 
@@ -296,8 +296,8 @@ describe('SyncNextLedgerStore', () => {
         source,
         wasLatestBaseState : true,
       }],
-      handledThrough : source,
-      settled        : [],
+      checkpoint : source,
+      settled    : [],
     });
     const [selected] = await store.getDeliveryForLink(link);
 
@@ -306,27 +306,27 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.getDeliveryForLink(link)).toMatchObject([{ outcome: { reason: 'dependency' } }]);
   });
 
-  it('should preserve concurrent pull and push progress through the ledger mutation lock', async () => {
+  it('should preserve concurrent pull and push progress through the progress-store mutation lock', async () => {
     const create = linkCreate();
-    const sibling = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec');
+    const sibling = new SyncNextProgressStore(db, 'sync-next-progress-store-spec');
     await store.getOrCreateLink(create);
 
     await Promise.all([
       commitPull(store, create, {
-        handledThrough : token(5, 'pull'),
-        quarantine     : [],
-        settled        : [],
+        checkpoint : token(5, 'pull'),
+        quarantine : [],
+        settled    : [],
       }),
       commitPush(sibling, create, {
-        delivery       : [],
-        handledThrough : token(7, 'push'),
-        settled        : [],
+        delivery   : [],
+        checkpoint : token(7, 'push'),
+        settled    : [],
       }),
     ]);
 
     expect(await store.getLink(identity(create))).toMatchObject({
-      pullHandledThrough : token(5, 'pull'),
-      pushHandledThrough : token(7, 'push'),
+      pullCheckpoint : token(5, 'pull'),
+      pushCheckpoint : token(7, 'push'),
     });
   });
 
@@ -336,68 +336,68 @@ describe('SyncNextLedgerStore', () => {
     const validSource = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
 
     await expect(commitPull(store, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [quarantineInput(validSource)],
-      settled        : [validSource],
+      checkpoint : token(2, 'pull'),
+      quarantine : [quarantineInput(validSource)],
+      settled    : [validSource],
     })).rejects.toThrow('more than one page disposition');
 
     await expect(commitPull(store, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [],
-      settled        : [{ messageCid: 'cid-3', source: token(3, 'pull', 'cid-3') }],
+      checkpoint : token(2, 'pull'),
+      quarantine : [],
+      settled    : [{ messageCid: 'cid-3', source: token(3, 'pull', 'cid-3') }],
     })).rejects.toThrow('exceeds its page checkpoint');
 
     await expect(commitPull(store, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [],
-      settled        : [{ messageCid: 'cid-1', source: token(1, 'other', 'cid-1') }],
+      checkpoint : token(2, 'pull'),
+      quarantine : [],
+      settled    : [{ messageCid: 'cid-1', source: token(1, 'other', 'cid-1') }],
     })).rejects.toThrow('does not match its page domain');
 
     await expect(commitPull(store, create, {
-      handledThrough : { epoch: 'epoch-pull', position: 'not-an-integer', streamId: 'stream-pull' },
-      quarantine     : [],
-      settled        : [],
-    })).rejects.toThrow('handled-through token is invalid');
+      checkpoint : { epoch: 'epoch-pull', position: 'not-an-integer', streamId: 'stream-pull' },
+      quarantine : [],
+      settled    : [],
+    })).rejects.toThrow('checkpoint is invalid');
 
-    expect((await store.getLink(identity(create)))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(identity(create)))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject a progress-token domain change', async () => {
     const create = linkCreate();
     await store.getOrCreateLink(create);
     await commitPull(store, create, {
-      handledThrough : token(4, 'old'),
-      quarantine     : [],
-      settled        : [],
+      checkpoint : token(4, 'old'),
+      quarantine : [],
+      settled    : [],
     });
 
     await expect(commitPull(store, create, {
-      handledThrough : token(1, 'new'),
-      quarantine     : [],
-      settled        : [],
+      checkpoint : token(1, 'new'),
+      quarantine : [],
+      settled    : [],
     })).rejects.toThrow('domain changed without an explicit reset');
   });
 
-  it('should fence retired links without deleting their sparse recovery input', async () => {
+  it('should fence retired links without deleting their pending recovery input', async () => {
     const create = linkCreate();
     const link = await store.getOrCreateLink(create);
     const source = token(1, 'pull', 'cid-1');
     await commitPull(store, create, {
-      handledThrough : token(1, 'pull'),
-      quarantine     : [quarantineInput({ messageCid: 'cid-1', source })],
-      settled        : [],
+      checkpoint : token(1, 'pull'),
+      quarantine : [quarantineInput({ messageCid: 'cid-1', source })],
+      settled    : [],
     });
 
     await store.retireLink(link);
     expect(await store.commitPullPage(link, {
-      handledThrough : token(2, 'pull'),
-      pageReceipts   : [],
-      quarantine     : [],
-      settled        : [],
+      checkpoint   : token(2, 'pull'),
+      pageReceipts : [],
+      quarantine   : [],
+      settled      : [],
     })).toBe(false);
     expect(await store.getQuarantineForLink(identity(create))).toHaveLength(1);
 
-    await store.settleQuarantineForLogicalTarget(
+    await store.settleQuarantineForProjection(
       create.tenantDid,
       create.projectionId,
       'cid-1',
@@ -409,8 +409,8 @@ describe('SyncNextLedgerStore', () => {
     const create = linkCreate();
     const link = await store.getOrCreateLink(create);
     await commitPull(store, create, {
-      handledThrough : token(1, 'pull'),
-      quarantine     : [quarantineInput({
+      checkpoint : token(1, 'pull'),
+      quarantine : [quarantineInput({
         messageCid : 'pull-cid',
         source     : token(1, 'pull', 'pull-cid'),
       })],
@@ -423,8 +423,8 @@ describe('SyncNextLedgerStore', () => {
         source             : token(1, 'push', 'push-cid'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
+      checkpoint : token(1, 'push'),
+      settled    : [],
     });
 
     await store.retireLink(link);
@@ -434,7 +434,7 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.getDeliveryForLink(identity(create))).toEqual([]);
   });
 
-  it('should delete only one current link and the sparse state it owns', async () => {
+  it('should delete only one current link and the pending state it owns', async () => {
     const first = linkCreate();
     const second = linkCreate({ remoteEndpoint: 'https://second.example.com' });
     const firstLink = await store.getOrCreateLink(first);
@@ -442,8 +442,8 @@ describe('SyncNextLedgerStore', () => {
 
     for (const create of [first, second]) {
       await commitPull(store, create, {
-        handledThrough : token(1, 'pull'),
-        quarantine     : [quarantineInput({
+        checkpoint : token(1, 'pull'),
+        quarantine : [quarantineInput({
           messageCid : 'pull-cid',
           source     : token(1, 'pull', 'pull-cid'),
         }, { protocol: create.remoteEndpoint })],
@@ -457,11 +457,11 @@ describe('SyncNextLedgerStore', () => {
         source             : token(1, 'push', 'push-cid'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
+      checkpoint : token(1, 'push'),
+      settled    : [],
     });
 
-    await store.deleteLinkAndSparse(firstLink);
+    await store.deleteLinkAndPendingWork(firstLink);
 
     expect(await store.getLink(identity(first))).toBeUndefined();
     expect(await store.getQuarantineForLink(identity(first))).toEqual([]);
@@ -470,7 +470,7 @@ describe('SyncNextLedgerStore', () => {
     expect(await store.getQuarantineForLink(identity(second))).toHaveLength(1);
   });
 
-  it('should settle duplicate logical-target receipts together', async () => {
+  it('should settle duplicate projection receipts together', async () => {
     const first = linkCreate();
     const second = linkCreate({ remoteEndpoint: 'https://second.example.com' });
     const unrelated = linkCreate({ tenantDid: 'did:example:bob' });
@@ -480,8 +480,8 @@ describe('SyncNextLedgerStore', () => {
 
     for (const create of [first, second, unrelated]) {
       await commitPull(store, create, {
-        handledThrough : token(1, 'pull'),
-        quarantine     : [quarantineInput({
+        checkpoint : token(1, 'pull'),
+        quarantine : [quarantineInput({
           messageCid : 'shared-cid',
           source     : token(1, 'pull', 'shared-cid'),
         }, { protocol: create.remoteEndpoint })],
@@ -495,9 +495,9 @@ describe('SyncNextLedgerStore', () => {
     })._quarantine;
     await quarantine.put(syncNextReceiptKey(unrelatedEntry, unrelatedEntry), 'invalid JSON');
 
-    expect(await store.getQuarantineForLogicalTarget(first.tenantDid, first.projectionId)).toHaveLength(2);
-    await store.settleQuarantineForLogicalTarget(first.tenantDid, first.projectionId, 'shared-cid');
-    expect(await store.getQuarantineForLogicalTarget(first.tenantDid, first.projectionId)).toEqual([]);
+    expect(await store.getQuarantineForProjection(first.tenantDid, first.projectionId)).toHaveLength(2);
+    await store.settleQuarantineForProjection(first.tenantDid, first.projectionId, 'shared-cid');
+    expect(await store.getQuarantineForProjection(first.tenantDid, first.projectionId)).toEqual([]);
   });
 
   it('should reject obsolete rows and invalid queue metadata', async () => {
@@ -519,19 +519,19 @@ describe('SyncNextLedgerStore', () => {
 
     await expect(store.getQuarantineForLink(link)).rejects.toThrow('encrypted quarantine rows are obsolete');
     await expect(store.commitPullPage(link, {
-      handledThrough : token(1, 'pull', 'cid-1'),
-      pageReceipts   : [receipt],
-      quarantine     : [],
-      settled        : [receipt],
-    })).rejects.toThrow('clear the complete sync-next ledger');
-    expect((await store.getLink(link))?.pullHandledThrough).toBeUndefined();
+      checkpoint   : token(1, 'pull', 'cid-1'),
+      pageReceipts : [receipt],
+      quarantine   : [],
+      settled      : [receipt],
+    })).rejects.toThrow('clear the complete sync-next progress store');
+    expect((await store.getLink(link))?.pullCheckpoint).toBeUndefined();
     await quarantine.del(key);
 
     await store.commitPullPage(link, {
-      handledThrough : token(1, 'pull', 'cid-1'),
-      pageReceipts   : [receipt],
-      quarantine     : [quarantineInput(receipt)],
-      settled        : [],
+      checkpoint   : token(1, 'pull', 'cid-1'),
+      pageReceipts : [receipt],
+      quarantine   : [quarantineInput(receipt)],
+      settled      : [],
     });
     const [retained] = await store.getQuarantineForLink(link);
     await quarantine.put(key, JSON.stringify({ ...retained, entrySize: -1 }));
@@ -541,11 +541,11 @@ describe('SyncNextLedgerStore', () => {
     await expect(store.getQuarantineForLink(link)).rejects.toThrow('quarantine row has an invalid schema');
   });
 
-  it('should preserve checkpoints and sparse obligations after Level reopens', async () => {
+  it('should preserve checkpoints and pending obligations after Level reopens', async () => {
     const create = linkCreate();
-    const path = '__TESTDATA__/sync-next-ledger-reopen-spec';
+    const path = '__TESTDATA__/sync-next-progress-store-reopen-spec';
     const originalDb = new Level<string, string>(path);
-    const original = new SyncNextLedgerStore(originalDb, path);
+    const original = new SyncNextProgressStore(originalDb, path);
     await original.clear();
     const link = await original.getOrCreateLink(create);
     await commitPush(original, create, {
@@ -555,20 +555,20 @@ describe('SyncNextLedgerStore', () => {
         source             : token(1, 'push', 'cid-1'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
+      checkpoint : token(1, 'push'),
+      settled    : [],
     });
     const pullReceipt = { messageCid: 'pull-cid', source: token(1, 'pull', 'pull-cid') };
     await original.commitPullPage(link, {
-      handledThrough : token(1, 'pull', 'pull-cid'),
-      pageReceipts   : [pullReceipt],
-      quarantine     : [quarantineInput(pullReceipt, { protocol: 'https://example.com/notes' })],
-      settled        : [],
+      checkpoint   : token(1, 'pull', 'pull-cid'),
+      pageReceipts : [pullReceipt],
+      quarantine   : [quarantineInput(pullReceipt, { protocol: 'https://example.com/notes' })],
+      settled      : [],
     });
     await originalDb.close();
 
     const reopenedDb = new Level<string, string>(path);
-    const reopened = new SyncNextLedgerStore(reopenedDb, path);
+    const reopened = new SyncNextProgressStore(reopenedDb, path);
     try {
       expect(await reopened.getDeliveryForLink(identity(create))).toMatchObject([{
         messageCid : 'cid-1',
@@ -583,9 +583,9 @@ describe('SyncNextLedgerStore', () => {
         messageCid: 'pull-cid',
       }]);
       expect(await reopened.getLink(identity(create))).toMatchObject({
-        lifetimeId         : link.lifetimeId,
-        pullHandledThrough : token(1, 'pull', 'pull-cid'),
-        pushHandledThrough : token(1, 'push'),
+        lifetimeId     : link.lifetimeId,
+        pullCheckpoint : token(1, 'pull', 'pull-cid'),
+        pushCheckpoint : token(1, 'push'),
       });
     } finally {
       await reopened.clear();
@@ -593,14 +593,14 @@ describe('SyncNextLedgerStore', () => {
     }
   });
 
-  it('should leave sparse recovery state intact if checkpoint clearing fails', async () => {
+  it('should leave pending recovery state intact if checkpoint clearing fails', async () => {
     const link = await store.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     await store.commitPullPage(link, {
-      handledThrough : token(1, 'pull'),
-      pageReceipts   : [receipt],
-      quarantine     : [quarantineInput(receipt)],
-      settled        : [],
+      checkpoint   : token(1, 'pull'),
+      pageReceipts : [receipt],
+      quarantine   : [quarantineInput(receipt)],
+      settled      : [],
     });
 
     const sublevels = store as unknown as {
@@ -622,7 +622,7 @@ describe('SyncNextLedgerStore', () => {
 
   it('should serialize a cross-context full reset behind an in-flight page commit', async () => {
     const link = await store.getOrCreateLink(linkCreate());
-    const sibling = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec');
+    const sibling = new SyncNextProgressStore(db, 'sync-next-progress-store-spec');
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const internal = store as unknown as {
       readQuarantine(entries: AsyncIterable<[string, string]>): Promise<SyncNextQuarantineEntry[]>;
@@ -644,10 +644,10 @@ describe('SyncNextLedgerStore', () => {
 
     try {
       committing = store.commitPullPage(link, {
-        handledThrough : token(1, 'pull'),
-        pageReceipts   : [receipt],
-        quarantine     : [quarantineInput(receipt)],
-        settled        : [],
+        checkpoint   : token(1, 'pull'),
+        pageReceipts : [receipt],
+        quarantine   : [quarantineInput(receipt)],
+        settled      : [],
       });
       await entered;
       resetting = sibling.clear();
@@ -672,41 +672,41 @@ describe('SyncNextLedgerStore', () => {
     const laterReceipt = { messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') };
     const firstInput = quarantineInput(firstReceipt);
     const laterInput = quarantineInput(laterReceipt, { protocol: '📝'.repeat(20) });
-    const limited = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec', {
+    const limited = new SyncNextProgressStore(db, 'sync-next-progress-store-spec', {
       maxQuarantineBytesPerTenant : JSON.stringify(laterInput.entry).length,
       maxQuarantinePerTenant      : 1,
     });
     const create = linkCreate();
     await limited.getOrCreateLink(create);
     await commitPull(limited, create, {
-      handledThrough : token(1, 'pull'),
-      quarantine     : [firstInput],
-      settled        : [],
+      checkpoint : token(1, 'pull'),
+      quarantine : [firstInput],
+      settled    : [],
     });
 
     await expect(commitPull(limited, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [laterInput],
-      settled        : [],
+      checkpoint : token(2, 'pull'),
+      quarantine : [laterInput],
+      settled    : [],
     })).rejects.toThrow('quarantine entry capacity');
-    expect((await limited.getLink(identity(create)))?.pullHandledThrough).toEqual(token(1, 'pull'));
+    expect((await limited.getLink(identity(create)))?.pullCheckpoint).toEqual(token(1, 'pull'));
     expect(await limited.getQuarantineForLink(identity(create))).toHaveLength(1);
 
-    await limited.settleQuarantineForLogicalTarget(
+    await limited.settleQuarantineForProjection(
       create.tenantDid,
       create.projectionId,
       'cid-1',
     );
     await expect(commitPull(limited, create, {
-      handledThrough : token(2, 'pull'),
-      quarantine     : [laterInput],
-      settled        : [],
+      checkpoint : token(2, 'pull'),
+      quarantine : [laterInput],
+      settled    : [],
     })).rejects.toThrow('quarantine byte capacity');
-    expect((await limited.getLink(identity(create)))?.pullHandledThrough).toEqual(token(1, 'pull'));
+    expect((await limited.getLink(identity(create)))?.pullCheckpoint).toEqual(token(1, 'pull'));
   });
 
   it('should stop before push progress when delivery-obligation capacity is exhausted', async () => {
-    const limited = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec', {
+    const limited = new SyncNextProgressStore(db, 'sync-next-progress-store-spec', {
       maxDeliveryPerLink: 1,
     });
     const create = linkCreate();
@@ -718,8 +718,8 @@ describe('SyncNextLedgerStore', () => {
         source             : token(1, 'push', 'cid-1'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
+      checkpoint : token(1, 'push'),
+      settled    : [],
     });
 
     await expect(commitPush(limited, create, {
@@ -729,10 +729,10 @@ describe('SyncNextLedgerStore', () => {
         source             : token(2, 'push', 'cid-2'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(2, 'push'),
-      settled        : [],
+      checkpoint : token(2, 'push'),
+      settled    : [],
     })).rejects.toThrow('delivery obligation capacity');
-    expect((await limited.getLink(identity(create)))?.pushHandledThrough).toEqual(token(1, 'push'));
+    expect((await limited.getLink(identity(create)))?.pushCheckpoint).toEqual(token(1, 'push'));
     expect(await limited.getDeliveryForLink(identity(create))).toHaveLength(1);
   });
 
@@ -745,16 +745,16 @@ describe('SyncNextLedgerStore', () => {
     }))).rejects.toThrow('different durable definition');
 
     await commitPull(store, create, {
-      handledThrough : token(5, 'pull'),
-      quarantine     : [],
-      settled        : [],
+      checkpoint : token(5, 'pull'),
+      quarantine : [],
+      settled    : [],
     });
     expect(await commitPull(store, create, {
-      handledThrough : token(4, 'pull'),
-      quarantine     : [],
-      settled        : [],
+      checkpoint : token(4, 'pull'),
+      quarantine : [],
+      settled    : [],
     })).toBe(false);
-    expect((await store.getLink(identity(create)))?.pullHandledThrough).toEqual(token(5, 'pull'));
+    expect((await store.getLink(identity(create)))?.pullCheckpoint).toEqual(token(5, 'pull'));
   });
 
   it('should recognize the same durable definition regardless of property order', async () => {
@@ -797,8 +797,8 @@ describe('SyncNextLedgerStore', () => {
     await Promise.all([store.getOrCreateLink(alice), store.getOrCreateLink(bob)]);
     for (const create of [alice, bob]) {
       await commitPull(store, create, {
-        handledThrough : token(1, 'pull'),
-        quarantine     : [quarantineInput({
+        checkpoint : token(1, 'pull'),
+        quarantine : [quarantineInput({
           messageCid : 'pull-cid',
           source     : token(1, 'pull', 'pull-cid'),
         })],
@@ -812,8 +812,8 @@ describe('SyncNextLedgerStore', () => {
         source             : token(1, 'push', 'push-cid'),
         wasLatestBaseState : true,
       }],
-      handledThrough : token(1, 'push'),
-      settled        : [],
+      checkpoint : token(1, 'push'),
+      settled    : [],
     });
 
     const [quarantine] = await store.getQuarantineForTenant(alice.tenantDid);
@@ -837,10 +837,10 @@ describe('SyncNextLedgerStore', () => {
     const link = await store.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     await store.commitPullPage(link, {
-      handledThrough : token(1, 'pull'),
-      pageReceipts   : [receipt],
-      quarantine     : [quarantineInput(receipt)],
-      settled        : [],
+      checkpoint   : token(1, 'pull'),
+      pageReceipts : [receipt],
+      quarantine   : [quarantineInput(receipt)],
+      settled      : [],
     });
     await store.retireLink(link);
     const [entry] = await store.getQuarantineForTenant(link.tenantDid);
@@ -883,31 +883,31 @@ describe('SyncNextLedgerStore', () => {
     const second = { messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') };
 
     await expect(store.commitPullPage(link, {
-      handledThrough : token(2, 'pull'),
-      pageReceipts   : [first, second],
-      quarantine     : [],
-      settled        : [first],
+      checkpoint   : token(2, 'pull'),
+      pageReceipts : [first, second],
+      quarantine   : [],
+      settled      : [first],
     })).rejects.toThrow('source without a disposition');
 
     await expect(store.commitPullPage(link, {
-      handledThrough : token(2, 'pull'),
-      pageReceipts   : [first],
-      quarantine     : [],
-      settled        : [first, second],
+      checkpoint   : token(2, 'pull'),
+      pageReceipts : [first],
+      quarantine   : [],
+      settled      : [first, second],
     })).rejects.toThrow('is not in the page');
-    expect((await store.getLink(link))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(link))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject a cursor CID that does not identify its page entry', async () => {
     const link = await store.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     await expect(store.commitPullPage(link, {
-      handledThrough : token(1, 'pull', 'different-cid'),
-      pageReceipts   : [receipt],
-      quarantine     : [],
-      settled        : [receipt],
+      checkpoint   : token(1, 'pull', 'different-cid'),
+      pageReceipts : [receipt],
+      quarantine   : [],
+      settled      : [receipt],
     })).rejects.toThrow('cursor CID does not match its page entry');
-    expect((await store.getLink(link))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(link))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject different CIDs assigned to one source position', async () => {
@@ -916,12 +916,12 @@ describe('SyncNextLedgerStore', () => {
     const conflicting = { messageCid: 'cid-2', source: token(1, 'pull', 'cid-2') };
 
     await expect(store.commitPullPage(link, {
-      handledThrough : token(1, 'pull', 'cid-1'),
-      pageReceipts   : [first, conflicting],
-      quarantine     : [],
-      settled        : [first, conflicting],
+      checkpoint   : token(1, 'pull', 'cid-1'),
+      pageReceipts : [first, conflicting],
+      quarantine   : [],
+      settled      : [first, conflicting],
     })).rejects.toThrow('more than one CID to position 1');
-    expect((await store.getLink(link))?.pullHandledThrough).toBeUndefined();
+    expect((await store.getLink(link))?.pullCheckpoint).toBeUndefined();
   });
 
   it('should reject overlapping pull commits and same-position cursor rewrites', async () => {
@@ -930,52 +930,52 @@ describe('SyncNextLedgerStore', () => {
     const second = { messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') };
     const committed = await Promise.all([
       store.commitPullPage(link, {
-        handledThrough : token(1, 'pull', 'cid-1'),
-        pageReceipts   : [first],
-        quarantine     : [quarantineInput(first)],
-        settled        : [],
+        checkpoint   : token(1, 'pull', 'cid-1'),
+        pageReceipts : [first],
+        quarantine   : [quarantineInput(first)],
+        settled      : [],
       }),
       store.commitPullPage(link, {
-        handledThrough : token(2, 'pull', 'cid-2'),
-        pageReceipts   : [second],
-        quarantine     : [quarantineInput(second)],
-        settled        : [],
+        checkpoint   : token(2, 'pull', 'cid-2'),
+        pageReceipts : [second],
+        quarantine   : [quarantineInput(second)],
+        settled      : [],
       }),
     ]);
     expect(committed.filter(Boolean)).toHaveLength(1);
     expect(await store.getQuarantineForLink(link)).toHaveLength(1);
 
     const current = (await store.getLink(link))!;
-    const storedToken = current.pullHandledThrough!;
+    const storedToken = current.pullCheckpoint!;
     expect(await store.commitPullPage(current, {
-      handledThrough : storedToken,
-      pageReceipts   : [],
-      quarantine     : [],
-      settled        : [],
+      checkpoint   : storedToken,
+      pageReceipts : [],
+      quarantine   : [],
+      settled      : [],
     })).toBe(true);
     expect(await store.getLink(link)).toEqual(current);
 
     expect(await store.commitPullPage(current, {
-      handledThrough : { ...storedToken, messageCid: 'different-cid' },
-      pageReceipts   : [],
-      quarantine     : [],
-      settled        : [],
+      checkpoint   : { ...storedToken, messageCid: 'different-cid' },
+      pageReceipts : [],
+      quarantine   : [],
+      settled      : [],
     })).toBe(false);
     const duplicate = { messageCid: 'extra-cid', source: token(Number(storedToken.position), 'pull', 'extra-cid') };
     expect(await store.commitPullPage(current, {
-      handledThrough : storedToken,
-      pageReceipts   : [duplicate],
-      quarantine     : [quarantineInput(duplicate)],
-      settled        : [],
+      checkpoint   : storedToken,
+      pageReceipts : [duplicate],
+      quarantine   : [quarantineInput(duplicate)],
+      settled      : [],
     })).toBe(false);
-    expect((await store.getLink(link))?.pullHandledThrough).toEqual(storedToken);
+    expect((await store.getLink(link))?.pullCheckpoint).toEqual(storedToken);
     expect(await store.getQuarantineForLink(link)).toHaveLength(1);
 
     await expect(store.commitPullPage(current, {
-      handledThrough : token(3, 'pull'),
-      pageReceipts   : [first],
-      quarantine     : [quarantineInput(first)],
-      settled        : [],
+      checkpoint   : token(3, 'pull'),
+      pageReceipts : [first],
+      quarantine   : [quarantineInput(first)],
+      settled      : [],
     })).rejects.toThrow('behind its previous checkpoint');
   });
 
@@ -988,15 +988,15 @@ describe('SyncNextLedgerStore', () => {
 
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const commit = {
-      handledThrough : token(1, 'pull'),
-      pageReceipts   : [receipt],
-      quarantine     : [quarantineInput(receipt)],
-      settled        : [],
+      checkpoint   : token(1, 'pull'),
+      pageReceipts : [receipt],
+      quarantine   : [quarantineInput(receipt)],
+      settled      : [],
     };
     expect(await store.commitPullPage(oldLink, commit)).toBe(false);
     expect(await store.commitPullPage(replacement, commit)).toBe(true);
     await store.retireLink(oldLink);
-    await store.deleteLinkAndSparse(oldLink);
+    await store.deleteLinkAndPendingWork(oldLink);
     expect((await store.getLink(replacement))?.lifetimeId).toBe(replacement.lifetimeId);
     expect(await store.getQuarantineForLink(replacement)).toHaveLength(1);
   });
@@ -1016,33 +1016,33 @@ describe('SyncNextLedgerStore', () => {
   });
 
   it('should count retired quarantine against the tenant capacity', async () => {
-    const limited = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec', {
+    const limited = new SyncNextProgressStore(db, 'sync-next-progress-store-spec', {
       maxQuarantinePerTenant: 1,
     });
     const first = await limited.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     await limited.commitPullPage(first, {
-      handledThrough : token(1, 'pull'),
-      pageReceipts   : [receipt],
-      quarantine     : [quarantineInput(receipt)],
-      settled        : [],
+      checkpoint   : token(1, 'pull'),
+      pageReceipts : [receipt],
+      quarantine   : [quarantineInput(receipt)],
+      settled      : [],
     });
     await limited.retireLink(first);
 
     const second = await limited.getOrCreateLink(linkCreate({ remoteEndpoint: 'https://second.example.com' }));
     const later = { messageCid: 'cid-2', source: token(1, 'pull', 'cid-2') };
     await expect(limited.commitPullPage(second, {
-      handledThrough : token(1, 'pull'),
-      pageReceipts   : [later],
-      quarantine     : [quarantineInput(later)],
-      settled        : [],
+      checkpoint   : token(1, 'pull'),
+      pageReceipts : [later],
+      quarantine   : [quarantineInput(later)],
+      settled      : [],
     })).rejects.toThrow('tenant quarantine entry capacity');
-    expect((await limited.getLink(second))?.pullHandledThrough).toBeUndefined();
+    expect((await limited.getLink(second))?.pullCheckpoint).toBeUndefined();
     expect(await limited.getQuarantineForTenant(first.tenantDid)).toHaveLength(1);
   });
 
-  it('should enforce one tenant quarantine budget across concurrent logical targets', async () => {
-    const limited = new SyncNextLedgerStore(db, 'sync-next-ledger-store-spec', {
+  it('should enforce one tenant quarantine budget across concurrent projections', async () => {
+    const limited = new SyncNextProgressStore(db, 'sync-next-progress-store-spec', {
       maxQuarantinePerTenant: 1,
     });
     const first = await limited.getOrCreateLink(linkCreate());
@@ -1054,10 +1054,10 @@ describe('SyncNextLedgerStore', () => {
     const commit = (link: typeof first, messageCid: string): Promise<boolean> => {
       const receipt = { messageCid, source: token(1, 'pull', messageCid) };
       return limited.commitPullPage(link, {
-        handledThrough : token(1, 'pull'),
-        pageReceipts   : [receipt],
-        quarantine     : [quarantineInput(receipt)],
-        settled        : [],
+        checkpoint   : token(1, 'pull'),
+        pageReceipts : [receipt],
+        quarantine   : [quarantineInput(receipt)],
+        settled      : [],
       });
     };
 

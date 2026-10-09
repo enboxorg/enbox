@@ -2,7 +2,7 @@ import type { MessagesQueryReplyEntry, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { SyncAuthorization, SyncScope } from '../types/sync.js';
 
-/** Exact identity shared by one link record and its sparse outcomes. */
+/** Exact identity shared by one link record and its pending work. */
 export type SyncNextLinkIdentity = {
   authorizationEpoch: string;
   projectionId: string;
@@ -19,8 +19,8 @@ export type SyncNextLinkCreate = SyncNextLinkIdentity & {
 export type SyncNextLink = SyncNextLinkCreate & {
   /** Changes whenever the same exact link key is retired and recreated. */
   lifetimeId: string;
-  pullHandledThrough?: ProgressToken;
-  pushHandledThrough?: ProgressToken;
+  pullCheckpoint?: ProgressToken;
+  pushCheckpoint?: ProgressToken;
   updatedAt: string;
 };
 
@@ -56,7 +56,7 @@ export type SyncNextDeliveryOutcome = {
   retryAt?: number;
 };
 
-/** Sparse outbound obligation; message and data remain in the local DWN. */
+/** Pending outbound obligation; message and data remain in the local DWN. */
 export type SyncNextDeliveryObligation = SyncNextLinkIdentity & SyncNextSourceReceipt & {
   lastAttemptAt: string;
   outcome: SyncNextDeliveryOutcome;
@@ -79,7 +79,7 @@ export type SyncNextHandledWrite = {
 };
 
 export type SyncNextPullPageCommit = {
-  handledThrough: ProgressToken;
+  checkpoint: ProgressToken;
   /** Exact receipts from the page, captured before classifying its entries. */
   pageReceipts: SyncNextSourceReceipt[];
   quarantine: SyncNextQuarantineInput[];
@@ -88,7 +88,7 @@ export type SyncNextPullPageCommit = {
 
 export type SyncNextPushPageCommit = {
   delivery: SyncNextDeliveryInput[];
-  handledThrough: ProgressToken;
+  checkpoint: ProgressToken;
   handledWrites: SyncNextHandledWrite[];
   /** Exact receipts from the page, captured before classifying its entries. */
   pageReceipts: SyncNextSourceReceipt[];

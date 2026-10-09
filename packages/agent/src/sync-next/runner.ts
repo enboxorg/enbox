@@ -1,13 +1,17 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncDirection } from '../types/sync.js';
 import type { SyncNextDeliveryRetryResult } from './delivery-retry.js';
-import type { SyncNextLedgerStore } from './ledger-store.js';
-import type { SyncNextLinkIdentity } from './types.js';
+import type { SyncNextProgressStore } from './progress-store.js';
 import type { SyncNextPullPageResult } from './pull-page.js';
 import type { SyncNextPushPageResult } from './push-page.js';
 import type { SyncNextQuarantineRetryResult } from './quarantine-retry.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
+import type {
+  SyncNextDeliveryObligation,
+  SyncNextLinkIdentity,
+  SyncNextQuarantineEntry,
+} from './types.js';
 
 import { runWithCrossContextLock } from '@enbox/common';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
@@ -19,7 +23,7 @@ import { SyncNextFeedQueryError } from './feed-page.js';
 import { SyncNextPullPage } from './pull-page.js';
 import { SyncNextPushPage } from './push-page.js';
 import { SyncWorkInterruptedError } from '../sync-messages.js';
-import { syncNextLinkIdentity, syncNextLinkKey } from './ledger-key.js';
+import { compareSyncNextRetryOrder, syncNextLinkIdentity, syncNextLinkKey } from './progress-key.js';
 
 type SyncNextWorkKind = 'delivery' | 'pullPage' | 'pushPage' | 'quarantine';
 
@@ -29,7 +33,7 @@ export type SyncNextWorkFailure = {
   work: SyncNextWorkKind;
 };
 
-export type SyncNextWorkPumpResult = {
+export type SyncNextRunResult = {
   failures: SyncNextWorkFailure[];
   remoteRequests: number;
   workRemaining: boolean;
@@ -41,7 +45,7 @@ type SyncNextWorkOperation<TResult> = (
   runRemoteRequest: SyncRemoteRequestRunner,
 ) => Promise<TResult>;
 
-export type SyncNextWorkPumpOperations = {
+export type SyncNextRunnerOperations = {
   deliveryRetry: SyncNextWorkOperation<SyncNextDeliveryRetryResult>;
   pullPage: SyncNextWorkOperation<SyncNextPullPageResult>;
   pushPage: SyncNextWorkOperation<SyncNextPushPageResult>;
@@ -49,10 +53,15 @@ export type SyncNextWorkPumpOperations = {
 };
 
 type TargetState = {
-  covered: boolean;
+  feedDrained: boolean;
   failures: SyncNextWorkFailure[];
   identity: SyncNextLinkIdentity;
   target: SyncTarget;
+};
+
+type RecoveryCandidate = {
+  entry: SyncNextDeliveryObligation | SyncNextQuarantineEntry;
+  state: TargetState;
 };
 
 type RequestBudget = {
@@ -63,23 +72,23 @@ type RequestBudget = {
 
 const DEFAULT_MAX_REMOTE_REQUESTS = 32;
 
-/** Executes one request-bounded sync-next turn for already-resolved targets. */
-export class SyncNextWorkPump {
+/** Executes one request-bounded sync-next run for already-resolved targets. */
+export class SyncNextRunner {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
-    private readonly _ledger: SyncNextLedgerStore,
-    private readonly _operations: Partial<SyncNextWorkPumpOperations> = {},
+    private readonly _progressStore: SyncNextProgressStore,
+    private readonly _operations: Partial<SyncNextRunnerOperations> = {},
   ) {}
 
-  /** Run one turn. Durable checkpoints and sparse rows carry unfinished work to the next turn. */
+  /** Run one direction. Durable checkpoints and pending rows carry unfinished work to the next run. */
   public async run(
     targets: readonly SyncTarget[],
     direction: SyncDirection,
     options: { maxRemoteRequests?: number; signal?: AbortSignal } = {},
-  ): Promise<SyncNextWorkPumpResult> {
+  ): Promise<SyncNextRunResult> {
     const maxRequests = options.maxRemoteRequests ?? DEFAULT_MAX_REMOTE_REQUESTS;
-    if (!Number.isSafeInteger(maxRequests) || maxRequests < 2) {
-      throw new RangeError('SyncNextWorkPump: request budget must be an integer of at least 2.');
+    if (!Number.isSafeInteger(maxRequests) || maxRequests < 3) {
+      throw new RangeError('SyncNextRunner: request budget must be an integer of at least 3.');
     }
     const budget: RequestBudget = {
       limit    : maxRequests,
@@ -91,15 +100,19 @@ export class SyncNextWorkPump {
     const blockedEndpoints = new Set<string>();
     const page = direction === 'pull' ? 'pullPage' : 'pushPage';
     const retry = direction === 'pull' ? 'quarantine' : 'delivery';
-    const recoveryPending = (await Promise.all(states.map(
-      state => this.hasPendingRecovery(state, direction)
-    ))).some(Boolean);
-
-    // Preserve capacity for existing sparse work without slowing the common queue-empty path.
-    budget.limit = recoveryPending ? Math.ceil(maxRequests / 2) : maxRequests;
+    const pendingRecovery = await this.getRecoveryCandidates(states, direction);
+    const recoveryReserve = pendingRecovery.reduce(
+      (reserve, candidate) => Math.max(reserve, this.minimumRecoveryRequests(candidate, retry)),
+      0,
+    );
+    // Preserve capacity for existing pending work without slowing the common queue-empty path.
+    budget.limit = recoveryReserve > 0
+      ? Math.min(Math.ceil(maxRequests / 2), maxRequests - recoveryReserve)
+      : maxRequests;
     await this.runPhase(states, page, budget, blockedEndpoints);
     budget.limit = maxRequests;
-    await this.runPhase(states, retry, budget, blockedEndpoints);
+    const recovery = await this.getRecoveryCandidates(states, direction);
+    await this.runRecoveryPhase(recovery, retry, budget, blockedEndpoints);
 
     return this.buildResult(states, budget, direction);
   }
@@ -116,8 +129,8 @@ export class SyncNextWorkPump {
         continue;
       }
       const state: TargetState = {
-        covered  : false,
-        failures : [],
+        feedDrained : false,
+        failures    : [],
         identity,
         target,
       };
@@ -127,7 +140,7 @@ export class SyncNextWorkPump {
   }
 
   private async ensureLink(state: TargetState): Promise<void> {
-    await this._ledger.getOrCreateLink({
+    await this._progressStore.getOrCreateLink({
       ...state.identity,
       authorization : state.target.authorization,
       scope         : state.target.scope,
@@ -146,6 +159,44 @@ export class SyncNextWorkPump {
     await Promise.all(states.map(state => // NOSONAR
       this.runWork(state, kind, budget, blockedEndpoints)
     ));
+  }
+
+  /** Run pending recovery oldest-first without starting a partial role attempt. */
+  private async runRecoveryPhase(
+    candidates: RecoveryCandidate[],
+    kind: SyncNextWorkKind,
+    budget: RequestBudget,
+    blockedEndpoints: Set<string>,
+  ): Promise<void> {
+    for (const candidate of candidates) {
+      if (budget.signal?.aborted === true || budget.requests >= budget.limit) {
+        return;
+      }
+      if (budget.limit - budget.requests < this.minimumRecoveryRequests(candidate, kind)) {
+        continue;
+      }
+      await this.runWork(candidate.state, kind, budget, blockedEndpoints); // NOSONAR: S9382 - recovery must remain oldest-first.
+    }
+  }
+
+  private async getRecoveryCandidates(
+    states: TargetState[],
+    direction: SyncDirection,
+  ): Promise<RecoveryCandidate[]> {
+    const pending = await Promise.all(states.map(async (state) => {
+      const entries = direction === 'pull'
+        ? await this._progressStore.getQuarantineForProjection(state.identity.tenantDid, state.identity.projectionId)
+        : await this._progressStore.getDeliveryForLink(state.identity);
+      entries.sort(compareSyncNextRetryOrder);
+      return { entry: entries[0], state };
+    }));
+    return pending
+      .flatMap(({ entry, state }) => entry === undefined ? [] : [{ entry, state }])
+      .sort((left, right) => compareSyncNextRetryOrder(left.entry, right.entry));
+  }
+
+  private minimumRecoveryRequests(candidate: RecoveryCandidate, kind: SyncNextWorkKind): number {
+    return kind === 'quarantine' && candidate.state.target.authorization.kind === 'role' ? 2 : 1;
   }
 
   private async runWork(
@@ -176,7 +227,7 @@ export class SyncNextWorkPump {
       if (!(error instanceof SyncWorkInterruptedError)) {
         state.failures.push({ message: syncErrorMessage(error), target: state.identity, work: kind });
       }
-      // Other exceptions can come from local validation or ledger mutation and stay link-scoped.
+      // Other exceptions can come from local validation or progress-store mutation and stay link-scoped.
       if (kind === 'pullPage' && error instanceof SyncNextFeedQueryError &&
           (error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500)) {
         blockedEndpoints.add(endpoint);
@@ -191,11 +242,11 @@ export class SyncNextWorkPump {
   ): Promise<void> {
     const result = await (this._operations.pullPage?.(
       state.target, shouldContinue, runRemoteRequest,
-    ) ?? new SyncNextPullPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
+    ) ?? new SyncNextPullPage(this._agent, this._progressStore, runRemoteRequest).run(state.target, shouldContinue));
     if (result.kind !== 'committed') {
       return;
     }
-    state.covered = !result.hasMore;
+    state.feedDrained = result.feedDrained;
   }
 
   private async runQuarantine(
@@ -210,7 +261,7 @@ export class SyncNextWorkPump {
       await (this._operations.quarantineRetry?.(
         state.target, shouldContinue, runRemoteRequest,
       ) ?? retryOneQuarantinedRoot({
-        agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
+        agent: this._agent, progressStore: this._progressStore, target: state.target, shouldContinue, runRemoteRequest,
       }));
     });
   }
@@ -223,11 +274,11 @@ export class SyncNextWorkPump {
   ): Promise<void> {
     const result = await (this._operations.pushPage?.(
       state.target, shouldContinue, runRemoteRequest,
-    ) ?? new SyncNextPushPage(this._agent, this._ledger, runRemoteRequest).consume(state.target, shouldContinue));
+    ) ?? new SyncNextPushPage(this._agent, this._progressStore, runRemoteRequest).run(state.target, shouldContinue));
     if (result.kind !== 'committed') {
       return;
     }
-    state.covered = !result.hasMore;
+    state.feedDrained = result.feedDrained;
     if (result.blocked?.blockScope === 'endpoint') {
       blockedEndpoints.add(state.identity.remoteEndpoint);
     }
@@ -242,7 +293,7 @@ export class SyncNextWorkPump {
     const result = await (this._operations.deliveryRetry?.(
       state.target, shouldContinue, runRemoteRequest,
     ) ?? retryOneDeliveryObligation({
-      agent: this._agent, ledger: this._ledger, target: state.target, shouldContinue, runRemoteRequest,
+      agent: this._agent, progressStore: this._progressStore, target: state.target, shouldContinue, runRemoteRequest,
     }));
     if (result.kind === 'pending' && result.outcome.blockScope === 'endpoint') {
       blockedEndpoints.add(state.identity.remoteEndpoint);
@@ -292,7 +343,7 @@ export class SyncNextWorkPump {
     states: TargetState[],
     budget: RequestBudget,
     direction: SyncDirection,
-  ): Promise<SyncNextWorkPumpResult> {
+  ): Promise<SyncNextRunResult> {
     const remaining = await Promise.all(states.map(state => this.hasRemainingWork(state, direction)));
     return {
       failures       : states.flatMap(state => state.failures),
@@ -302,7 +353,7 @@ export class SyncNextWorkPump {
   }
 
   private async hasRemainingWork(state: TargetState, direction: SyncDirection): Promise<boolean> {
-    if (!state.covered) {
+    if (!state.feedDrained) {
       return true;
     }
     return this.hasPendingRecovery(state, direction);
@@ -310,8 +361,8 @@ export class SyncNextWorkPump {
 
   private async hasPendingRecovery(state: TargetState, direction: SyncDirection): Promise<boolean> {
     const pending = direction === 'pull'
-      ? await this._ledger.getQuarantineForLogicalTarget(state.identity.tenantDid, state.identity.projectionId)
-      : await this._ledger.getDeliveryForLink(state.identity);
+      ? await this._progressStore.getQuarantineForProjection(state.identity.tenantDid, state.identity.projectionId)
+      : await this._progressStore.getDeliveryForLink(state.identity);
     return pending.length > 0;
   }
 

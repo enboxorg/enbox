@@ -31,6 +31,8 @@ import { DidJwk, UniversalResolver } from '@enbox/dids';
 
 import { verifyRemoteDwnResponse } from '../src/remote-dwn-response.js';
 
+import { deferred } from './utils/deferred.js';
+
 const protocolUri = 'https://example.com/remote-response';
 const otherProtocolUri = 'https://example.com/other-protocol';
 const recordSchema = 'https://example.com/schemas/note';
@@ -307,6 +309,54 @@ describe('verifyRemoteDwnResponse', () => {
       await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
 
       expect(await DataStream.toBytes(reply.entry!.data!)).toEqual(data);
+    });
+
+    it('cancels an unread source when the verified stream is discarded', async () => {
+      const data = textEncoder.encode('discarded record');
+      const recordsWrite = await createRecordsWrite(data, targetSigner);
+      const read = await RecordsRead.create({ filter: { recordId: recordsWrite.message.recordId }, signer: targetSigner });
+      let cancelled = false;
+      const reply = recordsReadReply(recordsWrite.message, data);
+      reply.entry!.data = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancelled = true;
+        },
+      });
+
+      await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
+      await reply.entry!.data!.cancel();
+
+      expect(cancelled).toBe(true);
+    });
+
+    it('cancels the source while a verified read is pending', async () => {
+      const data = textEncoder.encode('stalled record');
+      const recordsWrite = await createRecordsWrite(data, targetSigner);
+      const read = await RecordsRead.create({ filter: { recordId: recordsWrite.message.recordId }, signer: targetSigner });
+      const pullStarted = deferred();
+      const releasePull = deferred();
+      let cancelled = false;
+      const reply = recordsReadReply(recordsWrite.message, data);
+      reply.entry!.data = new ReadableStream<Uint8Array>({
+        cancel(): void {
+          cancelled = true;
+          releasePull.resolve();
+        },
+        pull(): Promise<void> {
+          pullStarted.resolve();
+          return releasePull.promise;
+        },
+      }, { highWaterMark: 0 });
+
+      await expect(verifyResponse(read.message, reply)).resolves.toBeUndefined();
+      const reader = reply.entry!.data!.getReader();
+      const pendingRead = reader.read();
+      await pullStarted.promise;
+
+      await reader.cancel();
+
+      expect(cancelled).toBe(true);
+      await expect(pendingRead).resolves.toEqual({ done: true, value: undefined });
     });
 
     it('fails the returned stream when bytes are tampered with or differ from the signed size', async () => {

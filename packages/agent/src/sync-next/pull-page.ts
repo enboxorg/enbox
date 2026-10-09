@@ -1,7 +1,7 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { SyncMessageEntry } from '../sync-messages.js';
-import type { SyncNextLedgerStore } from './ledger-store.js';
 import type { SyncNextPreparedFeedEntry } from './feed-page.js';
+import type { SyncNextProgressStore } from './progress-store.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type {
@@ -16,7 +16,7 @@ import { admitClosure } from '../sync-admit-closure.js';
 import { messageFeedFiltersForSyncScope } from '../types/sync.js';
 import { orderMessagesForAdmission } from '../sync-admission-order.js';
 import { queryRemoteMessageFeed } from '../sync-messages.js';
-import { syncNextLinkIdentity } from './ledger-key.js';
+import { syncNextLinkIdentity } from './progress-key.js';
 import { Cid, Encoder, Records, RecordsWrite } from '@enbox/dwn-sdk-js';
 import { prepareSyncNextFeedPage, SYNC_NEXT_PAGE_SIZE } from './feed-page.js';
 
@@ -30,8 +30,8 @@ export type SyncNextPullPageResult =
   | { kind: 'aborted' | 'stale' }
   | {
       kind: 'committed';
-      handledThrough: ProgressToken;
-      hasMore: boolean;
+      checkpoint: ProgressToken;
+      feedDrained: boolean;
       /** Closure messages handled as Applied, Duplicate, or Superseded. */
       handledCids: string[];
       quarantined: number;
@@ -41,15 +41,15 @@ export type SyncNextPullPageResult =
 export class SyncNextPullPage {
   public constructor(
     private readonly _agent: EnboxPlatformAgent,
-    private readonly _ledger: SyncNextLedgerStore,
+    private readonly _progressStore: SyncNextProgressStore,
     private readonly _runRemoteRequest?: SyncRemoteRequestRunner,
   ) {}
 
-  public async consume(
+  public async run(
     target: SyncTarget,
     shouldContinue: () => boolean = (): boolean => true,
   ): Promise<SyncNextPullPageResult> {
-    const link = await this._ledger.getLink(syncNextLinkIdentity(target));
+    const link = await this._progressStore.getLink(syncNextLinkIdentity(target));
     if (link === undefined) {
       return { kind: 'stale' };
     }
@@ -57,13 +57,13 @@ export class SyncNextPullPage {
       return { kind: 'aborted' };
     }
 
-    const reply = await this.query(target, link.pullHandledThrough);
+    const reply = await this.query(target, link.pullCheckpoint);
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
     const feedPage = await prepareSyncNextFeedPage({
       label    : 'SyncNextPullPage',
-      previous : link.pullHandledThrough,
+      previous : link.pullCheckpoint,
       reply,
       target   : `query for ${target.did} -> ${target.dwnUrl}`,
     });
@@ -79,22 +79,22 @@ export class SyncNextPullPage {
       return { kind: 'aborted' };
     }
 
-    const committed = await this._ledger.commitPullPage(link, {
-      handledThrough : feedPage.handledThrough,
-      pageReceipts   : feedPage.pageReceipts,
-      quarantine     : classified.quarantine,
-      settled        : classified.settled,
+    const committed = await this._progressStore.commitPullPage(link, {
+      checkpoint   : feedPage.checkpoint,
+      pageReceipts : feedPage.pageReceipts,
+      quarantine   : classified.quarantine,
+      settled      : classified.settled,
     });
     if (!committed) {
       return { kind: 'stale' };
     }
 
     return {
-      handledThrough : feedPage.handledThrough,
-      hasMore        : !feedPage.drained,
-      kind           : 'committed',
-      handledCids    : [...classified.handledCids],
-      quarantined    : classified.quarantine.length,
+      checkpoint  : feedPage.checkpoint,
+      feedDrained : feedPage.drained,
+      kind        : 'committed',
+      handledCids : [...classified.handledCids],
+      quarantined : classified.quarantine.length,
     };
   }
 

@@ -19,7 +19,6 @@ import type {
 import {
   authenticate,
   Cid,
-  DataStream,
   DateSort,
   DwnInterfaceName,
   DwnMethodName,
@@ -250,7 +249,44 @@ async function verifyRecordsWriteReadEntry({
     throw verificationError(`RecordsRead response for '${recordsWrite.message.recordId}' did not contain record data`);
   }
 
-  entry.data = DataStream.fromAsyncIterable(verifyDataStream(entry.data, recordsWrite.message));
+  entry.data = verifiedDataStream(entry.data, recordsWrite.message);
+}
+
+/** Preserve cancellation before consumption and while a source read is pending. */
+function verifiedDataStream(
+  source: ReadableStream<Uint8Array>,
+  recordsWrite: RecordsWriteMessage,
+): ReadableStream<Uint8Array> {
+  let cancelled = false;
+  let iterator: AsyncGenerator<Uint8Array> | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      reader ??= source.getReader();
+      iterator ??= verifyDataStream(reader, recordsWrite, (): boolean => cancelled);
+      const { done, value } = await iterator.next();
+      if (cancelled) {
+        return;
+      }
+      if (done) {
+        controller.close();
+      } else {
+        controller.enqueue(value);
+      }
+    },
+    async cancel(): Promise<void> {
+      cancelled = true;
+      if (reader === undefined) {
+        await source.cancel();
+      } else {
+        try {
+          await reader.cancel();
+        } finally {
+          await iterator?.return(undefined);
+        }
+      }
+    },
+  }, { highWaterMark: 0 });
 }
 
 async function verifyRecordsDeleteReadEntry({
@@ -390,10 +426,10 @@ async function verifyDataBytes(data: Uint8Array, recordsWrite: RecordsWriteMessa
 
 /** Verifies streamed bytes as they are consumed, before allowing a successful end-of-stream. */
 async function* verifyDataStream(
-  source: ReadableStream<Uint8Array>,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
   recordsWrite: RecordsWriteMessage,
+  isCancelled: () => boolean,
 ): AsyncGenerator<Uint8Array> {
-  const reader = source.getReader();
   const hashingStream = new TransformStream<Uint8Array, Uint8Array>();
   const hashWriter = hashingStream.writable.getWriter();
   const dataCidPromise = Cid.computeDagPbCidFromStream(hashingStream.readable);
@@ -403,6 +439,9 @@ async function* verifyDataStream(
   try {
     while (true) {
       const { done, value } = await reader.read();
+      if (isCancelled()) {
+        return;
+      }
       if (done) {
         break;
       }

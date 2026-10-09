@@ -11,14 +11,14 @@ import { createLocalDwnRpc } from './utils/local-dwn-rpc-shim.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { retryOneDeliveryObligation } from '../src/sync-next/delivery-retry.js';
-import { SyncNextLedgerStore } from '../src/sync-next/ledger-store.js';
-import { syncNextLinkIdentity } from '../src/sync-next/ledger-key.js';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
 import { SyncNextPushPage } from '../src/sync-next/push-page.js';
-import { SyncNextWorkPump } from '../src/sync-next/work-pump.js';
+import { SyncNextRunner } from '../src/sync-next/runner.js';
 import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
-const ledgerPath = '__TESTDATA__/sync-next-push-page-integration/ledger';
+const progressStorePath = '__TESTDATA__/sync-next-push-page-integration/progress-store';
 const remoteEndpoint = 'http://localhost:9998/dwn';
 const protocol: ProtocolDefinition = {
   protocol  : 'https://sync-next-push.example/notes',
@@ -47,7 +47,7 @@ async function createSyncTarget(tenantDid: string, protocolUri = protocol.protoc
 describe('SyncNext push-page integration', () => {
   let db: Level<string, string>;
   let harness: PlatformAgentTestHarness;
-  let ledger: SyncNextLedgerStore;
+  let progressStore: SyncNextProgressStore;
   let remoteDwn: Dwn;
   let tenantDid: string;
 
@@ -80,13 +80,13 @@ describe('SyncNext push-page integration', () => {
       didResolver : harness.agent.did,
     });
     harness.agent.rpc = createLocalDwnRpc(remoteDwn);
-    db = new Level<string, string>(ledgerPath);
-    ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-integration');
-    await ledger.clear();
+    db = new Level<string, string>(progressStorePath);
+    progressStore = new SyncNextProgressStore(db, 'sync-next-push-page-integration');
+    await progressStore.clear();
   });
 
   afterAll(async () => {
-    await ledger?.clear();
+    await progressStore?.clear();
     await db?.close();
     await remoteDwn?.close();
     await harness?.clearStorage();
@@ -94,7 +94,7 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should resume an outbound obligation while new feed work continues', async () => {
-    const restartProtocol = { ...protocol, protocol: 'https://sync-next-push.example/work-pump-restart' };
+    const restartProtocol = { ...protocol, protocol: 'https://sync-next-push.example/runner-restart' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
@@ -128,10 +128,10 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      const first = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
+      const first = await new SyncNextRunner(harness.agent, progressStore).run([syncTarget], 'push');
       expect(first.remoteRequests).toBe(2);
       expect(first.workRemaining).toBe(true);
-      expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toHaveLength(1);
+      expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toHaveLength(1);
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
     }
@@ -152,13 +152,13 @@ describe('SyncNext push-page integration', () => {
     }
 
     await db.close();
-    db = new Level<string, string>(ledgerPath);
-    ledger = new SyncNextLedgerStore(db, 'sync-next-push-page-integration');
-    const resumed = await new SyncNextWorkPump(harness.agent, ledger).run([syncTarget], 'push');
+    db = new Level<string, string>(progressStorePath);
+    progressStore = new SyncNextProgressStore(db, 'sync-next-push-page-integration');
+    const resumed = await new SyncNextRunner(harness.agent, progressStore).run([syncTarget], 'push');
 
     expect(resumed.remoteRequests).toBe(17);
     expect(resumed.workRemaining).toBe(true);
-    expect(await ledger.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(syncNextLinkIdentity(syncTarget))).toEqual([]);
     const remoteRead = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
@@ -200,12 +200,12 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      const pump = new SyncNextWorkPump(harness.agent, ledger);
-      const first = await pump.run([syncTarget], 'push');
+      const runner = new SyncNextRunner(harness.agent, progressStore);
+      const first = await runner.run([syncTarget], 'push');
       expect(first).toMatchObject({ remoteRequests: 32, workRemaining: true });
       expect(appliedCids).toHaveLength(32);
 
-      const second = await pump.run([syncTarget], 'push');
+      const second = await runner.run([syncTarget], 'push');
       expect(second).toMatchObject({ remoteRequests: 2, workRemaining: false });
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
@@ -247,19 +247,19 @@ describe('SyncNext push-page integration', () => {
     expect(before.reply.status.code).toBe(404);
 
     const syncTarget = await createSyncTarget(tenantDid);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
     });
 
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget)).toMatchObject({
-      hasMore  : false,
-      kind     : 'committed',
-      retained : 0,
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget)).toMatchObject({
+      feedDrained : true,
+      kind        : 'committed',
+      retained    : 0,
     });
-    expect((await ledger.getLink(link))?.pushHandledThrough).toBeDefined();
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect((await progressStore.getLink(link))?.pushCheckpoint).toBeDefined();
+    expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
 
     const after = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
@@ -307,18 +307,18 @@ describe('SyncNext push-page integration', () => {
     );
 
     const syncTarget = await createSyncTarget(tenantDid);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
     });
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget)).toMatchObject({
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget)).toMatchObject({
       acknowledged : 1,
-      hasMore      : false,
+      feedDrained  : true,
       kind         : 'committed',
       retained     : 1,
     });
-    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+    expect(await progressStore.getDeliveryForLink(link)).toMatchObject([{
       messageCid : await Message.getCid(write.message!),
       outcome    : { reason: 'remote-incomplete' },
     }]);
@@ -330,9 +330,9 @@ describe('SyncNext push-page integration', () => {
       messageParams : { filter: { recordId: write.message!.recordId } },
     });
     expect(remoteRead.reply.status.code).toBe(410);
-    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, progressStore, target: syncTarget }))
       .toEqual({ kind: 'pending', outcome: { reason: 'remote-incomplete' } });
-    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+    expect(await progressStore.getDeliveryForLink(link)).toHaveLength(1);
   });
 
   it('should deliver a retained detached body after a transient remote failure', async () => {
@@ -360,7 +360,7 @@ describe('SyncNext push-page integration', () => {
     expect(write.reply.status.code).toBe(202);
 
     const syncTarget = await createSyncTarget(tenantDid, retryProtocol.protocol);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
@@ -375,18 +375,18 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget)).toMatchObject({
+      expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget)).toMatchObject({
         acknowledged : 1,
         kind         : 'committed',
         retained     : 1,
       });
-      expect(await ledger.getDeliveryForLink(link)).toMatchObject([{
+      expect(await progressStore.getDeliveryForLink(link)).toMatchObject([{
         messageCid         : await Message.getCid(write.message!),
         wasLatestBaseState : true,
       }]);
-      expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+      expect(await retryOneDeliveryObligation({ agent: harness.agent, progressStore, target: syncTarget }))
         .toEqual({ kind: 'settled' });
-      expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+      expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
       const remoteRead = await harness.agent.dwn.sendRequest({
         author        : tenantDid,
         target        : tenantDid,
@@ -424,12 +424,12 @@ describe('SyncNext push-page integration', () => {
     expect(initial.reply.status.code).toBe(202);
 
     const syncTarget = await createSyncTarget(tenantDid, updateProtocol.protocol);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
     });
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
       .toMatchObject({ kind: 'committed', retained: 0 });
 
     const updateParams = {
@@ -463,7 +463,7 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
         .toMatchObject({ kind: 'committed', retained: 1 });
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
@@ -489,9 +489,9 @@ describe('SyncNext push-page integration', () => {
     });
     expect(oldLocalRead.reply.status.code).toBe(404);
 
-    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, progressStore, target: syncTarget }))
       .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
       .toMatchObject({ kind: 'committed', retained: 0 });
     const remoteRead = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
@@ -501,7 +501,7 @@ describe('SyncNext push-page integration', () => {
     });
     expect(remoteRead.reply.status.code).toBe(200);
     expect(await DataStream.toBytes(remoteRead.reply.entry!.data!)).toEqual(latestData);
-    expect(await ledger.getDeliveryForLink(link)).toEqual([]);
+    expect(await progressStore.getDeliveryForLink(link)).toEqual([]);
   });
 
   it('should retain a pre-delete write that the remote tombstone still needs', async () => {
@@ -530,12 +530,12 @@ describe('SyncNext push-page integration', () => {
     expect(initial.reply.status.code).toBe(202);
 
     const syncTarget = await createSyncTarget(tenantDid, deleteProtocol.protocol);
-    const link = await ledger.getOrCreateLink({
+    const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
     });
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
       .toMatchObject({ kind: 'committed', retained: 0 });
 
     await Time.minimalSleep();
@@ -565,7 +565,7 @@ describe('SyncNext push-page integration', () => {
       return originalApply(request);
     };
     try {
-      expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+      expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
         .toMatchObject({ kind: 'committed', retained: 1 });
     } finally {
       harness.agent.rpc.applyReplicatedMessage = originalApply;
@@ -579,9 +579,9 @@ describe('SyncNext push-page integration', () => {
       messageParams : { recordId: initial.message!.recordId },
     });
     expect(recordsDelete.reply.status.code).toBe(202);
-    expect(await new SyncNextPushPage(harness.agent, ledger).consume(syncTarget))
+    expect(await new SyncNextPushPage(harness.agent, progressStore).run(syncTarget))
       .toMatchObject({ acknowledged: 1, kind: 'committed', retained: 0 });
-    expect(await ledger.getDeliveryForLink(link)).toMatchObject([{ messageCid: updateCid }]);
+    expect(await progressStore.getDeliveryForLink(link)).toMatchObject([{ messageCid: updateCid }]);
 
     const blueTombstoneFilter = {
       'interface' : DwnInterfaceName.Records,
@@ -591,8 +591,8 @@ describe('SyncNext push-page integration', () => {
     expect((await remoteDwn.storage.messageStore.query(tenantDid, [blueTombstoneFilter])).messages)
       .toEqual([]);
 
-    expect(await retryOneDeliveryObligation({ agent: harness.agent, ledger, target: syncTarget }))
+    expect(await retryOneDeliveryObligation({ agent: harness.agent, progressStore, target: syncTarget }))
       .toEqual({ kind: 'pending', outcome: { reason: 'dependency' } });
-    expect(await ledger.getDeliveryForLink(link)).toHaveLength(1);
+    expect(await progressStore.getDeliveryForLink(link)).toHaveLength(1);
   });
 });

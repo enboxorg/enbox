@@ -1,13 +1,13 @@
 import type { EnboxPlatformAgent } from '../types/agent.js';
 import type { PushResult } from '../types/sync.js';
-import type { SyncNextLedgerStore } from './ledger-store.js';
+import type { SyncNextProgressStore } from './progress-store.js';
 import type { SyncRemoteRequestRunner } from '../sync-request-runner.js';
 import type { SyncTarget } from '../sync-target-resolver.js';
 import type { SyncNextDeliveryObligation, SyncNextDeliveryOutcome, SyncNextLink } from './types.js';
 
 import { RemoteApplyPushContext } from '../sync-messages.js';
 import { syncNextDeliveryOutcome } from './delivery-outcome.js';
-import { compareSyncNextSparseAttempts, syncNextLinkIdentity } from './ledger-key.js';
+import { compareSyncNextRetryOrder, syncNextLinkIdentity } from './progress-key.js';
 
 export type SyncNextDeliveryRetryResult =
   | { kind: 'aborted' | 'empty' | 'stale' | 'settled' }
@@ -16,13 +16,13 @@ export type SyncNextDeliveryRetryResult =
 /** Retry one exact endpoint obligation without owning its schedule. */
 export async function retryOneDeliveryObligation({
   agent,
-  ledger,
+  progressStore,
   target,
   runRemoteRequest,
   shouldContinue = (): boolean => true,
 }: {
   agent: EnboxPlatformAgent;
-  ledger: SyncNextLedgerStore;
+  progressStore: SyncNextProgressStore;
   target: SyncTarget;
   runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
@@ -34,15 +34,15 @@ export async function retryOneDeliveryObligation({
     return { kind: 'aborted' };
   }
 
-  const link = await ledger.getLink(syncNextLinkIdentity(target));
+  const link = await progressStore.getLink(syncNextLinkIdentity(target));
   if (link === undefined) {
     return { kind: 'stale' };
   }
-  const entries = await ledger.getDeliveryForLink(link);
+  const entries = await progressStore.getDeliveryForLink(link);
   if (!shouldContinue()) {
     return { kind: 'aborted' };
   }
-  entries.sort(compareSyncNextSparseAttempts);
+  entries.sort(compareSyncNextRetryOrder);
   const selected = entries[0];
   if (selected === undefined) {
     return { kind: 'empty' };
@@ -67,7 +67,7 @@ export async function retryOneDeliveryObligation({
     if (!shouldContinue()) {
       return { kind: 'aborted' };
     }
-    if (!await ledger.finishDeliveryAttempt(link, selected, selected.outcome)) {
+    if (!await progressStore.finishDeliveryAttempt(link, selected, selected.outcome)) {
       return { kind: 'stale' };
     }
     throw error;
@@ -76,17 +76,17 @@ export async function retryOneDeliveryObligation({
     return { kind: 'aborted' };
   }
 
-  return finishDeliveryResult(ledger, link, selected, result);
+  return finishDeliveryResult(progressStore, link, selected, result);
 }
 
 async function finishDeliveryResult(
-  ledger: SyncNextLedgerStore,
+  progressStore: SyncNextProgressStore,
   link: SyncNextLink,
   selected: SyncNextDeliveryObligation,
   result: PushResult,
 ): Promise<SyncNextDeliveryRetryResult> {
   if (result.succeeded.includes(selected.messageCid)) {
-    return await ledger.finishDeliveryAttempt(link, selected)
+    return await progressStore.finishDeliveryAttempt(link, selected)
       ? { kind: 'settled' }
       : { kind: 'stale' };
   }
@@ -96,7 +96,7 @@ async function finishDeliveryResult(
     throw new Error(`SyncNextDeliveryRetry: push returned no disposition for ${selected.messageCid}.`);
   }
   const outcome = syncNextDeliveryOutcome(failure);
-  return await ledger.finishDeliveryAttempt(link, selected, outcome)
+  return await progressStore.finishDeliveryAttempt(link, selected, outcome)
     ? { kind: 'pending', outcome }
     : { kind: 'stale' };
 }

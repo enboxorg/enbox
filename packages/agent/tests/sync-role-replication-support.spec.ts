@@ -1,25 +1,37 @@
 import type { BearerDid } from '@enbox/dids';
+import type { SyncRemoteRequestRunner } from '../src/sync-request-runner.js';
+import type { SyncTarget } from '../src/sync-target-resolver.js';
 import type {
   DwnEncryption,
+  GenericMessage,
   MessageSigner,
   RecordsDeleteMessage,
   RecordsReadMessage,
   RecordsReadReplicationSupportEntry,
   RecordsWriteMessage,
+  ReplicationApplyOptions,
+  ReplicationApplyResult,
   SourceRoleAudienceKeyEncryption,
 } from '@enbox/dwn-sdk-js';
 
+import { Level } from 'level';
+import { retryOneQuarantinedRoot } from '../src/sync-next/quarantine-retry.js';
 import sinon from 'sinon';
+import { syncNextLinkIdentity } from '../src/sync-next/progress-key.js';
+import { SyncNextProgressStore } from '../src/sync-next/progress-store.js';
+import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '@enbox/dwn-sdk-js/stores/level';
 
 import { beforeAll, describe, expect, it } from 'bun:test';
 import {
   ContentEncryptionAlgorithm,
   DataStream,
+  Dwn,
   DwnErrorCode,
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
+  Message,
   ProtocolsConfigure,
   RecordsDelete,
   RecordsRead,
@@ -27,6 +39,7 @@ import {
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 import { DidJwk, UniversalResolver } from '@enbox/dids';
+import { DwnRpcError, JsonRpcErrorCodes } from '@enbox/dwn-clients';
 
 import {
   FollowedSourceNotReadyError,
@@ -68,6 +81,209 @@ describe('readRoleReplicationSupport', () => {
       fixture.configure.message,
       fixture.role.message,
     ]);
+  });
+
+  it('runs both split role reads through caller-owned request coordination', async () => {
+    const fixture = await createFixture();
+    const agent = responseAgent(fixture) as any;
+    agent.rpc.getServerInfo = sinon.stub();
+    let requests = 0;
+    const runRemoteRequest: SyncRemoteRequestRunner = async (request) => {
+      requests++;
+      return request();
+    };
+
+    await readFixture(fixture, agent, undefined, runRemoteRequest);
+
+    expect(requests).toBe(2);
+    expect(agent.rpc.getServerInfo.notCalled).toBe(true);
+  });
+
+  it('hydrates a newer current role root and settles its older quarantine row', async () => {
+    const fixture = await createFixture();
+    const oldRoot = fixture.root;
+    const oldCid = await Message.getCid(oldRoot.message);
+    fixture.rootData = new TextEncoder().encode('newer notebook');
+    fixture.root = await RecordsWrite.createFrom({
+      data                : fixture.rootData,
+      recordsWriteMessage : oldRoot.message,
+      signer              : ownerSigner,
+    });
+    fixture.rootInitialWrite = oldRoot.message;
+    const currentCid = await Message.getCid(fixture.root.message);
+    const configureCid = await Message.getCid(fixture.configure.message);
+    const roleCid = await Message.getCid(fixture.role.message);
+    const agent = responseAgent(fixture) as any;
+    agent.permissions = { getPermissionForRequest: sinon.stub() };
+    const appliedCids = new Set<string>();
+    let currentMaterialized = false;
+    agent.dwn.applyReplicatedMessage = sinon.stub().callsFake(async (
+      _did: string,
+      message: GenericMessage,
+      options?: { includeMaterializationConfirmation?: boolean },
+    ) => {
+      const cid = await Message.getCid(message);
+      if (options?.includeMaterializationConfirmation === true) {
+        return currentMaterialized && cid === oldCid
+          ? { kind: 'Superseded', currentWriteMaterialized: true }
+          : { kind: 'Superseded' };
+      }
+      if (cid === currentCid && (!appliedCids.has(configureCid) || !appliedCids.has(roleCid))) {
+        return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: PROTOCOL }] };
+      }
+      appliedCids.add(cid);
+      if (cid === currentCid) {
+        currentMaterialized = true;
+      }
+      return { kind: 'Applied' };
+    });
+    const target = roleRetryTarget(oldRoot.message, fixture.role.message.recordId);
+    const db = new Level<string, string>(`__TESTDATA__/sync-next-role-retry-${crypto.randomUUID()}`);
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-role-retry');
+    try {
+      await retainRoleRoot(progressStore, target, oldRoot.message);
+
+      const staleTarget: SyncTarget = {
+        ...target,
+        authorization: { ...target.authorization, roleRecordId: 'replaced-role' },
+      };
+      await expect(retryOneQuarantinedRoot({ agent, progressStore, target: staleTarget }))
+        .rejects.toBeInstanceOf(RoleReplicationSupportError);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
+        .toMatchObject({ kind: 'settled' });
+      expect(appliedCids.has(configureCid)).toBe(true);
+      expect(appliedCids.has(roleCid)).toBe(true);
+      expect(currentMaterialized).toBe(true);
+      expect(agent.rpc.sendDwnRequest.callCount).toBe(4);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
+    } finally {
+      await progressStore.clear();
+      await db.close();
+    }
+  });
+
+  it('replays real DWN role admission after settlement fails without local confirmation', async () => {
+    const fixture = await createFixture();
+    fixture.configure = await ProtocolsConfigure.create({
+      definition: {
+        protocol  : PROTOCOL,
+        published : true,
+        types     : {
+          notebook : { dataFormats: ['text/plain'] },
+          viewer   : { dataFormats: ['text/plain'] },
+        },
+        structure: {
+          notebook: {
+            viewer: { $role: true },
+          },
+        },
+      },
+      signer: ownerSigner,
+    });
+    fixture.support[0] = { isLatestBaseState: true, message: fixture.configure.message };
+    const target = roleRetryTarget(fixture.root.message, fixture.role.message.recordId);
+    const agent = responseAgent(fixture) as any;
+    agent.permissions = { getPermissionForRequest: sinon.stub() };
+    const storePath = `__TESTDATA__/sync-next-real-role-retry-${crypto.randomUUID()}`;
+    const dataStore = new DataStoreLevel({ blockstoreLocation: `${storePath}/data` });
+    const messageStore = new MessageStoreLevel({ location: `${storePath}/messages` });
+    const resumableTaskStore = new ResumableTaskStoreLevel({ location: `${storePath}/tasks` });
+    const localDwn = await Dwn.create({ dataStore, didResolver: resolver, messageStore, resumableTaskStore });
+    const rootCid = await Message.getCid(fixture.root.message);
+    const rootResults: ReplicationApplyResult[] = [];
+    agent.dwn.applyReplicatedMessage = sinon.stub().callsFake(async (
+      did: string,
+      message: GenericMessage,
+      options: ReplicationApplyOptions = {},
+    ): Promise<ReplicationApplyResult> => {
+      if (options?.includeMaterializationConfirmation === true) {
+        throw new DwnRpcError(
+          JsonRpcErrorCodes.Forbidden,
+          'includeMaterializationConfirmation requires an authenticated local-node connection',
+        );
+      }
+      const result = await localDwn.applyReplicatedMessage(did, message, options);
+      if (await Message.getCid(message) === rootCid) {
+        rootResults.push(result);
+      }
+      return result;
+    });
+    const db = new Level<string, string>(`__TESTDATA__/sync-next-exact-role-retry-${crypto.randomUUID()}`);
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-exact-role-retry');
+    try {
+      await retainRoleRoot(progressStore, target, fixture.root.message);
+      const settle = sinon.stub(progressStore, 'settleQuarantineForProjection');
+      settle.onFirstCall().rejects(new Error('injected settlement failure'));
+      settle.callThrough();
+
+      await expect(retryOneQuarantinedRoot({ agent, progressStore, target }))
+        .rejects.toThrow('injected settlement failure');
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+
+      const read = await RecordsRead.create({
+        filter : { recordId: fixture.root.message.recordId },
+        signer : ownerSigner,
+      });
+      const readReply = await localDwn.processMessage(owner.uri, read.message);
+      expect(readReply.status.code).toBe(200);
+      expect(await DataStream.toBytes(readReply.entry!.data!)).toEqual(fixture.rootData);
+
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target }))
+        .toEqual({ kind: 'settled', appliedEntries: [] });
+      expect(rootResults.at(-1)).toEqual({ kind: 'Duplicate', materialized: true });
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toEqual([]);
+    } finally {
+      await progressStore.clear();
+      await db.close();
+      await dataStore.clear();
+      await messageStore.clear();
+      await resumableTaskStore.clear();
+      await localDwn.close();
+    }
+  });
+
+  it('cancels the verified role body when dependency admission fails', async () => {
+    const fixture = await createFixture();
+    let bodyCancelled = false;
+    let bodiesCreated = 0;
+    const agent = responseAgent(fixture, () => new ReadableStream<Uint8Array>({
+      start(): void {
+        bodiesCreated++;
+      },
+      cancel(): void {
+        bodyCancelled = true;
+      },
+    })) as any;
+    agent.permissions = { getPermissionForRequest: sinon.stub() };
+    const rootCid = await Message.getCid(fixture.root.message);
+    agent.dwn.applyReplicatedMessage = sinon.stub().callsFake(async (
+      _did: string,
+      message: GenericMessage,
+      options?: ReplicationApplyOptions,
+    ): Promise<ReplicationApplyResult> => {
+      if (options?.includeMaterializationConfirmation === true) {
+        return { kind: 'Superseded' };
+      }
+      return await Message.getCid(message) === rootCid
+        ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: PROTOCOL }] }
+        : { kind: 'Invalid', reason: 'injected dependency rejection' };
+    });
+    const target = roleRetryTarget(fixture.root.message, fixture.role.message.recordId);
+    const db = new Level<string, string>(`__TESTDATA__/sync-next-role-cancel-${crypto.randomUUID()}`);
+    const progressStore = new SyncNextProgressStore(db, 'sync-next-role-cancel');
+    try {
+      await retainRoleRoot(progressStore, target, fixture.root.message);
+
+      expect(await retryOneQuarantinedRoot({ agent, progressStore, target })).toEqual({ kind: 'pending' });
+      expect(bodiesCreated).toBe(1);
+      expect(bodyCancelled).toBe(true);
+      expect(await progressStore.getQuarantineForLink(syncNextLinkIdentity(target))).toHaveLength(1);
+    } finally {
+      await progressStore.clear();
+      await db.close();
+    }
   });
 
   it('represents an updated role initial write as an ordinary support entry', async () => {
@@ -635,6 +851,7 @@ describe('readRoleReplicationSupport', () => {
     roleData: Uint8Array;
     root: RecordsWrite;
     rootData: Uint8Array;
+    rootInitialWrite?: RecordsWriteMessage;
     support: RecordsReadReplicationSupportEntry[];
   }> {
     const rootData = new TextEncoder().encode('notebook');
@@ -692,6 +909,7 @@ describe('readRoleReplicationSupport', () => {
     fixture: Awaited<ReturnType<typeof createFixture>>,
     agent: any = responseAgent(fixture),
     expectedRoot?: RecordsDeleteMessage | RecordsWriteMessage,
+    runRemoteRequest?: SyncRemoteRequestRunner,
   ): ReturnType<typeof readRoleReplicationSupport> {
     return readRoleReplicationSupport({
       actorDid       : actor.uri,
@@ -703,11 +921,15 @@ describe('readRoleReplicationSupport', () => {
       protocol       : PROTOCOL,
       protocolPath   : fixture.root.message.descriptor.protocolPath!,
       protocolRole   : ROLE_PATH,
+      runRemoteRequest,
       sourceDid      : owner.uri,
     });
   }
 
-  function responseAgent(fixture: Awaited<ReturnType<typeof createFixture>>): object {
+  function responseAgent(
+    fixture: Awaited<ReturnType<typeof createFixture>>,
+    rootDataStream: () => ReadableStream<Uint8Array> = () => DataStream.fromBytes(fixture.rootData),
+  ): object {
     return {
       did : resolver,
       dwn : {
@@ -720,8 +942,9 @@ describe('readRoleReplicationSupport', () => {
           entry: {
             ...(message.descriptor.includeReplicationSupport === true
               ? {}
-              : { data: DataStream.fromBytes(fixture.rootData) }),
+              : { data: rootDataStream() }),
             recordsWrite: fixture.root.message,
+            ...(fixture.rootInitialWrite === undefined ? {} : { initialWrite: fixture.rootInitialWrite }),
           },
           roleRecordId : fixture.role.message.recordId,
           status       : { code: 200 },
@@ -729,6 +952,48 @@ describe('readRoleReplicationSupport', () => {
         })),
       },
     };
+  }
+
+  function roleRetryTarget(root: RecordsWriteMessage, roleRecordId: string): SyncTarget {
+    return {
+      authorization: {
+        actorDid     : actor.uri,
+        kind         : 'role',
+        protocolRole : ROLE_PATH,
+        roleRecordId,
+      },
+      authorizationEpoch : 'role-epoch',
+      did                : owner.uri,
+      dwnUrl             : 'https://owner.example.com',
+      projectionId       : 'role-projection',
+      scope              : {
+        contextId     : root.contextId!,
+        kind          : 'context',
+        protocol      : PROTOCOL,
+        protocolPaths : ['notebook'],
+      },
+    };
+  }
+
+  async function retainRoleRoot(
+    progressStore: SyncNextProgressStore,
+    target: SyncTarget,
+    message: RecordsWriteMessage,
+  ): Promise<void> {
+    const messageCid = await Message.getCid(message);
+    const link = await progressStore.getOrCreateLink({
+      ...syncNextLinkIdentity(target),
+      authorization : target.authorization,
+      scope         : target.scope,
+    });
+    const source = { epoch: 'source-epoch', position: '1', streamId: 'source-stream', messageCid };
+    const entry = { isLatestBaseState: true, message, messageCid, seq: '1' };
+    expect(await progressStore.commitPullPage(link, {
+      checkpoint   : source,
+      pageReceipts : [{ messageCid, source }],
+      quarantine   : [{ entry, messageCid, source }],
+      settled      : [],
+    })).toBe(true);
   }
 
   async function controlRecord(input: {
