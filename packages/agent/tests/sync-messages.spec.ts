@@ -324,13 +324,15 @@ describe('sync-messages', () => {
 
   describe('fetchRemoteMessages', () => {
     it('should fetch messages by CID from remote DWN', async () => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const messageCid = await Message.getCid(message);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
         rpc               : {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
             entry  : {
-              message: { descriptor: { interface: 'Protocols', method: 'Configure' } },
+              message,
             },
           }),
         },
@@ -339,12 +341,13 @@ describe('sync-messages', () => {
       const result = await fetchRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
+        messageCids : [messageCid],
         agent       : mockAgent,
       });
 
       expect(result).toHaveLength(1);
       expect(result[0].message).toBeDefined();
+      expect(result[0].verifiedMessageCid).toBe(messageCid);
     });
 
     it('should skip messages where remote returns non-200 status', async () => {
@@ -385,14 +388,16 @@ describe('sync-messages', () => {
     });
 
     it('should include dataStream for RecordsWrite messages with data', async () => {
-      const mockStream = new ReadableStream();
+      const write = await TestDataGenerator.generateRecordsWrite();
+      const messageCid = await Message.getCid(write.message);
+      const mockStream = streamFromBytes(write.dataBytes!);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         rpc               : {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
             entry  : {
-              message : { descriptor: { interface: 'Records', method: 'Write' } },
+              message : write.message,
               data    : mockStream,
             },
           }),
@@ -402,16 +407,17 @@ describe('sync-messages', () => {
       const result = await fetchRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
+        messageCids : [messageCid],
         agent       : mockAgent,
       });
 
       expect(result).toHaveLength(1);
-      expect(result[0].dataStream).toBe(mockStream);
+      expect(await readStreamBytes(result[0].dataStream!)).toEqual(write.dataBytes!);
     });
 
     it('should cap RecordsWrite data streams at the descriptor dataSize', async () => {
       const write = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([7]) });
+      const messageCid = await Message.getCid(write.message);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         rpc               : {
@@ -428,7 +434,7 @@ describe('sync-messages', () => {
       const result = await fetchRemoteMessages({
         did         : write.author.did,
         dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
+        messageCids : [messageCid],
         agent       : mockAgent,
       });
 
@@ -436,14 +442,45 @@ describe('sync-messages', () => {
       await expect(readStreamBytes(result[0].dataStream!)).rejects.toThrow(SyncDataSizeLimitExceededError);
     });
 
+    it('should reject and cancel a message that does not match the requested CID', async () => {
+      const requested = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array(50_000) });
+      const returned = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array(1_000_000) });
+      const requestedCid = await Message.getCid(requested.message);
+      const cancel = sinon.spy();
+      const pull = sinon.spy();
+      const data = new ReadableStream<Uint8Array>({ cancel, pull }, { highWaterMark: 0 });
+      const mockAgent = {
+        processDwnRequest : sinon.stub().resolves({ message: {} }),
+        rpc               : {
+          sendDwnRequest: sinon.stub().resolves({
+            status : { code: 200 },
+            entry  : { message: returned.message, data },
+          }),
+        },
+      } as any;
+
+      const result = await fetchRemoteMessages({
+        did         : requested.author.did,
+        dwnUrl      : 'https://dwn.example.com',
+        messageCids : [requestedCid],
+        agent       : mockAgent,
+      });
+
+      expect(result).toEqual([]);
+      expect(pull.notCalled).toBe(true);
+      expect(cancel.calledOnce).toBe(true);
+    });
+
     it('should not include dataStream for non-RecordsWrite messages', async () => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const messageCid = await Message.getCid(message);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
         rpc               : {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
             entry  : {
-              message: { descriptor: { interface: 'Protocols', method: 'Configure' } },
+              message,
             },
           }),
         },
@@ -452,7 +489,7 @@ describe('sync-messages', () => {
       const result = await fetchRemoteMessages({
         did         : 'did:example:alice',
         dwnUrl      : 'https://dwn.example.com',
-        messageCids : ['cid-1'],
+        messageCids : [messageCid],
         agent       : mockAgent,
       });
 
@@ -461,13 +498,15 @@ describe('sync-messages', () => {
     });
 
     it('should pass resolved delegate grant IDs when delegateDid is provided', async () => {
+      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const messageCid = await Message.getCid(message);
       const processDwnRequestStub = sinon.stub().resolves({ message: {} });
       const mockAgent = {
         processDwnRequest : processDwnRequestStub,
         rpc               : {
           sendDwnRequest: sinon.stub().resolves({
             status : { code: 200 },
-            entry  : { message: { descriptor: {} } },
+            entry  : { message },
           }),
         },
       } as any;
@@ -477,7 +516,7 @@ describe('sync-messages', () => {
         dwnUrl             : 'https://dwn.example.com',
         delegateDid        : 'did:example:delegate',
         permissionGrantIds : ['grant-1'],
-        messageCids        : ['cid-1'],
+        messageCids        : [messageCid],
         agent              : mockAgent,
       });
 
@@ -486,17 +525,26 @@ describe('sync-messages', () => {
     });
 
     it('should process all requested messages with bounded concurrency', async () => {
+      const generated = await Promise.all(Array.from(
+        { length: 15 },
+        () => TestDataGenerator.generateProtocolsConfigure(),
+      ));
+      const messagesByCid = new Map(await Promise.all(generated.map(async ({ message }) =>
+        [await Message.getCid(message), message] as const
+      )));
       const mockAgent = {
-        processDwnRequest : sinon.stub().resolves({ message: {} }),
-        rpc               : {
-          sendDwnRequest: sinon.stub().resolves({
+        processDwnRequest: sinon.stub().callsFake(async ({ messageParams }: any) => ({
+          message: { requestedCid: messageParams.messageCid },
+        })),
+        rpc: {
+          sendDwnRequest: sinon.stub().callsFake(async ({ message }: any) => ({
             status : { code: 200 },
-            entry  : { message: { descriptor: {} } },
-          }),
+            entry  : { message: messagesByCid.get(message.requestedCid) },
+          })),
         },
       } as any;
 
-      const cids = Array.from({ length: 15 }, (_, i): string => `cid-${i}`);
+      const cids = [...messagesByCid.keys()];
 
       const result = await fetchRemoteMessages({
         did         : 'did:example:alice',
