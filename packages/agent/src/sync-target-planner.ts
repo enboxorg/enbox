@@ -24,6 +24,7 @@ export interface SyncTargetPlanningResolver {
     source: FollowedSyncSource,
     delegateDid?: string,
   ): Promise<SyncTarget>;
+  withCurrentRoleGrant(target: SyncTarget): Promise<SyncTarget>;
 }
 
 export type SyncTargetPlannerParams = {
@@ -164,6 +165,11 @@ export class SyncTargetPlanner {
       targets,
     });
     return targets;
+  }
+
+  /** Refresh transient delegated grant material immediately before target execution. */
+  public withCurrentRoleGrant(target: SyncTarget): Promise<SyncTarget> {
+    return this._getTargetResolver().withCurrentRoleGrant(target);
   }
 
   /** Shared prerequisite for endpoint planning and durable-link retention. */
