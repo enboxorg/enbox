@@ -513,12 +513,18 @@ export async function fetchRemoteMessages({
       }
 
       const replyEntry = reply.entry;
+      const replyMessageCid = await Message.getCid(replyEntry.message).catch((): undefined => undefined);
+      if (replyMessageCid !== messageCid) {
+        await replyEntry.data?.cancel().catch((): void => {});
+        return undefined;
+      }
+
       let dataStream: ReadableStream<Uint8Array> | undefined;
       if (isRecordsWrite(replyEntry) && replyEntry.data) {
         dataStream = capRecordsWriteDataStream(replyEntry.message, replyEntry.data);
       }
 
-      return { message: replyEntry.message, dataStream };
+      return { message: replyEntry.message, dataStream, verifiedMessageCid: messageCid };
     }));
 
     for (const result of batchResults) {

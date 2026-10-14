@@ -1,3 +1,5 @@
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+
 import type { AdmitOutcome } from '../src/sync-admit-closure.js';
 
 import sinon from 'sinon';
@@ -7,6 +9,7 @@ import { DwnErrorCode, Encoder, ENCRYPTION_CONTROL_AUDIENCE_PATH, Message, TestD
 
 import { admitClosure } from '../src/sync-admit-closure.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { SyncWorkInterruptedError } from '../src/sync-messages.js';
 
 /** CIDs of freshly-applied entries, in admission order ([] for non-admitted outcomes). */
 function freshCidsOf(outcome: AdmitOutcome): string[] {
@@ -97,6 +100,114 @@ describe('admitClosure', () => {
     expect(agent.dwn.applyReplicatedMessage.callCount).toBe(3);
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(initial.message);
     expect(agent.dwn.applyReplicatedMessage.thirdCall.args[1]).toEqual(update.message);
+  });
+
+  it('cancels a root body opened before a missing dependency is retried', async () => {
+    const protocol = 'https://example.com/stream-cleanup';
+    const parent = await TestDataGenerator.generateRecordsWrite({
+      data         : new Uint8Array([1]),
+      protocol,
+      protocolPath : 'parent',
+    });
+    const child = await TestDataGenerator.generateRecordsWrite({
+      author          : parent.author,
+      data            : new Uint8Array([2]),
+      parentContextId : parent.message.contextId,
+      protocol,
+      protocolPath    : 'parent/child',
+    });
+    const parentCid = await Message.getCid(parent.message);
+    const childCid = await Message.getCid(child.message);
+    const cancelUnusedBody = sinon.spy();
+    const unusedBody = new ReadableStream<Uint8Array>({ cancel: cancelUnusedBody }, { highWaterMark: 0 });
+    const childBodyFactory = sinon.stub();
+    childBodyFactory.onFirstCall().resolves(unusedBody);
+    childBodyFactory.onSecondCall().resolves(streamFromBytes(child.dataBytes!));
+    const agent = createMockAgent();
+
+    agent.rpc.sendDwnRequest.resolves({
+      status : { code: 200 },
+      entry  : {
+        message : parent.message,
+        data    : streamFromBytes(parent.dataBytes!),
+      },
+    });
+    let parentMissing = true;
+    agent.dwn.applyReplicatedMessage.callsFake(async (
+      _tenant: string,
+      message: unknown,
+      options: { dataStream: ReadableStream<Uint8Array> },
+    ): Promise<ReplicationApplyResult> => {
+      if (message === child.message && parentMissing) {
+        parentMissing = false;
+        return {
+          kind    : 'Incomplete',
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, messageCid: parentCid, protocol }],
+        };
+      }
+      await readStreamBytes(options.dataStream);
+      return { kind: 'Applied' };
+    });
+
+    const outcome = await admitClosure(childCid, {
+      did        : child.author.did,
+      dwnUrl     : 'https://dwn.example.com',
+      agent,
+      prefetched : [{
+        dataStreamFactory : childBodyFactory,
+        isLatestBaseState : true,
+        message           : child.message,
+      }],
+    });
+
+    expect(outcome).toMatchObject({ kind: 'admitted', handledCids: [parentCid, childCid] });
+    expect(childBodyFactory.calledTwice).toBe(true);
+    expect(cancelUnusedBody.calledOnce).toBe(true);
+  });
+
+  it('cancels a fetched dependency body when interrupted before its admission pass', async () => {
+    const protocol = 'https://example.com/interrupted-dependency';
+    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const dependency = await TestDataGenerator.generateRecordsWrite({
+      data: new Uint8Array([4, 5, 6]),
+      protocol,
+    });
+    const rootCid = await Message.getCid(root.message);
+    const cancelDependencyBody = sinon.spy();
+    const dependencyBody = new ReadableStream<Uint8Array>(
+      { cancel: cancelDependencyBody },
+      { highWaterMark: 0 },
+    );
+    const agent = createMockAgent();
+    let interrupted = false;
+
+    agent.rpc.sendDwnRequest.callsFake(async () => {
+      interrupted = true;
+      return {
+        status : { code: 200 },
+        entry  : { recordsWrite: dependency.message, data: dependencyBody },
+      };
+    });
+    agent.dwn.applyReplicatedMessage.resolves({
+      kind    : 'Incomplete',
+      missing : [{
+        type     : 'RecordData',
+        dataCid  : dependency.message.descriptor.dataCid,
+        protocol,
+        recordId : dependency.message.recordId,
+      }],
+    });
+
+    await expect(admitClosure(rootCid, {
+      did            : root.author.did,
+      dwnUrl         : 'https://dwn.example.com',
+      agent,
+      prefetched     : [{ message: root.message }],
+      shouldContinue : (): boolean => !interrupted,
+    })).rejects.toBeInstanceOf(SyncWorkInterruptedError);
+
+    expect(agent.dwn.applyReplicatedMessage.calledOnce).toBe(true);
+    expect(cancelDependencyBody.calledOnce).toBe(true);
   });
 
   it('defers missing dependencies without remote reads during page intake', async () => {
