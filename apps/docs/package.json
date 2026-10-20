@@ -6,19 +6,18 @@
     "build": "next build",
     "dev": "next dev",
     "deploy": "wrangler pages deploy out --project-name=enbox-docs",
-    "start": "serve out",
+    "start": "vite preview --outDir out",
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx",
     "lint": "biome lint --error-on-warnings",
     "format": "biome format --write"
   },
   "dependencies": {
-    "@orama/orama": "3.1.18",
-    "fumadocs-core": "16.6.8",
-    "fumadocs-mdx": "14.2.9",
-    "fumadocs-ui": "16.6.8",
+    "fumadocs-core": "16.17.7",
+    "fumadocs-mdx": "15.4.9",
+    "fumadocs-ui": "16.17.7",
     "lucide-react": "0.575.0",
-    "next": "16.3.6",
+    "next": "16.3.8",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tailwind-merge": "3.5.0"
@@ -30,10 +29,10 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "postcss": "8.5.23",
-    "serve": "14.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "wrangler": "3.114.17",
+    "vite": "8.3.4",
+    "wrangler": "4.151.3",
     "@biomejs/biome": "2.4.6"
   }
 }

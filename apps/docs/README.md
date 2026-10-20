@@ -16,7 +16,11 @@ The docs site is **excluded** from the monorepo-wide `bun run build`, `bun run l
 ```bash
 bun run docs:dev        # Dev server on localhost:3000
 bun run docs:build      # Static export to apps/docs/out/
+bun run --filter @enbox/docs start  # Preview the static export locally with Vite
 ```
+
+The preview command serves the existing `out/` directory on port 4173. Pass
+`--port <port>` to choose another port. Cloudflare Pages serves the deployed site.
 
 ## Content
 
