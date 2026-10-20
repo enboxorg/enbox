@@ -190,38 +190,19 @@ activatePolyfills({
 
 Register and await the worker before initializing Enbox or rendering the app.
 This prevents the first screen from issuing DRLs before a worker controls the
-page. The second `activatePolyfills()` call below runs in the page only; it adds
-DRL-aware link handling and loading UI without registering another worker.
+page. `prepareBrowser()` waits for the requested registration's active worker
+to control this page, then activates page-only DRL links and loading UI without
+registering a second worker.
 
 ```tsx title="src/main.tsx"
-import { activatePolyfills } from '@enbox/browser';
+import { prepareBrowser } from '@enbox/browser';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { Connection } from './Connection.js';
 import { connectionStore } from './enbox/application.js';
 
-async function activateDweb(): Promise<void> {
-  if (!('serviceWorker' in navigator)) {
-    throw new Error('This browser does not support the DWeb service worker.');
-  }
-
-  await navigator.serviceWorker.register('/sw.js', { type: 'module' });
-  await navigator.serviceWorker.ready;
-
-  if (navigator.serviceWorker.controller === null) {
-    await new Promise<void>((resolve) => {
-      navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
-        once: true,
-      });
-    });
-  }
-
-  activatePolyfills({ serviceWorker: false });
-}
-
-async function main(): Promise<void> {
-  await activateDweb();
+async function startApplication(): Promise<void> {
   await connectionStore.initialize();
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
@@ -230,11 +211,58 @@ async function main(): Promise<void> {
   );
 }
 
-void main().catch((error: unknown) => {
+function showStartupError(error: unknown): void {
   console.error('Application startup failed:', error);
   document.getElementById('root')!.textContent = 'Application startup failed.';
-});
+}
+
+const workerUrl = `${import.meta.env.BASE_URL}${import.meta.env.DEV ? 'dev-sw.js?dev-sw' : 'sw.js'}`;
+void prepareBrowser(workerUrl, {
+  registrationOptions: { type: 'module', scope: import.meta.env.BASE_URL },
+}).then(startApplication).catch(showStartupError);
 ```
+
+The default 20-second timeout bounds URL registration and the wait for control.
+Pass `timeoutMs` to change it, or an `AbortSignal` to cancel the wait when the
+caller is disposed. Cancellation does not unregister the worker or undo an
+in-progress browser registration. The helper removes its listeners and does
+not activate page polyfills after cancellation or failure.
+
+### Reuse a PWA registration
+
+Keep URL registration above for this module-worker recipe. If an existing PWA
+registrar owns registration, pass its `ServiceWorkerRegistration` through its
+callback instead of adding another registration path:
+
+```ts
+function onRegisteredSW(
+  _workerUrl: string,
+  registration: ServiceWorkerRegistration | undefined,
+): void {
+  if (registration === undefined) {
+    showStartupError(new Error('The application worker could not be registered.'));
+    return;
+  }
+  void prepareBrowser(registration).then(startApplication).catch(showStartupError);
+}
+```
+
+The existing registrar must match the worker's actual format: `module` for
+ES-module output, or `classic` for a classic/IIFE build. For example,
+`virtual:pwa-register` uses classic registration in production, so it cannot
+register the ES-module worker above. `registrationOptions` applies only to URL
+inputs; passing a registration does not register it again or change its type.
+Use a registration from this page's `navigator.serviceWorker`, not a wrapper
+obtained from another window.
+
+An existing active worker controlling this page is sufficient even when an
+update is waiting. Preparation does not call `skipWaiting()`, claim clients,
+or reload the page. The worker-side `activatePolyfills()` already calls
+`skipWaiting()` and `clients.claim()`; its immediate takeover still applies
+when the PWA registrar uses prompt mode. The preparation timeout starts when
+the helper is called, after the external registrar has returned a registration.
+In React, keep that registrar mounted outside the SDK subtree being gated, and
+mount or initialize the subtree only after preparation succeeds.
 
 The page owns the connection store and WebSockets. The service worker owns
 fetch interception and precaching; browsers may terminate it between events,
