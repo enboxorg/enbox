@@ -1,5 +1,11 @@
 # @enbox/protocol-codegen
 
+## 0.1.9
+
+### Patch Changes
+
+- [#1789](https://github.com/enboxorg/enbox/pull/1789) [`43ab272`](https://github.com/enboxorg/enbox/commit/43ab272df1be874e62f07a444fac0a3d115170ed) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Update the optional MySQL driver and S3 SDK dependencies to patched releases, including matching peer dependency versions, and align the code generator with the patched esbuild toolchain.
+
 ## 0.1.8
 
 ### Patch Changes
