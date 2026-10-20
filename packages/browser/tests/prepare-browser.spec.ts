@@ -125,7 +125,7 @@ describe('prepareBrowser', () => {
     try {
       const frameWindow = frame.contentWindow as Window & typeof globalThis;
       const script = new frameWindow.URL('/app-worker.js', document.baseURI);
-      expect(script instanceof URL).toBe(false);
+      expect(script).not.toBeInstanceOf(URL);
       container.claim(registration, worker());
 
       expect(await prepareBrowser(script)).toBe(registration.native);
