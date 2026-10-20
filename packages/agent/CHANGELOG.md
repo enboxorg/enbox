@@ -1,5 +1,49 @@
 # @enbox/agent
 
+## 0.8.49
+
+### Patch Changes
+
+- [#1720](https://github.com/enboxorg/enbox/pull/1720) [`da63515`](https://github.com/enboxorg/enbox/commit/da6351568741aa6e5c194eb0600e3f0ab2a1185e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Bound populated sync catch-up traffic by fetching multi-missing pages inline and avoiding payload reads for retained non-latest writes. Keep sparse inventory comparisons lightweight, retry temporarily unavailable large payloads, and stream them only when needed.
+
+- [#1783](https://github.com/enboxorg/enbox/pull/1783) [`a72a98c`](https://github.com/enboxorg/enbox/commit/a72a98c4988d5ee5b777dff0aa41a99f03ce7c64) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Hydrate quarantined role-authorized writes through authenticated replication support.
+
+- [#1760](https://github.com/enboxorg/enbox/pull/1760) [`1bf3e9e`](https://github.com/enboxorg/enbox/commit/1bf3e9e1d0b12f4967050ef4006305cebda6840d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - refactor: retain sync-next quarantine input in bounded local-profile storage without a vault dependency
+
+- [#1726](https://github.com/enboxorg/enbox/pull/1726) [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add immutable per-instance DID DHT gateway configuration across creation, resolution, publication, auth, anonymous reads, and browser DRLs, and keep failed DID updates out of local cache and storage.
+
+- [#1758](https://github.com/enboxorg/enbox/pull/1758) [`aeee9f2`](https://github.com/enboxorg/enbox/commit/aeee9f272825812e6fd0b6ba805b4b9099f20ad2) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add the isolated durable progress store and plaintext quarantine for the next sync engine
+
+- [#1771](https://github.com/enboxorg/enbox/pull/1771) [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Distinguish an indexed replicated write with unavailable record data from a general remote storage failure.
+
+- [#1761](https://github.com/enboxorg/enbox/pull/1761) [`2da799e`](https://github.com/enboxorg/enbox/commit/2da799e4e3e415c139e33538253ee149fc78fc5e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: retry one retained sync-next quarantine root through normal admission
+
+- [#1782](https://github.com/enboxorg/enbox/pull/1782) [`50ce84d`](https://github.com/enboxorg/enbox/commit/50ce84dba5c8a2200e32e81345b540dea8fb8ff1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Settle role-authorized quarantine from confirmed materialized local state.
+
+- [#1781](https://github.com/enboxorg/enbox/pull/1781) [`5d91f62`](https://github.com/enboxorg/enbox/commit/5d91f62132d7424e21768647e763848aa0d9abef) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Settle inbound quarantine when a newer current RecordsWrite is confirmed materialized.
+
+- [#1759](https://github.com/enboxorg/enbox/pull/1759) [`6dd55d7`](https://github.com/enboxorg/enbox/commit/6dd55d7515d0ed816779527394ebd4216ec70333) Thanks [@LiranCohen](https://github.com/LiranCohen)! - feat: add one-page remote intake for the next sync engine
+
+- [#1765](https://github.com/enboxorg/enbox/pull/1765) [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Carry opt-in RecordsWrite materialization confirmation through agent remote mode and authenticated local-node HTTP transport.
+
+- [#1767](https://github.com/enboxorg/enbox/pull/1767) [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose opt-in `includeMaterializationConfirmation` for replicated writes. Report `handledCids` for Applied, Duplicate, and Superseded outcomes, and `appliedEntries` only for Applied outcomes.
+
+- [#1774](https://github.com/enboxorg/enbox/pull/1774) [`3bf7330`](https://github.com/enboxorg/enbox/commit/3bf733059dff8f5ff92ce793b59ef26456bcc055) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Retry one retained sync-next delivery obligation against its exact endpoint without advancing or resetting the feed checkpoint.
+
+- [#1776](https://github.com/enboxorg/enbox/pull/1776) [`4472609`](https://github.com/enboxorg/enbox/commit/44726093a9c29d9b2644b81e7a4ce095e27cb5f6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Settle older sync-next write receipts after a newer current write is handled by the same endpoint.
+
+- [#1770](https://github.com/enboxorg/enbox/pull/1770) [`c832a6e`](https://github.com/enboxorg/enbox/commit/c832a6e90a5a234f7b7f0453344056e7cb020fc4) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add bounded sync-next push-page delivery with durable endpoint-specific obligations for unsettled local feed entries.
+
+- [#1766](https://github.com/enboxorg/enbox/pull/1766) [`75b3906`](https://github.com/enboxorg/enbox/commit/75b390632e288629d269c66b6fcc8d04b253f140) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow sync-next quarantine retry to settle an exact RecordsWrite already materialized in the local DWN, even when its source is unavailable. Stop retrying terminal JSON-RPC errors returned as HTTP 500 so unsupported local confirmation falls back promptly.
+
+- [#1778](https://github.com/enboxorg/enbox/pull/1778) [`a91f6f3`](https://github.com/enboxorg/enbox/commit/a91f6f3e7e54ce88dd893bb4cbab6b84be40c71f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Compose bounded sync-next page and retry work with shared endpoint request limits.
+
+- Updated dependencies [[`7c3ce8d`](https://github.com/enboxorg/enbox/commit/7c3ce8d476bb40d20b843a652c1dc4e9717b0347), [`c92a759`](https://github.com/enboxorg/enbox/commit/c92a759524472fedb266f5eb25760d8ee1359898), [`2d1501b`](https://github.com/enboxorg/enbox/commit/2d1501b4e1f80061ea65f980e3595dc12850277c), [`05b4177`](https://github.com/enboxorg/enbox/commit/05b41776e92bd1f42462726d7a7d4bb2a0fcb9de), [`d435c4f`](https://github.com/enboxorg/enbox/commit/d435c4fadbeb64aae824a4c1f0497ebc49c378b3), [`0bcd330`](https://github.com/enboxorg/enbox/commit/0bcd330cb59649e6fcf3a858f636d286a9c26bf3), [`8f06093`](https://github.com/enboxorg/enbox/commit/8f0609317f1097e922db0b8a903ecf3454732827), [`b3e12b1`](https://github.com/enboxorg/enbox/commit/b3e12b10323dd0f8d4ed22e44a2a487111ff7862), [`fe33c65`](https://github.com/enboxorg/enbox/commit/fe33c65633c11a8c4b10f11d2751a0406b9c7a0f), [`5d4c035`](https://github.com/enboxorg/enbox/commit/5d4c035563429242cb50b19907091701e373ec9b), [`75b3906`](https://github.com/enboxorg/enbox/commit/75b390632e288629d269c66b6fcc8d04b253f140)]:
+  - @enbox/dwn-sdk-js@0.4.28
+  - @enbox/dwn-clients@0.4.36
+  - @enbox/dids@0.1.13
+  - @enbox/connect@0.1.24
+
 ## 0.8.48
 
 ### Patch Changes
