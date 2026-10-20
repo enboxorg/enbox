@@ -11,13 +11,16 @@ export type PrepareBrowserOptions = {
   /** Bounds registration and control together. Defaults to 20 seconds. */
   timeoutMs?: number;
   /** Page polyfills, activated after control with serviceWorker forced to false. */
-  polyfills?: Omit<ActivatePolyfillsOptions, 'path' | 'serviceWorker'>;
+  polyfills?: Omit<ActivatePolyfillsOptions, 'path' | 'serviceWorker' | 'onCacheCheck'>;
 };
 
 /**
  * Await an application worker controlling this page, then activate page polyfills.
  * Existing registrations use their currently active worker, even when an update
  * waits. Script URLs additionally require the controller's script URL to match.
+ * Obtain registrations from this page's navigator.serviceWorker; worker object
+ * identity is specific to each window, so another window's registration cannot
+ * be compared to this page's controller.
  * This helper never forces worker takeover, reloads, or unregisters a worker.
  */
 export async function prepareBrowser(
@@ -33,7 +36,7 @@ export async function prepareBrowser(
     throw new Error('prepareBrowser: service workers are unavailable in this page.');
   }
   const container = navigator.serviceWorker;
-  const script = typeof worker === 'string' || worker instanceof URL ? new URL(worker, document.baseURI) : undefined;
+  const script = typeof worker === 'string' || 'href' in worker ? new URL(worker, document.baseURI) : undefined;
   if (script !== undefined) {
     script.hash = '';
   }

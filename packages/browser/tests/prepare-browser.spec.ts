@@ -119,6 +119,24 @@ describe('prepareBrowser', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('accepts a URL created in another window', async () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    try {
+      const frameWindow = frame.contentWindow as Window & typeof globalThis;
+      const script = new frameWindow.URL('/app-worker.js', document.baseURI);
+      expect(script instanceof URL).toBe(false);
+      container.claim(registration, worker());
+
+      expect(await prepareBrowser(script)).toBe(registration.native);
+      expect(container.register).toHaveBeenCalledWith(script.href, undefined);
+      expect(activatePolyfills).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      frame.remove();
+    }
+  });
+
   it('waits for first-install control after registration and activation', async () => {
     const installed = worker('/app-worker.js', 'installing');
     registration.installing = installed;

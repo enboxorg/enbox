@@ -230,13 +230,11 @@ not activate page polyfills after cancellation or failure.
 
 ### Reuse a PWA registration
 
-If a PWA tool owns registration, pass its `ServiceWorkerRegistration` instead
-of registering the URL again. For example, a `vite-plugin-pwa` registration
-callback can start the application through the functions above:
+Keep URL registration above for this module-worker recipe. If an existing PWA
+registrar owns registration, pass its `ServiceWorkerRegistration` through its
+callback instead of adding another registration path:
 
 ```ts
-import { registerSW } from 'virtual:pwa-register';
-
 function onRegisteredSW(
   _workerUrl: string,
   registration: ServiceWorkerRegistration | undefined,
@@ -247,24 +245,24 @@ function onRegisteredSW(
   }
   void prepareBrowser(registration).then(startApplication).catch(showStartupError);
 }
-
-registerSW({ onRegisteredSW, onRegisterError: showStartupError });
 ```
 
-Use this callback in place of the URL registration call. The PWA tool remains
-the sole registrar and keeps its manifest, precache routes, update checks, and
-update UI. `registrationOptions` applies only to URL inputs; an existing
-registration keeps its worker type. Use `module` for an ES-module worker and
-`classic` for a classic/IIFE build, matching the tool's development and
-production output.
+The existing registrar must match the worker's actual format: `module` for
+ES-module output, or `classic` for a classic/IIFE build. For example,
+`virtual:pwa-register` uses classic registration in production, so it cannot
+register the ES-module worker above. `registrationOptions` applies only to URL
+inputs; passing a registration does not register it again or change its type.
+Use a registration from this page's `navigator.serviceWorker`, not a wrapper
+obtained from another window.
 
 An existing active worker controlling this page is sufficient even when an
 update is waiting. Preparation does not call `skipWaiting()`, claim clients,
-reload the page, or change the application's update policy. Its timeout starts
-when preparation is called; registration performed earlier by another tool is
-outside that wait. In React, keep the PWA registration owner mounted outside
-the SDK subtree being gated, and mount or initialize that subtree only after
-preparation succeeds.
+or reload the page. The worker-side `activatePolyfills()` already calls
+`skipWaiting()` and `clients.claim()`; its immediate takeover still applies
+when the PWA registrar uses prompt mode. The preparation timeout starts when
+the helper is called, after the external registrar has returned a registration.
+In React, keep that registrar mounted outside the SDK subtree being gated, and
+mount or initialize the subtree only after preparation succeeds.
 
 The page owns the connection store and WebSockets. The service worker owns
 fetch interception and precaching; browsers may terminate it between events,
