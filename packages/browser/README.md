@@ -63,6 +63,12 @@ Every browser dapp must register an application-owned service worker that calls
 WebSockets; the worker owns DRL fetch interception and the offline shell. Keep
 the default Level/IndexedDB storage stack.
 
+Before initializing the connection store, await `prepareBrowser(workerUrl,
+{ registrationOptions: { type: 'module' } })` for a module worker, or pass an
+existing `ServiceWorkerRegistration` when a PWA tool owns registration. The
+helper waits for that worker to control the page and activates page polyfills.
+It supports a timeout and abort signal without changing worker update policy.
+
 Current browser-conditioned packages work in page and worker builds without
 Enbox-specific Node-global, `process`, or IIFE shims. Follow the
 [browser dapp guide][browser-dapp-guide-link] for the canonical Vite, worker,

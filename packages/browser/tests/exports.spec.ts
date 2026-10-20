@@ -120,6 +120,11 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.BrowserConnectHandler).toBe('function');
   });
 
+  it('exports prepareBrowser', async () => {
+    const mod = await getBrowserExports();
+    expect(typeof mod.prepareBrowser).toBe('function');
+  });
+
   it('exports browser object URL resources', async () => {
     const mod = await getBrowserExports();
     expect(typeof mod.createBlobUrlPool).toBe('function');

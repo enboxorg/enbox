@@ -52,6 +52,8 @@ export type { ConnectApproval, ConnectRequest } from '@enbox/connect';
 // DWeb Connect popup transports, wallet selector, DRL polyfills.
 
 export * from './web-features.js';
+export { prepareBrowser } from './prepare-browser.js';
+export type { PrepareBrowserOptions } from './prepare-browser.js';
 export { BrowserConnectHandler, DEFAULT_WALLETS } from './browser-connect-handler.js';
 export type { BrowserConnectHandlerOptions, WalletOption } from './browser-connect-handler.js';
 export { connectViaPopup, PopupClientTransport, PopupWindowClosedError } from './dweb-connect-client.js';
