@@ -30,9 +30,9 @@ export default defineConfig({
     },
   },
   test: {
-    // Only utils.spec.ts is browser-safe.
-    // All other test files depend on PlatformAgentTestHarness / EnboxUserAgent (LevelDB).
+    // Exercise native File branding and local DWN round trips without network services.
     include: [
+      'tests/record-file.spec.ts',
       'tests/utils.spec.ts',
     ],
     testTimeout : 15_000,
