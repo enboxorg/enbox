@@ -394,17 +394,20 @@ export class DidKey extends DidMethod {
       throw new DidError(DidErrorCode.MethodNotSupported, `Method not supported`);
     }
 
-    // Use the given PortableDid to construct the BearerDid object.
-    const did = await BearerDid.import({ portableDid, keyManager });
-
-    // Validate that the given DID document contains exactly one verification method.
-    // Note: The non-undefined assertion is necessary because the type system cannot infer that
-    // the `verificationMethod` property is defined -- which is checked by `BearerDid.import()`.
-    if (did.document.verificationMethod!.length !== 1) {
-      throw new DidError(DidErrorCode.InvalidDidDocument, `DID document must contain exactly one verification method`);
+    // Method-specific constraints must be checked before private keys enter the target KMS.
+    if (portableDid.document.verificationMethod?.length !== 1) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID document must contain exactly one verification method');
     }
 
-    return did;
+    if (portableDid.document.id !== portableDid.uri) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID document id must match the imported DID');
+    }
+    const publicKey = portableDid.document.verificationMethod[0].publicKeyJwk;
+    if (!publicKey || `did:key:${await DidKeyUtils.publicKeyToMultibaseId({ publicKey })}` !== portableDid.uri) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID identifier must match its public key');
+    }
+
+    return await BearerDid.import({ portableDid, keyManager });
   }
 
   /**

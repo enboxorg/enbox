@@ -1,11 +1,13 @@
 import type {
   InferKeyGeneratorAlgorithm,
+  KeyImporterExporter,
   KeyManager,
+  KmsExportKeyParams,
+  KmsImportKeyParams,
   LocalKeyManager,
 } from '@enbox/crypto';
 
 import type { BearerDid } from '../bearer-did.js';
-import type { DidMetadata } from '../types/portable-did.js';
 import type {
   DidDocument,
   DidResolutionOptions,
@@ -13,6 +15,7 @@ import type {
   DidVerificationMethod,
   DidVerificationRelationship,
 } from '../types/did-core.js';
+import type { DidMetadata, PortableDid } from '../types/portable-did.js';
 
 /**
  * Represents options during the creation of a Decentralized Identifier (DID).
@@ -108,6 +111,12 @@ export interface DidMethodApi<
   create(params: {
     keyManager?: TKms;
     options?: TOptions;
+  }): Promise<TDid>;
+
+  /** Imports a portable DID after validating the method's identifier and document constraints. */
+  import(params: {
+    keyManager?: KeyManager & KeyImporterExporter<KmsImportKeyParams, string, KmsExportKeyParams>;
+    portableDid: PortableDid;
   }): Promise<TDid>;
 
   /**

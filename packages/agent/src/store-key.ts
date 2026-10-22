@@ -1,7 +1,7 @@
 import type { Jwk } from '@enbox/crypto';
 
+import { computeJwkThumbprint, isPrivateJwk, KEY_URI_PREFIX_JWK } from '@enbox/crypto';
 import { Convert, Stream } from '@enbox/common';
-import { isPrivateJwk, KEY_URI_PREFIX_JWK } from '@enbox/crypto';
 
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
@@ -28,8 +28,8 @@ export class DwnKeyStore extends DwnDataStore<Jwk> {
     schema       : this._recordProtocolDefinition.types.privateJwk.schema,
   };
 
-  protected getStoredObjectId(storedKey: Jwk): string {
-    return `${KEY_URI_PREFIX_JWK}${storedKey.kid}`;
+  protected async getStoredObjectId(storedKey: Jwk): Promise<string> {
+    return `${KEY_URI_PREFIX_JWK}${await computeJwkThumbprint({ jwk: storedKey })}`;
   }
 
   protected isStoredObject(value: unknown): value is Jwk {

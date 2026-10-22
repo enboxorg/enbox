@@ -27,6 +27,7 @@ import {
   computeJwkThumbprint,
   CryptoError,
   CryptoErrorCode,
+  CryptoUtils,
   EcdsaAlgorithm,
   EdDsaAlgorithm,
   isPrivateJwk,
@@ -73,7 +74,7 @@ const supportedAlgorithms = {
   },
   'secp256r1': {
     implementation : EcdsaAlgorithm,
-    names          : ['ES256', 'secp256r1'] as const,
+    names          : ['ES256', 'secp256r1', 'P-256'] as const,
   },
   'SHA-256': {
     implementation : Sha2Algorithm,
@@ -464,9 +465,8 @@ export class LocalKeyManager implements AgentKeyManager {
    * cryptographic operations. It is particularly useful for initializing the KMS with pre-existing
    * keys or for restoring keys from backups.
    *
-   * Note that, if defined, the `kid` (key ID) property of the JWK is used as the key URI for the
-   * imported key. If the `kid` property is not provided, the key URI is computed from the JWK
-   * thumbprint of the key.
+   * The key URI is derived from the JWK thumbprint. A supplied `kid` is preserved as metadata;
+   * if omitted, it is set to the thumbprint.
    *
    * @example
    * ```ts
@@ -483,7 +483,7 @@ export class LocalKeyManager implements AgentKeyManager {
   public async importKey({ key }:
     KmsImportKeyParams
   ): Promise<string> {
-    if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
+    await CryptoUtils.validateKeyImport(key, (candidate: Jwk): string => this.getAlgorithmName({ key: candidate }));
 
     // Make a deep copy of the key to avoid mutating the original.
     const privateKey = structuredClone(key);

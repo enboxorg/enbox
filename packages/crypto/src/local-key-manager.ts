@@ -20,11 +20,12 @@ import type {
   KmsVerifyParams,
 } from './types/params-kms.js';
 
+import { CryptoUtils } from './utils.js';
 import { EcdsaAlgorithm } from './algorithms/ecdsa.js';
 import { EdDsaAlgorithm } from './algorithms/eddsa.js';
 import { Sha2Algorithm } from './algorithms/sha-2.js';
 import { X25519Algorithm } from './algorithms/x25519.js';
-import { computeJwkThumbprint, isPrivateJwk, KEY_URI_PREFIX_JWK } from './jose/jwk.js';
+import { computeJwkThumbprint, KEY_URI_PREFIX_JWK } from './jose/jwk.js';
 
 /**
  * `supportedAlgorithms` is an object mapping algorithm names to their respective implementations
@@ -45,7 +46,7 @@ const supportedAlgorithms = {
   },
   'secp256r1': {
     implementation : EcdsaAlgorithm,
-    names          : ['ES256', 'secp256r1'],
+    names          : ['ES256', 'secp256r1', 'P-256'],
   },
   'SHA-256': {
     implementation : Sha2Algorithm,
@@ -321,9 +322,8 @@ export class LocalKeyManager implements
    * cryptographic operations. It is particularly useful for initializing the KMS with pre-existing
    * keys or for restoring keys from backups.
    *
-   * Note that, if defined, the `kid` (key ID) property of the JWK is used as the key URI for the
-   * imported key. If the `kid` property is not provided, the key URI is computed from the JWK
-   * thumbprint of the key.
+   * The key URI is derived from the JWK thumbprint. A supplied `kid` is preserved as metadata;
+   * if omitted, it is set to the thumbprint.
    *
    * @example
    * ```ts
@@ -340,7 +340,7 @@ export class LocalKeyManager implements
   public async importKey({ key }:
     KmsImportKeyParams
   ): Promise<string> {
-    if (!isPrivateJwk(key)) {throw new TypeError('Invalid key provided. Must be a private key in JWK format.');}
+    await CryptoUtils.validateKeyImport(key, (candidate: Jwk): string => this.getAlgorithmName({ key: candidate }));
 
     // Make a deep copy of the key to avoid mutating the original.
     const privateKey = structuredClone(key);

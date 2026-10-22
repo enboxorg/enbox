@@ -452,6 +452,10 @@ describe('JWK', () => {
       expect(isPublicJwk(validRsaJwk)).toBe(false);
     });
 
+    it('returns false for RSA secret material without the private exponent', () => {
+      expect(isPublicJwk({ kty: 'RSA', n: 'modulus', e: 'exponent', p: 'private-prime' })).toBe(false);
+    });
+
     it('returns false for non-object inputs', () => {
       expect(isPublicJwk(null)).toBe(false);
       expect(isPublicJwk(undefined)).toBe(false);

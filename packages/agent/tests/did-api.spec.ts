@@ -321,6 +321,39 @@ describe('AgentDidApi', () => {
       });
 
       describe('import()', () => {
+        it.each(['dht', 'jwk'])(`enforces %s identifier binding before writing keys, documents or cache entries`, async (method) => {
+          const createDid = method === 'dht' ? (): ReturnType<typeof DidDht.create> => DidDht.create({ options: { publish: false } })
+            : (): ReturnType<typeof DidJwk.create> => DidJwk.create();
+          const original = await createDid();
+          const portableDid = await (await createDid()).export();
+          portableDid.uri = original.uri;
+          portableDid.document.id = original.uri;
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+          const cache = sinon.spy(testHarness.agent.did.cache, 'set');
+          const store = sinon.spy(testHarness.agent.did['_store'], 'set');
+
+          await expect(testHarness.agent.did.import({ portableDid })).rejects.toThrow('DID identifier must match');
+          expect(importKey.called).toBe(false);
+          expect(cache.called).toBe(false);
+          expect(store.called).toBe(false);
+        });
+
+        it.each(['dht', 'jwk'])(`rejects %s document-id spoofing through portable metadata`, async (method) => {
+          const did = method === 'dht' ? await DidDht.create({ options: { publish: false } }) : await DidJwk.create();
+          const portableDid = await did.export();
+          portableDid.document.id = `did:${method}:unrelated`;
+          portableDid.metadata.equivalentId = [portableDid.uri];
+          portableDid.metadata.canonicalId = portableDid.document.id;
+          const importKey = sinon.spy(testHarness.agent.keyManager, 'importKey');
+          const cache = sinon.spy(testHarness.agent.did.cache, 'set');
+          const store = sinon.spy(testHarness.agent.did['_store'], 'set');
+
+          await expect(testHarness.agent.did.import({ portableDid })).rejects.toThrow();
+          expect(importKey.called).toBe(false);
+          expect(cache.called).toBe(false);
+          expect(store.called).toBe(false);
+        });
+
         it('imports DID and private keys', async () => {
           // Generate a new DID.
           const did = await DidJwk.create();

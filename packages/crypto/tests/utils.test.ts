@@ -2,9 +2,28 @@ import type { Jwk } from '../src/jose/jwk.js';
 
 import { describe, expect, it } from 'bun:test';
 
+import { Ed25519 } from '../src/primitives/ed25519.js';
 import { CryptoUtils, isCipher } from '../src/utils.js';
 
 describe('Crypto Utils', () => {
+  describe('validatePrivateKeyBinding()', () => {
+    it('defers RSA and unknown curve bindings to the importing KMS while validating key shape', async () => {
+      await expect(CryptoUtils.validatePrivateKeyBinding({ kty: 'RSA', n: 'AQ', e: 'AQ', d: 'AQ', alg: 'SHA-256' })).resolves.toBe(false);
+      await expect(CryptoUtils.validatePrivateKeyBinding({
+        kty: 'OKP', crv: 'unknown', d: 'AQ', x: 'AQ', alg: 'A256GCM',
+      })).resolves.toBe(false);
+      await expect(CryptoUtils.validatePrivateKeyBinding({ kty: 'RSA', n: 'AQ', e: 'AQ' })).rejects.toThrow();
+      await expect(CryptoUtils.validatePrivateKeyBinding({ kty: 'RSA', n: 'AQ', e: 'AQ', d: '' })).rejects.toThrow();
+    });
+
+    it('preserves provider-specific algorithm metadata while validating a supported curve binding', async () => {
+      const key = await Ed25519.generateKey();
+      key.alg = 'provider-specific';
+
+      await expect(CryptoUtils.validatePrivateKeyBinding(key)).resolves.toBe(true);
+    });
+  });
+
   describe('getJoseSignatureAlgorithmFromPublicKey()', () => {
     it('returns the algorithm specified by the alg property regardless of the crv property', () => {
       const publicKey: Jwk = { kty: 'OKP', alg: 'EdDSA', crv: 'P-256' };

@@ -1,14 +1,106 @@
 import type { Cipher } from './types/cipher.js';
-import type { Jwk } from './jose/jwk.js';
+import type { Jwk, PrivateKeyJwk } from './jose/jwk.js';
 
 import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils.js';
 
+import { Ed25519 } from './primitives/ed25519.js';
+import { Secp256k1 } from './primitives/secp256k1.js';
+import { Secp256r1 } from './primitives/secp256r1.js';
+import { X25519 } from './primitives/x25519.js';
+import { computeJwkThumbprint, isPrivateJwk } from './jose/jwk.js';
+
 import { getWebcrypto } from './primitives/webcrypto.js';
+
+const curveToJoseAlgorithm: Record<string, string> = {
+  'Ed25519'   : 'EdDSA',
+  'P-256'     : 'ES256',
+  'P-384'     : 'ES384',
+  'P-521'     : 'ES512',
+  'secp256k1' : 'ES256K',
+};
 
 /**
  * A collection of cryptographic utility methods.
  */
 export class CryptoUtils {
+
+  /**
+   * Checks private JWK shape and deterministically validates supported EC/OKP public bindings.
+   * RSA and curves unsupported by the native KMS require provider validation; symmetric keys have no public binding.
+   *
+   * @param key - Private key to validate before storing or importing it into another KMS.
+   * @returns True if the public binding was validated; false if validation belongs to the importing KMS.
+   * @throws If the private key is malformed or a supported public binding does not match.
+   */
+  public static async validatePrivateKeyBinding(key: Jwk): Promise<boolean> {
+    CryptoUtils.validatePrivateKeyShape(key);
+    if (key.kty === 'oct' || key.kty === 'RSA') {
+      return false;
+    }
+
+    const curve = key.crv;
+    let publicKey: Jwk;
+    switch (curve) {
+      case 'Ed25519': publicKey = await Ed25519.computePublicKey({ key }); break;
+      case 'X25519': publicKey = await X25519.computePublicKey({ key }); break;
+      case 'secp256k1': publicKey = await Secp256k1.computePublicKey({ key }); break;
+      case 'P-256': publicKey = await Secp256r1.computePublicKey({ key }); break;
+      default: return false;
+    }
+
+    CryptoUtils.validatePrivateKeyAlgorithm(key);
+
+    if (await computeJwkThumbprint({ jwk: key }) !== await computeJwkThumbprint({ jwk: publicKey })) {
+      throw new TypeError('Private key material does not match its public key.');
+    }
+    return true;
+  }
+
+  /** @internal Validates a native import using the importing KMS's existing algorithm resolver. */
+  public static async validateKeyImport(key: Jwk, getAlgorithmName: (key: Jwk) => string): Promise<void> {
+    const bindingValidated = await CryptoUtils.validatePrivateKeyBinding(key);
+    const curveAlgorithm = getAlgorithmName(key.kty === 'oct' ? key : { ...key, alg: undefined });
+    if (key.kty !== 'oct' && !bindingValidated) {
+      throw new TypeError('Unsupported private key curve.');
+    }
+    if (getAlgorithmName(key) !== curveAlgorithm) {
+      throw new TypeError('Private key algorithm metadata does not match its curve.');
+    }
+  }
+
+  /** Validate required private JWK material before selecting a key implementation. */
+  private static validatePrivateKeyShape(key: Jwk): asserts key is PrivateKeyJwk {
+    if (!isPrivateJwk(key)) {
+      throw new TypeError('Invalid key provided. Must be a private key in JWK format.');
+    }
+    let material: (string | undefined)[];
+    switch (key.kty) {
+      case 'oct': material = [key.k]; break;
+      case 'RSA': material = [key.n, key.e, key.d]; break;
+      case 'EC': material = [key.x, key.y, key.d]; break;
+      case 'OKP': material = [key.x, key.d]; break;
+    }
+    if (material.some(value => typeof value !== 'string' || value.length === 0)) {
+      throw new TypeError('Private JWK is missing required key material.');
+    }
+  }
+
+  /** Reject known native algorithm metadata that contradicts a supported curve; leave unknown metadata to the provider. */
+  private static validatePrivateKeyAlgorithm(key: Jwk): void {
+    let metadataCurve = Object.keys(curveToJoseAlgorithm)
+      .find(candidate => candidate === key.alg || curveToJoseAlgorithm[candidate] === key.alg);
+    if (key.alg === 'secp256r1') {
+      metadataCurve = 'P-256';
+    } else if (key.alg === 'X25519') {
+      metadataCurve = 'X25519';
+    }
+    const isNonCurveAlgorithm = key.alg !== undefined && [
+      'SHA-256', 'A128GCM', 'A192GCM', 'A256GCM', 'A128KW', 'A192KW', 'A256KW',
+    ].includes(key.alg);
+    if (isNonCurveAlgorithm || (metadataCurve !== undefined && metadataCurve !== key.crv)) {
+      throw new TypeError('Private key algorithm metadata does not match its curve.');
+    }
+  }
 
   /**
    * Determines the JOSE algorithm identifier of the digital signature algorithm based on the `alg` or
@@ -36,14 +128,6 @@ export class CryptoUtils {
    * @throws Error if the algorithm cannot be determined from the provided input.
    */
   static getJoseSignatureAlgorithmFromPublicKey(publicKey: Jwk): string {
-    const curveToJoseAlgorithm: Record<string, string> = {
-      'Ed25519'   : 'EdDSA',
-      'P-256'     : 'ES256',
-      'P-384'     : 'ES384',
-      'P-521'     : 'ES512',
-      'secp256k1' : 'ES256K',
-    };
-
     // If the key contains an `alg` property that matches a JOSE registered algorithm identifier,
     // return its value.
     if (publicKey.alg && Object.values(curveToJoseAlgorithm).includes(publicKey.alg)) {

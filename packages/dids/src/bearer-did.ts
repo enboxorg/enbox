@@ -9,13 +9,15 @@ import type {
   Signer,
 } from '@enbox/crypto';
 
-import { CryptoUtils, LocalKeyManager } from '@enbox/crypto';
+import { CryptoUtils, isPublicJwk, LocalKeyManager } from '@enbox/crypto';
 
-import type { DidDocument } from './types/did-core.js';
+import type { DidDocument, DidVerificationMethod } from './types/did-core.js';
 import type { DidMetadata, PortableDid } from './types/portable-did.js';
 
+import { Did } from './did.js';
+import { DidVerificationRelationship } from './types/did-core.js';
 import { DidError, DidErrorCode } from './did-error.js';
-import { extractDidFragment, getVerificationMethods } from './utils.js';
+import { extractDidFragment, isDidVerificationMethod } from './utils.js';
 
 /**
  * A `BearerDidSigner` extends the {@link Signer} interface to include specific properties for
@@ -225,6 +227,10 @@ export class BearerDid {
    * const did = await BearerDid.import({ portableDid });
    * ```
    *
+   * Document and native-supported EC/OKP key validation finishes before target key imports begin.
+   * External KMS providers must validate RSA and nonnative private-key bindings themselves.
+   * Provider import/storage failures can still leave partial writes; this operation is not transactional.
+   *
    * @param params - The parameters for the import operation.
    * @param params.portableDid - The PortableDid object to import.
    * @param params.keyManager - Optionally specify an external Key Management System (KMS) used to
@@ -241,47 +247,76 @@ export class BearerDid {
     portableDid: PortableDid;
   }): Promise<BearerDid> {
 
-    // Get all verification methods from the given DID document, including embedded methods.
-    const verificationMethods = getVerificationMethods({ didDocument: portableDid.document });
-
-    // Validate that the DID document contains at least one verification method.
-    if (verificationMethods.length === 0) {
-      throw new DidError(DidErrorCode.InvalidDidDocument, `At least one verification method is required but 0 were given`);
-    }
-
-    // If given, import the private key material into the key manager.
-    for (const key of portableDid.privateKeys ?? []) {
-
-      // confirm th key does not already exist before importing it to avoid failures from the key manager
-      const keyUri = await keyManager.getKeyUri({ key });
-      const keyExists = await keyManager.getPublicKey({ keyUri }).then(() => true).catch(() => false);
-      if (!keyExists) {
-        await keyManager.importKey({ key });
-      }
-    }
-
-    // Validate that the key material for every verification method in the DID document is present
-    // in the key manager.
-    for (const vm of verificationMethods) {
+    const verificationMethods = BearerDid.getImportVerificationMethods(portableDid);
+    const verificationPublicKeys = verificationMethods.map((vm): Jwk => {
       if (!vm.publicKeyJwk) {
         throw new Error(`Verification method '${vm.id}' does not contain a public key in JWK format`);
       }
+      if (!isPublicJwk(vm.publicKeyJwk)) {
+        throw new DidError(DidErrorCode.InvalidDidDocument, `Verification method '${vm.id}' must contain a public JWK`);
+      }
+      return vm.publicKeyJwk;
+    });
+    const verificationKeyUris = await Promise.all(verificationPublicKeys.map(key => keyManager.getKeyUri({ key })));
 
-      // Compute the key URI of the verification method's public key.
-      const keyUri = await keyManager.getKeyUri({ key: vm.publicKeyJwk });
+    const suppliedKeys = new Map(await Promise.all((portableDid.privateKeys ?? []).map(async (key): Promise<readonly [string, Jwk]> => {
+      // External KMS providers remain responsible for RSA and nonnative curve validation.
+      await CryptoUtils.validatePrivateKeyBinding(key);
+      return [await keyManager.getKeyUri({ key }), key] as const;
+    })));
 
-      // Verify that the key is present in the key manager. If not, an error is thrown.
-      await keyManager.getPublicKey({ keyUri });
+    const keysToImport = await Promise.all([...new Set([...verificationKeyUris, ...suppliedKeys.keys()])].map(
+      async (keyUri): Promise<Jwk | undefined> => {
+        try {
+          await keyManager.getPublicKey({ keyUri });
+          return undefined;
+        } catch (error) {
+          const key = suppliedKeys.get(keyUri);
+          if (key === undefined) {
+            throw error;
+          }
+          return key;
+        }
+      }
+    ));
+
+    for (const key of keysToImport) {
+      if (key !== undefined) {
+        await keyManager.importKey({ key }); // NOSONAR -- preserve serialized writes to stateful KMS backends.
+      }
     }
 
-    // Use the given PortableDid to construct the BearerDid object.
-    const did = new BearerDid({
+    return new BearerDid({
       uri      : portableDid.uri,
       document : portableDid.document,
       metadata : portableDid.metadata,
       keyManager
     });
-
-    return did;
   }
+
+  /** Validate the DID subject and all embedded verification methods before target KMS access. */
+  private static getImportVerificationMethods({ uri, document, metadata }: PortableDid): DidVerificationMethod[] {
+    const parsedUri = Did.parse(uri);
+    const parsedDocumentId = Did.parse(document.id);
+    const equivalentIds = [metadata.canonicalId, ...metadata.equivalentId ?? []];
+    if (!parsedUri || !parsedDocumentId || parsedUri.uri !== uri || parsedDocumentId.uri !== document.id
+      || parsedUri.method !== parsedDocumentId.method
+      || (uri !== document.id && !equivalentIds.includes(uri) && metadata.canonicalId !== document.id)) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID document id must identify the imported DID');
+    }
+
+    const verificationMethods = [
+      ...document.verificationMethod ?? [],
+      ...Object.values(DidVerificationRelationship).flatMap(relationship =>
+        (document[relationship] ?? []).filter(entry => typeof entry !== 'string')),
+    ];
+    if (!verificationMethods.every(isDidVerificationMethod)) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'Invalid verification method');
+    }
+    if (verificationMethods.length === 0) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'At least one verification method is required but 0 were given');
+    }
+    return verificationMethods;
+  }
+
 }

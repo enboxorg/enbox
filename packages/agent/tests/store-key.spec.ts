@@ -291,6 +291,34 @@ describe('KeyStore', () => {
     });
 
     describe('encryption at rest', () => {
+      it('keeps externally tagged imported keys usable after reopening the store', async () => {
+        const did = await DidDht.create({ options: {
+          publish             : false,
+          verificationMethods : [{ algorithm: 'X25519', purposes: ['keyAgreement'] }],
+        } });
+        const portableDid = await did.export();
+        portableDid.privateKeys!.forEach((key, index): void => {
+          key.kid = `external-key-${index}`;
+        });
+        await DidDht.import({ portableDid, keyManager: testHarness.agent.keyManager });
+
+        const keyManager = new LocalKeyManager({ agent: testHarness.agent, keyStore: new DwnKeyStore() });
+        testHarness.agent.keyManager = keyManager;
+        const imported = await DidDht.import({
+          keyManager,
+          portableDid: { ...portableDid, privateKeys: undefined },
+        });
+
+        for (const key of portableDid.privateKeys!) {
+          const keyUri = await keyManager.getKeyUri({ key });
+          expect(await keyManager.exportKey({ keyUri })).toEqual(key);
+        }
+        const signer = await imported.getSigner();
+        const data = new Uint8Array([1, 2, 3]);
+        const signature = await signer.sign({ data });
+        expect(await signer.verify({ data, signature })).toBe(true);
+      });
+
       it('installs the JWK protocol with $keyAgreement keys', async () => {
         // Trigger protocol installation by initializing the store.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });

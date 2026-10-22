@@ -394,14 +394,16 @@ export class DidDht extends DidMethod {
       throw new DidError(DidErrorCode.MethodNotSupported, `Method not supported`);
     }
 
-    const did = await BearerDid.import({ portableDid, keyManager });
-
-    // Validate that the given verification methods contain an Identity Key.
-    if (!did.document.verificationMethod?.some(vm => vm.id?.split('#').pop() === '0')) {
-      throw new DidError(DidErrorCode.InvalidDidDocument, `DID document must contain an Identity Key`);
+    const identityMethod = portableDid.document.verificationMethod?.find(vm => extractDidFragment(vm.id) === '0');
+    if (!identityMethod?.publicKeyJwk) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID document must contain an Identity Key');
+    }
+    const identityUri = await DidDhtUtils.identityKeyToIdentifier({ identityKey: identityMethod.publicKeyJwk });
+    if (identityUri !== portableDid.uri || portableDid.document.id !== portableDid.uri) {
+      throw new DidError(DidErrorCode.InvalidDidDocument, 'DID identifier must match its Identity Key');
     }
 
-    return did;
+    return await BearerDid.import({ portableDid, keyManager });
   }
 
   /**

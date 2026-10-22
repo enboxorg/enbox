@@ -4,7 +4,11 @@ import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:tes
 import { Convert, MemoryStore } from '@enbox/common';
 
 import { EcdsaAlgorithm } from '../src/algorithms/ecdsa.js';
+import { Ed25519 } from '../src/primitives/ed25519.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
+import { Secp256k1 } from '../src/primitives/secp256k1.js';
+import { Secp256r1 } from '../src/primitives/secp256r1.js';
+import { X25519 } from '../src/primitives/x25519.js';
 
 describe('LocalKeyManager', () => {
   let keyManager: LocalKeyManager;
@@ -59,6 +63,73 @@ describe('LocalKeyManager', () => {
       expect(digest).toBeInstanceOf(Uint8Array);
       expect(digest).toHaveLength(32);
       expect(digest).toEqual(expectedOutput);
+    });
+  });
+
+  describe('import integrity', () => {
+    for (const primitive of [Ed25519, X25519, Secp256k1, Secp256r1]) {
+      it(`validates ${primitive.name} bindings before storing keys`, async () => {
+        const key = await primitive.generateKey();
+        const otherKey = await primitive.generateKey();
+        const keyStore = new MemoryStore<string, Jwk>();
+        const keyManager = new LocalKeyManager({ keyStore });
+        const store = spyOn(keyStore, 'set');
+        const invalidKey = { ...key, d: otherKey.d };
+
+        await expect(keyManager.importKey({ key: invalidKey })).rejects.toThrow('does not match its public key');
+        expect(store).not.toHaveBeenCalled();
+
+        const keyUri = await keyManager.importKey({ key });
+        expect(await keyManager.exportKey({ keyUri })).toEqual(key);
+        expect(await keyManager.getPublicKey({ keyUri })).toMatchObject(await primitive.getPublicKey({ key }));
+      });
+    }
+
+    it.each(['EdDSA', 'ES256'])(`rejects contradictory %s metadata before storing a secp256k1 key`, async (alg) => {
+      const key = await Secp256k1.generateKey();
+      key.alg = alg;
+      const store = spyOn(keyManager['_keyStore'], 'set');
+
+      await expect(keyManager.importKey({ key })).rejects.toThrow('algorithm metadata does not match its curve');
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('rejects a noncanonical curve alias even when key material is valid', async () => {
+      const key = await Secp256r1.generateKey();
+      key.crv = 'secp256r1';
+      const store = spyOn(keyManager['_keyStore'], 'set');
+
+      await expect(keyManager.importKey({ key })).rejects.toThrow('Unsupported private key curve');
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('rejects algorithm metadata that changes native dispatch', async () => {
+      const key = await X25519.generateKey();
+      key.alg = 'SHA-256';
+      const store = spyOn(keyManager['_keyStore'], 'set');
+
+      await expect(keyManager.importKey({ key })).rejects.toThrow('algorithm metadata does not match its curve');
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('rejects unsupported native algorithms even when usage metadata names a supported algorithm', async () => {
+      const pair = await crypto.subtle.generateKey({
+        name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256',
+      }, true, ['encrypt', 'decrypt']);
+      const key = await crypto.subtle.exportKey('jwk', pair.privateKey) as Jwk;
+      key.alg = 'Ed25519';
+      const store = spyOn(keyManager['_keyStore'], 'set');
+      await expect(keyManager.importKey({ key })).rejects.toThrow('Unable to determine algorithm');
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed private material without storing it', async () => {
+      const key = await Ed25519.generateKey();
+      key.d = 'AA';
+      const store = spyOn(keyManager['_keyStore'], 'set');
+
+      await expect(keyManager.importKey({ key })).rejects.toThrow();
+      expect(store).not.toHaveBeenCalled();
     });
   });
 

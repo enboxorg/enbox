@@ -303,12 +303,14 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
       throw new Error('AgentDidApi: No changes detected, update aborted');
     }
 
-    // If private keys are present in the PortableDid, import the key material into the Agent's key
-    // manager. Validate that the key material for every verification method in the DID document is
-    // present in the key manager. If no keys are present, this will fail.
-    // NOTE: We currently do not delete the previous keys from the document.
-    // TODO: Add support for deleting the keys no longer present in the document.
-    const bearerDid = await BearerDid.import({ keyManager: this.agent.keyManager, portableDid });
+    // Apply the configured method's validation before importing any missing keys.
+    // Keys removed from the document remain in the KMS.
+    const parsedDid = Did.parse(portableDid.uri);
+    if (parsedDid === null) {
+      throw new Error(`AgentDidApi: Invalid DID URI: ${portableDid.uri}`);
+    }
+    const didMethod = this.getMethod(parsedDid.method);
+    const bearerDid = await didMethod.import({ keyManager: this.agent.keyManager, portableDid });
 
     if (publish) {
       const parsedDid = Did.parse(bearerDid.uri);
@@ -361,10 +363,13 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     portableDid: PortableDid;
     tenant?: string;
   }): Promise<BearerDid> {
-    // If private keys are present in the PortableDid, import the key material into the Agent's key
-    // manager. Validate that the key material for every verification method in the DID document is
-    // present in the key manager.
-    const bearerDid = await BearerDid.import({ keyManager: this.agent.keyManager, portableDid });
+    // Apply the configured method's validation before importing any missing keys.
+    const parsedDid = Did.parse(portableDid.uri);
+    if (parsedDid === null) {
+      throw new Error(`AgentDidApi: Invalid DID URI: ${portableDid.uri}`);
+    }
+    const didMethod = this.getMethod(parsedDid.method);
+    const bearerDid = await didMethod.import({ keyManager: this.agent.keyManager, portableDid });
 
     // Only the DID URI, document, and metadata are stored in the Agent's DID store.
     const { uri, document, metadata } = bearerDid;

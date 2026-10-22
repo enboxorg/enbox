@@ -23,8 +23,6 @@ import sinon from 'sinon';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
-import type { PortableIdentity } from '../src/types/identity.js';
-
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnPermissionScope } from '../src/types/dwn.js';
 
@@ -1861,112 +1859,19 @@ describe('AgentDwnApi', () => {
       await testHarness.clearStorage();
       await testHarness.createAgentDid();
 
-      const testPortableIdentity: PortableIdentity = {
-        portableDid: {
-          uri      : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-          document : {
-            id                 : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-            verificationMethod : [
-              {
-                id           : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#0',
-                type         : 'JsonWebKey',
-                controller   : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-                publicKeyJwk : {
-                  crv : 'Ed25519',
-                  kty : 'OKP',
-                  x   : 'mZXKvarfofrcrdTYzes2YneEsrbJFc1kE0O-d1cJPEw',
-                  kid : 'EAlW6h08kqdLGEhR_o6hCnZpYpQ8QJavMp3g0BJ35IY',
-                  alg : 'EdDSA',
-                },
-              },
-              {
-                id           : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#sig',
-                type         : 'JsonWebKey',
-                controller   : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-                publicKeyJwk : {
-                  crv : 'Ed25519',
-                  kty : 'OKP',
-                  x   : 'iIWijzQnfb_Jk4yRjISV6ci8EtyHn0fIxg0TVCh7wkE',
-                  kid : '8QSlw4ct9taIgh23EUGLM0ELaukQ1VogIuBGrQ_UIsk',
-                  alg : 'EdDSA',
-                },
-              },
-              {
-                id           : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#enc',
-                type         : 'JsonWebKey',
-                controller   : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-                publicKeyJwk : {
-                  kty : 'OKP',
-                  crv : 'X25519',
-                  x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-                  kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-                },
-              },
-            ],
-            authentication: [
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#0',
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#sig',
-            ],
-            assertionMethod: [
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#0',
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#sig',
-            ],
-            capabilityDelegation: [
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#0',
-            ],
-            capabilityInvocation: [
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#0',
-            ],
-            keyAgreement: [
-              'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#enc',
-            ],
-            service: [
-              {
-                id              : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy#dwn',
-                type            : 'DecentralizedWebNode',
-                serviceEndpoint : testDwnUrls,
-              },
-            ],
-          },
-          metadata: {
-            published : true,
-            versionId : '1708160454',
-          },
-          privateKeys: [
-            {
-              crv : 'Ed25519',
-              d   : 'gXu7HmJgvZFWgNf_eqF-eDAFegd0OLe8elAIXXGMgoc',
-              kty : 'OKP',
-              x   : 'mZXKvarfofrcrdTYzes2YneEsrbJFc1kE0O-d1cJPEw',
-              kid : 'EAlW6h08kqdLGEhR_o6hCnZpYpQ8QJavMp3g0BJ35IY',
-              alg : 'EdDSA',
-            },
-            {
-              crv : 'Ed25519',
-              d   : 'SiUL1QDp6X2QnvJ1Q7hRlpo3ZhiVjRlvINocOzYPaBU',
-              kty : 'OKP',
-              x   : 'iIWijzQnfb_Jk4yRjISV6ci8EtyHn0fIxg0TVCh7wkE',
-              kid : '8QSlw4ct9taIgh23EUGLM0ELaukQ1VogIuBGrQ_UIsk',
-              alg : 'EdDSA',
-            },
-            {
-              kty : 'OKP',
-              crv : 'X25519',
-              d   : 'b2gb-OfB5X4G3xd16u19MXNkamDP5lsT6bVsDN4aeuY',
-              x   : 'P5FoqXk9W11i8FWyTpIvltAjV09FL9Q5o76wEHcxMtI',
-              kid : 'hXXhIgfXRVIYqnKiX0DIL7ZGy0CBJrFQFIYxmRkAB-A',
-            },
-          ],
-        },
-        metadata: {
-          name   : 'Alice',
-          tenant : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy',
-          uri    : 'did:dht:ugkhixpk56o9izfp4ucc543scj5ajcis3rkh43yueq98qiaj8tgy'
-        }
-      };
-
+      const did = await DidDht.create({ options: {
+        publish             : false,
+        services            : [{ id: 'dwn', type: 'DecentralizedWebNode', serviceEndpoint: testDwnUrls }],
+        verificationMethods : [
+          { algorithm: 'Ed25519', id: 'sig', purposes: ['authentication', 'assertionMethod'] },
+          { algorithm: 'X25519', id: 'enc', purposes: ['keyAgreement'] },
+        ],
+      } });
       alice = await testHarness.agent.identity.import({
-        portableIdentity: testPortableIdentity
+        portableIdentity: {
+          portableDid : await did.export(),
+          metadata    : { name: 'Alice', tenant: did.uri, uri: did.uri },
+        },
       });
 
       // Ensure the DID is published to the DHT. This step is necessary while the DHT Gateways
