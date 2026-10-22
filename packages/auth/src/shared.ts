@@ -4,9 +4,11 @@
  * @module
  */
 
-export { AuthManager } from './auth-manager.js';
-export { AuthSession } from './identity-session.js';
+export { AgentSession } from '@enbox/agent';
+export type { AgentSessionIdentity } from '@enbox/agent';
+
 export { AuthEventEmitter } from './events.js';
+export { AuthManager } from './auth-manager.js';
 export {
   ConnectDeniedError,
   DwnTenantRegistrationError,
@@ -16,7 +18,7 @@ export {
   isRecoveryPhraseMismatchError,
 } from './errors.js';
 
-export { processConnectedGrants } from './connect/wallet.js';
+export { processConnectedGrants } from './connect/lifecycle.js';
 export {
   SESSION_EXPIRED_ERROR_CODE,
   SESSION_REVOKED_ERROR_CODE,
@@ -92,7 +94,6 @@ export type {
   DwnTenantRegistrationResult,
   HandlerConnectOptions,
   HeadlessConnectOptions,
-  IdentityInfo,
   IdentityVaultBackup,
   ImportFromPortableOptions,
   LocalNodeEjectOptions,

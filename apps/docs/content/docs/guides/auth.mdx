@@ -75,7 +75,7 @@ permission-scope UX (e.g. via a browser overlay) and returns a delegate
 session bound to the connecting wallet.
 
 ```ts
-import type { AuthSession } from '@enbox/browser';
+import type { AgentSession } from '@enbox/browser';
 
 import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
 
@@ -84,7 +84,7 @@ const walletAuth = await AuthManager.create({
 });
 
 // Bind this function directly to the connection button in browser UIs.
-function connectFromUserAction(): Promise<AuthSession> {
+function connectFromUserAction(): Promise<AgentSession> {
   return walletAuth.connect({ protocols: [NotesProtocol] });
 }
 ```

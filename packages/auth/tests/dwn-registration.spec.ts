@@ -880,7 +880,7 @@ describe('AuthManager.registerDwnTenants', (): void => {
     expect(created).toBe(true);
     expect(manager.session).toBeUndefined();
     expect(manager.state).toBe('unlocked');
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
   });
 
   test('coalesced partial failures report refreshed caller-managed credentials to every observer', async (): Promise<void> => {

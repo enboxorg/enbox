@@ -281,7 +281,7 @@ export class Enbox {
   /**
    * Creates an {@link Enbox} instance from a session-shaped object.
    *
-   * Accepts `AuthSession`, `AgentSession`, or any compatible custom session
+   * Accepts `AgentSession` or any compatible custom session
    * with `{ agent, did, delegateDid?, signal }`. This is the right entry point
    * whenever you already hold an active session — including ones produced by
    * a caller-managed `AuthManager`.

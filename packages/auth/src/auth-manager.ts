@@ -53,10 +53,9 @@ import type {
   LocalDwnProbeResult,
 } from './discovery.js';
 
-import { EnboxUserAgent, isDidResolutionUnavailableError } from '@enbox/agent';
+import { AgentSession, EnboxUserAgent, isDidResolutionUnavailableError } from '@enbox/agent';
 
 import { AuthEventEmitter } from './events.js';
-import { AuthSession } from './identity-session.js';
 import { ConnectDeniedError } from './errors.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { fetchConnectionStatus } from './connect/status.js';
@@ -66,7 +65,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
-import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './connect/lifecycle.js';
+import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, finalizeSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './connect/lifecycle.js';
 import {
   clearLocalDwnEjection,
   createLocalDwnRpcClient,
@@ -79,9 +78,9 @@ import {
 import { clearRegistrationCredentials, registerDwnTenants } from './registration.js';
 import {
   disconnectPersistedSessionWithinLifecycle,
-  readRevocationRetryEntries,
   restoreSession,
 } from './connect/restore.js';
+import { readPersistedSession, readRevocationRetryEntries } from './connect/session-state.js';
 
 type ConnectionMonitorState = {
   options: ConnectionMonitorOptions;
@@ -152,7 +151,7 @@ export class AuthManager {
   private readonly _userAgent: EnboxUserAgent;
   private readonly _emitter: AuthEventEmitter;
   private readonly _storage: StorageAdapter;
-  private _session: AuthSession | undefined;
+  private _session: AgentSession | undefined;
   private _state: AuthState = 'uninitialized';
   private _isConnecting = false;
   private _isShutDown = false;
@@ -325,11 +324,11 @@ export class AuthManager {
    * ```
    *
    * @param options - Connection options. The shape determines the flow.
-   * @returns An active AuthSession.
+   * @returns An active AgentSession.
    * @throws If a connection attempt is already in progress.
    * @throws If handler-based connect is attempted without a handler.
    */
-  async connect(options?: ConnectOptions): Promise<AuthSession> {
+  async connect(options?: ConnectOptions): Promise<AgentSession> {
     assertNoRecoveryPhrase(options, 'connect');
     return this._withConnectionAttempt(async (guard) => {
       // 1. Try to restore a previous session first.
@@ -356,10 +355,10 @@ export class AuthManager {
    * and CLI tools that own the identity vault directly.
    *
    * @param options - Vault connect options.
-   * @returns An active AuthSession.
+   * @returns An active AgentSession.
    * @throws If a connection attempt is already in progress.
    */
-  async connectVault(options?: VaultConnectOptions): Promise<AuthSession> {
+  async connectVault(options?: VaultConnectOptions): Promise<AgentSession> {
     assertNoRecoveryPhrase(options, 'connectVault');
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
@@ -371,7 +370,7 @@ export class AuthManager {
    * - Same local vault: verifies the phrase matches, resets the local password, and preserves data.
    * - Different local vault: throws without clearing or replacing the existing vault.
    */
-  async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AuthSession> {
+  async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AgentSession> {
     assertRestoreFromPhraseOptions(options);
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
@@ -383,11 +382,11 @@ export class AuthManager {
    * validates the PIN, imports the delegated DID, and processes grants.
    *
    * @param options - Wallet connect configuration.
-   * @returns An active AuthSession with delegated permissions.
+   * @returns An active AgentSession with delegated permissions.
    * @throws If sync is disabled (required for wallet connect).
    * @throws If a connection attempt is already in progress.
    */
-  async walletConnect(options: WalletConnectOptions): Promise<AuthSession> {
+  async walletConnect(options: WalletConnectOptions): Promise<AgentSession> {
     return this._withConnectionAttempt((guard) => walletConnect(this._flowContext(guard), options));
   }
 
@@ -396,7 +395,7 @@ export class AuthManager {
    *
    * The portable identity contains the DID's private keys and metadata.
    */
-  async importFromPortable(options: ImportFromPortableOptions): Promise<AuthSession> {
+  async importFromPortable(options: ImportFromPortableOptions): Promise<AgentSession> {
     return this._withConnectionAttempt((guard) => importFromPortable(this._flowContext(guard), options));
   }
 
@@ -406,7 +405,7 @@ export class AuthManager {
    * Returns `undefined` if no previous session exists.
    * This replaces the manual `previouslyConnected` localStorage pattern.
    */
-  async restoreSession(options?: RestoreSessionOptions): Promise<AuthSession | undefined> {
+  async restoreSession(options?: RestoreSessionOptions): Promise<AgentSession | undefined> {
     return this._withConnectionAttempt((guard) => restoreSession(this._flowContext(guard), options));
   }
 
@@ -440,12 +439,12 @@ export class AuthManager {
    *
    * The delegate's local keys and identity record are reused. Prior grants
    * remain valid until they expire or are revoked; local revocation metadata,
-   * sync scope, and session markers are updated for the new approval. A
-   * successful refresh replaces the active `AuthSession` and aborts the prior
+   * sync scope, and persisted session are updated for the new approval. A
+   * successful refresh replaces the active `AgentSession` and aborts the prior
    * session signal; use the returned session for subsequent work. A failed or
    * denied refresh leaves the existing session active.
    */
-  async refresh(options: RefreshOptions): Promise<AuthSession> {
+  async refresh(options: RefreshOptions): Promise<AgentSession> {
     return this._refresh(options);
   }
 
@@ -501,7 +500,7 @@ export class AuthManager {
    *
    * Unlocks the vault and retrieves the active (or first available)
    * identity **without** starting sync, DWN registration, or persisting
-   * session markers. This is the recommended replacement for calling
+   * a session. This is the recommended replacement for calling
    * `agent.start({ password })` directly.
    *
    * Typical use cases:
@@ -510,7 +509,7 @@ export class AuthManager {
    * - Any subprocess that shares a data directory with a long-running daemon
    *
    * @param options - Optional password override.
-   * @returns An active AuthSession (with sync disabled).
+   * @returns An active AgentSession (with sync disabled).
    *
    * @example
    * ```ts
@@ -519,7 +518,7 @@ export class AuthManager {
    * await auth.shutdown();   // clean exit
    * ```
    */
-  async connectHeadless(options?: HeadlessConnectOptions): Promise<AuthSession> {
+  async connectHeadless(options?: HeadlessConnectOptions): Promise<AgentSession> {
     return this._withConnectionAttempt(async (guard) => {
       let password = options?.password ?? this._defaultPassword;
       this._assertConnectionAttemptActive(guard);
@@ -555,9 +554,10 @@ export class AuthManager {
       }
 
       // Prefer the previously-active identity, fall back to first.
-      const savedDid = await this._storage.get(STORAGE_KEYS.ACTIVE_IDENTITY);
+      const savedSession = await readPersistedSession(this._storage);
+      const savedDid = savedSession?.delegateDid ?? savedSession?.connectedDid;
       const identity = (savedDid
-        ? identities.find(id => id.did.uri === savedDid || id.metadata.connectedDid === savedDid)
+        ? identities.find(id => id.did.uri === savedDid)
         : undefined
       ) ?? identities[0];
 
@@ -568,21 +568,21 @@ export class AuthManager {
         connectedDid : identity.metadata.connectedDid,
       };
 
-      // No sync, registration, session markers, session-start, or identity-added publication.
-      return this._commitConnectionResult(guard, async (): Promise<AuthSession> => new AuthSession({
+      // No sync, registration, persisted session, session-start, or identity-added publication.
+      return this._commitConnectionResult(guard, (): Promise<AgentSession> => Promise.resolve(new AgentSession({
         agent    : this._userAgent,
         did      : connectedDid,
         delegateDid,
         identity : identityInfo,
         signal   : guard.sessionLifetime.signal,
-      }), { publishSessionStart: false });
+      })), { publishSessionStart: false });
     });
   }
 
   // ─── Session management ────────────────────────────────────────
 
   /** The current active session, or `undefined` if not connected. */
-  get session(): AuthSession | undefined {
+  get session(): AgentSession | undefined {
     return this._session;
   }
 
@@ -590,8 +590,8 @@ export class AuthManager {
    * Lock the auth manager.
    *
    * Stops sync, clears the active session, and locks the underlying vault
-   * so the password must be provided again to resume. Session storage
-   * markers are preserved so {@link restoreSession} can reconnect after
+   * so the password must be provided again to resume. The stored
+   * session is preserved so {@link restoreSession} can reconnect after
    * the vault is unlocked again.
    *
    * After locking, the state transitions to `'locked'`.
@@ -635,7 +635,7 @@ export class AuthManager {
       syncStopError = error;
     }
 
-    // 2. Clear the session (but keep storage markers for restore).
+    // 2. Clear the session (but keep the stored session for restore).
     this._session = undefined;
 
     // 3. Lock the vault.
@@ -712,10 +712,7 @@ export class AuthManager {
         } catch { /* continue with the wipe */ }
 
         await this._storage.clear();
-        await Promise.all([
-          this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
-          clearRegistrationCredentials(this._userAgent, this._registration),
-        ]);
+        await clearRegistrationCredentials(this._userAgent, this._registration);
 
         if (globalThis.localStorage !== undefined) {
           globalThis.localStorage.clear();
@@ -738,7 +735,7 @@ export class AuthManager {
         return;
       }
 
-      // Persist the complete retry journal before clearing the restore marker.
+      // Persist the complete retry journal before clearing the stored session.
       // Every later step is either retryable or local best-effort cleanup.
       hasPendingRevocations = await disconnectPersistedSessionWithinLifecycle(
         this._userAgent, this._storage, delegateDid, connectedDid,
@@ -752,7 +749,9 @@ export class AuthManager {
     });
 
     this._session = undefined;
-    this._userAgent.dwn.clearDelegateDecryptionKeys();
+    if (delegateDid !== undefined) {
+      this._userAgent.dwn.clearDelegateDecryptionKeys(delegateDid);
+    }
 
     this._setState('unlocked');
 
@@ -763,6 +762,9 @@ export class AuthManager {
 
   private async _retireDelegateIdentity(delegateDid: string): Promise<void> {
     try {
+      if ((await readPersistedSession(this._storage))?.delegateDid === delegateDid) {
+        return;
+      }
       const delegateIdentity = await this._userAgent.identity.get({ didUri: delegateDid });
       if (delegateIdentity === undefined) {
         return;
@@ -904,7 +906,7 @@ export class AuthManager {
    * Disconnects the current session (if any) and creates a new session
    * for the specified identity.
    */
-  async switchIdentity(didUri: string): Promise<AuthSession> {
+  async switchIdentity(didUri: string): Promise<AgentSession> {
     return this._withConnectionAttempt(async (guard) => {
       // Disconnect the current session inside this connection attempt so a
       // concurrent lock, disconnect, or shutdown invalidates the entire
@@ -922,12 +924,6 @@ export class AuthManager {
       }
 
       const { connectedDid, delegateDid } = resolveIdentityDids(identity);
-      const identityInfo: AgentSessionIdentity = {
-        didUri       : connectedDid,
-        name         : identity.metadata.name,
-        connectedDid : identity.metadata.connectedDid,
-      };
-
       // Resolve the desired sync scope before entering the terminal commit.
       // A teardown that lands while this read is pending invalidates the
       // guard and prevents every mutation below.
@@ -936,12 +932,7 @@ export class AuthManager {
         : undefined;
       this._assertConnectionAttemptActive(guard);
 
-      return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
-        await Promise.all([
-          this._storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true'),
-          this._storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid),
-        ]);
-
+      return this._commitConnectionResult(guard, async (): Promise<AgentSession> => {
         // Always repair the sync registration regardless of sync state — a
         // stale registration persists on disk and would take effect when
         // sync is later enabled. This matches restoreSession()'s behavior.
@@ -951,12 +942,16 @@ export class AuthManager {
           delegateDid,
           scope     : delegateDid === undefined ? this._defaultIdentitySyncProtocols : derivedProtocols,
         });
-        const session = new AuthSession({
-          agent    : this._userAgent,
-          did      : connectedDid,
+        const session = await finalizeSession({
+          userAgent            : this._userAgent,
+          emitter              : this._emitter,
+          storage              : this._storage,
+          connectedDid,
           delegateDid,
-          identity : identityInfo,
-          signal   : guard.sessionLifetime.signal,
+          identityName         : identity.metadata.name,
+          identityConnectedDid : identity.metadata.connectedDid,
+          emitIdentityAdded    : false,
+          signal               : guard.sessionLifetime.signal,
         });
 
         startSyncInBackgroundIfEnabled(
@@ -1009,7 +1004,7 @@ export class AuthManager {
   /**
    * Delete a stored identity.
    *
-   * Drains and removes its sync registration before deleting keys or metadata.
+   * Waits for identity sync to stop and removes its registration before deleting keys or metadata.
    * An active identity is disconnected. Delegate keys needed by pending grant
    * revocations are retained until that work completes.
    *
@@ -1307,12 +1302,12 @@ export class AuthManager {
    * 3. Normalize protocol permission requests.
    * 4. Delegate to the connect handler for credential acquisition.
    * 5. Import the delegate DID, process grants, set up sync.
-   * 6. Finalize and return the AuthSession.
+   * 6. Finalize and return the AgentSession.
    */
   private async _handlerConnect(
     options: HandlerConnectOptions | undefined,
     guard: ConnectionAttemptGuard,
-  ): Promise<AuthSession> {
+  ): Promise<AgentSession> {
     const ctx = this._flowContext(guard);
     const { userAgent, emitter, storage } = ctx;
     const sync = options?.sync ?? ctx.defaultSync;
@@ -1351,7 +1346,7 @@ export class AuthManager {
       throw new ConnectDeniedError('[@enbox/auth] Connect was denied or cancelled by the user.');
     }
 
-    return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
+    return this._commitConnectionResult(guard, async (): Promise<AgentSession> => {
       // 5. Validate the returned grants against the request before importing
       //    anything — grantee must be the delegate DID and every scope must
       //    have been requested.
@@ -1366,17 +1361,12 @@ export class AuthManager {
         flowName: 'Connect',
       });
 
-      // 7. Finalize session. Pass the transient delegate state explicitly
-      // so `persistOrClearDelegateSecrets` doesn't need to read it back
-      // off the identity (which was the old `(identity as any)._foo`
-      // smuggling pattern).
+      // 7. Persist this approval's revocation metadata and finalize the session.
       return finalizeDelegateSession({
         userAgent, emitter, storage, identity,
-        connectedDid, delegateDid   : delegatePortableDid.uri, sync,
-        signal        : guard.sessionLifetime.signal,
-        delegateState : {
-          sessionRevocations,
-        },
+        connectedDid, delegateDid : delegatePortableDid.uri, sync,
+        signal      : guard.sessionLifetime.signal,
+        sessionRevocations,
       });
     });
   }
@@ -1385,7 +1375,7 @@ export class AuthManager {
   private async _refresh(
     options: RefreshOptions,
     monitor?: ConnectionMonitorState,
-  ): Promise<AuthSession> {
+  ): Promise<AgentSession> {
     this._guardShutdown();
     if (this._session?.delegateDid === undefined) {
       throw new Error('[@enbox/auth] refresh() requires an active delegated session.');
@@ -1404,7 +1394,7 @@ export class AuthManager {
   private async _handlerRefresh(
     options: RefreshOptions,
     guard: ConnectionAttemptGuard,
-  ): Promise<AuthSession> {
+  ): Promise<AgentSession> {
     const currentSession = this._session;
     const connectedDid = currentSession?.did;
     const delegateDid = currentSession?.delegateDid;
@@ -1466,7 +1456,7 @@ export class AuthManager {
       );
     }
 
-    return this._commitConnectionResult(guard, async (): Promise<AuthSession> => {
+    return this._commitConnectionResult(guard, async (): Promise<AgentSession> => {
       validateConnectResultGrants(result, permissionRequests);
       await processDelegateGrantsForExistingIdentity({
         userAgent      : this._userAgent,
@@ -1477,17 +1467,17 @@ export class AuthManager {
       await this._userAgent.permissions.clear();
 
       return finalizeDelegateSession({
-        userAgent         : this._userAgent,
-        emitter           : this._emitter,
-        storage           : this._storage,
+        userAgent          : this._userAgent,
+        emitter            : this._emitter,
+        storage            : this._storage,
         identity,
         connectedDid,
         delegateDid,
-        sync              : this._defaultSync,
-        delegateState     : { sessionRevocations: result.sessionRevocations },
-        startSync         : false,
-        emitIdentityAdded : false,
-        signal            : guard.sessionLifetime.signal,
+        sync               : this._defaultSync,
+        sessionRevocations : result.sessionRevocations,
+        startSync          : false,
+        emitIdentityAdded  : false,
+        signal             : guard.sessionLifetime.signal,
       });
     });
   }
@@ -1600,7 +1590,7 @@ export class AuthManager {
       assertActive                 : (): void => this._assertConnectionAttemptActive(guard),
       runMutation                  : <T>(operation: () => Promise<T>): Promise<T> =>
         this._runConnectionMutation(guard, operation),
-      commitSession: <T extends AuthSession | undefined>(
+      commitSession: <T extends AgentSession | undefined>(
         operation: () => Promise<T>, options?: { completeVaultSetup?: boolean },
       ): Promise<T> => this._commitConnectionResult(guard, operation, options),
     };
@@ -1618,7 +1608,7 @@ export class AuthManager {
    * a closed manager would otherwise fail deep inside sync/storage with an
    * unhelpful error.
    */
-  private async _withConnectionAttempt<T extends AuthSession | undefined>(
+  private async _withConnectionAttempt<T extends AgentSession | undefined>(
     fn: (guard: ConnectionAttemptGuard) => Promise<T>,
     monitor?: ConnectionMonitorState,
   ): Promise<T> {
@@ -1675,7 +1665,7 @@ export class AuthManager {
   }
 
   /** Finalize, install, and publish a connection session before queued teardown can run. */
-  private async _commitConnectionResult<T extends AuthSession | undefined>(
+  private async _commitConnectionResult<T extends AgentSession | undefined>(
     guard: ConnectionAttemptGuard,
     operation: () => Promise<T>,
     options: { publishSessionStart?: boolean; completeVaultSetup?: boolean } = {},
@@ -1703,20 +1693,16 @@ export class AuthManager {
           if (completeVaultSetup) {
             await this._userAgent.vault.clearPendingSetup();
           }
-          const previousSession = this._session;
-          const previousDelegateDid = previousSession?.delegateDid;
+          const previousDelegateDid = this._session?.delegateDid;
           if (previousDelegateDid !== undefined && previousDelegateDid !== session.delegateDid) {
             this._userAgent.dwn.clearDelegateDecryptionKeys(previousDelegateDid);
           }
-          const isReplacementSession = previousSession !== session;
-          if (isReplacementSession) {
-            this._abortSessionLifetime();
-          }
+          this._abortSessionLifetime();
 
           this._session = session;
           this._sessionLifetime = guard.sessionLifetime;
           this._setState('connected');
-          if (publishSessionStart && isReplacementSession) {
+          if (publishSessionStart) {
             this._emitter.emit('session-start', {});
           }
         }

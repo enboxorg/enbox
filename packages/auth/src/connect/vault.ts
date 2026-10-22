@@ -9,8 +9,8 @@
  * @module
  */
 
-import type { AuthSession } from '../identity-session.js';
-import type { BearerIdentity } from '@enbox/agent';
+import type { AgentSession, BearerIdentity } from '@enbox/agent';
+
 import type { FlowContext } from './lifecycle.js';
 import type { RestoreFromPhraseOptions, SyncOption, VaultConnectOptions } from '../types.js';
 
@@ -20,7 +20,7 @@ import { publishServiceConfigNotice } from '@enbox/agent';
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { DEFAULT_DWN_ENDPOINTS } from '../types.js';
 import { registerDwnTenants } from '../registration.js';
-import { assertFlowActive, commitFlowSession, createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, runFlowMutation, startSyncInBackgroundIfEnabled } from './lifecycle.js';
+import { createDefaultIdentity, ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 import { recoverIdentitiesFromRemote, registerAgentDidForSync } from './recovery.js';
 
 function normalizeDwnEndpoints(endpoints: string[]): string[] {
@@ -57,10 +57,10 @@ async function migrateVaultDwnEndpoints(
       { dids: [userAgent.agentDid.uri], dwnEndpoints: replacementEndpoints },
       ctx.registration,
     );
-    assertFlowActive(ctx);
+    ctx.assertActive();
   }
 
-  await runFlowMutation(ctx, async (): Promise<void> => {
+  await ctx.runMutation(async (): Promise<void> => {
     await runAuthSessionLifecycle(async (): Promise<void> => {
       await userAgent.vault.resetPasswordWithRecoveryPhrase({
         recoveryPhrase,
@@ -78,7 +78,7 @@ async function migrateVaultDwnEndpoints(
       console.error(`[@enbox/auth] Failed to announce vault DWN endpoint change: ${String(error)}`);
     });
   });
-  await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
+  await ctx.runMutation(() => registerAgentDidForSync(userAgent));
 }
 
 /** Prepare or resume the owner vault before identity recovery, selection or session creation. */
@@ -92,8 +92,8 @@ async function prepareOwnerVault(
   const replacementDwnEndpoints = isRecovery ? params.dwnEndpoints : undefined;
   const { password, recoveryPhrase: suppliedRecoveryPhrase } = params;
   // Initialize vault on first launch and start the agent.
-  const initializedRecoveryPhrase = await runFlowMutation(ctx, () => ensureVaultReady({ userAgent, emitter, ...params }));
-  const pendingSetup = await runFlowMutation(ctx, () => runAuthSessionLifecycle(() => userAgent.vault.getPendingSetup()));
+  const initializedRecoveryPhrase = await ctx.runMutation(() => ensureVaultReady({ userAgent, emitter, ...params }));
+  const pendingSetup = await ctx.runMutation(() => runAuthSessionLifecycle(() => userAgent.vault.getPendingSetup()));
   const recoveryPhrase = pendingSetup?.recoveryPhrase ?? initializedRecoveryPhrase;
   const hasPendingSetup = pendingSetup !== undefined;
   if (pendingSetup?.registrationRequired && ctx.registration === undefined) {
@@ -110,7 +110,7 @@ async function prepareOwnerVault(
   // Apply a stored local-node pairing when the agent was created in local mode.
   // In remote mode, discovery already ran before agent creation — skip.
   if (!userAgent.dwn.isRemoteMode) {
-    await runFlowMutation(ctx, () => applyLocalDwnDiscovery(userAgent, storage, emitter));
+    await ctx.runMutation(() => applyLocalDwnDiscovery(userAgent, storage, emitter));
   }
 
   // Seed recovery needs the vault DID's advertised node even when tenant registration is disabled.
@@ -129,10 +129,10 @@ async function prepareOwnerVault(
       { dids: [userAgent.agentDid.uri], dwnEndpoints: agentDwnEndpoints },
       ctx.registration,
     );
-    assertFlowActive(ctx);
+    ctx.assertActive();
   }
   if (sync !== 'off' || isRecovery) {
-    await runFlowMutation(ctx, () => registerAgentDidForSync(userAgent));
+    await ctx.runMutation(() => registerAgentDidForSync(userAgent));
   }
 
   return { recoveryPhrase, hasPendingSetup, advertisedVaultEndpoints };
@@ -155,9 +155,9 @@ async function prepareOwnerVault(
 export async function vaultConnect(
   ctx: FlowContext,
   options: VaultConnectOptions | RestoreFromPhraseOptions = {},
-): Promise<AuthSession> {
+): Promise<AgentSession> {
   const { userAgent, emitter, storage } = ctx;
-  assertFlowActive(ctx);
+  ctx.assertActive();
 
   const suppliedRecoveryPhrase = 'recoveryPhrase' in options ? options.recoveryPhrase : undefined;
   const isRecovery = suppliedRecoveryPhrase !== undefined;
@@ -174,9 +174,9 @@ export async function vaultConnect(
 
   // Resolve password through the standard chain.
   const isFirstLaunch = await userAgent.firstLaunch();
-  assertFlowActive(ctx);
+  ctx.assertActive();
   const password = await resolvePassword(ctx, options.password, isFirstLaunch);
-  assertFlowActive(ctx);
+  ctx.assertActive();
 
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
@@ -206,7 +206,7 @@ export async function vaultConnect(
       assertActive    : ctx.assertActive,
       runMutation     : ctx.runMutation,
     });
-    assertFlowActive(ctx);
+    ctx.assertActive();
   } else {
     identities = await userAgent.identity.list();
   }
@@ -226,9 +226,7 @@ export async function vaultConnect(
   // Create a default identity if none were found or recovered and the caller asked for one.
   if (!identity && shouldCreateIdentity) {
     isNewIdentity = true;
-    identity = await runFlowMutation(
-      ctx,
-      () => createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default'),
+    identity = await ctx.runMutation(() => createDefaultIdentity(userAgent, dwnEndpoints, options.metadata?.name ?? 'Default'),
     );
   }
 
@@ -250,16 +248,16 @@ export async function vaultConnect(
       { dids: [connectedDid], dwnEndpoints: identityDwnEndpoints },
       ctx.registration,
     );
-    assertFlowActive(ctx);
+    ctx.assertActive();
   }
-  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+  return ctx.commitSession( async (): Promise<AgentSession> => {
     if ((identity !== undefined && sync !== 'off') || (!isNewIdentity && delegateDid !== undefined)) {
       // Persisted delegates repair their grant-derived scope even while sync is
       // off so revoked protocols cannot resume from stale registration later.
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
     }
 
-    // Persist session info and build the AuthSession for the manager to publish.
+    // Persist session info and build the AgentSession for the manager to publish.
     const session = await finalizeSession({
       userAgent,
       emitter,

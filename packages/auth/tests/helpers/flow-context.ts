@@ -1,4 +1,4 @@
-import type { AuthSession } from '../../src/identity-session.js';
+import type { AgentSession } from '@enbox/agent';
 import type { FlowContext } from '../../src/connect/lifecycle.js';
 
 type DirectFlowContext = Omit<
@@ -14,6 +14,6 @@ export function createFlowContext(context: DirectFlowContext): FlowContext {
     operationSignal : new AbortController().signal,
     assertActive    : (): void => {},
     runMutation     : <T>(operation: () => Promise<T>): Promise<T> => operation(),
-    commitSession   : (operation: () => Promise<AuthSession>): Promise<AuthSession> => operation(),
+    commitSession   : (operation: () => Promise<AgentSession>): Promise<AgentSession> => operation(),
   };
 }

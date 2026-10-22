@@ -103,9 +103,9 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.AuthManager).toBe('function');
   });
 
-  it('re-exports AuthSession from @enbox/auth', async () => {
-    const mod = await getBrowserExports();
-    expect(mod.AuthSession).toBeDefined();
+  it('re-exports the canonical AgentSession class from @enbox/agent', async () => {
+    const [mod, agent] = await Promise.all([getBrowserExports(), import('@enbox/agent')]);
+    expect(mod.AgentSession).toBe(agent.AgentSession);
   });
 
   it('re-exports normalizeProtocolRequests from @enbox/auth', async () => {

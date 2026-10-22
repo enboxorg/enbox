@@ -8,42 +8,39 @@
  * @module
  */
 
-import type { AuthSession } from '../identity-session.js';
+import type { AgentSession } from '@enbox/agent';
 import type { FlowContext } from './lifecycle.js';
 import type { WalletConnectOptions } from '../types.js';
 
 import { ConnectDeniedError } from '../errors.js';
 import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
-import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword, runFlowMutation } from './lifecycle.js';
-
-// Re-export for backward compatibility — processConnectedGrants moved to lifecycle.ts.
-export { processConnectedGrants } from './lifecycle.js';
+import { ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword } from './lifecycle.js';
 
 /**
  * Execute the wallet connect flow.
  *
  * 1. Passes the permission requests directly to `WalletConnect.initClient()`.
  * 2. Imports the delegate DID and processes grants.
- * 3. Sets up sync and returns an AuthSession.
+ * 3. Sets up sync and returns an AgentSession.
  */
 export async function walletConnect(
   ctx: FlowContext,
   options: WalletConnectOptions,
-): Promise<AuthSession> {
+): Promise<AgentSession> {
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
-  assertFlowActive(ctx);
+  ctx.assertActive();
 
   // Ensure the agent is initialized and started before the relay flow.
   const isFirstLaunch = await userAgent.firstLaunch();
-  assertFlowActive(ctx);
+  ctx.assertActive();
   const password = await resolvePassword(ctx, undefined, isFirstLaunch);
-  assertFlowActive(ctx);
+  ctx.assertActive();
   const prepareAgent = (): Promise<string | undefined> => ensureVaultReady({
     userAgent, emitter, password, isFirstLaunch,
   });
-  await runFlowMutation(ctx, prepareAgent);
+  await ctx.runMutation(prepareAgent);
 
   // Run the Enbox Connect relay flow.
   const result = await WalletConnect.initClient({
@@ -67,7 +64,7 @@ export async function walletConnect(
     throw new ConnectDeniedError('[@enbox/auth] Connection was denied by the wallet.');
   }
 
-  assertFlowActive(ctx);
+  ctx.assertActive();
 
   // Validate the returned grants before any local or provider-side mutation.
   validateConnectResultGrants(result, options.permissionRequests);
@@ -75,24 +72,19 @@ export async function walletConnect(
     delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
   } = result;
 
-  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+  return ctx.commitSession(async (): Promise<AgentSession> => {
     // Import delegate DID, process grants, and set up sync.
     const identity = await importDelegateAndSetupSync({
       userAgent, delegatePortableDid, connectedDid, delegateGrants,
       flowName: 'Wallet connect',
     });
 
-    // Finalize session. Pass the transient delegate state explicitly so
-    // `persistOrClearDelegateSecrets` doesn't have to read it back off
-    // the identity object (which was the old `(identity as any)._foo`
-    // smuggling pattern).
+    // Persist this approval's revocation metadata when finalizing the session.
     return finalizeDelegateSession({
       userAgent, emitter, storage, identity,
-      connectedDid, delegateDid   : delegatePortableDid.uri, sync,
-      signal        : ctx.sessionSignal,
-      delegateState : {
-        sessionRevocations,
-      },
+      connectedDid, delegateDid : delegatePortableDid.uri, sync,
+      signal      : ctx.sessionSignal,
+      sessionRevocations,
     });
   });
 }

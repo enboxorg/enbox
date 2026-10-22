@@ -8,7 +8,7 @@
  * - Vault init/start lifecycle
  * - Sync interval calculation and startup
  * - `connectedDid` / `delegateDid` derivation from identity metadata
- * - Session finalization (storage persistence + AuthSession construction)
+ * - Session finalization (atomic storage persistence + AgentSession construction)
  *
  * @module
  * @internal
@@ -20,15 +20,16 @@ import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMe
 
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
+import type { RevocationEntry } from './session-state.js';
 import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
+import { AgentSession, DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 import { Convert, runWithCrossContextLock } from '@enbox/common';
 import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
-import { DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 
-import { AuthSession } from '../identity-session.js';
+import { persistSessionBinding } from './session-state.js';
 import { RecoveryPhraseMismatchError } from '../errors.js';
-import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../types.js';
+import { DEFAULT_DWN_ENDPOINTS, INSECURE_DEFAULT_PASSWORD } from '../types.js';
 
 const AUTH_SESSION_LIFECYCLE_LOCK = 'enbox:auth:session-lifecycle';
 
@@ -42,10 +43,8 @@ export async function runAuthSessionLifecycle<T>(operation: () => Promise<T>): P
 /**
  * Unified context passed from `AuthManager` to every connect flow.
  *
- * Replaces the per-flow `VaultConnectContext`, `SessionRestoreContext`,
- * `WalletConnectContext`, and `ImportContext` interfaces. Manager-owned
- * lifecycle operations are required; flow-specific configuration remains
- * optional so each flow consumes only what it needs.
+ * AuthManager owns the required lifecycle guards and serialized mutations.
+ * Flow-specific configuration remains optional.
  *
  * @internal
  */
@@ -68,28 +67,9 @@ export interface FlowContext {
   /** Serializes a local mutation against session teardown. */
   runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
   /** Serializes terminal finalization and installs the returned session. */
-  commitSession: <T extends AuthSession | undefined>(
+  commitSession: <T extends AgentSession | undefined>(
     operation: () => Promise<T>, options?: { completeVaultSetup?: boolean },
   ) => Promise<T>;
-}
-
-/** Assert that a manager-owned flow is still active. */
-export function assertFlowActive(ctx: FlowContext): void {
-  ctx.assertActive();
-}
-
-/** Run a local mutation through the manager lifecycle mutex. */
-export async function runFlowMutation<T>(ctx: FlowContext, operation: () => Promise<T>): Promise<T> {
-  return ctx.runMutation(operation);
-}
-
-/** Commit a finalized session through the manager lifecycle mutex. */
-export async function commitFlowSession<T extends AuthSession | undefined>(
-  ctx: FlowContext,
-  operation: () => Promise<T>,
-  options?: { completeVaultSetup?: boolean },
-): Promise<T> {
-  return ctx.commitSession(operation, options);
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────
@@ -149,13 +129,6 @@ export async function resolvePassword(
 
 /**
  * Initialize or recover the vault, start the agent, then emit `vault-unlocked`.
- *
- * This consolidates the 5 copies of:
- * ```ts
- * if (isFirstLaunch) { await userAgent.initialize({ password, ... }); }
- * await userAgent.start({ password });
- * emitter.emit('vault-unlocked', {});
- * ```
  *
  * When `recoveryPhrase` is supplied for an already-initialized vault, the phrase is verified
  * against the stored agent DID and the vault password is reset without replacing local data.
@@ -386,16 +359,12 @@ export async function createDefaultIdentity(
  * For a **wallet-connected** identity: `connectedDid` is the external wallet
  * DID, and `delegateDid` is the local identity's DID URI.
  *
- * @param identity            - The bearer identity to extract DIDs from.
- * @param storedDelegateDid   - Optional fallback delegate DID from storage,
- *   used by session-restore when the identity metadata doesn't include a
- *   `connectedDid` but a delegate DID was persisted in a prior session.
+ * @param identity - The bearer identity to extract DIDs from.
  *
  * @internal
  */
 export function resolveIdentityDids(
   identity: BearerIdentity,
-  storedDelegateDid?: string,
 ): {
   connectedDid: string;
   delegateDid: string | undefined;
@@ -403,7 +372,7 @@ export function resolveIdentityDids(
   const connectedDid = identity.metadata.connectedDid ?? identity.did.uri;
   const delegateDid = identity.metadata.connectedDid
     ? identity.did.uri
-    : (storedDelegateDid ?? undefined);
+    : undefined;
   return { connectedDid, delegateDid };
 }
 
@@ -721,7 +690,7 @@ export async function processConnectedGrants(params: {
 // ─── importDelegateAndSetupSync ─────────────────────────────────
 
 /**
- * Import a delegated DID, process its grants, register sync, and pull.
+ * Import a delegated DID, process its grants, and register sync.
  *
  * This is the shared post-connect lifecycle used by both the DWeb Connect
  * and relay WalletConnect flows. On failure, the imported identity is
@@ -766,11 +735,6 @@ export async function importDelegateAndSetupSync(params: {
     // Doing a manual pull first would double the startup burst and can
     // trigger rate limits on the remote DWN.
 
-    // Delegate protocol keys / multi-party state / revocation map are
-    // passed back to the caller explicitly via the return value so
-    // `finalizeDelegateSession` can persist them. (The previous flow
-    // smuggled them through `(identity as any)._foo`, which traded
-    // type safety for one fewer return value.)
     return identity;
   } catch (error: unknown) {
     if (identity) {
@@ -824,21 +788,9 @@ export async function processDelegateGrantsForExistingIdentity(params: {
 // ─── finalizeDelegateSession ────────────────────────────────────
 
 /**
- * Transient state produced by a successful delegated connect flow that
- * `finalizeDelegateSession` persists into the SecretStore + storage
- * adapter. Passed explicitly through the call chain rather than
- * smuggled via private fields on `BearerIdentity`.
- *
- * @internal
- */
-export type DelegateSessionState = {
-  sessionRevocations?: { grantId: string; revocationGrantId: string }[];
-};
-
-/**
- * Build an `AuthSession` for a delegated connect flow (DWeb Connect or
+ * Build an `AgentSession` for a delegated connect flow (DWeb Connect or
  * relay WalletConnect). Optionally starts sync and persists delegate/connected
- * DID markers.
+ * DID binding.
  *
  * @internal
  */
@@ -850,33 +802,20 @@ export async function finalizeDelegateSession(params: {
   connectedDid: string;
   delegateDid: string;
   sync: SyncOption | undefined;
-  delegateState?: DelegateSessionState;
+  /** Revocation metadata persisted in the delegate session record. */
+  sessionRevocations?: RevocationEntry[];
   /** Whether to start sync as part of finalization. Defaults to `true`. */
   startSync?: boolean;
   /** Whether to emit `identity-added`. Defaults to `true`. */
   emitIdentityAdded?: boolean;
   /** Signal owned by the manager for this session. */
   signal: AbortSignal;
-}): Promise<AuthSession> {
+}): Promise<AgentSession> {
   const {
     userAgent, emitter, storage, identity, connectedDid, delegateDid, sync,
-    delegateState = {}, startSync = true, emitIdentityAdded = true,
+    sessionRevocations, startSync = true, emitIdentityAdded = true,
     signal,
   } = params;
-
-  // Persist protocol path keys alongside the delegate session markers
-  // so they survive agent restarts.  Delegate keys are stored in the
-  // vault-backed SecretStore (encrypted at rest), while non-secret
-  // session markers go into the plaintext StorageAdapter.
-  const extraStorageKeys: Record<string, string> = {
-    [STORAGE_KEYS.DELEGATE_DID]  : delegateDid,
-    [STORAGE_KEYS.CONNECTED_DID] : connectedDid,
-  };
-
-  // Persist or clear delegate keys/revocations. Clearing stale values
-  // from prior sessions prevents a reconnect with fewer capabilities
-  // from retaining old decryption material.
-  await persistOrClearDelegateSecrets(userAgent, storage, extraStorageKeys, delegateState);
 
   const session = await finalizeSession({
     userAgent,
@@ -888,7 +827,7 @@ export async function finalizeDelegateSession(params: {
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded,
     signal,
-    extraStorageKeys,
+    sessionRevocations   : sessionRevocations ?? [],
   });
 
   if (startSync) {
@@ -901,20 +840,11 @@ export async function finalizeDelegateSession(params: {
 // ─── finalizeSession ────────────────────────────────────────────
 
 /**
- * Persist session markers, build an `AuthSession`, and emit identity events.
- *
- * Consolidates 5 copies of:
- * ```ts
- * await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
- * await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid);
- * const session = new AuthSession({ ... });
- * emitter.emit('identity-added', { identity: identityInfo });
- * ```
+ * Persist the complete session, build an `AgentSession`, and emit identity events.
  *
  * @param params.emitIdentityAdded - Whether to emit `identity-added`. Defaults to `true`.
  *   Set to `false` for session-restore (identity was already added in the original flow).
- * @param params.extraStorageKeys  - Additional key-value pairs to persist (e.g. delegate/connected DIDs
- *   for wallet-connect flows).
+ * @param params.sessionRevocations - Approval metadata to replace. Omission preserves a matching delegated session's metadata.
  *
  * @internal
  */
@@ -929,8 +859,8 @@ export async function finalizeSession(params: {
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
   signal: AbortSignal;
-  extraStorageKeys?: Record<string, string>;
-}): Promise<AuthSession> {
+  sessionRevocations?: RevocationEntry[];
+}): Promise<AgentSession> {
   const {
     userAgent,
     emitter,
@@ -942,20 +872,10 @@ export async function finalizeSession(params: {
     identityConnectedDid,
     emitIdentityAdded = true,
     signal,
-    extraStorageKeys,
+    sessionRevocations,
   } = params;
 
-  // Persist all session markers concurrently — all writes are independent.
-  const storageWrites: Promise<void>[] = [
-    storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true'),
-    storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, connectedDid),
-  ];
-  if (extraStorageKeys) {
-    for (const [key, value] of Object.entries(extraStorageKeys)) {
-      storageWrites.push(storage.set(key, value));
-    }
-  }
-  await Promise.all(storageWrites);
+  await persistSessionBinding({ userAgent, storage, connectedDid, delegateDid, sessionRevocations });
 
   // When identityName is undefined, no user identity exists (agent-only session).
   // Build an AgentSessionIdentity with the agent DID as a fallback.
@@ -965,7 +885,7 @@ export async function finalizeSession(params: {
     connectedDid : identityConnectedDid,
   };
 
-  const session = new AuthSession({
+  const session = new AgentSession({
     agent    : userAgent,
     did      : connectedDid,
     delegateDid,
@@ -979,33 +899,4 @@ export async function finalizeSession(params: {
   }
 
   return session;
-}
-
-// ─── persistOrClearDelegateSecrets ──────────────────────────────
-
-/** @internal */
-async function persistOrClearDelegateSecrets(
-  userAgent: EnboxUserAgent,
-  storage: StorageAdapter,
-  extraStorageKeys: Record<string, string>,
-  delegateState: DelegateSessionState,
-): Promise<void> {
-  const {
-    sessionRevocations,
-  } = delegateState;
-
-  // Clear legacy key caches that are no longer populated by connect.
-  const secretWrites: Promise<void>[] = [];
-  secretWrites.push(
-    userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).then(() => {}).catch(() => {}),
-    storage.remove(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
-    storage.remove(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS).catch(() => {}),
-  );
-  await Promise.all(secretWrites);
-
-  if (sessionRevocations?.length) {
-    extraStorageKeys[STORAGE_KEYS.SESSION_REVOCATIONS] = JSON.stringify(sessionRevocations);
-  } else {
-    try { await storage.remove(STORAGE_KEYS.SESSION_REVOCATIONS); } catch { /* best-effort */ }
-  }
 }

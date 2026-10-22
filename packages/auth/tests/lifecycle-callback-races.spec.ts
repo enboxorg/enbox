@@ -8,6 +8,7 @@ import { AuthEventEmitter } from '../src/events.js';
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
+import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
@@ -75,14 +76,7 @@ async function expectNoSessionPersistence(
   storage: MemoryStorage,
 ): Promise<void> {
   expect(manager.session).toBeUndefined();
-  for (const key of [
-    STORAGE_KEYS.PREVIOUSLY_CONNECTED,
-    STORAGE_KEYS.ACTIVE_IDENTITY,
-    STORAGE_KEYS.DELEGATE_DID,
-    STORAGE_KEYS.CONNECTED_DID,
-  ]) {
-    expect(await storage.get(key)).toBeNull();
-  }
+  expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
 }
 
 describe('AuthManager lifecycle callback races', () => {
@@ -181,8 +175,8 @@ describe('AuthManager lifecycle callback races', () => {
     const callbackStarted = createDeferred<void>();
     const password = createDeferred<string>();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:testuser123');
+    await setStoredSession(storage, 'did:dht:testuser123');
+    const originalSession = await storage.get(STORAGE_KEYS.SESSION);
     let startCalls = 0;
     const agent = createMockAgent({
       firstLaunch  : async (): Promise<boolean> => false,
@@ -209,7 +203,8 @@ describe('AuthManager lifecycle callback races', () => {
     expect((restoreError as Error).message).toContain('invalidated');
     expect(startCalls).toBe(0);
     expect(manager.state).toBe('unlocked');
-    await expectNoSessionPersistence(manager, storage);
+    expect(manager.session).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.SESSION)).toBe(originalSession);
   });
 
   test('clearStorage disconnect prevents provider-auth mutations after pending UI resumes', async () => {

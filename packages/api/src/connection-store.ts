@@ -40,8 +40,8 @@ import type { ApplicationManifest } from './application-manifest.js';
 import type { DwnEndpointResolution } from '@enbox/dids';
 import type { ObservableStore } from './observable-store.js';
 import type {
+  AgentSession,
   AuthManagerOptions,
-  AuthSession,
   ConnectionMonitorOptions,
   ConnectionStatus,
   DisconnectOptions,
@@ -138,7 +138,7 @@ export type SyncStatusSnapshot = SyncStatusContents & Readonly<
  */
 type ConnectionSnapshotContents = Readonly<{
   /** The active auth session. Populated while `phase` is `'connected'`. */
-  session?: AuthSession;
+  session?: AgentSession;
 
   /**
    * The {@link Enbox} instance bound to the active session.
@@ -199,12 +199,12 @@ type ConnectionSnapshotContents = Readonly<{
 export type ConnectionSnapshot = ConnectionSnapshotContents & Readonly<
   | {
     phase: 'connected';
-    session: AuthSession;
+    session: AgentSession;
     enbox: Enbox;
   }
   | {
     phase: Exclude<ConnectionPhase, 'connected'>;
-    session?: AuthSession;
+    session?: AgentSession;
     enbox?: Enbox;
   }
 >;
@@ -443,22 +443,22 @@ function toError(cause: unknown): Error {
 }
 
 /** Whether an auth session still owns a usable, unaborted lifetime. */
-function isActiveAuthSession(session: AuthSession | undefined): session is AuthSession {
+function isActiveSession(session: AgentSession | undefined): session is AgentSession {
   return session !== undefined && !session.signal.aborted;
 }
 
 /** Whether a newly active session must replace the connection currently being published. */
-function shouldResetPublishedSession(snapshot: ConnectionSnapshot, activeSession: AuthSession): boolean {
+function shouldResetPublishedSession(snapshot: ConnectionSnapshot, activeSession: AgentSession): boolean {
   return snapshot.phase === 'disconnecting'
     || (snapshot.session !== undefined && snapshot.session !== activeSession);
 }
 
 /** Whether a candidate remains the auth manager's active, unaborted session. */
 function isAuthoritativeActiveSession(
-  authoritativeSession: AuthSession | undefined,
-  candidate: AuthSession,
+  authoritativeSession: AgentSession | undefined,
+  candidate: AgentSession,
 ): boolean {
-  return authoritativeSession === candidate && isActiveAuthSession(candidate);
+  return authoritativeSession === candidate && isActiveSession(candidate);
 }
 
 /** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
@@ -469,7 +469,7 @@ function requiresWalletReapproval(error: Error): boolean {
 
 /** Internal actionable failure for an incomplete delegated application sync registration. */
 class ManifestSyncRegistrationCoverageError extends Error {
-  public constructor(session: AuthSession, requiredProtocols: readonly string[]) {
+  public constructor(session: AgentSession, requiredProtocols: readonly string[]) {
     super(
       `[@enbox/api] The delegated session for '${session.did}' does not have a sync registration ` +
       `for delegate '${session.delegateDid}' covering every read protocol: ${requiredProtocols.join(', ')}. ` +
@@ -482,13 +482,13 @@ class ManifestSyncRegistrationCoverageError extends Error {
 type ManifestCoverageBinding = {
   onAbort: () => void;
   revision: number;
-  session: AuthSession;
+  session: AgentSession;
   unsubscribe?: () => void;
 };
 
 /** Whether one exact registration matches the delegate and every manifest read protocol. */
 function manifestRegistrationCoversSession(
-  session: AuthSession,
+  session: AgentSession,
   requiredProtocols: readonly string[],
   registration: SyncIdentityOptions | undefined,
 ): boolean {
@@ -505,7 +505,7 @@ type SyncStatusBinding = {
   refresh?: Promise<void>;
   refreshRequested: boolean;
   routedDwn?: DwnEndpointResolution;
-  session: AuthSession;
+  session: AgentSession;
   unsubscribe?: () => void;
 };
 
@@ -615,9 +615,9 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   public connect(options?: ConnectionStoreConnectOptions): Promise<ConnectionSnapshot> {
     const protocols = getApplicationProtocolRequests(this._application);
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => {
+    return this._startConnectFlow((auth: AuthManager): Promise<AgentSession> => {
       if (this._snapshot.walletReapprovalRequired === true
-        && isActiveAuthSession(auth.session)
+        && isActiveSession(auth.session)
         && auth.session.delegateDid !== undefined) {
         const refreshOptions = options?.connectHandler === undefined
           ? {}
@@ -629,11 +629,11 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   public connectVault(options?: VaultConnectOptions): Promise<ConnectionSnapshot> {
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => auth.connectVault(options));
+    return this._startConnectFlow((auth: AuthManager): Promise<AgentSession> => auth.connectVault(options));
   }
 
   public refresh(options: ConnectionStoreRefreshOptions = {}): Promise<ConnectionSnapshot> {
-    return this._startConnectFlow((auth: AuthManager): Promise<AuthSession> => (
+    return this._startConnectFlow((auth: AuthManager): Promise<AgentSession> => (
       auth.refresh(this._refreshOptions(options))
     ));
   }
@@ -715,7 +715,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   /** Single-flight entry point shared by `connect`, `connectVault`, and `refresh`. */
-  private _startConnectFlow(flow: (auth: AuthManager) => Promise<AuthSession>): Promise<ConnectionSnapshot> {
+  private _startConnectFlow(flow: (auth: AuthManager) => Promise<AgentSession>): Promise<ConnectionSnapshot> {
     this._assertNotDisposed();
     if (this._pendingAction !== undefined) {
       return this._pendingAction;
@@ -761,7 +761,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
   }
 
-  private async _runConnectFlow(flow: (auth: AuthManager) => Promise<AuthSession>): Promise<ConnectionSnapshot> {
+  private async _runConnectFlow(flow: (auth: AuthManager) => Promise<AgentSession>): Promise<ConnectionSnapshot> {
     const generation = ++this._actionGeneration;
     if (this._auth === undefined) {
       void this._materializeAuth();
@@ -827,7 +827,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._isStale(generation)) {
         return this._settleSuperseded();
       }
-      if (!isActiveAuthSession(this._auth?.session)) {
+      if (!isActiveSession(this._auth?.session)) {
         this._manifestCoverageMissing = false;
       }
       return this._settlePublication(generation, this._applyActionFailure(generation, cause));
@@ -973,7 +973,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     generation: number,
   ): Promise<ConnectionSnapshot | undefined> {
     const activeSession = auth.session;
-    if (!isActiveAuthSession(activeSession)) {
+    if (!isActiveSession(activeSession)) {
       return this._publishDisconnected();
     }
     if (shouldResetPublishedSession(this._snapshot, activeSession)) {
@@ -1011,7 +1011,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
 
       const readySession = auth.session;
-      if (!isActiveAuthSession(readySession)) {
+      if (!isActiveSession(readySession)) {
         return this._publishDisconnected();
       }
       if (readySession !== activeSession) {
@@ -1031,7 +1031,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
 
       const coveredSession = auth.session;
-      if (!isActiveAuthSession(coveredSession)) {
+      if (!isActiveSession(coveredSession)) {
         return this._publishDisconnected();
       }
       if (coveredSession !== activeSession) {
@@ -1066,7 +1066,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (isAuthoritativeActiveSession(authoritativeSession, activeSession)) {
         return this._snapshot;
       }
-      if (!isActiveAuthSession(authoritativeSession)) {
+      if (!isActiveSession(authoritativeSession)) {
         return this._publishDisconnected();
       }
       return undefined;
@@ -1087,7 +1087,7 @@ class HeadlessConnectionStore implements ConnectionStore {
    * through readiness/publication so no registration transition can land in a
    * read-to-publish gap.
    */
-  private _bindManifestCoverage(session: AuthSession): ManifestCoverageBinding | undefined {
+  private _bindManifestCoverage(session: AgentSession): ManifestCoverageBinding | undefined {
     const existing = this._manifestCoverageBinding;
     if (existing?.session === session) {
       return existing;
@@ -1166,7 +1166,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   /** Fail closed on missing coverage without ending the repairable auth session. */
   private _publishManifestCoverageFailure(
     error: ManifestSyncRegistrationCoverageError,
-    expectedSession?: AuthSession,
+    expectedSession?: AgentSession,
   ): ConnectionSnapshot {
     if (expectedSession !== undefined && !this._isCurrentSession(expectedSession)) {
       return this._snapshot;
@@ -1218,7 +1218,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   /** Builds the snapshot patch for a connected session, reusing the current `Enbox` when unchanged. */
-  private _connectedPatch(session: AuthSession): ConnectedConnectionSnapshot {
+  private _connectedPatch(session: AgentSession): ConnectedConnectionSnapshot {
     const sameSession = this._snapshot.session === session;
     const enbox = sameSession && this._snapshot.enbox !== undefined
       ? this._snapshot.enbox
@@ -1269,7 +1269,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     }
 
     const survivingSession = this._auth?.session;
-    if (isActiveAuthSession(survivingSession)) {
+    if (isActiveSession(survivingSession)) {
       if (this._snapshot.session === survivingSession) {
         return this._apply({ error, phase: 'connected' });
       }
@@ -1388,7 +1388,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   // ─── Delegated connection status ───────────────────────────────
 
-  private _restartMonitor(auth: AuthManager, session: AuthSession): void {
+  private _restartMonitor(auth: AuthManager, session: AgentSession): void {
     this._stopDelegateMonitor();
     if (this._monitor === false || session.delegateDid === undefined) {
       return;
@@ -1422,7 +1422,7 @@ class HeadlessConnectionStore implements ConnectionStore {
    * expiring/expired transitions, so an explicit status read is the only way
    * the snapshot can report a healthy `'active'` connection.
    */
-  private async _seedConnectionStatus(auth: AuthManager, session: AuthSession, generation: number): Promise<void> {
+  private async _seedConnectionStatus(auth: AuthManager, session: AgentSession, generation: number): Promise<void> {
     if (session.delegateDid === undefined) {
       return;
     }
@@ -1445,7 +1445,7 @@ class HeadlessConnectionStore implements ConnectionStore {
 
   /** Applies a delegated connection status, deriving the wallet-reapproval flag. */
   private _applyConnectionStatus(connection: ConnectionStatus): void {
-    if (!isActiveAuthSession(this._snapshot.session)
+    if (!isActiveSession(this._snapshot.session)
       || this._snapshot.session.delegateDid === undefined) {
       return;
     }
@@ -1461,9 +1461,9 @@ class HeadlessConnectionStore implements ConnectionStore {
   // ─── Sync status ────────────────────────────────────────────────
 
   /** Replace the session-scoped observer and return its initial status projection. */
-  private _bindSyncStatus(session: AuthSession | undefined): SyncStatusSnapshot | undefined {
+  private _bindSyncStatus(session: AgentSession | undefined): SyncStatusSnapshot | undefined {
     this._unbindSyncStatus();
-    if (!isActiveAuthSession(session)) {
+    if (!isActiveSession(session)) {
       return undefined;
     }
 
@@ -1723,17 +1723,17 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   /** Whether one exact session still owns both auth and published connection state. */
-  private _isCurrentSession(session: AuthSession | undefined): session is AuthSession {
+  private _isCurrentSession(session: AgentSession | undefined): session is AgentSession {
     return !this._disposed
-      && isActiveAuthSession(session)
+      && isActiveSession(session)
       && this._auth?.session === session
       && this._snapshot.session === session;
   }
 
   /** Whether one candidate still owns the authoritative auth session before publication. */
-  private _isAuthoritativeSession(session: AuthSession | undefined): session is AuthSession {
+  private _isAuthoritativeSession(session: AgentSession | undefined): session is AgentSession {
     return !this._disposed
-      && isActiveAuthSession(session)
+      && isActiveSession(session)
       && this._auth?.session === session;
   }
 

@@ -20,7 +20,7 @@ describe('@enbox/auth/browser', () => {
     const mod = await getBrowserAuthExports();
 
     expect(mod.AuthManager).toBeDefined();
-    expect(mod.AuthSession).toBeDefined();
+    expect(mod.AgentSession).toBeDefined();
     expect(mod.BrowserStorage).toBeDefined();
     expect(mod.LevelStorage).toBeDefined();
     expect(mod.MemoryStorage).toBeDefined();

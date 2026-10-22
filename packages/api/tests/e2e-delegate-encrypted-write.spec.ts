@@ -649,7 +649,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
 
     // Drive the full connect flow: normalizeProtocolRequests →
     // handler.requestAccess → importDelegateAndSetupSync →
-    // finalizeDelegateSession → AuthSession.
+    // finalizeDelegateSession → AgentSession.
     const session = await auth.connect({
       protocols: [protocolDef],
     });

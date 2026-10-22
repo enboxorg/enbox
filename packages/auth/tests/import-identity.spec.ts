@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { readPersistedSession } from '../src/connect/session-state.js';
 import { importFromPortable as runImportFromPortable } from '../src/connect/import.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
@@ -186,8 +187,8 @@ describe('importFromPortable', () => {
       { portableIdentity: {} as any },
     );
 
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:testuser123');
+    expect(await storage.get(STORAGE_KEYS.SESSION)).not.toBeNull();
+    expect((await readPersistedSession(storage))?.connectedDid).toBe('did:dht:testuser123');
   });
 
   test('emits identity-added while session publication remains manager-owned', async () => {
