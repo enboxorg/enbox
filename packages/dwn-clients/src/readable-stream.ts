@@ -7,8 +7,12 @@ type ReadableStreamReader = {
 /**
  * Wraps runtime-provided streams in a standard `ReadableStream` so downstream
  * consumers see consistent reader behavior across Bun and browsers.
+ * An owned controller also releases fetch responses when runtime reader cancellation does not.
  */
-export function normalizeReadableStream(readableStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+export function normalizeReadableStream(
+  readableStream: ReadableStream<Uint8Array>,
+  abortController?: AbortController,
+): ReadableStream<Uint8Array> {
   const reader = readableStream.getReader() as ReadableStreamReader;
   let readerReleased = false;
 
@@ -23,7 +27,9 @@ export function normalizeReadableStream(readableStream: ReadableStream<Uint8Arra
 
   const cancelReader = async (reason?: unknown): Promise<void> => {
     try {
-      await reader.cancel?.(reason);
+      const cancellation = reader.cancel?.(reason);
+      abortController?.abort(reason);
+      await cancellation;
     } finally {
       releaseReader();
     }
@@ -41,6 +47,7 @@ export function normalizeReadableStream(readableStream: ReadableStream<Uint8Arra
 
         controller.enqueue(value!);
       } catch (error: unknown) {
+        abortController?.abort(error);
         try {
           await reader.cancel?.(error);
         } catch {

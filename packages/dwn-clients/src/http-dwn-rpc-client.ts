@@ -210,6 +210,10 @@ export class HttpDwnRpcClient implements DwnRpc {
   get transportProtocols(): string[] { return ['http:', 'https:']; }
 
   async sendDwnRequest(request: DwnRpcRequest): Promise<DwnRpcResponse> {
+    const responseController = new AbortController();
+    const signal = request.signal === undefined
+      ? responseController.signal
+      : AbortSignal.any([request.signal, responseController.signal]);
     const requestId = CryptoUtils.randomUuid();
     const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
       target  : request.targetDid,
@@ -220,7 +224,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       data   : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
-      signal : request.signal,
+      signal,
     });
 
     const resp = await this.fetchWithRetry(request.dwnUrl, fetchOpts, {
@@ -257,9 +261,9 @@ export class HttpDwnRpcClient implements DwnRpc {
         throw new Error(`missing data stream in json rpc response. dwn url: ${request.dwnUrl}`);
       }
       if (reply.record) {
-        reply.record.data = normalizeReadableStream(dataStream);
+        reply.record.data = normalizeReadableStream(dataStream, responseController);
       } else if (reply.entry) {
-        reply.entry.data = normalizeReadableStream(dataStream);
+        reply.entry.data = normalizeReadableStream(dataStream, responseController);
       }
     }
 
