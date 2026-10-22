@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 export type DwnServerConfig = typeof config;
@@ -91,9 +92,9 @@ export const config = {
    *
    * The `version` and `sdkVersion` are pulled from `package.json` at runtime.
    * If `DWN_SERVER_PACKAGE_JSON` is set, we use that path.
-   * Otherwise we resort to the path within the docker server image, located at `/dwn-server/package.json`.
+   * Otherwise resolve this package's own manifest in source, installed, and Docker layouts.
    */
-  packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
+  packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || createRequire(import.meta.url).resolve('@enbox/dwn-server/package.json'),
   /**
    * Maximum size of data that can be provided with a RecordsWrite.
    * Request bodies up to this size are buffered fully into memory, so the

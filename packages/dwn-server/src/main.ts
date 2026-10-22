@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { DwnServer } from './dwn-server.js';
 
 const dwnServer = new DwnServer();

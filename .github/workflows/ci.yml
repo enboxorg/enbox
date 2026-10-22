@@ -363,10 +363,50 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Lightweight packages: common, crypto, connect, auth, protocol-codegen, cli, local-node, protocols
-  # (no external services needed — the protocols suite runs its DWN
-  # integration tests against an in-process engine with did:jwk identities)
+  # Verify the packages consumers actually install, including strict declarations
+  # and executable entry points. The publisher's external writes are captured locally.
   # ---------------------------------------------------------------------------
+  packed-consumers:
+    name: 'Test: packed consumers'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build, changes]
+    if: needs.changes.outputs.src == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Restore bun cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
+      - name: Install dependencies
+        run: ./scripts/ci-install.sh
+
+      - name: Download build outputs
+        uses: actions/download-artifact@v8
+        with:
+          name: workspace-build
+          path: packages
+
+      - name: Verify installed package contracts
+        run: bun scripts/check-packed-consumers.mjs
+
+  # Lightweight packages need no external services; protocols uses an in-process DWN.
   test-lightweight:
     name: 'Test: common / crypto / connect / auth / cli'
     runs-on: ubuntu-latest
@@ -1599,7 +1639,7 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [security, changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
+    needs: [security, changes, lint, build, packed-consumers, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
     if: always() && !cancelled()
     steps:
       - name: Check results
@@ -1622,6 +1662,10 @@ jobs:
           fi
           if [ "${{ needs.build.result }}" != "success" ]; then
             echo "::error::build failed"
+            exit 1
+          fi
+          if [ "${{ needs.packed-consumers.result }}" != "success" ]; then
+            echo "::error::packed consumer checks failed"
             exit 1
           fi
 

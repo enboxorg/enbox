@@ -371,6 +371,10 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
 - **`updateInternalDependencies: "patch"`** — when a dependency gets bumped, its dependents automatically get a patch bump too.
 - **`scripts/publish.sh`** handles the Bun `workspace:*` → real version resolution that changesets' built-in publish cannot do.
 - The publish script **skips already-published versions** (idempotent).
+- Packed manifests record their release commit in `gitHead`. After npm publishing,
+  `scripts/reconcile-release.mjs` verifies that identity before completing remote
+  tags and GitHub releases. Re-run the original failed Release workflow to recover
+  partial metadata writes; historical package versions and tag objects are preserved.
 - Git tags are created automatically in the format `@enbox/<package>@<version>`.
 - npm auth is handled via `NPM_TOKEN` secret in CI.
 
