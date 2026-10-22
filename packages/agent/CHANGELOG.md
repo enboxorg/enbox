@@ -1,5 +1,42 @@
 # @enbox/agent
 
+## 0.8.50
+
+### Patch Changes
+
+- [#1793](https://github.com/enboxorg/enbox/pull/1793) [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow identity sync removal to require an expected delegate, draining that delegate's local runtime and followed-context signing before key deletion while preserving a concurrent replacement's durable registration, quota, and runtime. Keep delayed activation fenced after removal and preserve explicit follow and pull operations while sync is stopped.
+
+- [#1791](https://github.com/enboxorg/enbox/pull/1791) [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Validate portable DID documents, private/public key bindings, and known native algorithm metadata before target key storage. Apply configured DID method import validation through the agent, including did:dht identity-key binding. Reject private or symmetric key material in did:jwk identifiers during import and resolution, including partial RSA secrets in public JWKs.
+  
+  Index stored private keys by their JWK thumbprints so imports preserve external key IDs and remain usable after DWN store indexes are rebuilt.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Prepare explicit vault recovery bootstrap tenants before publishing their endpoints or pulling recovery data. Keep failed bootstraps unpublished and require an explicit phrase-restore retry before an ordinary vault connection can commit a session. Add native recovery-bootstrap deferral while preserving standalone vault publication and established recovery routes.
+  
+  Retain generated owner recovery phrases and required registration policy inside the encrypted vault record until setup and session persistence succeed. Resume failed agent or identity tenant preparation on retry, and reject ordinary session restoration while owner setup or recovery publication remains incomplete. Read current encrypted vault state when checking or completing setup across contexts.
+
+- [#1801](https://github.com/enboxorg/enbox/pull/1801) [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Correct public record and agent store declarations for strict TypeScript consumers, including exact optional properties. Run the DWN server executable with Bun and resolve installed server and codegen versions from their package manifests.
+
+- [#1786](https://github.com/enboxorg/enbox/pull/1786) [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: bind point-read payloads to their requested message and release unused admission streams
+  
+  Abort the owning HTTP request when its response stream is cancelled or fails, so sync cleanup releases the remote response under Bun as well as the local reader.
+
+- [#1793](https://github.com/enboxorg/enbox/pull/1793) [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Wait for subscription closes retained after stops or source removal before unregistering an identity, and share stored identity deletion ordering across explicit and delegated cleanup.
+  
+  Preserve delegate keys when disconnect or revocation retirement cannot immediately settle local sync work.
+  
+  Fence retained identity task groups and initialization retries before re-registering after a timed-out stop or sibling unregister, allowing fresh foreground role operations while keeping old captured runners closed.
+
+- [#1793](https://github.com/enboxorg/enbox/pull/1793) [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Wait for foreign-context subscriptions owned by an actor before changing that actor's sync registration.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/dwn-clients@0.4.37
+  - @enbox/dids@0.1.14
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+  - @enbox/connect@0.1.25
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.8.49
 
 ### Patch Changes

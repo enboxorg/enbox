@@ -1,5 +1,11 @@
 # @enbox/common
 
+## 0.1.9
+
+### Patch Changes
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+
 ## 0.1.8
 
 ### Patch Changes

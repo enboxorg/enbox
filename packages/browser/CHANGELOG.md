@@ -1,5 +1,31 @@
 # @enbox/browser
 
+## 0.3.81
+
+### Patch Changes
+
+- [#1796](https://github.com/enboxorg/enbox/pull/1796) [`fd72aca`](https://github.com/enboxorg/enbox/commit/fd72aca045cf33b6fb53f4e9f7a7c926dc706d0a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use the canonical AgentSession class and AgentSessionIdentity type throughout authentication and connection APIs. Re-export both directly through auth and browser entrypoints, removing the AuthSession and IdentityInfo aliases and the intermediate wallet grant-processing re-export.
+  
+  Remove obsolete delegate cache keys, single-object retry compatibility, forwarding-only lifecycle helpers, and the internal delegate-state wrapper. Reject unreadable retry journals and invalid persisted sessions without erasing their evidence.
+  
+  Persist each session's complete owner/delegate binding and revocation metadata in one atomic record, replacing the separate restoration and identity markers. Journal replaced delegates' revocations under their original binding, retain their signing keys for retry, and reject journal overflow before replacing valid persisted state. Preserve matching restored sessions' revocation metadata while refresh approvals replace it.
+  
+  Preserve another context's current approval when a stale manager disconnects. Resolve restore and headless identity preferences from the same canonical record. Complete journal-proven interrupted teardown before disconnect, restore maintenance, or public retry can consume its durable intent.
+  
+  Preserve successful fresh approvals while retrying older grants for the same delegate. Treat retry evidence as current disconnect intent only when it contains the current approval's complete revocation map.
+
+- [#1790](https://github.com/enboxorg/enbox/pull/1790) [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve application icon URLs against the page origin, or document URL for opaque origins, when BrowserConnectHandler requests access, keeping handler creation inert.
+- Updated dependencies [[`c75ecc8`](https://github.com/enboxorg/enbox/commit/c75ecc8b2ab3a915eda7bde2f8bdff3b4f2519bd), [`fd72aca`](https://github.com/enboxorg/enbox/commit/fd72aca045cf33b6fb53f4e9f7a7c926dc706d0a), [`94ba873`](https://github.com/enboxorg/enbox/commit/94ba873629224c0b99a443175546d02d5a4187dc), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b), [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635)]:
+  - @enbox/api@0.6.89
+  - @enbox/auth@0.6.96
+  - @enbox/agent@0.8.50
+  - @enbox/dids@0.1.14
+  - @enbox/crypto@0.1.12
+  - @enbox/protocols@0.2.116
+  - @enbox/common@0.1.9
+  - @enbox/connect@0.1.25
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.3.80
 
 ### Patch Changes
