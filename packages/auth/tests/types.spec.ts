@@ -15,10 +15,7 @@ describe('types constants', () => {
   });
 
   test('STORAGE_KEYS has all expected keys', () => {
-    expect(STORAGE_KEYS.PREVIOUSLY_CONNECTED).toBe('enbox:auth:previouslyConnected');
-    expect(STORAGE_KEYS.ACTIVE_IDENTITY).toBe('enbox:auth:activeIdentity');
-    expect(STORAGE_KEYS.DELEGATE_DID).toBe('enbox:auth:delegateDid');
-    expect(STORAGE_KEYS.CONNECTED_DID).toBe('enbox:auth:connectedDid');
+    expect(STORAGE_KEYS.SESSION).toBe('enbox:auth:session');
   });
 });
 

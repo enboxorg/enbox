@@ -5,6 +5,7 @@ import { createFlowContext } from './helpers/flow-context.js';
 import { DwnTenantRegistrationError } from '../src/errors.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
+import { readPersistedSession } from '../src/connect/session-state.js';
 import { vaultConnect as runVaultConnect } from '../src/connect/vault.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { INSECURE_DEFAULT_PASSWORD, STORAGE_KEYS } from '../src/types.js';
@@ -51,8 +52,8 @@ describe('vaultConnect', () => {
     expect(session.signal).toBe(context.sessionSignal);
 
     // Storage was updated
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:testuser123');
+    expect(await storage.get(STORAGE_KEYS.SESSION)).not.toBeNull();
+    expect((await readPersistedSession(storage))?.connectedDid).toBe('did:dht:testuser123');
   });
 
   test('subsequent launch: unlocks vault, reconnects to existing identity', async () => {
@@ -810,7 +811,7 @@ describe('vaultConnect', () => {
     expect(session.identity.name).toBe('Agent');
 
     // Storage was updated with agent DID
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:testagent');
+    expect((await readPersistedSession(storage))?.connectedDid).toBe('did:dht:testagent');
   });
 
   test('createIdentity: false with existing identities uses the existing identity', async () => {

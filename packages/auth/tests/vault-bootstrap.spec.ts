@@ -173,7 +173,7 @@ describe('vault recovery bootstrap', (): void => {
     try {
       await expect(manager.connectVault(options)).rejects.toThrow('Vault storage unavailable');
       const generatedPhrase = await initialize.firstCall.returnValue;
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).not.toBeNull();
+      expect(await storage.get(STORAGE_KEYS.SESSION)).not.toBeNull();
       expect(manager.session).toBeUndefined();
       await manager.lock();
       retryManager = await AuthManager.create({ agent, storage, registration: {} });
@@ -282,7 +282,7 @@ describe('vault recovery bootstrap', (): void => {
         expect(vault.isLocked()).toBe(false);
         expect((await vault.getDid()).metadata.published).toBe(false);
         expect(manager.session).toBe(previousSession);
-        expect((await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)) !== null).toBe(existing);
+        expect((await storage.get(STORAGE_KEYS.SESSION)) !== null).toBe(existing);
 
         await manager.lock();
         await expect(manager.connectVault({ password: 'new-password', sync: 'off' }))
@@ -295,7 +295,7 @@ describe('vault recovery bootstrap', (): void => {
         }
         expect(calls).toEqual(['prepare']);
         expect(manager.session).toBeUndefined();
-        expect((await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)) !== null).toBe(existing);
+        expect((await storage.get(STORAGE_KEYS.SESSION)) !== null).toBe(existing);
         fixture.allowPreparation();
 
         const session = await manager.restoreFromPhrase(options);

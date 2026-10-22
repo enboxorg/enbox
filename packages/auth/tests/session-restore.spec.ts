@@ -2,15 +2,16 @@ import sinon from 'sinon';
 import { describe, expect, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
-import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
+import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { readRevocationRetryEntries, retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
+import { readPersistedSession, readRevocationRetryEntries } from '../src/connect/session-state.js';
+import { retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
 
 function restoreSession(
   context: Parameters<typeof createFlowContext>[0],
@@ -32,7 +33,7 @@ describe('restoreSession', () => {
   test('returns undefined when vault does not exist (stale flag)', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
 
     const agent = createMockAgent({ firstLaunch: async () => true });
 
@@ -40,7 +41,7 @@ describe('restoreSession', () => {
     expect(session).toBeUndefined();
 
     // Stale flag should be cleaned up
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
   });
 
   test('retains revocation retry evidence when the vault is missing', async () => {
@@ -51,19 +52,19 @@ describe('restoreSession', () => {
       connectedDid : 'did:dht:owner',
       revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
     }]);
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
     const agent = createMockAgent({ firstLaunch: async () => true });
 
     expect(await restoreSession({ userAgent: agent, emitter, storage })).toBeUndefined();
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
     expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(retryContext);
   });
 
   test('returns undefined when no identity found and not an agent-only session', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
 
     const agent = createMockAgent({
       firstLaunch               : async () => false,
@@ -76,17 +77,14 @@ describe('restoreSession', () => {
     expect(session).toBeUndefined();
 
     // All session data should be cleaned up
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBeNull();
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBeNull();
+    expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
   });
 
   test('restores agent-only session when active identity is the agent DID', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:testagent');
+    await setStoredSession(storage, 'did:dht:testagent');
+
 
     const agent = createMockAgent({
       firstLaunch               : async () => false,
@@ -104,15 +102,15 @@ describe('restoreSession', () => {
   test('restores session from connected identity', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
     const identity = createMockIdentity({
       metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
     });
 
     const agent = createMockAgent({
-      firstLaunch               : async () => false,
-      identityConnectedIdentity : async () => identity,
+      firstLaunch : async () => false,
+      identityGet : async () => identity,
     });
 
     const context = createFlowContext({ userAgent: agent, emitter, storage });
@@ -121,15 +119,15 @@ describe('restoreSession', () => {
     expect(session!.did).toBe('did:dht:external');
     expect(session!.delegateDid).toBe('did:dht:testuser123');
     expect(session!.signal).toBe(context.sessionSignal);
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:dht:testuser123');
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:external');
+    expect((await readPersistedSession(storage))?.delegateDid).toBe('did:dht:testuser123');
+    expect((await readPersistedSession(storage))?.connectedDid).toBe('did:dht:external');
   });
 
   test('restores session from active identity DID', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:specific');
+    await setStoredSession(storage, 'did:dht:specific');
+
 
     const identity = createMockIdentity({
       did: { uri: 'did:dht:specific' },
@@ -149,11 +147,11 @@ describe('restoreSession', () => {
     expect(session!.did).toBe('did:dht:specific');
   });
 
-  test('falls back to first identity when active identity not found', async () => {
+  test('clears a missing persisted identity without selecting another identity', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:missing');
+    await setStoredSession(storage, 'did:dht:missing');
+
 
     const identity = createMockIdentity();
 
@@ -165,14 +163,14 @@ describe('restoreSession', () => {
     });
 
     const session = await restoreSession({ userAgent: agent, emitter, storage });
-    expect(session).toBeDefined();
-    expect(session!.did).toBe('did:dht:testuser123');
+    expect(session).toBeUndefined();
+    expect(await readPersistedSession(storage)).toBeNull();
   });
 
   test('emits vault-unlocked while session publication remains manager-owned', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     const events: string[] = [];
 
     emitter.on('vault-unlocked', () => { events.push('vault-unlocked'); });
@@ -188,7 +186,7 @@ describe('restoreSession', () => {
   test('applies local DWN discovery from stored pairing', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
 
     await persistLocalDwnPairingRecord(storage, {
       createdAt    : 123,
@@ -214,7 +212,7 @@ describe('restoreSession', () => {
   test('uses insecure default password when none provided', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     const startCalls: any[] = [];
 
     const agent = createMockAgent({
@@ -227,31 +225,24 @@ describe('restoreSession', () => {
     expect(startCalls[0].password).toBe('insecure-static-phrase');
   });
 
-  test('uses stored delegate DID for non-connected identities', async () => {
+  test('rejects an identity that disagrees with its stored delegate binding', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-    await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:dht:storeddelegate');
+    await setStoredSession(storage, 'did:dht:owner', 'did:dht:testuser123');
+    const agent = createMockAgent({ firstLaunch: async () => false });
 
-    const identity = createMockIdentity();
-
-    const agent = createMockAgent({
-      firstLaunch               : async () => false,
-      identityConnectedIdentity : async () => undefined,
-      identityList              : async () => [identity],
+    await expect(restoreSession({ userAgent: agent, emitter, storage })).rejects.toThrow(
+      'Stored identity does not match the persisted session',
+    );
+    expect(await readPersistedSession(storage)).toEqual({
+      connectedDid: 'did:dht:owner', delegateDid: 'did:dht:testuser123', revocations: [],
     });
-
-    const session = await restoreSession({ userAgent: agent, emitter, storage });
-    expect(session).toBeDefined();
-    expect(session!.delegateDid).toBe('did:dht:storeddelegate');
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:dht:storeddelegate');
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe(identity.did.uri);
   });
 
   test('starts sync with the bare-interval settle-check cadence when set', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
@@ -268,7 +259,7 @@ describe('restoreSession', () => {
   test('restores the session before initial sync catch-up finishes', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     let finishCatchUp!: () => void;
     const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
     const agent = createMockAgent({
@@ -286,7 +277,7 @@ describe('restoreSession', () => {
   test('skips sync when sync is off', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
@@ -302,7 +293,7 @@ describe('restoreSession', () => {
   test('skips startSync when sync is already running', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+    await setStoredSession(storage, 'did:dht:testuser123');
     const syncCalls: any[] = [];
 
     const agent = createMockAgent({
@@ -321,7 +312,7 @@ describe('restoreSession', () => {
     test('calls onPasswordRequired when no password is provided', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
       const startCalls: any[] = [];
 
       const agent = createMockAgent({
@@ -340,7 +331,7 @@ describe('restoreSession', () => {
     test('prefers explicit password over onPasswordRequired', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
       const startCalls: any[] = [];
       let callbackCalled = false;
 
@@ -364,7 +355,7 @@ describe('restoreSession', () => {
     test('prefers manager default password over onPasswordRequired', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
       const startCalls: any[] = [];
       let callbackCalled = false;
 
@@ -385,7 +376,7 @@ describe('restoreSession', () => {
     test('falls back to insecure default when callback not provided', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
       const startCalls: any[] = [];
 
       const agent = createMockAgent({
@@ -406,7 +397,7 @@ describe('restoreSession', () => {
     test('registers sync successfully when delegate has grants', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -415,9 +406,9 @@ describe('restoreSession', () => {
       const registerCalls: any[] = [];
       const lifecycleOptions: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params, options) => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params, options) => {
           registerCalls.push(params);
           lifecycleOptions.push(options);
         },
@@ -450,7 +441,7 @@ describe('restoreSession', () => {
       const clock = sinon.useFakeTimers();
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -460,9 +451,9 @@ describe('restoreSession', () => {
       const unregisterCalls: Array<{ did: string; options: unknown }> = [];
       const syncStartCalls: unknown[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        processDwnRequest         : () => {
+        firstLaunch       : async () => false,
+        identityGet       : async () => identity,
+        processDwnRequest : () => {
           markQueryStarted();
           return new Promise(() => {});
         },
@@ -495,7 +486,7 @@ describe('restoreSession', () => {
     test('does not start sync when setIdentityOptions fails', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -503,11 +494,11 @@ describe('restoreSession', () => {
 
       const syncStartCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async () => { throw new Error('database unavailable'); },
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async () => { throw new Error('database unavailable'); },
+        syncStartSync          : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest      : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -532,7 +523,7 @@ describe('restoreSession', () => {
     test('removes sync when delegate has zero grants', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -541,10 +532,10 @@ describe('restoreSession', () => {
       const registerCalls: any[] = [];
       const unregisterCalls: string[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
         // Default processDwnRequest returns empty entries for RecordsQuery,
         // so deriveProtocolsFromGrants returns [] → unregister stale registration.
       });
@@ -558,14 +549,13 @@ describe('restoreSession', () => {
       expect(unregisterCalls).toHaveLength(1);
       expect(unregisterCalls[0]).toBe('did:dht:external');
     });
-
   });
 
   describe('deriveProtocolsFromGrants', () => {
     test('filters out PermissionsProtocol.uri from derived protocols', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -578,10 +568,10 @@ describe('restoreSession', () => {
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        processDwnRequest      : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -608,32 +598,25 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).not.toContain(permissionsProtoUri);
     });
 
-    test('excludes revoked grants from sync scope', async () => {
+    test('requests revocation-filtered grants for the restored delegate sync scope', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
       });
 
       const registerCalls: any[] = [];
+      const grantRequests: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        permissionsFetchGrants    : async () => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        permissionsFetchGrants : async (params) => {
+          grantRequests.push(params);
           const validGrant = buildMockGrantEntry('https://proto.example/valid');
           return [{ grant: DwnPermissionGrant.parse(validGrant), message: validGrant }];
-        },
-        processDwnRequest: async (params: any) => {
-          if (params?.messageType === 'RecordsQuery') {
-            const filter = params.messageParams?.filter;
-            if (filter?.protocolPath === PermissionsProtocol.revocationPath && filter.contextId === undefined) {
-              return { reply: { status: { code: 400, detail: 'nested revocation queries require contextId' } } };
-            }
-          }
-          return { reply: { status: { code: 202, detail: 'Accepted' } } };
         },
       });
 
@@ -642,15 +625,20 @@ describe('restoreSession', () => {
       );
 
       expect(session).toBeDefined();
+      expect(grantRequests).toEqual([{
+        author       : 'did:dht:testuser123',
+        target       : 'did:dht:testuser123',
+        grantee      : 'did:dht:testuser123',
+        checkRevoked : true,
+      }]);
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.protocols).toContain('https://proto.example/valid');
-      expect(registerCalls[0].options.protocols).not.toContain('https://proto.example/revoked');
     });
 
     test('returns all for an unscoped grant (no protocol in scope)', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -658,10 +646,10 @@ describe('restoreSession', () => {
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async (params) => { registerCalls.push(params); },
-        processDwnRequest         : async (params: any) => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
+        processDwnRequest      : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -683,36 +671,10 @@ describe('restoreSession', () => {
       expect(registerCalls[0].options.protocols).toBe('all');
     });
 
-    test('does not start sync when repair fails with I/O error', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-
-      const identity = createMockIdentity({
-        metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
-      });
-
-      const syncStartCalls: any[] = [];
-      const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncRemoveIdentity        : async () => { throw new Error('LEVEL_IO_ERROR'); },
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-      });
-
-      // Restore succeeds but sync should NOT start — repair failed.
-      const session = await restoreSession(
-        { userAgent: agent, emitter, storage, defaultSync: '15s' },
-      );
-
-      expect(session).toBeDefined();
-      expect(syncStartCalls).toHaveLength(0);
-    });
-
     test('removes stale registration when repair fails so later sync cannot use it', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -721,12 +683,12 @@ describe('restoreSession', () => {
       const unregisterCalls: string[] = [];
       const syncStartCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
+        firstLaunch        : async () => false,
+        identityGet        : async () => identity,
+        syncStartSync      : async (params) => { syncStartCalls.push(params); },
+        syncRemoveIdentity : async (did) => { unregisterCalls.push(did); },
         // Make grant derivation fail to trigger the repair-failure path.
-        processDwnRequest         : async () => { throw new Error('store unavailable'); },
+        processDwnRequest  : async () => { throw new Error('store unavailable'); },
       });
 
       const session = await restoreSession(
@@ -745,7 +707,7 @@ describe('restoreSession', () => {
     test('sets syncRepairFailed when setIdentityOptions throws non-registration error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -779,10 +741,10 @@ describe('restoreSession', () => {
       const unregisterCalls: string[] = [];
       const cleanupLifecycleOptions: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncSetIdentityOptions    : async () => { throw new Error('database write error'); },
-        syncRemoveIdentity        : async (did, options) => {
+        firstLaunch            : async () => false,
+        identityGet            : async () => identity,
+        syncSetIdentityOptions : async () => { throw new Error('database write error'); },
+        syncRemoveIdentity     : async (did, options) => {
           unregisterCalls.push(did);
           cleanupLifecycleOptions.push(options);
         },
@@ -805,7 +767,7 @@ describe('restoreSession', () => {
     test('sets syncRepairFailed when zero-grant unregister throws I/O error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -813,11 +775,11 @@ describe('restoreSession', () => {
 
       const syncStartCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncRemoveIdentity        : async () => { throw new Error('LEVEL_IO_ERROR'); },
-        syncStartSync             : async (params) => { syncStartCalls.push(params); },
-        processDwnRequest         : async () => ({
+        firstLaunch        : async () => false,
+        identityGet        : async () => identity,
+        syncRemoveIdentity : async () => { throw new Error('LEVEL_IO_ERROR'); },
+        syncStartSync      : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest  : async () => ({
           reply: { status: { code: 200 }, entries: [] },
         }),
       });
@@ -833,7 +795,7 @@ describe('restoreSession', () => {
     test('repairs delegate registration even when sync is off', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
 
       const identity = createMockIdentity({
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
@@ -841,9 +803,9 @@ describe('restoreSession', () => {
 
       const unregisterCalls: string[] = [];
       const agent = createMockAgent({
-        firstLaunch               : async () => false,
-        identityConnectedIdentity : async () => identity,
-        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
+        firstLaunch        : async () => false,
+        identityGet        : async () => identity,
+        syncRemoveIdentity : async (did) => { unregisterCalls.push(did); },
       });
 
       // Sync is off — repair should still run to clean up stale registrations.
@@ -862,7 +824,7 @@ describe('restoreSession', () => {
     test('retains and rejects an empty truncated value', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
       await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '');
       const agent = createMockAgent({ firstLaunch: async () => false });
 
@@ -873,18 +835,19 @@ describe('restoreSession', () => {
         'AuthManager: Revocation retry context is invalid.',
       );
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe('');
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+      expect(await readPersistedSession(storage)).not.toBeNull();
     });
 
-    test('retains and rejects a malformed legacy object', async () => {
+    test('retains and rejects an unsupported single-entry object', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      const malformedLegacy = JSON.stringify({
-        delegateDid : 'did:jwk:delegate1',
-        revocations : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
+      await setStoredSession(storage, 'did:dht:testuser123');
+      const unsupportedObject = JSON.stringify({
+        connectedDid : 'did:dht:owner1',
+        delegateDid  : 'did:jwk:delegate1',
+        revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
       });
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, malformedLegacy);
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, unsupportedObject);
 
       const agent = createMockAgent({ firstLaunch: async () => false });
 
@@ -895,23 +858,10 @@ describe('restoreSession', () => {
         'AuthManager: Revocation retry context is invalid.',
       );
 
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(malformedLegacy);
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(unsupportedObject);
+      expect(await readPersistedSession(storage)).not.toBeNull();
     });
 
-    test('accepts the legacy single-entry object shape', async () => {
-      const storage = new MemoryStorage();
-      const legacyEntry = {
-        delegateDid  : 'did:jwk:delegate1',
-        connectedDid : 'did:dht:owner1',
-        revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
-      };
-      const encoded = JSON.stringify(legacyEntry);
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, encoded);
-
-      expect(await readRevocationRetryEntries(storage)).toEqual([legacyEntry]);
-      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(encoded);
-    });
   });
 
   describe('retryOrphanedRevocations', () => {

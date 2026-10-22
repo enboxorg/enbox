@@ -7,11 +7,12 @@ import { DwnPermissionGrant } from '@enbox/agent';
 import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
-import { STORAGE_KEYS } from '../src/types.js';
+import { processConnectedGrants } from '../src/connect/lifecycle.js';
+import { readPersistedSession } from '../src/connect/session-state.js';
+import { walletConnect as runWalletConnect } from '../src/connect/wallet.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
-import { processConnectedGrants, walletConnect as runWalletConnect } from '../src/connect/wallet.js';
 
 function walletConnect(
   context: Parameters<typeof createFlowContext>[0],
@@ -432,10 +433,9 @@ describe('walletConnect', () => {
     expect(events).toEqual(['identity-added']);
 
     // Check storage
-    expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
-    expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBe('did:dht:connected456');
-    expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe('did:dht:delegate123');
-    expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe('did:dht:connected456');
+    expect(await readPersistedSession(storage)).toEqual({
+      connectedDid: 'did:dht:connected456', delegateDid: 'did:dht:delegate123', revocations: [],
+    });
   });
 
   test('passes correct options to initClient', async () => {

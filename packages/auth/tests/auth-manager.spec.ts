@@ -6,6 +6,7 @@ import { AuthManager } from '../src/auth-manager.js';
 import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
+import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
@@ -726,7 +727,7 @@ describe('AuthManager', () => {
       // Simulate a fresh wallet connect having replaced the delegate, then
       // reconnect — the previous delegate's in-memory keys must be cleared.
       identities = [oldIdentity, newIdentity];
-      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:delegate:new');
+      await setStoredSession(storage, 'did:dht:connected', 'did:delegate:new');
       await manager.connect({ password: 'test' });
       expect(clearCalls).toHaveLength(1);
       expect(clearCalls[0]).toBe('did:delegate:old');
@@ -814,7 +815,7 @@ describe('AuthManager', () => {
 
     test('restores session and sets state to connected', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
 
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -843,11 +844,7 @@ describe('AuthManager', () => {
         metadata : { name: 'Fresh', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
       });
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      // Production persists the owner DID in ACTIVE_IDENTITY and the
-      // delegate's own DID in DELEGATE_DID.
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:owner456');
-      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:jwk:fresh-delegate');
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:fresh-delegate');
 
       const agent = createMockAgent({
         firstLaunch               : async () => false,
@@ -867,7 +864,7 @@ describe('AuthManager', () => {
     test('stops sync before sending session revocations', async () => {
       const order: string[] = [];
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:delegate123');
 
       const delegateIdentity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate123' },
@@ -888,7 +885,7 @@ describe('AuthManager', () => {
 
       const manager = createTestManager(agent, { storage });
       const session = await manager.connect({ password: 'test' });
-      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:delegate123', [{ grantId: 'g1', revocationGrantId: 'r1' }]);
       expect(session.delegateDid).toBe('did:jwk:delegate123');
       expect(session.did).toBe('did:dht:owner456');
       expect(session.signal.aborted).toBe(false);
@@ -905,7 +902,7 @@ describe('AuthManager', () => {
 
     test('clean disconnect removes the delegate identity locally', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:delegate123');
       const delegateIdentity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate123' },
         metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
@@ -930,8 +927,7 @@ describe('AuthManager', () => {
 
     test('disconnect keeps the delegate identity while revocations are queued for retry', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([{ grantId: 'g1', revocationGrantId: 'r1' }]));
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:delegate123', [{ grantId: 'g1', revocationGrantId: 'r1' }]);
       const delegateIdentity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate123' },
         metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
@@ -956,12 +952,9 @@ describe('AuthManager', () => {
       expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
     });
 
-    test('clean disconnect removes session markers', async () => {
+    test('clean disconnect removes the session record', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:test');
-      await storage.set(STORAGE_KEYS.DELEGATE_DID, 'did:delegate');
-      await storage.set(STORAGE_KEYS.CONNECTED_DID, 'did:connected');
+      await setStoredSession(storage, 'did:dht:testuser123');
 
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -974,19 +967,21 @@ describe('AuthManager', () => {
 
       expect(manager.state).toBe('unlocked');
       expect(manager.session).toBeUndefined();
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-      expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
+      expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
     });
 
     test('clean disconnect clears the runtime delegate decryption key cache', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:owner456', 'did:jwk:delegate123');
 
       let clearCalled = false;
       const agent = createMockAgent({
-        firstLaunch                    : async () => false,
-        identityList                   : async () => [createMockIdentity()],
-        dwnClearDelegateDecryptionKeys : () => { clearCalled = true; },
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity({
+          did      : { uri: 'did:jwk:delegate123' },
+          metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+        })],
+        dwnClearDelegateDecryptionKeys: () => { clearCalled = true; },
       });
       const manager = createTestManager(agent, { storage });
       await manager.connect({ password: 'test' });
@@ -996,50 +991,15 @@ describe('AuthManager', () => {
       expect(clearCalled).toBe(true);
     });
 
-    test('clean disconnect removes delegate context keys and multi-party protocols from storage', async () => {
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-      await storage.set(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, JSON.stringify([{ protocol: 'test', contextId: 'c1' }]));
-      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(['https://test.xyz']));
-
-      const agent = createMockAgent({
-        firstLaunch  : async () => false,
-        identityList : async () => [createMockIdentity()],
-      });
-      const manager = createTestManager(agent, { storage });
-      await manager.connect({ password: 'test' });
-
-      await manager.disconnect();
-
-      expect(await storage.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeNull();
-      expect(await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS)).toBeNull();
-    });
-
-    test('clean disconnect clears delegate context keys from SecretStore', async () => {
-      const { Convert } = await import('@enbox/common');
-      const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
-
-      const agent = createMockAgent({
-        firstLaunch  : async () => false,
-        identityList : async () => [createMockIdentity()],
-      });
-
-      await agent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string('[]').toUint8Array());
-
-      const manager = createTestManager(agent, { storage });
-      await manager.connect({ password: 'test' });
-      await manager.disconnect();
-
-      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeUndefined();
-    });
-
     test('nuclear disconnect clears delegate decryption key cache', async () => {
       let clearCalled = false;
       const agent = createMockAgent({
-        firstLaunch                    : async () => false,
-        identityList                   : async () => [createMockIdentity()],
-        dwnClearDelegateDecryptionKeys : () => { clearCalled = true; },
+        firstLaunch  : async () => false,
+        identityList : async () => [createMockIdentity({
+          did      : { uri: 'did:jwk:delegate123' },
+          metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:owner456' },
+        })],
+        dwnClearDelegateDecryptionKeys: () => { clearCalled = true; },
       });
       const manager = createTestManager(agent);
       await manager.connect({ password: 'test' });
@@ -1049,7 +1009,7 @@ describe('AuthManager', () => {
       expect(clearCalled).toBe(true);
     });
 
-    test('nuclear disconnect clears all storage including SecretStore', async () => {
+    test('nuclear disconnect clears saved registration credentials', async () => {
       const { Convert } = await import('@enbox/common');
       const storage = new MemoryStorage();
 
@@ -1058,8 +1018,7 @@ describe('AuthManager', () => {
         identityList : async () => [createMockIdentity()],
       });
 
-      // Pre-populate SecretStore with secret types.
-      await agent.secrets.put(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS, Convert.string('[]').toUint8Array());
+      // Seed the current registration credentials.
       await agent.secrets.put(STORAGE_KEYS.REGISTRATION_TOKENS, Convert.string('{}').toUint8Array());
 
       const manager = createTestManager(agent, { storage });
@@ -1070,8 +1029,7 @@ describe('AuthManager', () => {
       expect(manager.state).toBe('unlocked');
       expect(manager.session).toBeUndefined();
 
-      // All secrets must be wiped.
-      expect(await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS)).toBeUndefined();
+      // Saved registration credentials must be erased.
       expect(await agent.secrets.get(STORAGE_KEYS.REGISTRATION_TOKENS)).toBeUndefined();
     });
 
@@ -1658,7 +1616,7 @@ describe('AuthManager', () => {
       expect(stopCalls[0]).toBe(5000);
     });
 
-    test('preserves session storage markers for subsequent restore', async () => {
+    test('preserves the stored session for subsequent restore', async () => {
       const storage = new MemoryStorage();
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -1667,13 +1625,13 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent, { storage });
       await manager.connect({ password: 'test' });
 
-      // Verify markers exist after connect
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+      // Verify the complete record exists after connect.
+      expect(JSON.parse((await storage.get(STORAGE_KEYS.SESSION))!)).toEqual({ connectedDid: 'did:dht:testuser123', revocations: [] });
 
       await manager.lock();
 
-      // Markers should still be present (unlike disconnect)
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBe('true');
+      // Lock retains the complete record for later restoration.
+      expect(JSON.parse((await storage.get(STORAGE_KEYS.SESSION))!)).toEqual({ connectedDid: 'did:dht:testuser123', revocations: [] });
     });
   });
 
@@ -1977,7 +1935,7 @@ describe('AuthManager', () => {
 
     test('prefers previously-active identity', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:second');
+      await setStoredSession(storage, 'did:dht:second');
 
       const identities = [
         createMockIdentity({ did: { uri: 'did:dht:first' }, metadata: { name: 'First', tenant: 't1' } }),
@@ -1994,9 +1952,30 @@ describe('AuthManager', () => {
       expect(session.did).toBe('did:dht:second');
     });
 
+    test('prefers the exact saved delegate when identities share an owner', async () => {
+      const storage = new MemoryStorage();
+      await setStoredSession(storage, 'did:dht:owner', 'did:jwk:current-delegate');
+      const savedSession = await storage.get(STORAGE_KEYS.SESSION);
+      const identities = ['did:jwk:old-delegate', 'did:jwk:current-delegate'].map(didUri => createMockIdentity({
+        did      : { uri: didUri },
+        metadata : { name: 'Delegate', tenant: 'tenant', connectedDid: 'did:dht:owner' },
+      }));
+      const agent = createMockAgent({
+        firstLaunch  : async () => false,
+        identityList : async () => identities,
+      });
+      const manager = createTestManager(agent, { storage });
+
+      const session = await manager.connectHeadless({ password: 'pw' });
+
+      expect(session.did).toBe('did:dht:owner');
+      expect(session.delegateDid).toBe('did:jwk:current-delegate');
+      expect(await storage.get(STORAGE_KEYS.SESSION)).toBe(savedSession);
+    });
+
     test('falls back to first identity when saved identity not found', async () => {
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.ACTIVE_IDENTITY, 'did:dht:gone');
+      await setStoredSession(storage, 'did:dht:gone');
 
       const identities = [
         createMockIdentity({ did: { uri: 'did:dht:first' }, metadata: { name: 'First', tenant: 't1' } }),
@@ -2029,7 +2008,7 @@ describe('AuthManager', () => {
       expect(session.delegateDid).toBe('did:dht:delegate');
     });
 
-    test('does not persist session markers', async () => {
+    test('does not persist the session record', async () => {
       const storage = new MemoryStorage();
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -2039,8 +2018,8 @@ describe('AuthManager', () => {
 
       await manager.connectHeadless({ password: 'pw' });
 
-      // No persistence markers should be set
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
+      // Headless connection leaves persistence to its caller.
+      expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
     });
 
     test('emits vault-unlocked event', async () => {
@@ -2336,7 +2315,7 @@ describe('AuthManager', () => {
     test('restoreSession() uses provider when no explicit password', async () => {
       const startCalls: any[] = [];
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
 
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -2355,7 +2334,7 @@ describe('AuthManager', () => {
     test('restoreSession() prefers onPasswordRequired over provider', async () => {
       const startCalls: any[] = [];
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.PREVIOUSLY_CONNECTED, 'true');
+      await setStoredSession(storage, 'did:dht:testuser123');
 
       const agent = createMockAgent({
         firstLaunch  : async () => false,

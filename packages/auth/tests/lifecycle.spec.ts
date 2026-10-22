@@ -5,7 +5,9 @@ import { DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '
 
 import { AuthEventEmitter } from '../src/events.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { readPersistedSession } from '../src/connect/session-state.js';
 import { RecoveryPhraseMismatchError } from '../src/errors.js';
+import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { deriveActiveSyncScope, deriveSyncScopeFromGrants, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, processConnectedGrants, registerSyncScopeForIdentity } from '../src/connect/lifecycle.js';
@@ -900,69 +902,26 @@ describe('finalizeDelegateSession', () => {
   });
 
   describe('stale state cleanup on reconnect', () => {
-    test('clears old context keys and multi-party protocols when absent on reconnect', async () => {
+    test('replaces matching approval revocations with an empty approval', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       const agent = createMockAgent();
-
-      // Simulate a prior session that stored context keys and multi-party protocols.
-      await agent.secrets.put(
-        STORAGE_KEYS.DELEGATE_CONTEXT_KEYS,
-        new TextEncoder().encode(JSON.stringify([{ contextId: 'old-ctx' }])),
-      );
-      await storage.set(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS, JSON.stringify(['old-proto']));
-
-      const identity = createMockIdentity({
-        did      : { uri: 'did:jwk:delegate2' },
-        metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
-      });
-
-      await finalizeDelegateSession({
-        userAgent    : agent,
-        emitter,
-        storage,
-        identity     : identity as any,
-        connectedDid : 'did:dht:connected1',
-        delegateDid  : 'did:jwk:delegate2',
-        sync         : '15s',
-        signal       : new AbortController().signal,
-      });
-
-      const ctxKeys = await agent.secrets.get(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS);
-      expect(ctxKeys).toBeUndefined();
-      const mpProtos = await storage.get(STORAGE_KEYS.DELEGATE_MULTI_PARTY_PROTOCOLS);
-      expect(mpProtos).toBeNull();
-    });
-
-    test('clears old session revocations when absent on reconnect', async () => {
-      const emitter = new AuthEventEmitter();
-      const storage = new MemoryStorage();
-      const agent = createMockAgent();
-
-      // Simulate a prior session that stored revocations.
-      await storage.set(STORAGE_KEYS.SESSION_REVOCATIONS, JSON.stringify([
+      await setStoredSession(storage, 'did:dht:connected1', 'did:jwk:delegate2', [
         { grantId: 'old-grant', revocationGrantId: 'old-revocation' },
-      ]));
-
+      ]);
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate2' },
         metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected1' },
       });
-      // No _sessionRevocations set on identity.
 
       await finalizeDelegateSession({
-        userAgent    : agent,
-        emitter,
-        storage,
-        identity     : identity as any,
-        connectedDid : 'did:dht:connected1',
-        delegateDid  : 'did:jwk:delegate2',
-        sync         : '15s',
+        userAgent    : agent, emitter, storage, identity     : identity as any,
+        connectedDid : 'did:dht:connected1', delegateDid  : 'did:jwk:delegate2', sync         : 'off',
         signal       : new AbortController().signal,
       });
 
-      const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-      expect(revocations).toBeNull();
+      expect((await readPersistedSession(storage))?.revocations).toEqual([]);
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
     });
 
     test('persists session revocations when present on reconnect', async () => {
@@ -979,19 +938,18 @@ describe('finalizeDelegateSession', () => {
       });
 
       await finalizeDelegateSession({
-        userAgent     : agent,
+        userAgent    : agent,
         emitter,
         storage,
-        identity      : identity as any,
-        connectedDid  : 'did:dht:connected1',
-        delegateDid   : 'did:jwk:delegate2',
-        sync          : '15s',
-        signal        : new AbortController().signal,
-        delegateState : { sessionRevocations },
+        identity     : identity as any,
+        connectedDid : 'did:dht:connected1',
+        delegateDid  : 'did:jwk:delegate2',
+        sync         : '15s',
+        signal       : new AbortController().signal,
+        sessionRevocations,
       });
 
-      const revocations = await storage.get(STORAGE_KEYS.SESSION_REVOCATIONS);
-      expect(revocations).toBe(JSON.stringify(sessionRevocations));
+      expect((await readPersistedSession(storage))?.revocations).toEqual(sessionRevocations);
     });
   });
 

@@ -60,7 +60,7 @@ export type EnboxParams = Omit<AgentSessionPrimitives, 'did' | 'signal'> & {
  * Session-shaped parameters accepted by {@link Enbox.fromSession}.
  *
  * Alias for {@link AgentSessionPrimitives} so callers can pass an
- * `AuthSession` from `@enbox/auth`, an `AgentSession` from `@enbox/agent`, or
- * any compatible custom session without duplicating field declarations.
+ * `AgentSession` or any compatible custom session without duplicating field
+ * declarations.
  */
 export type EnboxSessionParams = AgentSessionPrimitives;

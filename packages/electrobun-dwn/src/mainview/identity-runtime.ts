@@ -1,6 +1,6 @@
 import type { DidResolutionLike } from './utils/identity-helpers.js';
 import type { Record as EnboxRecord } from '@enbox/api';
-import type { AuthState, IdentityInfo, PortableIdentity } from '@enbox/auth';
+import type { AgentSessionIdentity, AuthState, PortableIdentity } from '@enbox/auth';
 
 import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
@@ -16,7 +16,7 @@ const localEndpointCacheMs = 5_000;
 export const identityRuntimeWindowKey = '__identityRuntime';
 export const identityWalletEventName = 'identity-wallet-changed';
 
-export type ManagedIdentitySnapshot = IdentityInfo & {
+export type ManagedIdentitySnapshot = AgentSessionIdentity & {
   active: boolean;
   connectedTargetDid: string;
   kind: 'local' | 'delegated';

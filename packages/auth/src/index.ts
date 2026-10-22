@@ -2,8 +2,8 @@
  * @enbox/auth — Headless authentication and identity management SDK.
  *
  * Provides composable, multi-identity-aware authentication that works
- * in both browser and CLI environments. Depends only on `@enbox/agent`
- * and can be used standalone or consumed by `@enbox/api`.
+ * in both browser and CLI environments. Coordinates the agent and connection
+ * libraries and can be used standalone or consumed by `@enbox/api`.
  *
  * @example Standalone auth (wallet app)
  * ```ts

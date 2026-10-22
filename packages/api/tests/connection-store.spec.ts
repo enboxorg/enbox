@@ -17,7 +17,7 @@ import type {
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
-import { AuthEventEmitter, AuthSession, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
+import { AgentSession, AuthEventEmitter, ConnectDeniedError, isConnectDeniedError } from '@enbox/auth';
 import { EnboxUserAgent, projectReplicationCurrentness, resolveSyncConnectivityState } from '@enbox/agent';
 
 import type { ApplicationManifest } from '../src/application-manifest.js';
@@ -263,7 +263,7 @@ type FakeAuthManager = {
   agent: EnboxUserAgent;
   emitter: AuthEventEmitter;
   state: AuthState;
-  session: AuthSession | undefined;
+  session: AgentSession | undefined;
   stopMonitorSpy: sinon.SinonSpy;
   on: AuthManager['on'];
   restoreSession: sinon.SinonStub;
@@ -354,9 +354,9 @@ describe('createConnectionStore()', () => {
     delegateDid?: string;
     name?: string;
     signal?: AbortSignal;
-  } = {}): AuthSession {
+  } = {}): AgentSession {
     const did = params.did ?? OWNER_DID;
-    return new AuthSession({
+    return new AgentSession({
       agent       : params.agent ?? testHarness.agent as EnboxUserAgent,
       did,
       delegateDid : params.delegateDid,
@@ -385,13 +385,13 @@ describe('createConnectionStore()', () => {
   ): {
       auth: FakeAuthManager;
       ensureReady: sinon.SinonStub;
-      session: AuthSession;
+      session: AgentSession;
       store: ReturnType<typeof createStore>;
     } {
     const ensureReady = stubProtocolReadiness(enboxes);
     const session = createSession({ agent: agentWithSync(engine.sync), delegateDid: DELEGATE_DID, signal });
     const auth = createFakeAuth();
-    auth.connect.callsFake(async (): Promise<AuthSession> => {
+    auth.connect.callsFake(async (): Promise<AgentSession> => {
       auth.session = session;
       return session;
     });
@@ -405,7 +405,7 @@ describe('createConnectionStore()', () => {
   ): Promise<{ auth: FakeAuthManager; store: ReturnType<typeof createStore> }> {
     const session = createSession({ agent: agentWithSync(engine.sync), ...params });
     const auth = createFakeAuth();
-    auth.connect.callsFake(async (): Promise<AuthSession> => {
+    auth.connect.callsFake(async (): Promise<AgentSession> => {
       auth.session = session;
       return session;
     });
@@ -822,7 +822,7 @@ describe('createConnectionStore()', () => {
         name  : 'Replacement identity',
       });
       const auth = createFakeAuth();
-      auth.connect.callsFake(async (): Promise<AuthSession> => {
+      auth.connect.callsFake(async (): Promise<AgentSession> => {
         auth.session = firstSession;
         return firstSession;
       });
@@ -858,7 +858,7 @@ describe('createConnectionStore()', () => {
       const lifetime = new AbortController();
       const session = createSession({ agent: agentWithSync(engine.sync), signal: lifetime.signal });
       const auth = createFakeAuth();
-      auth.connect.callsFake(async (): Promise<AuthSession> => {
+      auth.connect.callsFake(async (): Promise<AgentSession> => {
         auth.session = session;
         return session;
       });
@@ -899,7 +899,7 @@ describe('createConnectionStore()', () => {
         signal      : lifetime.signal,
       });
       const auth = createFakeAuth();
-      auth.connect.callsFake(async (): Promise<AuthSession> => {
+      auth.connect.callsFake(async (): Promise<AgentSession> => {
         auth.session = session;
         return session;
       });
@@ -1216,7 +1216,7 @@ describe('createConnectionStore()', () => {
     it('should restore a previous session into a connected snapshot', async () => {
       const fake = createFakeAuth();
       const session = createSession({ name: 'Restored identity' });
-      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+      fake.restoreSession.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -1302,7 +1302,7 @@ describe('createConnectionStore()', () => {
       const ensureReady = stubProtocolReadiness();
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -1321,7 +1321,7 @@ describe('createConnectionStore()', () => {
       expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION, publish: false });
 
       const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
-      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+      fake.refresh.callsFake(async (): Promise<AgentSession> => {
         fake.session = refreshedSession;
         return refreshedSession;
       });
@@ -1390,7 +1390,7 @@ describe('createConnectionStore()', () => {
         const ensureReady = stubProtocolReadiness();
         const ownerAuth = createFakeAuth();
         const ownerSession = createSession();
-        ownerAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+        ownerAuth.connectVault.callsFake(async (): Promise<AgentSession> => {
           ownerAuth.session = ownerSession;
           return ownerSession;
         });
@@ -1404,7 +1404,7 @@ describe('createConnectionStore()', () => {
 
         const writeOnlyAuth = createFakeAuth();
         const writeOnlySession = createSession({ delegateDid: DELEGATE_DID });
-        writeOnlyAuth.connect.callsFake(async (): Promise<AuthSession> => {
+        writeOnlyAuth.connect.callsFake(async (): Promise<AgentSession> => {
           writeOnlyAuth.session = writeOnlySession;
           return writeOnlySession;
         });
@@ -1452,7 +1452,7 @@ describe('createConnectionStore()', () => {
           delegateDid : DELEGATE_DID,
           name        : 'Reapproved identity',
         });
-        auth.refresh.callsFake(async (): Promise<AuthSession> => {
+        auth.refresh.callsFake(async (): Promise<AgentSession> => {
           engine.options = COVERED_REGISTRATION;
           auth.session = refreshedSession;
           return refreshedSession;
@@ -1479,7 +1479,7 @@ describe('createConnectionStore()', () => {
           delegateDid : DELEGATE_DID,
           name        : 'Covered replacement',
         });
-        auth.refresh.callsFake(async (): Promise<AuthSession> => {
+        auth.refresh.callsFake(async (): Promise<AgentSession> => {
           engine.options = COVERED_REGISTRATION;
           auth.session = refreshedSession;
           return refreshedSession;
@@ -1585,7 +1585,7 @@ describe('createConnectionStore()', () => {
       it('should repair an expired retained session when connect is retried', async () => {
         const auth = createFakeAuth();
         const session = createSession({ delegateDid: DELEGATE_DID });
-        auth.connect.callsFake(async (): Promise<AuthSession> => {
+        auth.connect.callsFake(async (): Promise<AgentSession> => {
           auth.session = session;
           return session;
         });
@@ -1893,14 +1893,14 @@ describe('createConnectionStore()', () => {
         metadata  : { name: 'Local owner' },
         didMethod : 'jwk',
       });
-      const session = new AuthSession({
+      const session = new AgentSession({
         agent  : testHarness.agent,
         did    : identity.did.uri,
         identity,
         signal : new AbortController().signal,
       });
       const localAuth = createFakeAuth();
-      localAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+      localAuth.connectVault.callsFake(async (): Promise<AgentSession> => {
         localAuth.session = session;
         return session;
       });
@@ -1915,7 +1915,7 @@ describe('createConnectionStore()', () => {
       await localStore.dispose();
 
       const hostedAuth = createFakeAuth();
-      hostedAuth.connectVault.callsFake(async (): Promise<AuthSession> => {
+      hostedAuth.connectVault.callsFake(async (): Promise<AgentSession> => {
         hostedAuth.session = session;
         return session;
       });
@@ -1939,7 +1939,7 @@ describe('createConnectionStore()', () => {
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
       const session = createSession();
-      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+      fake.restoreSession.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2026,7 +2026,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const firstSession = createSession({ name: 'First identity' });
       const replacementSession = createSession({ did: 'did:dht:replacement', name: 'Replacement identity' });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = firstSession;
         return firstSession;
       });
@@ -2058,7 +2058,7 @@ describe('createConnectionStore()', () => {
       ensureReady.onSecondCall().rejects(readinessError);
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2066,7 +2066,7 @@ describe('createConnectionStore()', () => {
       await store.connect();
 
       const replacementSession = createSession({ delegateDid: DELEGATE_DID, name: 'Replacement identity' });
-      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+      fake.refresh.callsFake(async (): Promise<AgentSession> => {
         fake.session = replacementSession;
         return replacementSession;
       });
@@ -2098,7 +2098,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const previousLifetime = new AbortController();
       const previousSession = createSession({ delegateDid: DELEGATE_DID, signal: previousLifetime.signal });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = previousSession;
         return previousSession;
       });
@@ -2127,7 +2127,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const lifetime = new AbortController();
       const session = createSession({ delegateDid: DELEGATE_DID, signal: lifetime.signal });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2155,7 +2155,7 @@ describe('createConnectionStore()', () => {
       }));
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2178,7 +2178,7 @@ describe('createConnectionStore()', () => {
     it('should pass through the connecting phase and land connected with a seeded delegated status', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2202,7 +2202,7 @@ describe('createConnectionStore()', () => {
     it('should forward monitor options and reuse them for the status seed', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2227,7 +2227,7 @@ describe('createConnectionStore()', () => {
     it('should not start a monitor when monitoring is disabled but still seed the status', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2242,7 +2242,7 @@ describe('createConnectionStore()', () => {
     it('should keep the connection field unset for non-delegated vault sessions', async () => {
       const fake = createFakeAuth();
       const session = createSession();
-      fake.connectVault.callsFake(async (): Promise<AuthSession> => {
+      fake.connectVault.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2286,7 +2286,7 @@ describe('createConnectionStore()', () => {
     it('should clear the previous error when a new attempt starts', async () => {
       const fake = createFakeAuth();
       fake.connect.onFirstCall().rejects(new ConnectDeniedError());
-      let resolveSecond!: (session: AuthSession) => void;
+      let resolveSecond!: (session: AgentSession) => void;
       fake.connect.onSecondCall().returns(new Promise((resolve) => { resolveSecond = resolve; }));
       const store = createStore({ auth: asAuth(fake) });
 
@@ -2306,7 +2306,7 @@ describe('createConnectionStore()', () => {
 
     it('should return the in-flight promise for a second connect call while connecting', async () => {
       const fake = createFakeAuth();
-      let resolveConnect!: (session: AuthSession) => void;
+      let resolveConnect!: (session: AgentSession) => void;
       fake.connect.returns(new Promise((resolve) => { resolveConnect = resolve; }));
       const store = createStore({ auth: asAuth(fake) });
 
@@ -2326,7 +2326,7 @@ describe('createConnectionStore()', () => {
   describe('refresh()', () => {
     async function connectDelegatedStore(fake: FakeAuthManager): Promise<ReturnType<typeof createStore>> {
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2356,7 +2356,7 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().walletReapprovalRequired).toBe(true);
 
       const refreshedSession = createSession({ delegateDid: DELEGATE_DID, name: 'Refreshed identity' });
-      fake.refresh.callsFake(async (): Promise<AuthSession> => {
+      fake.refresh.callsFake(async (): Promise<AgentSession> => {
         fake.session = refreshedSession;
         fake.emitter.emit('session-start', {});
         return refreshedSession;
@@ -2379,7 +2379,7 @@ describe('createConnectionStore()', () => {
     it('should flip to disconnected and stop the monitor when the session ends externally', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2402,7 +2402,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const firstSession = createSession({ delegateDid: DELEGATE_DID, name: 'First identity' });
       const replacementSession = createSession({ did: 'did:dht:replacement', name: 'Replacement identity' });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = firstSession;
         return firstSession;
       });
@@ -2432,7 +2432,7 @@ describe('createConnectionStore()', () => {
     it('should follow a session end that lands while connection status is loading', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2479,7 +2479,7 @@ describe('createConnectionStore()', () => {
     it('should reflect an expiring connection status without requiring reapproval', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2498,7 +2498,7 @@ describe('createConnectionStore()', () => {
     it('should require wallet reapproval when the connection expires or is revoked', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2529,7 +2529,7 @@ describe('createConnectionStore()', () => {
     it('should publish disconnecting synchronously, then clear the session fields', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2574,7 +2574,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const lifetime = new AbortController();
       const session = createSession({ signal: lifetime.signal });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2597,12 +2597,12 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const lifetime = new AbortController();
       const session = createSession({ signal: lifetime.signal });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
       let finishRefresh!: () => void;
-      fake.refresh.callsFake((): Promise<AuthSession> => new Promise((resolve) => {
+      fake.refresh.callsFake((): Promise<AgentSession> => new Promise((resolve) => {
         finishRefresh = (): void => {
           const replacement = createSession({ name: 'Replacement' });
           fake.session = replacement;
@@ -2627,7 +2627,7 @@ describe('createConnectionStore()', () => {
       let rejectConnect!: (error: Error) => void;
       let connectStarted!: () => void;
       const started = new Promise<void>((resolve) => { connectStarted = resolve; });
-      fake.connect.callsFake((): Promise<AuthSession> => {
+      fake.connect.callsFake((): Promise<AgentSession> => {
         connectStarted();
         return new Promise((_resolve, reject) => { rejectConnect = reject; });
       });
@@ -2658,7 +2658,7 @@ describe('createConnectionStore()', () => {
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
       const session = createSession();
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2685,7 +2685,7 @@ describe('createConnectionStore()', () => {
     it('should stop the connection monitor and detach event subscriptions', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2783,7 +2783,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const session = createSession();
       const nativeAction = action === 'initialize' ? fake.restoreSession : fake.connectVault;
-      nativeAction.callsFake(async (): Promise<AuthSession> => {
+      nativeAction.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2924,7 +2924,7 @@ describe('createConnectionStore()', () => {
     it('should let a reentrant disconnect own an initialize retry before manager creation settles', async () => {
       const fake = createFakeAuth();
       const session = createSession({ name: 'Must not restore' });
-      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+      fake.restoreSession.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -2964,7 +2964,7 @@ describe('createConnectionStore()', () => {
       const session = createSession({ name: 'Resurrected identity' });
       // Primed to restore a session — if the stale path ever runs restore,
       // the store visibly (and wrongly) reconnects.
-      fake.restoreSession.callsFake(async (): Promise<AuthSession> => {
+      fake.restoreSession.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3021,8 +3021,8 @@ describe('createConnectionStore()', () => {
       const session = createSession();
       let restoreStarted!: () => void;
       const started = new Promise<void>((resolve) => { restoreStarted = resolve; });
-      let resolveRestore!: (value: AuthSession) => void;
-      fake.restoreSession.callsFake((): Promise<AuthSession> => {
+      let resolveRestore!: (value: AgentSession) => void;
+      fake.restoreSession.callsFake((): Promise<AgentSession> => {
         restoreStarted();
         return new Promise((resolve) => { resolveRestore = resolve; });
       });
@@ -3069,7 +3069,7 @@ describe('createConnectionStore()', () => {
     it('should not re-run restore when initialize() follows an eager connect', async () => {
       const fake = createFakeAuth();
       const session = createSession();
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3105,7 +3105,7 @@ describe('createConnectionStore()', () => {
     it('should stay connected without a status when the connection seed fails', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3122,7 +3122,7 @@ describe('createConnectionStore()', () => {
     it('should flag wallet reapproval when the seeded status is already terminal', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3138,7 +3138,7 @@ describe('createConnectionStore()', () => {
     it('should clear a required reapproval when an active status is observed', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3157,7 +3157,7 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const lifetime = new AbortController();
       const session = createSession({ signal: lifetime.signal });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3179,7 +3179,7 @@ describe('createConnectionStore()', () => {
     it('should stay connected when a failed action leaves the auth session intact', async () => {
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
-      fake.connect.callsFake(async (): Promise<AuthSession> => {
+      fake.connect.callsFake(async (): Promise<AgentSession> => {
         fake.session = session;
         return session;
       });
@@ -3196,7 +3196,7 @@ describe('createConnectionStore()', () => {
 
     it('should normalize non-Error rejections into Error instances', async () => {
       const fake = createFakeAuth();
-      fake.connect.callsFake((): Promise<AuthSession> => Promise.reject('string rejection'));
+      fake.connect.callsFake((): Promise<AgentSession> => Promise.reject('string rejection'));
       const store = createStore({ auth: asAuth(fake) });
 
       const snapshot = await store.connect();

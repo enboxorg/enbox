@@ -89,7 +89,7 @@ export interface AuthEventMap {
   /** Wake indicating that consumers should read the emitting manager's authoritative active session. */
   'session-start': Record<string, never>;
   'session-end': { did: string };
-  'identity-added': { identity: IdentityInfo };
+  'identity-added': { identity: AgentSessionIdentity };
   'identity-removed': { didUri: string };
   'vault-locked': Record<string, never>;
   'vault-unlocked': Record<string, never>;
@@ -106,18 +106,6 @@ export interface AuthEventMap {
 /** A type-safe event handler for a specific event. */
 export type AuthEventHandler<E extends AuthEvent = AuthEvent> =
   (payload: AuthEventMap[E]) => void;
-
-// ─── Identity ────────────────────────────────────────────────────
-
-/**
- * Lightweight metadata about a stored identity.
- *
- * @deprecated Prefer {@link AgentSessionIdentity} from `@enbox/agent` — this
- *   alias exists for `@enbox/auth`'s self-contained public surface but the
- *   canonical name lives in the agent package. The two are structurally
- *   identical; new code should import `AgentSessionIdentity` directly.
- */
-export type IdentityInfo = AgentSessionIdentity;
 
 // ─── Registration ────────────────────────────────────────────────
 
@@ -731,7 +719,7 @@ export interface StorageAdapter {
   /** Get a value by key. Returns `null` if not found. */
   get(key: string): Promise<string | null>;
 
-  /** Set a key-value pair. */
+  /** Atomically replace the value for a key. */
   set(key: string, value: string): Promise<void>;
 
   /** Remove a key. */
@@ -763,23 +751,8 @@ export const DEFAULT_DWN_ENDPOINTS = ['https://enbox-dwn.fly.dev'];
  * @internal
  */
 export const STORAGE_KEYS = {
-  /** Whether a session was previously established. */
-  PREVIOUSLY_CONNECTED: 'enbox:auth:previouslyConnected',
-
-  /** The DID URI of the last active identity. */
-  ACTIVE_IDENTITY: 'enbox:auth:activeIdentity',
-
-  /** The delegate DID URI (for wallet-connected sessions). */
-  DELEGATE_DID: 'enbox:auth:delegateDid',
-
-  /** The connected DID (for wallet-connected sessions). */
-  CONNECTED_DID: 'enbox:auth:connectedDid',
-
-  /** Legacy context key cache key, retained for cleanup during session restore. */
-  DELEGATE_CONTEXT_KEYS: 'enbox:auth:delegateContextKeys',
-
-  /** Legacy multi-party protocol cache key, retained for cleanup during session restore. */
-  DELEGATE_MULTI_PARTY_PROTOCOLS: 'enbox:auth:delegateMultiPartyProtocols',
+  /** Complete session binding and revocation metadata; presence enables restore. */
+  SESSION: 'enbox:auth:session',
 
   /** Versioned local-node pairing record: endpoint, bearer token, origin, and metadata. */
   LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
@@ -797,20 +770,13 @@ export const STORAGE_KEYS = {
   REGISTRATION_TOKENS: 'enbox:auth:registrationTokens',
 
   /**
-   * JSON-serialised `SessionRevocationEntry[]` mapping session grant IDs to
-   * their corresponding revocation grant IDs for disconnect.
-   */
-  SESSION_REVOCATIONS: 'enbox:auth:sessionRevocations',
-
-  /**
    * Self-contained collection of revocation retry entries from previous
    * partial disconnects. JSON-serialised array of
-   * `{ delegateDid, connectedDid, revocations }` entries, one per
-   * session. Keyed by `delegateDid` (unique per session).
+   * `{ delegateDid, connectedDid, revocations }` entries, one per delegate.
    *
-   * Self-contained for remote retry. During restore, an exact match with the
-   * persisted delegate and connected DID also proves an interrupted disconnect
-   * whose local session teardown must be completed before restoration.
+   * Matching DIDs prove an interrupted disconnect only when the retry entry
+   * contains the current approval's complete, nonempty revocation map. Older
+   * retry work can coexist with a newer approval for the same delegate.
    */
   REVOCATION_RETRY_CONTEXT: 'enbox:auth:revocationRetryContext',
 } as const;

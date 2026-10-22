@@ -5,12 +5,13 @@ import type { ConnectHandler, ConnectionStatus } from '../src/types.js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, test } from 'bun:test';
 
+import { AgentSession } from '@enbox/agent';
 import { AuthEventEmitter } from '../src/events.js';
 import { AuthManager } from '../src/auth-manager.js';
-import { AuthSession } from '../src/identity-session.js';
 import { Convert } from '@enbox/common';
 import { DidResolutionErrorCause } from '@enbox/dids';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
@@ -74,7 +75,7 @@ function createTestManager(agent: EnboxUserAgent, options: {
   internals._sessionLifetime = sessionLifetime;
   internals._session = sessionLifetime === undefined
     ? undefined
-    : new AuthSession({
+    : new AgentSession({
       agent,
       did         : OWNER_DID,
       delegateDid : DELEGATE_DID,
@@ -216,11 +217,13 @@ describe('delegated connection lifecycle', () => {
         syncRemoveIdentity : syncUnregister,
       });
       const requestAccess = sinon.spy(async (): Promise<any> => createRefreshResult());
-      const manager = createTestManager(agent, { connectHandler: { requestAccess } });
+      const storage = new MemoryStorage();
+      await setStoredSession(storage, OWNER_DID, DELEGATE_DID, [{ grantId: 'prior-grant', revocationGrantId: 'prior-revoker' }]);
+      const manager = createTestManager(agent, { connectHandler: { requestAccess }, storage });
       const originalSession = manager.session!;
       let identityAdded = 0;
       let sessionStarted = 0;
-      let sessionAtEvent: AuthSession | undefined;
+      let sessionAtEvent: AgentSession | undefined;
       let stateAtEvent = manager.state;
       manager.on('identity-added', () => { identityAdded++; });
       manager.on('session-start', () => {
@@ -254,6 +257,8 @@ describe('delegated connection lifecycle', () => {
       expect(syncStart.called).toBe(false);
       expect(identityAdded).toBe(0);
       expect(sessionStarted).toBe(1);
+      expect(JSON.parse((await storage.get(STORAGE_KEYS.SESSION))!).revocations).toEqual([]);
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
     });
 
     test('rejects a different connected DID or delegate DID returned by the handler', async () => {
@@ -433,8 +438,7 @@ describe('delegated connection lifecycle', () => {
       expect(sessionEnds).toEqual([OWNER_DID]);
       expect(manager.session).toBeUndefined();
       expect(manager.state).toBe('unlocked');
-      expect(await storage.get(STORAGE_KEYS.PREVIOUSLY_CONNECTED)).toBeNull();
-      expect(await storage.get(STORAGE_KEYS.ACTIVE_IDENTITY)).toBeNull();
+      expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
     });
 
     test('rejects new connect and refresh attempts as soon as shutdown starts', async () => {

@@ -5,11 +5,11 @@
  * @module
  */
 
-import type { AuthSession } from '../identity-session.js';
+import type { AgentSession } from '@enbox/agent';
 import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPortableOptions } from '../types.js';
 
-import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncInBackgroundIfEnabled } from './lifecycle.js';
+import { finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 
 /**
  * Import an identity from a PortableIdentity JSON object.
@@ -20,25 +20,25 @@ import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScope
 export async function importFromPortable(
   ctx: FlowContext,
   options: ImportFromPortableOptions,
-): Promise<AuthSession> {
+): Promise<AgentSession> {
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
   const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
-  assertFlowActive(ctx);
+  ctx.assertActive();
 
-  const identity = await runFlowMutation(ctx, () => userAgent.identity.import({
+  const identity = await ctx.runMutation(() => userAgent.identity.import({
     portableIdentity: options.portableIdentity,
   }));
 
   const { connectedDid, delegateDid } = resolveIdentityDids(identity);
 
-  return commitFlowSession(ctx, async (): Promise<AuthSession> => {
+  return ctx.commitSession(async (): Promise<AgentSession> => {
     // Register sync. For delegates, derive scope from grants (not 'all').
     if (delegateDid !== undefined || sync !== 'off') {
       await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
     }
 
-    // Persist session info and build the AuthSession for the manager to publish.
+    // Persist session info and build the AgentSession for the manager to publish.
     const session = await finalizeSession({
       userAgent,
       emitter,
