@@ -430,6 +430,14 @@ Typed record operations return protocol-bound `TypedRecord<T>` handles.
 every create, read, query, observe, subscription, and materialization result.
 `update()` mutates and returns the same refined handle. Successful delete
 operations resolve without a value.
+
+Queries and observed views accept `materialize: true` for decoded values, or
+`materialize: { children: [...] }` to include selected direct singleton
+children. Inline child paths infer their exact result shape without a const
+assertion. Materialization requires an explicit pagination limit. Integrations
+can use `RecordMaterialization`, `RecordObserveRequest`, and
+`RecordRepresentation` to share these native selection and result contracts.
+
 Context-bound deletion requires authority-backed proof: an authorized existing
 tombstone is idempotent, while a plain scoped 404 remains a 404 because the ID
 may name a record outside the context.
@@ -616,6 +624,9 @@ covers its service worker, persistent storage, and build setup.
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
 | `MaterializedRecord<T, Handle>` | A decoded value paired with its retained record handle. |
+| `RecordMaterialization` | Protocol-derived value or direct singleton child selection. |
+| `RecordObserveRequest` | Bounded query, materialization, and cancellation options for an observed view. |
+| `RecordRepresentation` | Protocol-bound handle or materialized row selected by a request. |
 | `TypedRecord<T>` | A canonical record with required protocol coordinates. |
 | `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
 | `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |

@@ -368,7 +368,7 @@ void set.then((record): void => {
 });
 
 void context.records.query('workspace', {
-  materialize : { children: ['workspace/title'] as const },
+  materialize : { children: ['workspace/title'] },
   pagination  : { limit: 1 },
 }).then((page): void => {
   const title: ContextRecord<{ text: string }> | undefined = page.records[0]?.children.title?.record;
@@ -435,7 +435,7 @@ void context.records.subscribe(['workspace/note', 'workspace/live'], async (even
 });
 
 void context.records.observe('workspace', {
-  materialize : { children: ['workspace/title'] as const },
+  materialize : { children: ['workspace/title'] },
   pagination  : { limit: 1 },
 }).then((view): void => {
   const title: ContextRecord<{ text: string }> | undefined = view.getSnapshot().records[0]?.children.title?.record;
