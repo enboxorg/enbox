@@ -100,10 +100,10 @@ type RecordMetadata = ImmutableRecordProperties & OptionalRecordProperties;
  *
  * @beta
  */
-export type RecordModel = Pick<RecordMetadata, 'dateCreated'> & {
+export type RecordModel = Pick<RecordMetadata, 'dateCreated' | 'authorization'> & {
   // Handles also represent tombstones and non-protocol records. Their getters
   // and toJSON() expose undefined for metadata absent in that record state.
-  [Property in Exclude<keyof RecordMetadata, 'dateCreated'>]?: RecordMetadata[Property] | undefined;
+  [Property in Exclude<keyof RecordMetadata, 'dateCreated' | 'authorization'>]?: RecordMetadata[Property] | undefined;
 } & {
 
   /** The logical author of the record. */

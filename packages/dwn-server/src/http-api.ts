@@ -129,7 +129,12 @@ export class HttpApi {
     };
 
     try {
-      const packageJson = JSON.parse(readFileSync(config.packageJsonPath).toString());
+      // Resolve installed metadata only when the legacy Docker manifest is absent.
+      // Keep resolution here so bundled deployments can start without manifests.
+      const packageJsonPath = config.packageJsonPath === '/dwn-server/package.json' && !existsSync(config.packageJsonPath)
+        ? require.resolve('@enbox/dwn-server/package.json')
+        : config.packageJsonPath;
+      const packageJson = JSON.parse(readFileSync(packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
     } catch (error: any) {
       log.info('could not read `package.json` for version info', error);

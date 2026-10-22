@@ -23,6 +23,12 @@ if (args.includes('POST')) {
   }
   const release = { ...body, id: 1, draft: false };
   fs.writeFileSync(file, JSON.stringify(release));
+  const lostResponse = path.join(directory, 'lost-response');
+  if (process.env.FAIL_RELEASE_RESPONSE_ONCE === '1' && !fs.existsSync(lostResponse)) {
+    fs.writeFileSync(lostResponse, 'failed');
+    console.error('gh: connection lost after creating release');
+    process.exit(1);
+  }
   console.log(JSON.stringify(release));
 } else {
   const tag = decodeURIComponent(endpoint.split('/tags/')[1]);

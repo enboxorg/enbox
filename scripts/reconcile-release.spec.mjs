@@ -82,6 +82,13 @@ exec '${realGit}' "$@"
     expect(await Bun.file(join(fixture.env.RELEASE_GITHUB, 'posts')).exists()).toBe(false);
   });
 
+  it('accepts a release created before its POST response is lost', async () => {
+    const fixture = await createFixture();
+    expect((await reconcile(fixture, { FAIL_RELEASE_RESPONSE_ONCE: '1' })).code).toBe(0);
+    expect((await reconcile(fixture)).code).toBe(0);
+    expect((await readFile(join(fixture.env.RELEASE_GITHUB, 'posts'), 'utf8')).trim().split('\n')).toHaveLength(2);
+  });
+
   it('recovers the completed part of a failed npm batch and finishes on retry', async () => {
     const fixture = await createReleaseFixture();
     fixtures.push(fixture.directory);

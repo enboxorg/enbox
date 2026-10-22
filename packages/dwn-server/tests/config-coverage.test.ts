@@ -4,6 +4,40 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 
+describe('config — bundled deployments', () => {
+  it('should load bundled configuration before resolving optional package metadata', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dwn-config-bundle-'));
+    try {
+      const result = await Bun.build({
+        entrypoints : [join(import.meta.dir, '../src/config.ts')],
+        outdir      : directory,
+        target      : 'bun',
+      });
+      expect(result.success).toBe(true);
+
+      for (const packageJsonPath of ['', '/custom/server-package.json']) {
+        const child = Bun.spawn([
+          process.execPath, '-e', 'import { config } from "./config.js"; process.stdout.write(config.packageJsonPath);',
+        ], {
+          cwd    : directory,
+          env    : { ...process.env, DWN_SERVER_PACKAGE_JSON: packageJsonPath },
+          stdout : 'pipe',
+          stderr : 'pipe',
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+        ]);
+        if (exitCode !== 0) {
+          throw new Error(`Bundled config failed: ${stderr}`);
+        }
+        expect(stdout).toBe(packageJsonPath || '/dwn-server/package.json');
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 /**
  * Tests for `readAdminTokenFromFile` (config.ts lines 233-236).
  *
