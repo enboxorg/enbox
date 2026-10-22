@@ -13,6 +13,7 @@ export default defineConfig({
   },
   test: {
     include: [
+      'tests/sync-admit-closure.spec.ts',
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-link-recovery-coordinator.spec.ts',
       'tests/sync-next-progress-store.spec.ts',
@@ -27,6 +28,7 @@ export default defineConfig({
     testTimeout : 10_000,
     coverage: {
       include: [
+        'src/sync-admit-closure.ts',
         'src/sync-durable-feed-reconciler.ts',
         'src/sync-link-recovery-coordinator.ts',
         'src/sync-next/progress-key.ts',

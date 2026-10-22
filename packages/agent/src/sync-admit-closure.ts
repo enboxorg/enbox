@@ -115,7 +115,8 @@ type ScopeCheckResult = 'in-scope' | 'out-of-scope' | 'unknown';
  * incomplete, invalid, or deferred. On top of that, this module fetches
  * missing dependencies and retries in dependency order, AND enforces its own
  * admission policy: sync-scope gating on the root, data availability before
- * apply, the data-size limit, and a bounded pass budget.
+ * apply, the data-size limit, and a bounded pass budget. It owns and releases
+ * every data stream received or opened while admitting the closure.
  */
 export async function admitClosure(rootCid: string, deps: AdmitClosureDeps): Promise<AdmitOutcome> {
   const context = new AdmitClosureContext(deps);
@@ -123,6 +124,7 @@ export async function admitClosure(rootCid: string, deps: AdmitClosureDeps): Pro
 }
 
 class AdmitClosureContext {
+  private readonly dataStreamsToRelease = new Set<ReadableStream<Uint8Array>>();
   private readonly entriesByCid = new Map<string, SyncMessageEntry>();
   private readonly fetchedDependencyEntries = new Map<string, SyncMessageEntry[]>();
   private readonly prefetchedEntries: SyncMessageEntry[];
@@ -134,6 +136,15 @@ class AdmitClosureContext {
   }
 
   public async admit(rootCid: string): Promise<AdmitOutcome> {
+    try {
+      return await this.admitRoot(rootCid);
+    } finally {
+      // Dependency fetches can acquire bodies before their next admission pass.
+      await Promise.allSettled([...this.dataStreamsToRelease].map((stream) => stream.cancel()));
+    }
+  }
+
+  private async admitRoot(rootCid: string): Promise<AdmitOutcome> {
     await this.rememberEntries(this.prefetchedEntries);
     let pending = await this.initialPending(rootCid);
     const handledCids: string[] = [];
@@ -211,6 +222,9 @@ class AdmitClosureContext {
     }
 
     const dataStream = await replayableDataStream(entry);
+    if (dataStream !== undefined) {
+      this.dataStreamsToRelease.add(dataStream);
+    }
     if (entryRequiresDataBeforeApply(entry) && dataStream === undefined) {
       return this.admissionResultFromMissingData(rootCid, entry);
     }
@@ -342,16 +356,7 @@ class AdmitClosureContext {
       return [];
     }
 
-    const fetched = await fetchRemoteMessages({
-      did                : this.deps.did,
-      dwnUrl             : this.deps.dwnUrl,
-      delegateDid        : this.deps.delegateDid,
-      permissionGrantIds : this.deps.permissionGrantIds,
-      messageCids        : [rootCid],
-      agent              : this.deps.agent,
-      runRemoteRequest   : this.deps.runRemoteRequest,
-    });
-    return fetched;
+    return this.fetchMessageCids([rootCid]);
   }
 
   /** Hydrates a role root at most once without duplicating admission ordering. */
@@ -367,12 +372,12 @@ class AdmitClosureContext {
       return [];
     }
     const support = await fetch(root);
+    const entries = [...support.dependencies, support.root];
+    await this.rememberEntries(entries);
     if (await getMessageCid(support.root.message) !== rootCid) {
       throw new Error(`AdmitClosure: replication support replaced root '${rootCid}' with another message.`);
     }
 
-    const entries = [...support.dependencies, support.root];
-    await this.rememberEntries(entries);
     return entries;
   }
 
@@ -659,7 +664,11 @@ class AdmitClosureContext {
         ...(signal === undefined ? {} : { signal }),
       }) as Promise<RecordsReadReply>
     );
-    if (reply.status.code !== 200 || reply.entry?.recordsWrite === undefined || reply.entry.data === undefined) {
+    const responseData = reply.entry?.data;
+    if (responseData !== undefined) {
+      this.dataStreamsToRelease.add(responseData);
+    }
+    if (reply.status.code !== 200 || reply.entry?.recordsWrite === undefined || responseData === undefined) {
       return [];
     }
 
@@ -668,7 +677,9 @@ class AdmitClosureContext {
       return [];
     }
 
-    const entry = { message: recordsWrite, dataStream: capRecordsWriteDataStream(recordsWrite, reply.entry.data) };
+    const dataStream = capRecordsWriteDataStream(recordsWrite, responseData);
+    this.dataStreamsToRelease.delete(responseData);
+    const entry = { message: recordsWrite, dataStream };
     await this.rememberEntry(entry);
     return [entry];
   }
@@ -718,6 +729,9 @@ class AdmitClosureContext {
   }
 
   private async rememberEntry(entry: SyncMessageEntry): Promise<string> {
+    if (entry.dataStream !== undefined) {
+      this.dataStreamsToRelease.add(entry.dataStream);
+    }
     const cid = entry.verifiedMessageCid ?? await Message.getCid(entry.message);
     this.entriesByCid.set(cid, entry);
     return cid;

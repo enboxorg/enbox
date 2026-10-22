@@ -350,6 +350,7 @@ describe('SyncEngineLevel durable pull admission', () => {
 
   it('fetches a durable-query entry by CID when the query omits its message', async () => {
     const fetchedMessage = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const fetchedMessageCid = await Message.getCid(fetchedMessage);
     const processDwnRequest = sinon.stub().resolves({ message: { descriptor: {} } });
     const sendDwnRequest = sinon.stub().resolves({
       status : { code: 200, detail: 'OK' },
@@ -366,12 +367,13 @@ describe('SyncEngineLevel durable pull admission', () => {
 
     const [hydrated] = await internal.syncEntriesFromFeedEntry(target(), {
       isLatestBaseState : true,
-      messageCid        : 'cid-without-message',
+      messageCid        : fetchedMessageCid,
     });
 
     expect(hydrated).toEqual({
-      isLatestBaseState : true,
-      message           : fetchedMessage,
+      isLatestBaseState  : true,
+      message            : fetchedMessage,
+      verifiedMessageCid : fetchedMessageCid,
     });
     expect(processDwnRequest.calledOnce).toBe(true);
     expect(sendDwnRequest.calledOnce).toBe(true);
@@ -379,6 +381,7 @@ describe('SyncEngineLevel durable pull admission', () => {
 
   it('refetches detached RecordsWrite data for every data-stream attempt', async () => {
     const message = recordsWriteMessage();
+    const messageCid = await Message.getCid(message);
     const firstStream = new Blob(['first']).stream();
     const secondStream = new Blob(['second']).stream();
     const processDwnRequest = sinon.stub().resolves({ message: { descriptor: {} } });
@@ -401,9 +404,9 @@ describe('SyncEngineLevel durable pull admission', () => {
     const internal = engine as any;
 
     const [hydrated] = await internal.syncEntriesFromFeedEntry(target(), {
-      isLatestBaseState : true,
+      isLatestBaseState: true,
       message,
-      messageCid        : 'cid-detached-data',
+      messageCid,
     });
 
     expect(await hydrated.dataStreamFactory()).toBe(firstStream);
