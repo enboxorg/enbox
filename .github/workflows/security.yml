@@ -24,7 +24,7 @@ jobs:
           bun-version: 1.4.4
 
       - name: Verify runtime and audit policy
-        run: bun test scripts/security-audit.spec.mjs scripts/runtime-security.spec.mjs
+        run: bun test scripts/security-audit.spec.mjs scripts/runtime-security.spec.mjs scripts/publish.spec.mjs
 
       - name: Audit all locked dependencies
         run: bun run security:audit

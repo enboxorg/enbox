@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Changesets Action v2 reads structured receipts instead of stdout markers.
+# Check the destination before publishing and discard receipts from earlier runs.
+if [ -n "${CHANGESETS_OUTPUT:-}" ]; then
+  : > "$CHANGESETS_OUTPUT"
+fi
+
 # Custom publish script that resolves Bun's workspace:* protocol before publishing.
 #
 # Changesets' built-in publish uses `npm publish` directly on the package
@@ -172,8 +178,19 @@ for pkg_dir in "${PACKAGES[@]}"; do
     echo "Published $name@$version"
     published=$((published + 1))
 
-    # Changesets discovers published packages from this marker and pushes their tags.
+    # Keep the human-readable marker and report successful releases to Action v2.
     echo "New tag: $tag"
+    if [ -n "${CHANGESETS_OUTPUT:-}" ]; then
+      node -e '
+        const fs = require("node:fs");
+        const event = {
+          type        : "git-tag",
+          tag         : process.argv[2],
+          packageName : process.argv[1],
+        };
+        fs.appendFileSync(process.env.CHANGESETS_OUTPUT, JSON.stringify(event) + "\n");
+      ' "$name" "$tag"
+    fi
 
     # Clean up tarball
     rm -f "$pkg_dir/$tarball"
