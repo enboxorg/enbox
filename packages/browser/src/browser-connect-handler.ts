@@ -101,9 +101,10 @@ export interface BrowserConnectHandlerOptions {
   appName?: string;
 
   /**
-   * Icon URL of the requesting application.
-   * Shown alongside the app name in the wallet's consent screen.
-   * Defaults to `${window.location.origin}/favicon.ico` if omitted.
+   * Icon URL of the requesting application, resolved against the page origin
+   * when access is requested. Documents with an opaque origin use their URL
+   * as the base. Shown in the wallet's consent screen.
+   * Defaults to `/favicon.ico` if omitted.
    */
   appIcon?: string;
 
@@ -198,13 +199,14 @@ export function BrowserConnectHandler(
       requestType?: ConnectRequestType;
       expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
+      const appIconBase = window.location.origin === 'null' ? window.location.href : window.location.origin;
       return runConnectModal({
         wallets,
         walletUrl,
         preferredMethod,
         rememberChoice,
         appName,
-        appIcon             : appIcon ?? `${window.location.origin}/favicon.ico`,
+        appIcon             : new URL(appIcon ?? '/favicon.ico', appIconBase).href,
         applicationId,
         connectServerUrl,
         relayWalletPath,

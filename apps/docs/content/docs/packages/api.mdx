@@ -197,6 +197,16 @@ Lower-level owner lifecycles call `enbox.protocols.ensureReady()` with
 `publish: false` when the DID has no hosted `#dwn`; omitting that option attempts
 hosted publication by default.
 
+When the store creates its own `AuthManager`, local identity sync defaults to
+every protocol URI in the application manifest. Restoration reapplies that
+default, replacing any older broader registration. Configure
+`identitySyncProtocols: 'all'` or an explicit non-empty URI list on the store
+when a broader scope must survive reloads; a per-call `connectVault` override
+applies only to that call. Include cross-protocol dependencies in the manifest
+or explicit scope. The store does not discover additional protocols, and a
+caller-provided `auth` manager keeps its own sync configuration. `sync: 'off'`
+still disables live sync.
+
 ## Typed records
 
 `enbox.using(NotebookProtocol).records` is the ordinary collection API. It

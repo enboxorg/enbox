@@ -8,12 +8,13 @@
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
-    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json && bun run typecheck:contracts",
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "test:node": "bun test .spec.ts",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts"
+    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
+    "typecheck:contracts": "bun tsc -p type-tests/tsconfig.json"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/protocols#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",

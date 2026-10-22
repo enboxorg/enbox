@@ -70,17 +70,19 @@ import { ProfileDefinition } from './profile.js';
  *
  * Both `Record` (connected `DwnApi`) and `ReadOnlyRecord`
  * (`Enbox.anonymous()`) satisfy this structurally.
+ * Optional metadata accepts explicit `undefined` from native getters for
+ * consumers using `exactOptionalPropertyTypes`; see the public type contracts.
  */
 export type ProfileReaderRecord = {
   /** Protocol path of the record (e.g. `'profile'`). */
-  protocolPath?: string;
+  protocolPath?: string | undefined;
   /** MIME type of the record data. */
-  dataFormat?: string;
+  dataFormat?: string | undefined;
   /**
    * Declared size of the record data in bytes, when known. Used to reject
    * over-budget image records BEFORE downloading their bytes.
    */
-  dataSize?: number;
+  dataSize?: number | undefined;
   /** Data accessors. Reading may perform a network fetch for non-inlined data. */
   data: {
     blob(): Promise<Blob>;
@@ -116,10 +118,10 @@ export type ProfileReaderReadRequest = {
   filter: RecordsFilter;
 };
 
-/** Response of a records read. */
+/** A missing record may be omitted or explicitly `undefined` in native read replies. */
 export type ProfileReaderReadResponse = {
   status: ProfileReaderReplyStatus;
-  record?: ProfileReaderRecord;
+  record?: ProfileReaderRecord | undefined;
 };
 
 /**

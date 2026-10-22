@@ -233,13 +233,22 @@ export type ConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & 
  *
  * Accepts `AuthManagerOptions` except `agent` — everything the store does not
  * consume itself (`connectHandler`, `sync`, `storage`, `password`, …) is
- * forwarded verbatim to `AuthManager.create()` during the first action. To
- * use a caller-owned agent, create an `AuthManager` around it and pass that
- * manager through `auth`.
+ * forwarded to `AuthManager.create()` during the first action. An omitted
+ * local identity sync scope defaults to the manifest's protocol URIs for a
+ * store-owned manager. To use a caller-owned agent, create an `AuthManager`
+ * around it and pass that manager through `auth`.
  */
-type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent'> & {
+type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent' | 'identitySyncProtocols'> & {
   /** Raw agents have ambiguous ownership; pass a caller-owned manager through {@link auth}. */
   agent?: never;
+
+  /**
+   * Local identity sync scope for a store-owned manager. Defaults to all
+   * application protocol URIs, including during session restoration. Explicit
+   * scopes override this default; a per-call vault override applies only to
+   * that call. Configure a persistent broader scope here. Ignored with `auth`.
+   */
+  identitySyncProtocols?: NonNullable<AuthManagerOptions['identitySyncProtocols']>;
 
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
@@ -555,7 +564,8 @@ class HeadlessConnectionStore implements ConnectionStore {
       );
     }
     const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
-    if (application.protocols.length === 0) {
+    const [firstProtocol, ...remainingProtocols] = application.protocols;
+    if (firstProtocol === undefined) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
     }
     this._application = application;
@@ -568,6 +578,12 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._monitor = monitor ?? {};
     this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
+    if (auth === undefined) {
+      authManagerOptions.identitySyncProtocols ??= [
+        firstProtocol.protocol.definition.protocol,
+        ...remainingProtocols.map(({ protocol }): string => protocol.definition.protocol),
+      ];
+    }
     this._authManagerOptions = authManagerOptions;
   }
 
