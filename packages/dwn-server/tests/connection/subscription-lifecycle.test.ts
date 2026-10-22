@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { getTestDwn } from '../test-dwn.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
+import { setImmediate } from 'node:timers/promises';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
 import { createGate, openSocket } from './socket-test-utils.js';
 import { createJsonRpcAck, createJsonRpcSubscriptionRequest } from '@enbox/dwn-clients';
@@ -287,6 +288,12 @@ describe('Socket subscription lifetimes', () => {
           { target: alice.did, message: subscribe.message }, 'peer')));
         if (!acknowledge) {
           await firstFrame.promise;
+          // Native delivery can expose the first frame before replay fills the buffer.
+          // Reach capacity before advancing the fake ACK deadline.
+          const capacityDeadline = AbortSignal.timeout(5_000);
+          while (connection.toSnapshot().subscriptions[0].buffered !== MAX_BUFFER_SIZE) {
+            await setImmediate(undefined, { signal: capacityDeadline });
+          }
           expect(connection.toSnapshot().subscriptions[0].buffered).toBe(MAX_BUFFER_SIZE);
           clock!.tick(MAX_BUFFER_WAIT_MS);
         }
