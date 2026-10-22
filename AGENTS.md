@@ -110,7 +110,7 @@ Code style in this repo is **strictly enforced** and routinely corrects drift. A
 
 ## Monorepo Overview
 
-Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.0.0). The repo root pins a **`packageManager`** field (see root `package.json`) so local Bun matches CI and lockfile expectations.
+Bun workspace monorepo for decentralized web infrastructure. Runtime is **Bun** (>=1.4.4). The repo root pins a **`packageManager`** field (see root `package.json`) so local Bun matches CI and lockfile expectations.
 
 **Task orchestration:** `bun run build`, `bun run lint`, and `bun run test:node` at the repo root invoke **Turbo** (`turbo.json`, pinned to `turbo@2.8.13` in root `devDependencies`):
 

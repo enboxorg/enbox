@@ -66,6 +66,34 @@ deployments must include `pg` and `pg-cursor`, MySQL deployments must include
 5. **Set resource limits** for containers
 6. **Enable registration** -- configure proof-of-work or terms-of-service tenant registration
 
+### Runtime security updates
+
+Use Bun **1.4.4 or newer**. The repository pins the tested version in
+`package.json`, CI, the desktop bundle configuration, and both Dockerfiles.
+The Docker base images also pin multi-platform image digests. When upgrading
+Bun, update these together and resolve the new image digests from the official
+`oven/bun` repository. The TLS hostname regression test in
+`scripts/runtime-security.spec.mjs` covers the Unicode separator bypass fixed
+in [Bun 1.4.3](https://bun.com/blog/bun-v1.4.3).
+
+After updating, rebuild and redeploy server images and distribute a new desktop
+bundle. Updating the lockfile or merging a PR does not update running processes
+or existing desktop installations. Check `bun --version` in each deployed
+container or host before considering the runtime rollout complete.
+
+Run `bun run security:audit` to check the entire lockfile and its production
+dependency graph. CI requires this check on every PR and runs it daily on
+`main`, including when the lockfile has not changed. Registry errors and skipped
+registries fail the check. No dependency installation is needed for this audit.
+
+Temporary tooling exceptions live in `.github/security-audit-exceptions.json`.
+Each entry names one advisory, exact locked versions, severity, rationale, and
+expiry. Production findings always fail, including an excepted package that
+becomes a production dependency. Expired or unused exceptions must be removed
+or reassessed. The initial exceptions for `braces` and `sprintf-js` have no
+published fixes and expire on **2026-11-21**; they are not production dependencies.
+Dependency auditing does not scan Bun's executable or the container's OS packages.
+
 ## Self-Hosting Anywhere
 
 To deploy your own DWN on any host (cloud provider, VPS, Kubernetes, or a home server behind a tunnel) — including how to advertise the node in your DID document — see the complete [Self-Hosting Guide](../SELF-HOSTING.md).

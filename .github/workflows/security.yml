@@ -1,0 +1,30 @@
+name: Security
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency and runtime security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Verify runtime and audit policy
+        run: bun test scripts/security-audit.spec.mjs scripts/runtime-security.spec.mjs
+
+      - name: Audit all locked dependencies
+        run: bun run security:audit

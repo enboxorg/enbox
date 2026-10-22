@@ -1,0 +1,18 @@
+[
+  {
+    "package": "braces",
+    "advisory": "GHSA-vfj7-8cjw-p6xm",
+    "versions": ["3.0.3"],
+    "severity": "high",
+    "expires": "2026-11-21",
+    "reason": "No published fix. Used by Changesets and lint tooling for repository-controlled glob patterns; absent from the production dependency graph. Review upstream and replace or upgrade before expiry."
+  },
+  {
+    "package": "sprintf-js",
+    "advisory": "GHSA-hp3w-g68c-fv3c",
+    "versions": ["1.0.3"],
+    "severity": "moderate",
+    "expires": "2026-11-21",
+    "reason": "No published fix. Transitive Changesets YAML/argparse tooling dependency; absent from the production dependency graph. Review upstream and replace or upgrade before expiry."
+  }
+]
