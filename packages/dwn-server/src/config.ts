@@ -91,7 +91,7 @@ export const config = {
    *
    * The `version` and `sdkVersion` are pulled from `package.json` at runtime.
    * If `DWN_SERVER_PACKAGE_JSON` is set, we use that path.
-   * Otherwise we resort to the path within the docker server image, located at `/dwn-server/package.json`.
+   * Otherwise use the Docker image path, with installed-package resolution in the metadata loader.
    */
   packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
   /**

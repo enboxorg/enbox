@@ -1,103 +1,18 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+
+import { createReleaseFixture, git, publish, receipts } from './test-utils/release-fixture.mjs';
 
 const fixtures = [];
-
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function run(command, cwd, env) {
-  const child = Bun.spawn(command, { cwd, env, stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
-  ]);
-  return { stdout, stderr, code };
-}
-
-async function git(fixture, ...args) {
-  const result = await run(['git', ...args], fixture.repo, fixture.env);
-  if (result.code !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-  }
-  return result.stdout.trim();
-}
-
 async function createFixture() {
-  const directory = await mkdtemp(join(tmpdir(), 'enbox-publish-'));
-  fixtures.push(directory);
-  const repo = join(directory, 'repo');
-  const bin = join(directory, 'bin');
-  await mkdir(repo);
-  await mkdir(bin);
-  const fixture = {
-    directory,
-    repo,
-    output : join(directory, 'receipts.ndjson'),
-    calls  : join(directory, 'npm-calls'),
-    env    : {
-      ...process.env,
-      PATH              : `${bin}:${process.env.PATH}`,
-      GIT_CONFIG_GLOBAL : '/dev/null',
-      GIT_CONFIG_SYSTEM : '/dev/null',
-      CHANGESETS_OUTPUT : join(directory, 'receipts.ndjson'),
-      PUBLISH_CALLS     : join(directory, 'npm-calls'),
-      ALREADY_PUBLISHED : '',
-      FAIL_PACKAGE      : '',
-    },
-  };
-  await writeFile(fixture.calls, '');
-  // These executables ensure no test can call the real npm registry or pack command.
-  await writeFile(join(bin, 'npm'), `#!/usr/bin/env bash
-set -eu
-printf '%s\\n' "$*" >> "$PUBLISH_CALLS"
-if [ "$1" = view ]; then
-  if [ "\${ALREADY_PUBLISHED:-}" = 1 ]; then printf '1.0.0\\n'; exit 0; fi
-  exit 1
-fi
-if [ "$1" = publish ]; then
-  if [[ "$2" == *"\${FAIL_PACKAGE:-never-match}"* ]]; then exit 1; fi
-  exit 0
-fi
-exit 99
-`);
-  await writeFile(join(bin, 'bun'), `#!/usr/bin/env bash
-set -eu
-[ "$1" = pm ] && [ "$2" = pack ] || exit 99
-touch artifact.tgz
-printf 'artifact.tgz\\n'
-`);
-  await Promise.all(['npm', 'bun'].map(name => chmod(join(bin, name), 0o755)));
-  await copyFile(new URL('./publish.sh', import.meta.url), join(repo, 'publish.sh'));
-  for (const name of ['common', 'crypto']) {
-    await mkdir(join(repo, 'packages', name), { recursive: true });
-    await writeFile(join(repo, 'packages', name, 'package.json'), JSON.stringify({
-      name    : `@enbox/${name}`,
-      version : '1.0.0',
-      ...(name === 'crypto' ? { dependencies: { '@enbox/common': 'workspace:*' } } : {}),
-    }));
-  }
-  await git(fixture, 'init', '--bare', join(directory, 'origin.git'));
-  await git(fixture, 'init');
-  await git(fixture, 'config', 'user.name', 'Publish fixture');
-  await git(fixture, 'config', 'user.email', 'publish-fixture@example.invalid');
-  await git(fixture, 'config', 'commit.gpgsign', 'false');
-  await git(fixture, 'config', 'tag.gpgsign', 'false');
-  await git(fixture, 'remote', 'add', 'origin', join(directory, 'origin.git'));
-  await git(fixture, 'add', '.');
-  await git(fixture, 'commit', '-m', 'fixture');
+  const fixture = await createReleaseFixture();
+  fixtures.push(fixture.directory);
   return fixture;
-}
-
-async function publish(fixture, overrides = {}) {
-  return run(['bash', 'publish.sh'], fixture.repo, { ...fixture.env, ...overrides });
-}
-
-async function receipts(fixture) {
-  const contents = await readFile(fixture.output, 'utf8');
-  return contents.trim() ? contents.trim().split('\n').map(line => JSON.parse(line)) : [];
 }
 
 describe('custom publisher Changesets Action v2 receipts', () => {
@@ -113,6 +28,9 @@ describe('custom publisher Changesets Action v2 receipts', () => {
       expect(await git(fixture, 'rev-parse', `@enbox/${name}@1.0.0^{commit}`)).toBe(await git(fixture, 'rev-parse', 'HEAD'));
     }
     expect(await readFile(join(fixture.repo, 'packages/crypto/package.json'), 'utf8')).toBe(original);
+    const packed = JSON.parse(await readFile(join(fixture.env.RELEASE_MANIFESTS, 'crypto.json'), 'utf8'));
+    expect(packed.gitHead).toBe(await git(fixture, 'rev-parse', 'HEAD'));
+    expect(packed.dependencies['@enbox/common']).toBe('1.0.0');
   });
 
   it('reports successful packages in a partial release and fails when another publish fails', async () => {

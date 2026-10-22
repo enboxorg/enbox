@@ -94,7 +94,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
     dataFormat: string;
     protocol: string;
     protocolPath: string;
-    schema?: string;
+    schema?: ProtocolDefinition['types'][string]['schema'];
   };
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {

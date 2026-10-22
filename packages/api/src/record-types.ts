@@ -92,13 +92,19 @@ export type OptionalRecordProperties =
   Pick<DwnMessage[DwnInterface.RecordsWrite], 'authorization' | 'attestation' | 'encryption' | 'contextId' > &
   Pick<DwnMessageDescriptor[DwnInterface.RecordsWrite], 'dataFormat' | 'dataCid' | 'dataSize' | 'datePublished' | 'published' | 'tags'>;
 
+type RecordMetadata = ImmutableRecordProperties & OptionalRecordProperties;
+
 /**
  * Represents the structured data model of a record, encapsulating the essential fields that define
  * the record's metadata and payload within a Decentralized Web Node (DWN).
  *
  * @beta
  */
-export type RecordModel = ImmutableRecordProperties & OptionalRecordProperties & {
+export type RecordModel = Pick<RecordMetadata, 'dateCreated' | 'authorization'> & {
+  // Handles also represent tombstones and non-protocol records. Their getters
+  // and toJSON() expose undefined for metadata absent in that record state.
+  [Property in Exclude<keyof RecordMetadata, 'dateCreated' | 'authorization'>]?: RecordMetadata[Property] | undefined;
+} & {
 
   /** The logical author of the record. */
   author: string;

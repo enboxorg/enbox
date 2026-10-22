@@ -49,8 +49,8 @@ PACKAGES=(
 # resolve_workspace_deps <package.json path>
 #
 # Replaces "workspace:*" dependency values with the actual version from the
-# corresponding workspace package's package.json. Backs up the original file
-# to <path>.bak before modifying.
+# corresponding workspace package's package.json and records the release commit.
+# Backs up the original file to <path>.bak before modifying.
 resolve_workspace_deps() {
   local pkg_json="$1"
   cp "$pkg_json" "$pkg_json.bak"
@@ -71,7 +71,7 @@ resolve_workspace_deps() {
 
     // Resolve workspace:* references in the target package.json
     const pkg = JSON.parse(fs.readFileSync('$pkg_json', 'utf8'));
-    let changed = false;
+    pkg.gitHead = process.argv[1];
     for (const depType of ['dependencies', 'devDependencies', 'peerDependencies']) {
       const deps = pkg[depType];
       if (!deps) continue;
@@ -80,15 +80,12 @@ resolve_workspace_deps() {
           const resolved = versions[name];
           if (resolved) {
             deps[name] = resolved;
-            changed = true;
           }
         }
       }
     }
-    if (changed) {
-      fs.writeFileSync('$pkg_json', JSON.stringify(pkg, null, 2) + '\n');
-    }
-  "
+    fs.writeFileSync('$pkg_json', JSON.stringify(pkg, null, 2) + '\n');
+  " "$release_commit"
 }
 
 # restore_package_json <package.json path>
@@ -114,6 +111,7 @@ trap cleanup EXIT
 
 published=0
 failed=0
+release_commit=$(git rev-parse --verify HEAD)
 
 for pkg_dir in "${PACKAGES[@]}"; do
   if [ ! -f "$pkg_dir/package.json" ]; then

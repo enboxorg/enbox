@@ -48,6 +48,8 @@ jobs:
           # `version` / `release` scripts uses the App identity, not
           # `github-actions[bot]`.
           token: ${{ steps.app-token.outputs.token }}
+          # Reconciliation compares package versions with the release commit's parent.
+          fetch-depth: 2
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -82,6 +84,9 @@ jobs:
           # Use the App identity so version PR commits trigger CI.
           github-token: ${{ steps.app-token.outputs.token }}
           push-with-git-cli: true
+          # Registry-bound reconciliation below owns retry-safe tags and releases.
+          create-github-releases: false
+          push-git-tags: false
           # Uses bun pack + npm publish (via scripts/publish.sh) instead of
           # changeset publish because changeset publish calls npm publish on the
           # raw package dir, which does NOT resolve Bun's workspace:* protocol.
@@ -99,3 +104,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # bun publish reads the npm token from bunfig or NPM_CONFIG_TOKEN
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Reconcile published tags and GitHub releases
+        if: always() && !cancelled() && steps.changesets.outputs.has-changesets == 'false'
+        run: bun scripts/reconcile-release.mjs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

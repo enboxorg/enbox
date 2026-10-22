@@ -10,6 +10,7 @@
   "main": "./dist/esm/src/index.js",
   "module": "./dist/esm/src/index.js",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "import": "./dist/esm/src/index.js"
     }

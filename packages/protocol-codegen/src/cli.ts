@@ -15,6 +15,7 @@
 import type { CodegenResult, CodegenTarget, ProtocolDefinitionInput } from './codegen.js';
 
 import { constants } from 'node:fs';
+import { createRequire } from 'node:module';
 import { generateProtocolModule } from './codegen.js';
 import { parseArgs } from 'node:util';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -24,7 +25,7 @@ import { lstat, open, readFile, realpath, stat } from 'node:fs/promises';
 // CLI
 // ---------------------------------------------------------------------------
 
-const VERSION = '0.1.0';
+const VERSION: string = createRequire(import.meta.url)('@enbox/protocol-codegen/package.json').version;
 
 const usage = `protocol-codegen <command> [options]
 

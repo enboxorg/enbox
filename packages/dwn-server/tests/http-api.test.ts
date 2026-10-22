@@ -1121,6 +1121,20 @@ describe('http api', function () {
   });
 
   describe('/info', function () {
+    it('should resolve installed version metadata when the Docker manifest is absent', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({ packageJsonPath: '/dwn-server/package.json' });
+
+      try {
+        const response = await fetch(`${url}/info`);
+        const info = await response.json();
+        const manifest = await Bun.file(new URL('../package.json', import.meta.url)).json();
+        expect(response.status).toBe(200);
+        expect(info.version).toBe(manifest.version);
+      } finally {
+        await api.close();
+      }
+    });
+
     it('verify /info has some of the fields it is supposed to have', async function () {
       const resp = await fetch(`${baseUrl}/info`);
       expect(resp.status).toBe(200);

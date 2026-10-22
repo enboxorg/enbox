@@ -200,7 +200,7 @@ describe('protocol-codegen CLI', () => {
 
     const versionMemory = createMemoryIo();
     await main(['--version'], versionMemory.io);
-    expect(versionMemory.stdout()).toBe('0.1.0\n');
+    expect(versionMemory.stdout()).toBe(`${JSON.parse(await readFile(join(PACKAGE_DIR, 'package.json'), 'utf8')).version}\n`);
   });
 
   it('should throw when no command is provided', async () => {
@@ -449,7 +449,7 @@ describe('protocol-codegen CLI', () => {
     const result = await runCli(['--version']);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe('0.1.0\n');
+    expect(result.stdout).toBe(`${JSON.parse(await readFile(join(PACKAGE_DIR, 'package.json'), 'utf8')).version}\n`);
   });
 
   it('should fail when required generate flags are missing', async () => {

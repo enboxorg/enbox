@@ -347,7 +347,7 @@ export type RecordRepresentation<
   ContextBound extends boolean = false,
 > = Materialization extends undefined
   ? RecordHandle<DataForPath<C, Path>, ContextBound>
-  : MaterializedRecordForPath<D, C, Path, Materialization, ContextBound>;
+  : MaterializedRecordForPath<D, C, Path, Exclude<Materialization, undefined>, ContextBound>;
 
 type MaterializedRecordWithChildren<T> = TypedMaterializedRecord<T> & Readonly<{
   children: Readonly<globalThis.Record<string, TypedMaterializedRecord<unknown> | undefined>>;
