@@ -1,5 +1,16 @@
 # @enbox/connect
 
+## 0.1.25
+
+### Patch Changes
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/dids@0.1.14
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.1.24
 
 ### Patch Changes

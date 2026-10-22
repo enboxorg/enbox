@@ -1,5 +1,59 @@
 # @enbox/auth
 
+## 0.6.96
+
+### Patch Changes
+
+- [#1796](https://github.com/enboxorg/enbox/pull/1796) [`fd72aca`](https://github.com/enboxorg/enbox/commit/fd72aca045cf33b6fb53f4e9f7a7c926dc706d0a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use the canonical AgentSession class and AgentSessionIdentity type throughout authentication and connection APIs. Re-export both directly through auth and browser entrypoints, removing the AuthSession and IdentityInfo aliases and the intermediate wallet grant-processing re-export.
+  
+  Remove obsolete delegate cache keys, single-object retry compatibility, forwarding-only lifecycle helpers, and the internal delegate-state wrapper. Reject unreadable retry journals and invalid persisted sessions without erasing their evidence.
+  
+  Persist each session's complete owner/delegate binding and revocation metadata in one atomic record, replacing the separate restoration and identity markers. Journal replaced delegates' revocations under their original binding, retain their signing keys for retry, and reject journal overflow before replacing valid persisted state. Preserve matching restored sessions' revocation metadata while refresh approvals replace it.
+  
+  Preserve another context's current approval when a stale manager disconnects. Resolve restore and headless identity preferences from the same canonical record. Complete journal-proven interrupted teardown before disconnect, restore maintenance, or public retry can consume its durable intent.
+  
+  Preserve successful fresh approvals while retrying older grants for the same delegate. Treat retry evidence as current disconnect intent only when it contains the current approval's complete revocation map.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve current registration credentials across rotations and shared requests, serialize caller-owned persistence callbacks so older work cannot overwrite rotated credentials, fence credential writes and authorization callbacks after teardown, and prepare explicit recovery bootstrap endpoints before publication. Credential erasure cancels captured registrations across managers sharing an agent and waits for started encrypted writes before deleting their credentials, while allowing fresh authorization afterward.
+
+- [#1793](https://github.com/enboxorg/enbox/pull/1793) [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Drain and remove an identity's durable sync registration before deleting its keys and metadata. Serialize deletion with auth lifecycle changes and retain delegate signing keys while grant revocations are pending.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Erase old plaintext registration credentials when creating the auth manager, including for locked vaults without registration enabled. Remove registration-only storage plumbing; encrypted credentials are not read or changed by this best-effort cleanup.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add explicit managed-owner DWN tenant registration with shared provider authorization, structured partial failures, concurrent-request coalescing and encrypted credential merging. Make encrypted token persistence the default, remove plaintext token storage helpers and fallback, and stop registering existing or foreign-owner tenants during unlock/import/recovery. Requested creation-time and replacement registration failures reject instead of silently continuing.
+  
+  Remove duplicate success/failure callbacks and unused persisted token-exchange URL metadata. Caller-owned token persistence callbacks are awaited. Lifecycle changes and failed connection attempts cancel pending registration work, preventing later credential writes and tenant registration.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Normalize saved and caller-managed registration credential endpoint URLs consistently with registration requests, including stable, linear-time normalization of repeated trailing slashes. Reject conflicting credentials for the same normalized endpoint before authorization or network requests.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Prepare explicit vault recovery bootstrap tenants before publishing their endpoints or pulling recovery data. Keep failed bootstraps unpublished and require an explicit phrase-restore retry before an ordinary vault connection can commit a session. Add native recovery-bootstrap deferral while preserving standalone vault publication and established recovery routes.
+  
+  Retain generated owner recovery phrases and required registration policy inside the encrypted vault record until setup and session persistence succeed. Resume failed agent or identity tenant preparation on retry, and reject ordinary session restoration while owner setup or recovery publication remains incomplete. Read current encrypted vault state when checking or completing setup across contexts.
+
+- [#1793](https://github.com/enboxorg/enbox/pull/1793) [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Wait for subscription closes retained after stops or source removal before unregistering an identity, and share stored identity deletion ordering across explicit and delegated cleanup.
+  
+  Preserve delegate keys when disconnect or revocation retirement cannot immediately settle local sync work.
+  
+  Fence retained identity task groups and initialization retries before re-registering after a timed-out stop or sibling unregister, allowing fresh foreground role operations while keeping old captured runners closed.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Preserve existing tenant registration when explicit phrase-recovery endpoints already match the DID route, and avoid redundant endpoint resolution after a successful recovery update.
+  
+  Require the owning manager's lifecycle guards for internal registration and recovery operations instead of permitting unguarded fallbacks.
+  
+  Use the flow operation signal directly for tenant registration so vault and recovery flows share their lifecycle context without adapter objects.
+  
+  Prepare recovered delegates with their own signing DID and active local grant scope before pulling protocol data. Prefer recovered local owners and keep the first usable delegate registration for each external owner. Skip delegated data recovery when local grants are unavailable, and keep recovery without an explicit identity scope limited to metadata.
+- Updated dependencies [[`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/dwn-clients@0.4.37
+  - @enbox/agent@0.8.50
+  - @enbox/dids@0.1.14
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+  - @enbox/connect@0.1.25
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.6.95
 
 ### Patch Changes

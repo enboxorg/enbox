@@ -1,5 +1,20 @@
 # @enbox/dwn-server
 
+## 0.1.45
+
+### Patch Changes
+
+- [#1801](https://github.com/enboxorg/enbox/pull/1801) [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Correct public record and agent store declarations for strict TypeScript consumers, including exact optional properties. Run the DWN server executable with Bun and resolve installed server and codegen versions from their package manifests.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/dwn-clients@0.4.37
+  - @enbox/dids@0.1.14
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+  - @enbox/dwn-sdk-js@0.4.29
+  - @enbox/dwn-sql-store@0.0.54
+
 ## 0.1.44
 
 ### Patch Changes

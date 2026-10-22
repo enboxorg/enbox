@@ -1,5 +1,16 @@
 # @enbox/protocols
 
+## 0.2.116
+
+### Patch Changes
+
+- [#1790](https://github.com/enboxorg/enbox/pull/1790) [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Accept connected Enbox and anonymous records surfaces in profile readers under exactOptionalPropertyTypes without consumer casts or adapters.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`c75ecc8`](https://github.com/enboxorg/enbox/commit/c75ecc8b2ab3a915eda7bde2f8bdff3b4f2519bd), [`fd72aca`](https://github.com/enboxorg/enbox/commit/fd72aca045cf33b6fb53f4e9f7a7c926dc706d0a), [`94ba873`](https://github.com/enboxorg/enbox/commit/94ba873629224c0b99a443175546d02d5a4187dc), [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f), [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/api@0.6.89
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.2.115
 
 ### Patch Changes

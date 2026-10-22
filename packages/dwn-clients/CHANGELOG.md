@@ -1,5 +1,21 @@
 # @enbox/dwn-clients
 
+## 0.4.37
+
+### Patch Changes
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Allow tenant proof-of-work registration to accept an AbortSignal, cancel pending HTTP requests, and stop later registration stages or nonce computation after cancellation.
+
+- [#1786](https://github.com/enboxorg/enbox/pull/1786) [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix: bind point-read payloads to their requested message and release unused admission streams
+  
+  Abort the owning HTTP request when its response stream is cancelled or fails, so sync cleanup releases the remote response under Bun as well as the local reader.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+  - @enbox/dwn-sdk-js@0.4.29
+
 ## 0.4.36
 
 ### Patch Changes

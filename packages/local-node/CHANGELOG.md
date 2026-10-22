@@ -1,5 +1,14 @@
 # @enbox/local-node
 
+## 0.0.36
+
+### Patch Changes
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/agent@0.8.50
+  - @enbox/dwn-server@0.1.45
+
 ## 0.0.35
 
 ### Patch Changes

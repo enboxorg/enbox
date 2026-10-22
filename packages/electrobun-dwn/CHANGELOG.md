@@ -1,5 +1,18 @@
 # @enbox/electrobun-dwn
 
+## 0.0.107
+
+### Patch Changes
+
+- Updated dependencies [[`c75ecc8`](https://github.com/enboxorg/enbox/commit/c75ecc8b2ab3a915eda7bde2f8bdff3b4f2519bd), [`fd72aca`](https://github.com/enboxorg/enbox/commit/fd72aca045cf33b6fb53f4e9f7a7c926dc706d0a), [`94ba873`](https://github.com/enboxorg/enbox/commit/94ba873629224c0b99a443175546d02d5a4187dc), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635), [`866e42a`](https://github.com/enboxorg/enbox/commit/866e42ae39bfed95ad4210529217a5bc2e4fda8b), [`45fa443`](https://github.com/enboxorg/enbox/commit/45fa4436c220abc3f76c8024d89d5b8e091c662f), [`f650717`](https://github.com/enboxorg/enbox/commit/f650717296941d8aca8894cb903c0c6cb627b4c3), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`24056f4`](https://github.com/enboxorg/enbox/commit/24056f4ce680dcba4318b040bafdc5732d62e9b7), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a), [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635)]:
+  - @enbox/api@0.6.89
+  - @enbox/auth@0.6.96
+  - @enbox/agent@0.8.50
+  - @enbox/dids@0.1.14
+  - @enbox/dwn-server@0.1.45
+  - @enbox/protocols@0.2.116
+  - @enbox/common@0.1.9
+
 ## 0.0.106
 
 ### Patch Changes

@@ -1,5 +1,20 @@
 # @enbox/dids
 
+## 0.1.14
+
+### Patch Changes
+
+- [#1794](https://github.com/enboxorg/enbox/pull/1794) [`766251f`](https://github.com/enboxorg/enbox/commit/766251fea59a90842706ff58815f8422e2f05635) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Normalize saved and caller-managed registration credential endpoint URLs consistently with registration requests, including stable, linear-time normalization of repeated trailing slashes. Reject conflicting credentials for the same normalized endpoint before authorization or network requests.
+
+- [#1791](https://github.com/enboxorg/enbox/pull/1791) [`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Validate portable DID documents, private/public key bindings, and known native algorithm metadata before target key storage. Apply configured DID method import validation through the agent, including did:dht identity-key binding. Reject private or symmetric key material in did:jwk identifiers during import and resolution, including partial RSA secrets in public JWKs.
+  
+  Index stored private keys by their JWK thumbprints so imports preserve external key IDs and remain usable after DWN store indexes are rebuilt.
+
+- [#1800](https://github.com/enboxorg/enbox/pull/1800) [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require Bun 1.4.4 or newer for the patched TLS runtime and update browser test dependencies.
+- Updated dependencies [[`c85f38e`](https://github.com/enboxorg/enbox/commit/c85f38e7d2df1c25f8c36d67a12e42cb3f824362), [`672a966`](https://github.com/enboxorg/enbox/commit/672a96673e9f7532137d22023db8c1b70e730f3a)]:
+  - @enbox/crypto@0.1.12
+  - @enbox/common@0.1.9
+
 ## 0.1.13
 
 ### Patch Changes
