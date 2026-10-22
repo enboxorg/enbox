@@ -1,7 +1,7 @@
 import { SyncTaskGroup } from './sync-task-group.js';
 
 /** Starts work in one identity task group captured for a specific runtime lifetime. */
-export type SyncIdentityTaskRunner = (operation: () => Promise<void>) => Promise<void>;
+export type SyncIdentityTaskRunner = <T>(operation: () => Promise<T>) => Promise<T | undefined>;
 
 /** One absolute wait budget shared by every pre-operation lifecycle barrier. */
 export type SyncLifecycleDeadline = {
@@ -32,7 +32,7 @@ export function remainingSyncLifecycleTimeout(deadline: SyncLifecycleDeadline): 
  */
 export class SyncLifecycleCoordinator {
   private readonly _backgroundTasks = new SyncTaskGroup();
-  private readonly _identityTaskGroups: Map<string, SyncTaskGroup> = new Map();
+  private readonly _identityTaskGroups: Map<string, Map<string | undefined, SyncTaskGroup>> = new Map();
   private _releaseSyncCompletion?: () => void;
   private _syncCompletion: Promise<void> = Promise.resolve();
   private _syncInProgress = false;
@@ -201,37 +201,62 @@ export class SyncLifecycleCoordinator {
     return this._backgroundTasks.run(operation);
   }
 
-  /** Returns the stable task group for an identity in the current runtime. */
-  public getIdentityTaskGroup(did: string): SyncTaskGroup {
-    let taskGroup = this._identityTaskGroups.get(did);
+  /** Returns one identity authorization's stable task group in the current runtime. */
+  public getIdentityTaskGroup(did: string, delegateDid?: string): SyncTaskGroup {
+    let groups = this._identityTaskGroups.get(did);
+    if (groups === undefined) {
+      groups = new Map();
+      this._identityTaskGroups.set(did, groups);
+    }
+    let taskGroup = groups.get(delegateDid);
     if (taskGroup === undefined) {
       taskGroup = new SyncTaskGroup();
-      this._identityTaskGroups.set(did, taskGroup);
+      groups.set(delegateDid, taskGroup);
     }
     return taskGroup;
   }
 
-  /** Whether an existing identity task group still owns work. */
-  public hasIdentityTasks(did: string): boolean {
-    return (this._identityTaskGroups.get(did)?.size ?? 0) > 0;
+  /** Returns all identity groups, or only the requested delegate's existing group. */
+  public getIdentityTaskGroups(did: string, delegateDid?: string): SyncTaskGroup[] {
+    const groups = this._identityTaskGroups.get(did);
+    if (groups === undefined) {
+      return [];
+    }
+    if (delegateDid === undefined) {
+      return [...groups.values()];
+    }
+    const group = groups.get(delegateDid);
+    return group === undefined ? [] : [group];
   }
 
   /** Bind a runner to the current identity group without resolving it again at fire time. */
-  public captureIdentityTaskRunner(did: string): SyncIdentityTaskRunner {
-    const taskGroup = this.getIdentityTaskGroup(did);
-    return (operation): Promise<void> => this.runIdentityTask(taskGroup, operation);
+  public captureIdentityTaskRunner(
+    did: string,
+    delegateDid?: string,
+    options: { foreground?: boolean } = {},
+  ): SyncIdentityTaskRunner {
+    const taskGroup = this.getIdentityTaskGroup(did, delegateDid);
+    if (options.foreground) {
+      // Explicit work captured under an identity mutation can run while sync
+      // is stopped. Its identity fence still applies, and global settlement
+      // must retain it without reopening background intake.
+      return <T>(operation: () => Promise<T>): Promise<T | undefined> => this._backgroundTasks.track(taskGroup.run(operation));
+    }
+    return <T>(operation: () => Promise<T>): Promise<T | undefined> => this.runIdentityTask(taskGroup, operation);
   }
 
   /** Starts work supervised by both the global runtime and an identity task group. */
-  public runIdentityTask(taskGroup: SyncTaskGroup, operation: () => Promise<void>): Promise<void> {
+  public runIdentityTask<T>(taskGroup: SyncTaskGroup, operation: () => Promise<T>): Promise<T | undefined> {
     return this._backgroundTasks.run(() => taskGroup.run(operation));
   }
 
   /** Prevents new global and per-identity background work from starting. */
   public pauseTaskIntake(): void {
     this._backgroundTasks.pause();
-    for (const taskGroup of this._identityTaskGroups.values()) {
-      taskGroup.pause();
+    for (const groups of this._identityTaskGroups.values()) {
+      for (const taskGroup of groups.values()) {
+        taskGroup.pause();
+      }
     }
   }
 
@@ -250,10 +275,20 @@ export class SyncLifecycleCoordinator {
     this._identityTaskGroups.clear();
   }
 
-  /** Removes an identity task group only if it is still the current group for that DID. */
+  /** Removes only the current authorization group matching the captured reference. */
   public deleteIdentityTaskGroup(did: string, taskGroup: SyncTaskGroup): void {
-    if (this._identityTaskGroups.get(did) === taskGroup) {
-      this._identityTaskGroups.delete(did);
+    const groups = this._identityTaskGroups.get(did);
+    if (groups === undefined) {
+      return;
+    }
+    for (const [delegateDid, current] of groups) {
+      if (current === taskGroup) {
+        groups.delete(delegateDid);
+        if (groups.size === 0) {
+          this._identityTaskGroups.delete(did);
+        }
+        return;
+      }
     }
   }
 

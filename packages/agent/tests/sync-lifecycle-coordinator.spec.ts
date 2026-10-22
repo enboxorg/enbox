@@ -212,6 +212,26 @@ describe('SyncLifecycleCoordinator', () => {
     expect(coordinator.getIdentityTaskGroup(did)).not.toBe(originalGroup);
   });
 
+  it('should fence one delegate without pausing a replacement or reopening old captures', async () => {
+    const coordinator = new SyncLifecycleCoordinator();
+    const did = 'did:example:alice';
+    const first = coordinator.captureIdentityTaskRunner(did, 'did:example:first');
+    const second = coordinator.captureIdentityTaskRunner(did, 'did:example:second');
+    const firstGroup = coordinator.getIdentityTaskGroups(did, 'did:example:first')[0];
+    firstGroup.pause();
+    coordinator.deleteIdentityTaskGroup(did, firstGroup);
+    coordinator.resumeTaskIntake();
+    coordinator.getIdentityTaskGroup(did, 'did:example:first').resume();
+    let firstCalls = 0;
+    let secondCalls = 0;
+
+    expect(await first(async (): Promise<string> => { firstCalls++; return 'first'; })).toBeUndefined();
+    expect(await second(async (): Promise<string> => { secondCalls++; return 'second'; })).toBe('second');
+    expect(firstCalls).toBe(0);
+    expect(secondCalls).toBe(1);
+    expect(coordinator.getIdentityTaskGroups(did)).toHaveLength(2);
+  });
+
   it('should pause all task intake and resume only the new global runtime', async () => {
     const coordinator = new SyncLifecycleCoordinator();
     const oldIdentityGroup = coordinator.getIdentityTaskGroup('did:example:alice');
@@ -231,5 +251,31 @@ describe('SyncLifecycleCoordinator', () => {
 
     expect(backgroundCalls).toBe(1);
     expect(identityCalls).toBe(1);
+  });
+
+  it('should supervise foreground preparation while background intake stays paused and retain identity fences', async () => {
+    const coordinator = new SyncLifecycleCoordinator();
+    const did = 'did:example:foreground';
+    const stale = coordinator.captureIdentityTaskRunner(did, undefined, { foreground: true });
+    coordinator.pauseTaskIntake();
+    coordinator.clearIdentityTaskGroups();
+    const foreground = coordinator.captureIdentityTaskRunner(did, undefined, { foreground: true });
+    const release = createDeferred();
+    let calls = 0;
+    const task = foreground(async (): Promise<string> => { calls++; await release.promise; return 'prepared'; });
+    await coordinator.runBackgroundTask(async (): Promise<void> => { calls++; });
+    await stale(async (): Promise<void> => { calls++; });
+    expect(calls).toBe(1);
+    expect(await coordinator.waitForBackgroundTasks(0)).toBe(false);
+    release.resolve();
+    expect(await task).toBe('prepared');
+    expect(await coordinator.waitForBackgroundTasks()).toBe(true);
+
+    const group = coordinator.getIdentityTaskGroup(did);
+    group.pause();
+    coordinator.deleteIdentityTaskGroup(did, group);
+    coordinator.getIdentityTaskGroup(did).resume();
+    await foreground(async (): Promise<void> => { calls++; });
+    expect(calls).toBe(1);
   });
 });

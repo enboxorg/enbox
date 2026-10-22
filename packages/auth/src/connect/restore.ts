@@ -886,13 +886,12 @@ async function retireSettledDelegateIdentity(
     if (previouslyConnected === 'true' && activeDelegateDid === entry.delegateDid) {
       return;
     }
-    try {
-      await userAgent.did.delete({
-        didUri    : identity.did.uri,
-        tenant    : identity.metadata.tenant,
-        deleteKey : true,
-      });
-    } catch { /* best effort */ }
+    await userAgent.sync.removeIdentity(entry.connectedDid, { expectedDelegateDid: entry.delegateDid, timeout: 0 });
+    await userAgent.did.delete({
+      didUri    : identity.did.uri,
+      tenant    : identity.metadata.tenant,
+      deleteKey : true,
+    });
     await userAgent.identity.delete({ didUri: identity.did.uri });
   } catch {
     // Best-effort local retirement cannot restore remotely settled authority.

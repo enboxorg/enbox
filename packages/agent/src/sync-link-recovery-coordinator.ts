@@ -33,7 +33,7 @@ export type SyncLinkRepairRetryOptions = {
 };
 
 export interface SyncLinkRecoveryCoordinatorOperations {
-  captureIdentityTaskRunner(tenantDid: string): SyncIdentityTaskRunner;
+  captureIdentityTaskRunner(did: string, delegateDid?: string): SyncIdentityTaskRunner;
   emitEvent(event: SyncEvent): void;
   getController(linkKey: string): SyncLinkController | undefined;
   getRuntime(): SyncRuntime;
@@ -253,7 +253,10 @@ export class SyncLinkRecoveryCoordinator {
 
     const attempts = controller.repairAttempts || 1;
     const delayMs = this.repairRetryDelayMs(attempts);
-    const runIdentityTask = this._operations.captureIdentityTaskRunner(link.tenantDid);
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(
+      link.authorization.kind === 'role' ? link.authorization.actorDid : link.tenantDid,
+      link.delegateDid,
+    );
     runtime.armTimeout(timerKey, (): void => {
       if (this.isStale(controller, runtime) || link.status !== 'repairing') {
         return;
@@ -305,7 +308,11 @@ export class SyncLinkRecoveryCoordinator {
   public scheduleReconcile(controller: SyncLinkController, delayMs = this._reconcileDelayMs): boolean {
     const normalizedDelay = Math.max(0, delayMs);
     const runtime = this._operations.getRuntime();
-    const runIdentityTask = this._operations.captureIdentityTaskRunner(controller.link.tenantDid);
+    const { link } = controller;
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(
+      link.authorization.kind === 'role' ? link.authorization.actorDid : link.tenantDid,
+      link.delegateDid,
+    );
     const timerKey = SyncLinkRecoveryCoordinator.reconcileTimerKey(controller.linkKey);
     return runtime.armTimeoutIfEarlier(timerKey, (): void => {
       if (this.isStale(controller, runtime)) {
@@ -324,7 +331,11 @@ export class SyncLinkRecoveryCoordinator {
   }
 
   private superviseExecutor(controller: SyncLinkController): void {
-    const runIdentityTask = this._operations.captureIdentityTaskRunner(controller.link.tenantDid);
+    const { link } = controller;
+    const runIdentityTask = this._operations.captureIdentityTaskRunner(
+      link.authorization.kind === 'role' ? link.authorization.actorDid : link.tenantDid,
+      link.delegateDid,
+    );
     void runIdentityTask(() => this.runExecutor(controller));
   }
 

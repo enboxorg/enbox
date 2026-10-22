@@ -1,5 +1,5 @@
 /**
- * Owns fire-and-forget sync work so lifecycle transitions can prevent new
+ * Tracks sync work so lifecycle transitions can prevent new
  * tasks from starting and wait for work that is already in flight.
  */
 export class SyncTaskGroup {
@@ -18,23 +18,20 @@ export class SyncTaskGroup {
     this._accepting = true;
   }
 
-  /**
-   * Starts and observes a task while the group is accepting work. The task's
-   * original promise is returned so an awaited callback still sees failures;
-   * the internal completion promise prevents ignored callback promises from
-   * becoming unhandled rejections.
-   */
-  public run(operation: () => Promise<void>): Promise<void> {
+  /** Run admitted work with its result or error, tracking a handled completion for settlement. */
+  public run<T>(operation: () => Promise<T>): Promise<T | undefined> {
     if (!this._accepting) {
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     }
 
-    // Start the thunk inside a promise chain so a synchronous throw surfaces as
-    // a rejection rather than escaping run(); a try/catch here could not observe
-    // an async rejection anyway. The completion tracker below keeps an ignored
-    // task from becoming an unhandled rejection.
+    // Enter through a promise so synchronous throws reject the returned task too.
     const task = Promise.resolve().then(operation);
 
+    return this.track(task);
+  }
+
+  /** Supervise work that has already passed its owner's intake gate. */
+  public track<T>(task: Promise<T>): Promise<T> {
     const completion = task.then((): void => {}, (): void => {});
     this._tasks.add(completion);
     void completion.then((): void => {

@@ -337,6 +337,12 @@ export type SyncLifecycleOptions = {
   timeout?: number;
 };
 
+/** Controls identity removal without discarding a replacement delegate registration. */
+export type SyncIdentityRemovalOptions = SyncLifecycleOptions & {
+  /** Remove only when the durable registration still uses this delegate. */
+  expectedDelegateDid?: string;
+};
+
 /**
  * Status of a replication link.
  *
@@ -914,10 +920,13 @@ export interface SyncEngine {
    *
    * When live sync is active, the identity is hot-removed: its subscriptions
    * are closed and runtime state cleaned up without affecting other identities.
-   * Removing an absent identity is a no-op. A timed-out removal preserves the
-   * durable registration and may be retried.
+   * An absent registration requires only local runtime cleanup. With
+   * `expectedDelegateDid`, a replacement's registration and runtime are
+   * preserved while the old delegate's local work drains. The binding is
+   * checked under the identity mutation lock. A timed-out removal preserves
+   * the durable registration and may be retried.
    */
-  removeIdentity(did: string, lifecycleOptions?: SyncLifecycleOptions): Promise<void>;
+  removeIdentity(did: string, options?: SyncIdentityRemovalOptions): Promise<void>;
   /**
    * Get the Sync Options for a specific identity.
    */

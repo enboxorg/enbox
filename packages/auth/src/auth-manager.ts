@@ -76,6 +76,7 @@ import {
 } from './discovery.js';
 import {
   disconnectPersistedSessionWithinLifecycle,
+  readRevocationRetryEntries,
   restoreSession,
 } from './connect/restore.js';
 
@@ -761,17 +762,22 @@ export class AuthManager {
       if (delegateIdentity === undefined) {
         return;
       }
-      try {
-        await this._userAgent.did.delete({
-          didUri    : delegateIdentity.did.uri,
-          tenant    : delegateIdentity.metadata.tenant,
-          deleteKey : true,
-        });
-      } catch { /* best effort */ }
-      await this._userAgent.identity.delete({ didUri: delegateIdentity.did.uri });
+      const { connectedDid } = resolveIdentityDids(delegateIdentity);
+      await this._userAgent.sync.removeIdentity(connectedDid, { expectedDelegateDid: delegateDid, timeout: 0 });
+      await this._deleteStoredIdentity(delegateIdentity);
     } catch {
-      // Best-effort — a leftover identity is harmless and recoverable.
+      // Best-effort retirement retains metadata for any remaining key material.
     }
+  }
+
+  /** Preserve metadata for any remaining key material if DID deletion fails. */
+  private async _deleteStoredIdentity(identity: BearerIdentity, didUri = identity.did.uri): Promise<void> {
+    await this._userAgent.did.delete({
+      didUri    : identity.did.uri,
+      tenant    : identity.metadata.tenant,
+      deleteKey : true,
+    });
+    await this._userAgent.identity.delete({ didUri });
   }
 
   /**
@@ -961,34 +967,71 @@ export class AuthManager {
   /**
    * Delete a stored identity.
    *
-   * If the identity is currently active, it will be disconnected first.
+   * Drains and removes its sync registration before deleting keys or metadata.
+   * An active identity is disconnected. Delegate keys needed by pending grant
+   * revocations are retained until that work completes.
    *
-   * @throws If the identity is not found.
+   * @throws If the vault is locked, the identity is missing, sync removal fails,
+   * or the delegate still has pending grant revocations.
    */
-  async deleteIdentity(didUri: string): Promise<void> {
-    // Disconnect if this is the active identity.
-    if (this._session?.did === didUri) {
-      await this.disconnect();
+  public async deleteIdentity(didUri: string): Promise<void> {
+    this._guardShutdown();
+    const generation = this._lifecycleGeneration;
+    const releaseCommit = await this._acquireLifecycleCommit();
+    let removalStarted = false;
+    try {
+      this._guardShutdown();
+      if (generation !== this._lifecycleGeneration || this._userAgent.vault.isLocked()) {
+        throw new Error('AuthManager.deleteIdentity: the vault must be unlocked and its lifecycle unchanged.');
+      }
+
+      const identity = await this._userAgent.identity.get({ didUri });
+      if (identity === undefined) {
+        throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
+      }
+      if (generation !== this._lifecycleGeneration) {
+        throw new Error('AuthManager.deleteIdentity: the identity deletion was invalidated by a lifecycle change.');
+      }
+
+      // Prevent a connect that read this identity earlier from committing it
+      // after removal. Teardown waits for this mutation to finish before locking.
+      this._invalidateConnectionAttempts();
+      removalStarted = true;
+      const { connectedDid, delegateDid } = resolveIdentityDids(identity);
+      await this._userAgent.sync.removeIdentity(
+        connectedDid,
+        delegateDid === undefined ? undefined : { expectedDelegateDid: delegateDid },
+      );
+
+      const isActiveDelegate = this._session?.delegateDid === didUri;
+      if (isActiveDelegate || this._session?.did === didUri) {
+        this._abortSessionLifetime();
+        this.stopConnectionMonitor();
+        await this._disconnect({});
+      }
+
+      await runAuthSessionLifecycle(async (): Promise<void> => {
+        const retryEntries = await readRevocationRetryEntries(this._storage);
+        if (retryEntries.some(entry => entry.delegateDid === didUri)) {
+          throw new Error('AuthManager.deleteIdentity: delegate keys are required by pending grant revocations.');
+        }
+
+        // A successful delegated disconnect may already have retired it.
+        if (isActiveDelegate && await this._userAgent.identity.get({ didUri }) === undefined) {
+          return;
+        }
+
+        await this._deleteStoredIdentity(identity, didUri);
+      });
+      this._invalidateConnectionAttempts();
+      removalStarted = false;
+      this._emitter.emit('identity-removed', { didUri });
+    } finally {
+      if (removalStarted) {
+        this._invalidateConnectionAttempts();
+      }
+      releaseCommit();
     }
-
-    const identity = await this._userAgent.identity.get({ didUri });
-    if (!identity) {
-      throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
-    }
-
-    // Delete the DID and keys.  If this fails, do NOT proceed to delete the
-    // identity record — that would leave orphaned cryptographic key material
-    // with no identity metadata pointing to it.
-    await this._userAgent.did.delete({
-      didUri    : identity.did.uri,
-      tenant    : identity.metadata.tenant,
-      deleteKey : true,
-    });
-
-    // Delete the identity record.
-    await this._userAgent.identity.delete({ didUri });
-
-    this._emitter.emit('identity-removed', { didUri });
   }
 
   /**
