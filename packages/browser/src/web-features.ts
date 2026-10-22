@@ -9,6 +9,20 @@ import type { DidDhtNetworkConfig, DidMethodResolver } from '@enbox/dids';
 import { createDidDhtMethod, DidDht, DidResolverCacheMemory, DidWeb, resolveDwnEndpointStatus, UniversalResolver } from '@enbox/dids';
 
 /**
+ * Structural service-worker fetch event used by DRL handlers.
+ * Keeps worker-only ambient globals out of declarations imported by page applications.
+ */
+export interface DrlFetchEvent extends Event {
+  readonly clientId: string;
+  readonly handled: Promise<void>;
+  readonly preloadResponse: Promise<Response | undefined>;
+  readonly request: Request;
+  readonly resultingClientId: string;
+  respondWith(response: Response | PromiseLike<Response>): void;
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+/**
  * Result returned by the `onCacheCheck` callback.
  * When returned, it signals that the response for the given DRL should be cached.
  */
@@ -22,7 +36,7 @@ export type CacheCheckResult = {
  * Returning a truthy `CacheCheckResult` opts in to caching; returning a falsy value skips it.
  */
 export type CacheCheckCallback = (
-  event: FetchEvent | Event,
+  event: DrlFetchEvent | Event,
   drl: string,
 ) => CacheCheckResult | undefined | null | Promise<CacheCheckResult | undefined | null>;
 
@@ -110,7 +124,7 @@ async function openDrlCache(): Promise<Cache | undefined> {
 
 /** @internal Exported for testing. Handles a DRL fetch event. */
 export async function handleEvent(
-  event: FetchEvent, did: string, path: string, options?: ActivatePolyfillsOptions
+  event: DrlFetchEvent, did: string, path: string, options?: ActivatePolyfillsOptions
 ): Promise<Response> {
   const drl = event.request.url
     .replace(httpToHttpsRegex, 'https:')
@@ -153,7 +167,7 @@ export async function handleEvent(
 
 /** @internal Exported for testing. Fetches a resource from DWN endpoints. */
 export async function fetchResource(
-  event: FetchEvent, did: string, drl: string, path: string,
+  event: DrlFetchEvent, did: string, drl: string, path: string,
   responseCache: Cache | undefined, options?: ActivatePolyfillsOptions
 ): Promise<Response> {
   const endpoints = await getDwnEndpoints(did);

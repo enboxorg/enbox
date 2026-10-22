@@ -128,6 +128,7 @@ async function checkClient(directory, packages) {
       await copyFile(join(root, 'packages/api/type-tests', file), join(typeTests, file));
     }
   }
+  await copyFile(join(root, 'packages/browser/type-tests/dom.ts'), join(typeTests, 'browser-dom.ts'));
   await writeFile(join(cwd, 'tsconfig.json'), JSON.stringify({
     compilerOptions: {
       target           : 'ES2022',
