@@ -3,11 +3,12 @@ import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '../../src/types/portable-did.js';
 import type { UnwrapPromise } from '@enbox/common';
 
-import { DidErrorCode } from '../../src/did-error.js';
 import { DidJwk } from '../../src/methods/did-jwk.js';
 import DidJwkResolveTestVector from '../fixtures/web5-spec-vectors/did_jwk/resolve.json' with { type: 'json' };
 import { LocalKeyManager } from '@enbox/crypto';
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { Convert, MemoryStore } from '@enbox/common';
+import { DidError, DidErrorCode } from '../../src/did-error.js';
 
 describe('DidJwk', () => {
   let keyManager: LocalKeyManager;
@@ -266,6 +267,23 @@ describe('DidJwk', () => {
       expect(isValid).toBe(true);
     });
 
+    it('rejects private key material in the identifier before writing to the target KMS', async () => {
+      const privateUri = `did:jwk:${Convert.object(portableDid.privateKeys![0]).toBase64Url()}`;
+      portableDid.document = JSON.parse(JSON.stringify(portableDid.document).replaceAll(portableDid.uri, privateUri));
+      portableDid.uri = privateUri;
+      const keyStore = new MemoryStore<string, Jwk>();
+      const targetKeyManager = new LocalKeyManager({ keyStore });
+
+      const error = await DidJwk.import({ portableDid, keyManager: targetKeyManager }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      expect(await keyStore.list()).toHaveLength(0);
+      expect(error).toBeInstanceOf(DidError);
+      expect((error as DidError).code).toBe(DidErrorCode.InvalidDid);
+    });
+
     it('throws an error if the DID method is not supported', async () => {
       // Change the method to something other than 'jwk'.
       portableDid.uri = 'did:unknown:abc123';
@@ -345,6 +363,18 @@ describe('DidJwk', () => {
       const didUriWithDifferentMethod = 'did:notjwk:eyJmb28iOiJiYXIifQ';
       const resolutionResult = await DidJwk.resolve(didUriWithDifferentMethod);
       expect(resolutionResult.didResolutionMetadata.error).toBe('methodNotSupported');
+    });
+
+    it('rejects private, symmetric, and partial RSA secret material in identifiers', async () => {
+      for (const key of [
+        { kty: 'OKP', crv: 'Ed25519', x: 'public-key', d: 'private-key' },
+        { kty: 'oct', k: 'symmetric-key' },
+        { kty: 'RSA', n: 'modulus', e: 'exponent', p: 'private-prime' },
+      ]) {
+        const result = await DidJwk.resolve(`did:jwk:${Convert.object(key).toBase64Url()}`);
+        expect(result.didResolutionMetadata.error).toBe(DidErrorCode.InvalidDid);
+        expect(result.didDocument).toBeNull();
+      }
     });
   });
 

@@ -1,11 +1,15 @@
 import type { KeyManager } from '@enbox/crypto';
 
+import type { Jwk } from '@enbox/crypto';
+
 import { LocalKeyManager } from '@enbox/crypto';
+import { MemoryStore } from '@enbox/common';
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { PortableDid } from '../src/types/portable-did.js';
 
 import { BearerDid } from '../src/bearer-did.js';
+import { DidDht } from '../src/methods/did-dht.js';
 
 describe('BearerDid', () => {
   let portableDid: PortableDid;
@@ -66,6 +70,144 @@ describe('BearerDid', () => {
         },
       ],
     };
+  });
+
+  describe('import integrity', () => {
+    it.each(['document id', 'DID URL subject', 'missing public key', 'private verification key', 'malformed verification method',
+      'malformed embedded method'])(`rejects %s before importing any key`, async (failure) => {
+      const keyManager = new LocalKeyManager();
+      const importKey = spyOn(keyManager, 'importKey');
+      const verificationMethod = portableDid.document.verificationMethod![0];
+      switch (failure) {
+        case 'document id': portableDid.document.id = 'did:example:unrelated'; break;
+        case 'DID URL subject': portableDid.uri += '#key'; portableDid.document.id = portableDid.uri; break;
+        case 'missing public key': delete verificationMethod.publicKeyJwk; break;
+        case 'private verification key': verificationMethod.publicKeyJwk = portableDid.privateKeys![0]; break;
+        case 'malformed verification method': portableDid.document.verificationMethod!.push({} as never); break;
+        case 'malformed embedded method': portableDid.document.authentication!.push({} as never); break;
+      }
+
+      await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow();
+      expect(importKey).not.toHaveBeenCalled();
+    });
+
+    it('preflights all supplied keys, including keys already in the target KMS', async () => {
+      const keyManager = new LocalKeyManager();
+      const originalKey = portableDid.privateKeys![0];
+      await keyManager.importKey({ key: originalKey });
+      const other = await (await DidDht.create({ options: { publish: false } })).export();
+      portableDid.privateKeys!.push({ ...originalKey, d: other.privateKeys![0].d });
+      const importKey = spyOn(keyManager, 'importKey');
+
+      await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow('does not match its public key');
+      expect(importKey).not.toHaveBeenCalled();
+    });
+
+    it('preflights contradictory metadata in later supplied keys before target writes', async () => {
+      const keyManager = new LocalKeyManager();
+      portableDid.privateKeys!.push({ ...portableDid.privateKeys![0], alg: 'ES256K' });
+      const importKey = spyOn(keyManager, 'importKey');
+
+      await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow('algorithm metadata does not match its curve');
+      expect(importKey).not.toHaveBeenCalled();
+    });
+
+    it.each(['SHA-256', 'A128GCM'])(
+      'rejects %s metadata on a later asymmetric key before storing any portable keys', async (alg) => {
+        const did = await DidDht.create({ options: {
+          publish             : false,
+          verificationMethods : [{ algorithm: 'X25519', purposes: ['keyAgreement'] }],
+        } });
+        const portableDid = await did.export();
+        portableDid.privateKeys![1].alg = alg;
+        const keyStore = new MemoryStore<string, Jwk>();
+        const keyManager = new LocalKeyManager({ keyStore });
+
+        await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow('algorithm metadata does not match its curve');
+        expect(await keyStore.list()).toEqual([]);
+      }
+    );
+
+    it('rejects native-incompatible supplied metadata even when its key already exists', async () => {
+      const did = await DidDht.create({ options: {
+        publish             : false,
+        verificationMethods : [{ algorithm: 'X25519', purposes: ['keyAgreement'] }],
+      } });
+      const portableDid = await did.export();
+      const keyStore = new MemoryStore<string, Jwk>();
+      const keyManager = new LocalKeyManager({ keyStore });
+      const agreementKey = portableDid.privateKeys![1];
+      await keyManager.importKey({ key: agreementKey });
+      const existingKeys = await keyStore.list();
+      agreementKey.alg = 'SHA-256';
+
+      await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow('algorithm metadata does not match its curve');
+      expect(await keyStore.list()).toEqual(existingKeys);
+    });
+
+    it('does not import a valid key when another document key is unavailable', async () => {
+      const keyManager = new LocalKeyManager();
+      const other = await (await DidDht.create({ options: { publish: false } })).export();
+      portableDid.document.verificationMethod!.push(other.document.verificationMethod![0]);
+      const importKey = spyOn(keyManager, 'importKey');
+
+      await expect(BearerDid.import({ portableDid, keyManager })).rejects.toThrow('Key not found');
+      expect(importKey).not.toHaveBeenCalled();
+    });
+
+    it.each(['RSA', 'P-384'])(`preserves supplied %s keys for an external KMS`, async (algorithm) => {
+      const pair = algorithm === 'RSA'
+        ? await crypto.subtle.generateKey({
+          name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256',
+        }, true, ['encrypt', 'decrypt'])
+        : await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-384' }, true, ['sign', 'verify']);
+      const privateKey = await crypto.subtle.exportKey('jwk', pair.privateKey) as Jwk;
+      const publicKey = await crypto.subtle.exportKey('jwk', pair.publicKey) as Jwk;
+      const keyManager = new LocalKeyManager();
+      const keys = new Map<string, Jwk>();
+      keyManager.importKey = mock(async ({ key }): Promise<string> => {
+        const keyUri = await keyManager.getKeyUri({ key });
+        keys.set(keyUri, publicKey);
+        return keyUri;
+      });
+      keyManager.getPublicKey = async ({ keyUri }): Promise<Jwk> => {
+        const key = keys.get(keyUri);
+        if (key === undefined) { throw new Error('External KMS key not found'); }
+        return key;
+      };
+      const portableDid: PortableDid = {
+        uri      : 'did:example:external',
+        document : { id                 : 'did:example:external', verificationMethod : [{
+          id: 'did:example:external#key', type: 'JsonWebKey', controller: 'did:example:external', publicKeyJwk: publicKey,
+        }] },
+        metadata    : {},
+        privateKeys : [privateKey],
+      };
+
+      await expect(BearerDid.import({ portableDid, keyManager })).resolves.toBeInstanceOf(BearerDid);
+      expect(keyManager.importKey).toHaveBeenCalledWith({ key: privateKey });
+    });
+
+    it('supports partial bundles with existing KMS keys and document-declared equivalent identifiers', async () => {
+      const did = await DidDht.create({ options: {
+        publish             : false,
+        verificationMethods : [{ algorithm: 'X25519', purposes: ['keyAgreement'] }],
+      } });
+      const portableDid = await did.export();
+      const keyManager = new LocalKeyManager();
+      await keyManager.importKey({ key: portableDid.privateKeys!.shift()! });
+      portableDid.uri = 'did:example:equivalent';
+      portableDid.document.id = 'did:example:canonical';
+      portableDid.metadata.equivalentId = [portableDid.uri];
+
+      const imported = await BearerDid.import({ portableDid, keyManager });
+      expect(imported.uri).toBe(portableDid.uri);
+      expect(imported.document).toEqual(portableDid.document);
+      delete portableDid.privateKeys;
+      const importKey = spyOn(keyManager, 'importKey');
+      await expect(BearerDid.import({ portableDid, keyManager })).resolves.toBeInstanceOf(BearerDid);
+      expect(importKey).not.toHaveBeenCalled();
+    });
   });
 
   describe('export()', () => {

@@ -108,6 +108,25 @@ describe('LocalKeyManager', () => {
       });
 
       describe('importKey()', () => {
+        it('rejects mismatched key material before writing to the target store', async () => {
+          const key = await Ed25519.generateKey();
+          const other = await Ed25519.generateKey();
+          key.d = other.d;
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key });
+
+          await expect(testHarness.agent.keyManager.importKey({ key })).rejects.toThrow('does not match its public key');
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).rejects.toThrow('Key not found');
+        });
+
+        it('rejects metadata that changes asymmetric dispatch before storing keys', async () => {
+          const key = await X25519.generateKey();
+          key.alg = 'SHA-256';
+          const keyUri = await testHarness.agent.keyManager.getKeyUri({ key });
+
+          await expect(testHarness.agent.keyManager.importKey({ key })).rejects.toThrow('algorithm metadata does not match its curve');
+          await expect(testHarness.agent.keyManager.getPublicKey({ keyUri })).rejects.toThrow('Key not found');
+        });
+
         it('imports a key and returns a key URI', async () => {
           // generate a key and import it
           const key = await Ed25519.generateKey();

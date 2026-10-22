@@ -4,7 +4,7 @@ import type { PortableDid } from '../../src/types/portable-did.js';
 
 import { DidErrorCode } from '../../src/did-error.js';
 import { LocalKeyManager } from '@enbox/crypto';
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { DidKey, DidKeyUtils } from '../../src/methods/did-key.js';
 
 describe('DidKey', () => {
@@ -330,6 +330,23 @@ describe('DidKey', () => {
           },
         ],
       };
+    });
+
+    it.each(['public key', 'document id'])(`rejects an unrelated %s before importing keys`, async (failure) => {
+      const keyManager = new LocalKeyManager();
+      const importKey = spyOn(keyManager, 'importKey');
+      if (failure === 'public key') {
+        const unrelated = await DidKey.create();
+        portableDid.uri = unrelated.uri;
+        portableDid.document.id = unrelated.uri;
+      } else {
+        portableDid.document.id = 'did:key:unrelated';
+        portableDid.metadata.equivalentId = [portableDid.uri];
+        portableDid.metadata.canonicalId = portableDid.document.id;
+      }
+
+      await expect(DidKey.import({ portableDid, keyManager })).rejects.toThrow();
+      expect(importKey).not.toHaveBeenCalled();
     });
 
     it('returns a BearerDid from the given DID JWK PortableDid', async () => {

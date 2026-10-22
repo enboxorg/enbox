@@ -271,7 +271,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
       const storedObject = await this.readStoredObject({ agent, record, tenantDid });
       if (storedObject !== undefined) {
         // Update the index with the matching record ID and cache the object.
-        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${this.getStoredObjectId(storedObject)}`;
+        const indexKey = `${tenantDid}${TENANT_SEPARATOR}${await this.getStoredObjectId(storedObject)}`; // NOSONAR S9382: incremental indexing.
         this._index.set(indexKey, record.recordId);
         this._cache.set(record.recordId, storedObject);
         storedObjects.push(storedObject);
@@ -306,7 +306,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
   /**
    * Returns the store identifier of one stored object for index bookkeeping.
    */
-  protected abstract getStoredObjectId(storedObject: TStoreObject): string;
+  protected abstract getStoredObjectId(storedObject: TStoreObject): string | Promise<string>;
 
   /**
    * Validates a parsed stored record payload.

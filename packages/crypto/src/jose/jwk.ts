@@ -617,15 +617,16 @@ export function isPrivateJwk(obj: unknown): obj is PrivateKeyJwk {
  */
 export function isPublicJwk(obj: unknown): obj is PublicKeyJwk {
   if (!obj || typeof obj !== 'object') {return false;}
+  if (['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'].some((parameter): boolean => parameter in obj)) {return false;}
 
   const kty = (obj as { kty: string }).kty;
 
   switch (kty) {
     case 'EC':
     case 'OKP':
-      return 'x' in obj && !('d' in obj);
+      return 'x' in obj;
     case 'RSA':
-      return 'n' in obj && 'e' in obj && !('d' in obj);
+      return 'n' in obj && 'e' in obj;
     default:
       return false;
   }
