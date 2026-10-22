@@ -133,6 +133,16 @@ for pkg_dir in "${PACKAGES[@]}"; do
 
   # Prepare the tag before publishing so a Git failure cannot strand an npm release.
   tag="$name@$version"
+  # Shallow checkouts must fetch the original remote tag object before validating it.
+  if git ls-remote --exit-code --refs origin "refs/tags/$tag" > /dev/null; then
+    git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+  else
+    remote_tag_status=$?
+    if [ "$remote_tag_status" -ne 2 ]; then
+      exit "$remote_tag_status"
+    fi
+  fi
+
   if git show-ref --verify --quiet "refs/tags/$tag"; then
     tagged_commit=$(git rev-parse --verify "refs/tags/$tag^{commit}")
     current_commit=$(git rev-parse --verify HEAD)
