@@ -2,9 +2,13 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type {
   MaterializedRecord,
   Record,
+  RecordMaterialization,
+  RecordObserveRequest,
   RecordPage,
+  RecordRepresentation,
   RecordView,
   TypedEnbox,
+  TypedRecord,
 } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
@@ -49,9 +53,16 @@ void LibraryProtocol;
 declare const typed: TypedEnbox<typeof LibraryDefinition, typeof LibraryProtocol.codecs>;
 
 async function assertTypedMaterialization(): Promise<void> {
-  const plainPage: RecordPage<Record<LibraryData>> = await typed.records.query('library');
-  const plainRecord: Record<LibraryData> | undefined = plainPage.records[0];
+  const plainPage = await typed.records.query('library');
+  const plainRecord: TypedRecord<LibraryData> | undefined = plainPage.records[0];
+  const compatiblePage: RecordPage<Record<LibraryData>> = plainPage;
   void plainRecord;
+  void compatiblePage;
+
+  const plainRequest: RecordObserveRequest<typeof LibraryDefinition, 'library'> = { pagination: { limit: 20 } };
+  const plainView: RecordView<RecordRepresentation<typeof LibraryDefinition, typeof LibraryProtocol.codecs, 'library'>> =
+    await typed.records.observe('library', plainRequest);
+  void plainView;
 
   const values = await typed.records.query('library', {
     materialize : true,
@@ -82,11 +93,15 @@ async function assertTypedMaterialization(): Promise<void> {
   });
   const conditionalItem: Record<LibraryData> | MaterializedRecord<LibraryData> | undefined = conditional.records[0];
   void conditionalItem;
-  // @ts-expect-error a conditional request does not guarantee the materialized representation.
-  void conditional.records[0]?.children;
+  // @ts-expect-error a conditional request does not guarantee a materialized record handle.
+  void conditional.records[0]?.record;
+  if (conditional.records[0] !== undefined && 'record' in conditional.records[0]) {
+    const materialized: MaterializedRecord<LibraryData> = conditional.records[0];
+    void materialized;
+  }
 
   const titleOnly = await typed.records.query('library', {
-    materialize : { children: ['library/title'] as const },
+    materialize : { children: ['library/title'] },
     pagination  : { limit: 20 },
   });
   const selectedTitleOnly: MaterializedRecord<string> | undefined = titleOnly.records[0]?.children.title;
@@ -97,7 +112,7 @@ async function assertTypedMaterialization(): Promise<void> {
   void titleOnly.records[0]?.children.metadata;
 
   const selected = await typed.records.query('library', {
-    materialize : { children: ['library/title', 'library/metadata'] as const },
+    materialize : { children: ['library/title', 'library/metadata'] },
     pagination  : { limit: 20 },
   });
   const selectedRecord = selected.records[0];
@@ -109,11 +124,51 @@ async function assertTypedMaterialization(): Promise<void> {
   void selectedRecord?.children.preference;
 
   const observed: RecordView<NonNullable<typeof selectedRecord>> = await typed.records.observe('library', {
-    materialize : { children: ['library/title', 'library/metadata'] as const },
+    materialize : { children: ['library/title', 'library/metadata'] },
     pagination  : { limit: 20 },
   });
   const observedTitle: MaterializedRecord<string> | undefined = observed.getSnapshot().records[0]?.children.title;
   void observedTitle;
+
+  const observedInline = await typed.records.observe('library', {
+    materialize : { children: ['library/title'] },
+    pagination  : { limit: 20 },
+  });
+  const inlineTitle: string | undefined = observedInline.getSnapshot().records[0]?.children.title?.value;
+  void inlineTitle;
+  // @ts-expect-error inline inference exposes only selected children.
+  void observedInline.getSnapshot().records[0]?.children.metadata;
+
+  const childSelection = { children: ['library/title'] as const } satisfies RecordMaterialization<typeof LibraryDefinition, 'library'>;
+  const request = {
+    materialize : childSelection,
+    pagination  : { limit: 20 },
+  } satisfies RecordObserveRequest<typeof LibraryDefinition, 'library', typeof childSelection>;
+  const selectedView = await typed.records.observe('library', request);
+  type SelectedItem = RecordRepresentation<
+    typeof LibraryDefinition,
+    typeof LibraryProtocol.codecs,
+    'library',
+    typeof childSelection
+  >;
+  const selectedItem: SelectedItem | undefined = selectedView.getSnapshot().records[0];
+  const retainedHandle: TypedRecord<LibraryData> | undefined = selectedItem?.record;
+  const retainedChild: TypedRecord<string> | undefined = selectedItem?.children.title?.record;
+  void retainedHandle;
+  void retainedChild;
+  // @ts-expect-error canonical selections cannot include collection children.
+  const invalidSelection: RecordMaterialization<typeof LibraryDefinition, 'library'> = { children: ['library/attachment'] };
+  void invalidSelection;
+
+  const optionalChildren = Math.random() > 0.5 ? childSelection : undefined;
+  const conditionalChildren = await typed.records.query('library', {
+    materialize : optionalChildren,
+    pagination  : { limit: 20 },
+  });
+  const conditionalChildItem: TypedRecord<LibraryData> | SelectedItem | undefined = conditionalChildren.records[0];
+  void conditionalChildItem;
+  // @ts-expect-error optional child materialization does not guarantee children.
+  void conditionalChildren.records[0]?.children.title;
 
   // @ts-expect-error an explicit materialized view must include the runtime materialize option.
   await typed.records.observe<'library', true>('library', { pagination: { limit: 20 } });
@@ -149,6 +204,12 @@ async function assertTypedMaterialization(): Promise<void> {
 
   await typed.records.query('library', {
     // @ts-expect-error selected children must be direct singleton paths.
+    materialize : { children: ['library/attachment'] },
+    pagination  : { limit: 20 },
+  });
+
+  await typed.records.observe('library', {
+    // @ts-expect-error observed child selections reject non-singleton paths without an assertion.
     materialize : { children: ['library/attachment'] },
     pagination  : { limit: 20 },
   });

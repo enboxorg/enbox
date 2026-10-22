@@ -297,7 +297,7 @@ export interface RecordSubscription {
 }
 
 /** Materialization requested from a typed records query or observed view. */
-type RecordMaterialization<
+export type RecordMaterialization<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
 > = true | {
@@ -338,11 +338,12 @@ type MaterializedRecordForPath<
     children: Readonly<MaterializedChildren<D, C, Path, Materialization, ContextBound>>;
   }>;
 
-type SelectedRecordRepresentation<
+/** Record handle or materialized value selected by a typed query or observed view. */
+export type RecordRepresentation<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
   Path extends ProtocolPaths<D> & string,
-  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
   ContextBound extends boolean = false,
 > = Materialization extends undefined
   ? RecordHandle<DataForPath<C, Path>, ContextBound>
@@ -397,10 +398,11 @@ type ObserveRequest<
   ? { materialize?: undefined }
   : { materialize: Materialization });
 
-type TypedObserveRequest<
+/** Bounded typed records selection accepted by `records.observe()`. */
+export type RecordObserveRequest<
   D extends ProtocolDefinition,
   Path extends ProtocolPaths<D> & string,
-  Materialization extends RecordMaterialization<D, Path> | undefined,
+  Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
 > = ObserveRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
@@ -1111,7 +1113,7 @@ type TypedRecordsApi<
 
   query: <
     Path extends Paths,
-    Materialization extends (
+    const Materialization extends (
       ContextBound extends true
         ? ContextRecordMaterialization<D, NoInfer<Path>>
         : RecordMaterialization<D, Path>
@@ -1120,12 +1122,12 @@ type TypedRecordsApi<
       ? ContextQueryArguments<D, Path, Materialization>
       : TypedQueryArguments<D, Path, Materialization>
     ) => Promise<
-    RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization, ContextBound>>
+    RecordPage<RecordRepresentation<D, C, Path, Materialization, ContextBound>>
   >;
 
   observe: <
     Path extends Paths,
-    Materialization extends (
+    const Materialization extends (
       ContextBound extends true
         ? ContextRecordMaterialization<D, NoInfer<Path>>
         : RecordMaterialization<D, Path>
@@ -1134,9 +1136,9 @@ type TypedRecordsApi<
     path: Path,
     request: ContextBound extends true
       ? ContextObserveRequest<D, NoInfer<Path>, Materialization>
-      : TypedObserveRequest<D, Path, Materialization>,
+      : RecordObserveRequest<D, Path, Materialization>,
   ) => Promise<ExpandableRecordView<
-    SelectedRecordRepresentation<D, C, Path, Materialization, ContextBound>
+    RecordRepresentation<D, C, Path, Materialization, ContextBound>
   >>;
 
   subscribe: TypedRecordsSubscribe<C, Paths, ContextBound>;
@@ -2023,7 +2025,7 @@ export class TypedEnbox<
     materialization : Materialization,
     childPaths : readonly string[],
     source : MaterializationSource,
-  ): Promise<readonly SelectedRecordRepresentation<D, C, Path, Materialization>[]> {
+  ): Promise<readonly RecordRepresentation<D, C, Path, Materialization>[]> {
     const represented = materialization === undefined
       ? records.map((record) => this.bindCodec<Path>(path, record))
       : await this.materializeRecords<Path>(
@@ -2035,7 +2037,7 @@ export class TypedEnbox<
 
     // The runtime branch above is the sole erasure point for the conditional
     // query result; both paths retain their concrete public representation.
-    return represented as unknown as readonly SelectedRecordRepresentation<D, C, Path, Materialization>[];
+    return represented as unknown as readonly RecordRepresentation<D, C, Path, Materialization>[];
   }
 
   /** Decode one bounded parent page and its explicitly selected singleton children. */
@@ -3336,7 +3338,7 @@ export class TypedEnbox<
         Path extends ProtocolPaths<D> & string,
         Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
       >(...args: TypedQueryArguments<D, Path, Materialization>): Promise<
-        RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>
+        RecordPage<RecordRepresentation<D, C, Path, Materialization>>
       > => {
         const [path, request] = args;
         const capturedRequest = request === undefined ? undefined : structuredClone(request);
@@ -3356,7 +3358,7 @@ export class TypedEnbox<
         const queryPage = async (
           compiledQuery : typeof canonicalQuery,
           priorCursor : PaginationCursorLineage | undefined,
-        ): Promise<RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+        ): Promise<RecordPage<RecordRepresentation<D, C, Path, Materialization>>> => {
           this._assertActive();
           const result = await this._dwn.records.query(compiledQuery);
           requireDwnSuccess('TypedEnbox.records.query', result);
@@ -3371,7 +3373,7 @@ export class TypedEnbox<
             pageCursor = { key, previous: priorCursor };
           }
 
-          const page: RecordPage<SelectedRecordRepresentation<D, C, Path, Materialization>> = {
+          const page: RecordPage<RecordRepresentation<D, C, Path, Materialization>> = {
             records: [...await this.representRecords<Path, Materialization>(
               normalizedPath,
               result.records,
@@ -3380,7 +3382,7 @@ export class TypedEnbox<
               { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within },
             )],
             next: async (): Promise<RecordPage<
-              SelectedRecordRepresentation<D, C, Path, Materialization>
+              RecordRepresentation<D, C, Path, Materialization>
             > | undefined> => continuation === undefined
               ? undefined
               : queryPage({
@@ -3388,10 +3390,10 @@ export class TypedEnbox<
                 pagination: { ...canonicalQuery.pagination, cursor: continuation },
               }, pageCursor),
             async *[Symbol.asyncIterator](): AsyncIterator<
-              SelectedRecordRepresentation<D, C, Path, Materialization>
+              RecordRepresentation<D, C, Path, Materialization>
               > {
               let current: RecordPage<
-                SelectedRecordRepresentation<D, C, Path, Materialization>
+                RecordRepresentation<D, C, Path, Materialization>
               > | undefined = page;
               while (current !== undefined) {
                 yield* current.records;
@@ -3421,8 +3423,8 @@ export class TypedEnbox<
         Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
       >(
         path: Path,
-        request: TypedObserveRequest<D, Path, Materialization>,
-      ): Promise<ExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>> => {
+        request: RecordObserveRequest<D, Path, Materialization>,
+      ): Promise<ExpandableRecordView<RecordRepresentation<D, C, Path, Materialization>>> => {
         request?.signal?.throwIfAborted();
         this._options.signal?.throwIfAborted();
         const normalizedPath = normalizePath(path);
@@ -3448,12 +3450,12 @@ export class TypedEnbox<
           [signal, this._options.signal],
         );
 
-        return createExpandableRecordView<SelectedRecordRepresentation<D, C, Path, Materialization>>({
+        return createExpandableRecordView<RecordRepresentation<D, C, Path, Materialization>>({
           additionalWakeFilters,
           callerSignal       : signal,
           definition         : this._definition,
           dwn                : this._dwn,
-          materializeRecords : async (records): Promise<readonly SelectedRecordRepresentation<
+          materializeRecords : async (records): Promise<readonly RecordRepresentation<
             D,
             C,
             Path,
