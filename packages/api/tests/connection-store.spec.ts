@@ -2771,8 +2771,73 @@ describe('createConnectionStore()', () => {
       await store.initialize();
 
       expect(create.calledOnce).toBe(true);
-      expect(create.firstCall.args[0]).toEqual({ password: 'pw', sync: 'off' });
+      expect(create.firstCall.args[0]).toEqual({
+        password              : 'pw',
+        sync                  : 'off',
+        identitySyncProtocols : [ApplicationDefinition.protocol],
+      });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
+    });
+
+    it.each(['connectVault', 'initialize'] as const)('should default owned %s sync to every manifest protocol', async (action) => {
+      const fake = createFakeAuth();
+      const session = createSession();
+      const nativeAction = action === 'initialize' ? fake.restoreSession : fake.connectVault;
+      nativeAction.callsFake(async (): Promise<AuthSession> => {
+        fake.session = session;
+        return session;
+      });
+      const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
+      const store = createStore({ application: MIXED_APPLICATION, sync: 'off' });
+
+      const snapshot = await store[action]();
+
+      expect(snapshot.phase).toBe('connected');
+      expect(create.firstCall.args[0]).toEqual({
+        sync                  : 'off',
+        identitySyncProtocols : [ApplicationDefinition.protocol, WriteOnlyDefinition.protocol],
+      });
+      expect(nativeAction.calledOnce).toBe(true);
+    });
+
+    it('should retain explicit owner scope defaults for restoration', async () => {
+      const create = sinon.stub(AuthManager, 'create');
+      for (const scope of ['all', ['https://example.com/additional']] satisfies NonNullable<ConnectionStoreOptions['identitySyncProtocols']>[]) {
+        const fake = createFakeAuth();
+        create.resolves(asAuth(fake));
+        const store = createStore({ identitySyncProtocols: scope });
+
+        await store.initialize();
+
+        expect(create.lastCall.args[0].identitySyncProtocols).toBe(scope);
+        expect(fake.restoreSession.calledOnce).toBe(true);
+        await store.dispose();
+      }
+    });
+
+    it('should forward a per-call vault scope without changing the owned default', async () => {
+      const fake = createFakeAuth();
+      const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
+      const store = createStore();
+      const options = { createIdentity: true, identitySyncProtocols: 'all' as const, sync: 'off' as const };
+
+      await store.connectVault(options);
+
+      expect(create.firstCall.args[0].identitySyncProtocols).toEqual([ApplicationDefinition.protocol]);
+      expect(fake.connectVault.firstCall.args[0]).toBe(options);
+    });
+
+    it('should keep borrowed manager restoration and vault options unchanged', async () => {
+      const fake = createFakeAuth();
+      const create = sinon.stub(AuthManager, 'create');
+      const store = createStore({ application: MIXED_APPLICATION, auth: asAuth(fake) });
+
+      await store.initialize();
+      await store.connectVault();
+
+      expect(create.called).toBe(false);
+      expect(fake.restoreSession.firstCall.args[0]).toBeUndefined();
+      expect(fake.connectVault.firstCall.args[0]).toBeUndefined();
     });
 
     it('should shut down an orphaned store-owned manager when disposed mid-creation', async () => {

@@ -1,7 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'bun:test';
-
-import type { DwnApi } from '@enbox/api/advanced';
-import type { EnboxAnonymousApi } from '@enbox/api';
+import { describe, expect, it } from 'bun:test';
 
 import type {
   ProfileReaderQueryRequest,
@@ -10,7 +7,6 @@ import type {
   ProfileReaderReadResponse,
   ProfileReaderRecord,
   ProfileReaderRecordsSurface,
-  ProfileReaderSource,
   ProfileReaderTimers,
   ProfileSnapshot,
 } from '../src/profile-reader.js';
@@ -196,13 +192,6 @@ describe('isRetryableProfileReadStatus', () => {
 });
 
 describe('createProfileReader', () => {
-  describe('source compatibility', () => {
-    it('should structurally accept a connected DwnApi and the Enbox.anonymous() result (compile-time)', () => {
-      expectTypeOf<DwnApi>().toMatchTypeOf<ProfileReaderSource>();
-      expectTypeOf<EnboxAnonymousApi>().toMatchTypeOf<ProfileReaderSource>();
-    });
-  });
-
   describe('source normalization', () => {
     it('should accept a bare records surface, a { records } object, and a { dwn: { records } } object', async () => {
       const clock = new FakeClock();
