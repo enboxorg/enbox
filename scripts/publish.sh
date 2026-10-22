@@ -131,6 +131,19 @@ for pkg_dir in "${PACKAGES[@]}"; do
     continue
   fi
 
+  # Prepare the tag before publishing so a Git failure cannot strand an npm release.
+  tag="$name@$version"
+  if git show-ref --verify --quiet "refs/tags/$tag"; then
+    tagged_commit=$(git rev-parse --verify "refs/tags/$tag^{commit}")
+    current_commit=$(git rev-parse --verify HEAD)
+    if [ "$tagged_commit" != "$current_commit" ]; then
+      echo "Tag $tag already exists at a different commit" >&2
+      exit 1
+    fi
+  else
+    git tag -a "$tag" -m "$tag"
+  fi
+
   echo "Publishing $name@$version from $pkg_dir..."
 
   # Step 1: Resolve workspace:* to real versions and pack
@@ -149,9 +162,8 @@ for pkg_dir in "${PACKAGES[@]}"; do
     echo "Published $name@$version"
     published=$((published + 1))
 
-    # Create a git tag matching Changesets convention
-    tag="$name@$version"
-    git tag -a "$tag" -m "$tag" 2>/dev/null || echo "Tag $tag already exists"
+    # Changesets discovers published packages from this marker and pushes their tags.
+    echo "New tag: $tag"
 
     # Clean up tarball
     rm -f "$pkg_dir/$tarball"
