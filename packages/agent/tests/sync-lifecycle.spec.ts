@@ -1534,6 +1534,8 @@ describe('SyncEngineLevel lifecycle', () => {
     const releasePush = createDeferred();
     const removeStarted = createDeferred();
     const did = 'did:example:alice';
+    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    engine['_runtime'] = new SyncRuntime(true);
     const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
     const controller = engine['activateLink'](linkKey, {
       authorization      : { kind: 'owner' },
@@ -1549,8 +1551,6 @@ describe('SyncEngineLevel lifecycle', () => {
     });
     controller.markReplicationReady();
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
-    engine['_runtime'] = new SyncRuntime(true);
     sinon.stub(engine as never, 'reconcileOwnedTarget').callsFake(async (): Promise<Record<string, unknown>> => {
       pushStarted.resolve();
       await releasePush.promise;

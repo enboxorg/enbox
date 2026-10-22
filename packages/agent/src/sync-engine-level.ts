@@ -34,6 +34,7 @@ import type {
   SyncEventScope,
   SyncHealthSummary,
   SyncIdentityOptions,
+  SyncIdentityRemovalOptions,
   SyncIdentityStatus,
   SyncLifecycleOptions,
   SyncRunOptions,
@@ -230,12 +231,12 @@ export class SyncEngineLevel implements SyncEngine {
   private readonly _linkInitializations: Map<string, Promise<LinkInitializationResult>> = new Map();
 
   /**
-   * Subscription closes that outlived a lifecycle deadline, grouped by tenant.
+   * Subscription closes that outlived a lifecycle deadline, owned by controller.
    * Retaining them lets a later stop or identity mutation wait for the original
    * transport cleanup instead of mistaking an already-detached controller for
    * a fully closed subscription.
    */
-  private readonly _pendingSubscriptionCloses: Map<string, Set<Promise<void>>> = new Map();
+  private readonly _pendingSubscriptionCloses: Map<SyncLinkController, Promise<void>> = new Map();
 
   // ---------------------------------------------------------------------------
   // Engine-lifetime state (survives every start/stop cycle)
@@ -556,8 +557,8 @@ export class SyncEngineLevel implements SyncEngine {
     return new SyncLinkRecoveryCoordinator({
       feedConvergenceManager : this._feedConvergenceManager,
       operations             : {
-        captureIdentityTaskRunner: (tenantDid): SyncIdentityTaskRunner =>
-          this._lifecycle.captureIdentityTaskRunner(tenantDid),
+        captureIdentityTaskRunner: (did, delegateDid): SyncIdentityTaskRunner =>
+          this._lifecycle.captureIdentityTaskRunner(did, delegateDid),
         emitEvent            : (event): void => { this.emitEvent(event); },
         getController        : (linkKey): SyncLinkController | undefined => this.getLinkController(linkKey),
         getRuntime           : (): SyncRuntime => this._runtime,
@@ -710,12 +711,7 @@ export class SyncEngineLevel implements SyncEngine {
       return existing;
     }
 
-    if (existing !== undefined) {
-      // Closing starts synchronously; the controller absorbs transport close
-      // errors while the replacement lifetime is installed.
-      this.deactivateLinkController(existing);
-      void existing.dispose();
-    }
+    this.removeLinkController(linkKey, existing);
     const controller = new SyncLinkController(linkKey, link);
     this._linkControllers.set(linkKey, controller);
     return controller;
@@ -743,10 +739,10 @@ export class SyncEngineLevel implements SyncEngine {
       return;
     }
 
-    // Removal is synchronous for callback invalidation; subscription closure
-    // is best effort and cannot reject from the controller.
+    // Fence callbacks synchronously and retain subscription closure so later
+    // lifecycle operations still wait after this controller leaves the registry.
     this.deactivateLinkController(controller);
-    void controller.dispose();
+    this.trackSubscriptionCloses([controller]);
     this._linkControllers.delete(linkKey);
   }
 
@@ -988,9 +984,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (this._pausedIdentities.get(did) !== authorization) {
         return;
       }
-      await Promise.all(links.filter(link => link.delegateDid === delegateDid &&
-        (link.authorization.kind === 'role' ? link.authorization.actorDid === did : link.tenantDid === did)
-      ).map((link): Promise<void> => {
+      await Promise.all(links.filter(link => this.isLinkOwnedByIdentity(link, did, delegateDid)).map((link): Promise<void> => {
         const linkKey = this.getReplicationLinkKey(syncTargetFromLink(link), link);
         this._runtime.cancelTimer(SyncEngineLevel.linkInitRetryTimerKey(linkKey));
         return this._linkRecoveryCoordinator.transitionToPaused(linkKey, this.getLinkController(linkKey)?.link ?? link);
@@ -1017,6 +1011,23 @@ export class SyncEngineLevel implements SyncEngine {
     await this._lifecycle.runIdentityMutation(async (activeDeadline): Promise<void> => {
       await this.runIdentityLifecycle(did, operation, activeDeadline);
     }, deadline);
+  }
+
+  /** Background work cannot queue behind a transition that waits for its caller to settle. */
+  private async runBackgroundIdentityMutation(did: string, operation: () => Promise<void>, shouldContinue: () => boolean): Promise<void> {
+    await this._lifecycle.acquireSync();
+    try {
+      if (!shouldContinue()) {
+        return;
+      }
+      await this.runIdentityLifecycle(did, async (): Promise<void> => {
+        if (shouldContinue()) {
+          await operation();
+        }
+      });
+    } finally {
+      this._lifecycle.releaseSync();
+    }
   }
 
   private async doSetIdentityOptions(
@@ -1051,19 +1062,15 @@ export class SyncEngineLevel implements SyncEngine {
     // still need their own live links even though the rate-limited link has no
     // controller yet. The runtime's ownership-token check neutralizes a timer
     // firing that was queued but had not started before this cancellation.
-    const hadPendingLinkInitRetry = existingOptions !== undefined && this.hasLinkInitRetriesForDid(did);
-    if (existingOptions !== undefined) {
-      this.cancelLinkInitRetriesForDid(did);
-    }
+    const hadPendingLinkInitRetry = this.hasLinkInitRetriesForDid(did);
+    this.cancelLinkInitRetriesForDid(did);
 
-    // A retry that fired earlier may already be RUNNING as an identity task.
-    // It is invisible to timer cancellation. Treat armed, running, and active
-    // states alike as a prior live runtime that must be stopped. The normal
-    // identity stop pauses task intake before settling, then cancels
-    // any retry re-armed by work that was already in flight.
-    const hadPriorLiveRuntime = existingOptions !== undefined && (hadPendingLinkInitRetry ||
-      this._lifecycle.hasIdentityTasks(did) ||
-      this.hasActiveLinksForDid(did));
+    // A timed-out stop or sibling unregister can leave local ownership after
+    // the durable marker disappears. Fence retries, idle paused groups, and
+    // active links before accepting replacement registration work.
+    const hadPriorLiveRuntime = hadPendingLinkInitRetry ||
+      this._lifecycle.getIdentityTaskGroups(did).length > 0 ||
+      this.hasActiveLinksForDid(did);
     const rebuildLiveLinks = this._runtime.live && hadPriorLiveRuntime;
     if (hadPriorLiveRuntime) {
       await this.removeIdentityFromLiveSync(did, deadline);
@@ -1114,40 +1121,32 @@ export class SyncEngineLevel implements SyncEngine {
       && leftProtocols.every((protocol, index): boolean => protocol === rightProtocols[index]);
   }
 
-  public removeIdentity(did: string, lifecycleOptions: SyncLifecycleOptions = {}): Promise<void> {
+  public removeIdentity(did: string, options: SyncIdentityRemovalOptions = {}): Promise<void> {
+    const { expectedDelegateDid } = options;
     return this.runExclusiveIdentityMutation(
       did,
-      (deadline): Promise<void> => this.doRemoveIdentity(did, deadline),
-      lifecycleOptions,
+      (deadline): Promise<void> => this.doRemoveIdentity(did, expectedDelegateDid, deadline),
+      options,
     );
   }
 
-  private async doRemoveIdentity(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
+  private async doRemoveIdentity(did: string, expectedDelegateDid: string | undefined, deadline?: SyncLifecycleDeadline): Promise<void> {
     const existing = await this.waitForLifecycleBarrier(
       this.getIdentityOptions(did),
       deadline,
       'Identity removal preparation did not complete',
     );
-    if (existing === undefined) {
+    if (existing === undefined || (expectedDelegateDid !== undefined && existing.delegateDid !== expectedDelegateDid)) {
+      // A sibling may have replaced the durable registration while this
+      // engine still owns callbacks using the deleted delegate's keys.
+      await this.removeIdentityFromLiveSync(did, deadline, expectedDelegateDid);
+      this.invalidateSyncTargetsCache();
       return;
     }
 
-    // A timed-out stop may leave already-running identity work after the live
-    // runtime has been disposed. Drain every surviving form of per-identity
-    // ownership before deleting the durable registration.
-    const hasPriorLiveRuntime = this._runtime.live ||
-      this._lifecycle.hasIdentityTasks(did) ||
-      this.hasActiveLinksForDid(did) ||
-      this.hasLinkInitRetriesForDid(did);
-    if (hasPriorLiveRuntime) {
-      await this.removeIdentityFromLiveSync(did, deadline);
-    }
-
-    // A pending rate-limit init retry may exist even without an active link
-    // (the 429 path drops the controller before arming the retry, so the
-    // hot-remove above can be skipped entirely). Its captured target is now
-    // unregistered — cancel it unconditionally.
-    this.cancelLinkInitRetriesForDid(did);
+    // A timed-out stop can leave tasks or subscription closes after detaching
+    // every controller. Always settle that ownership before deleting the marker.
+    await this.removeIdentityFromLiveSync(did, deadline);
     await this.pauseRoleLinksForActor(did);
 
     // Tenant-scoped deletion runs first; the identity marker is deleted LAST
@@ -1281,11 +1280,16 @@ export class SyncEngineLevel implements SyncEngine {
     };
 
     assertTransitionCurrent();
-    const identity = await this._identityStore.get(normalized.actorDid);
-    if (identity === undefined) {
+    const preparation = await this.runFollowedSourceIntake(normalized.actorDid, async (identity, runIdentityTask) => ({
+      identity,
+      prepared: await this.resolveFollowedSource(normalized, identity.delegateDid, transitionFence),
+      runIdentityTask,
+    }), { foreground: true, shouldContinue: transitionFence });
+    if (preparation === undefined) {
+      assertTransitionCurrent();
       throw new FollowedSourceNotReadyError(`actor '${normalized.actorDid}' is not registered for sync`);
     }
-    const prepared = await this.resolveFollowedSource(normalized, identity.delegateDid, transitionFence);
+    const { identity, prepared, runIdentityTask } = preparation;
     assertTransitionCurrent();
 
     let accepted = prepared.source;
@@ -1293,7 +1297,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this.runExclusiveIdentityMutation(normalized.sourceDid, async (): Promise<void> => {
       assertTransitionCurrent();
       const currentIdentity = await this._identityStore.get(normalized.actorDid);
-      if (currentIdentity?.delegateDid !== identity.delegateDid) {
+      if (currentIdentity === undefined || currentIdentity.delegateDid !== identity.delegateDid) {
         throw new FollowedSourceNotReadyError('the member sync registration changed while accepting the context');
       }
       const current = (await this.readFollowedSources()).filter(candidate =>
@@ -1312,8 +1316,38 @@ export class SyncEngineLevel implements SyncEngine {
     assertTransitionCurrent();
 
     await this.removeFollowedSourceLinksForSources(replaced);
-    this.activateFollowedSource(accepted, identity.delegateDid);
+    this.activateFollowedSource(accepted, identity.delegateDid, runIdentityTask);
     return accepted;
+  }
+
+  /** Capture signing preparation under the actor registration fence; source commits run after this task settles. */
+  private async runFollowedSourceIntake<T>(
+    actorDid: string,
+    prepare: (identity: SyncIdentityOptions, runIdentityTask: SyncIdentityTaskRunner) => T | Promise<T>,
+    options: { foreground?: boolean; shouldContinue: () => boolean },
+  ): Promise<T | undefined> {
+    let task: Promise<T | undefined> | undefined;
+    const capture = async (): Promise<void> => {
+      if (!options.shouldContinue()) {
+        return;
+      }
+      const identity = await this._identityStore.get(actorDid);
+      if (identity === undefined || !options.shouldContinue()) {
+        return;
+      }
+      const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(actorDid, identity.delegateDid, options);
+      task = runIdentityTask(async (): Promise<T> => {
+        // Ownership is retained before releasing the mutation, but preparation
+        // starts outside it so later source commits never wait on themselves.
+        await intake;
+        return prepare(identity, runIdentityTask);
+      });
+    };
+    const intake = options.foreground
+      ? this.runExclusiveIdentityMutation(actorDid, capture, {})
+      : this.runBackgroundIdentityMutation(actorDid, capture, options.shouldContinue);
+    await intake;
+    return task;
   }
 
   /** Resolve the strongest role that one reachable hosted endpoint proves. */
@@ -1460,12 +1494,12 @@ export class SyncEngineLevel implements SyncEngine {
   private activateFollowedSource(
     source: FollowedSyncSource,
     delegateDid: string | undefined,
+    runIdentityTask: SyncIdentityTaskRunner,
   ): void {
     if (!this._runtime.live) {
       return;
     }
 
-    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(source.actorDid);
     void runIdentityTask(async (): Promise<void> => {
       await this.refreshRoleLinksForActor(source.actorDid, delegateDid, source.id);
       await this.initializeLinkTargetWithRetry(
@@ -1539,7 +1573,7 @@ export class SyncEngineLevel implements SyncEngine {
       this.markPullPending(controller);
       controller.executor.request('pull');
       if (controller.isReplicationReady) {
-        const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(expected.sourceDid);
+        const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(expected.actorDid, controller.link.delegateDid);
         void runIdentityTask(() => this._linkRecoveryCoordinator.resume(controller));
       }
     }
@@ -1550,19 +1584,22 @@ export class SyncEngineLevel implements SyncEngine {
   public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
     const expected = normalizeFollowedSyncSource(source);
     const transitionFence = this.captureTransitionFence();
-    const identity = await this._identityStore.get(expected.actorDid);
-    if (identity === undefined) {
+    const preparation = await this.runFollowedSourceIntake(expected.actorDid, async (identity) => {
+      const accepted = await this._followedSourceStore.get(expected.id);
+      if (accepted === undefined || !followedSyncSourceActiveEqual(accepted, expected)) {
+        return undefined;
+      }
+      const target = await this.targetResolver.buildTargetForSource(expected, identity.delegateDid);
+      if (this._runtime.live &&
+        (await this.initializeLinkTargetWithRetry(target)).status !== LinkInitializationStatus.Active) {
+        return undefined;
+      }
+      return { identity, target };
+    }, { foreground: true, shouldContinue: transitionFence });
+    if (preparation === undefined) {
       return false;
     }
-    const accepted = await this._followedSourceStore.get(expected.id);
-    if (accepted === undefined || !followedSyncSourceActiveEqual(accepted, expected)) {
-      return false;
-    }
-    const target = await this.targetResolver.buildTargetForSource(expected, identity.delegateDid);
-    if (this._runtime.live &&
-      (await this.initializeLinkTargetWithRetry(target)).status !== LinkInitializationStatus.Active) {
-      return false;
-    }
+    const { identity, target } = preparation;
 
     let result: SyncReconcileResult;
     await this._lifecycle.acquireSync();
@@ -1573,7 +1610,8 @@ export class SyncEngineLevel implements SyncEngine {
         !transitionFence() ||
         current === undefined ||
         !followedSyncSourceActiveEqual(current, expected) ||
-        currentIdentity?.delegateDid !== identity.delegateDid
+        currentIdentity === undefined ||
+        currentIdentity.delegateDid !== identity.delegateDid
       ) {
         return false;
       }
@@ -1591,7 +1629,8 @@ export class SyncEngineLevel implements SyncEngine {
       transitionFence() &&
       current !== undefined &&
       followedSyncSourceActiveEqual(current, expected) &&
-      currentIdentity?.delegateDid === identity.delegateDid;
+      currentIdentity !== undefined &&
+      currentIdentity.delegateDid === identity.delegateDid;
   }
 
   private async commitFollowedSourceRemoval(source: FollowedSyncSource): Promise<void> {
@@ -1690,11 +1729,15 @@ export class SyncEngineLevel implements SyncEngine {
       this._lifecycle.releaseSync();
     }
     await this.removeObsoleteFollowedSourceLinks();
-    for (const source of activated) {
-      const identity = await this._identityStore.get(source.actorDid);
-      if (identity !== undefined) {
-        this.activateFollowedSource(source, identity.delegateDid);
-      }
+    const runtime = this._runtime;
+    const intakes = await Promise.allSettled(activated.map(source =>
+      this.runFollowedSourceIntake(source.actorDid, (identity, runIdentityTask): void => {
+        this.activateFollowedSource(source, identity.delegateDid, runIdentityTask);
+      }, { shouldContinue: (): boolean => !runtime.disposed })
+    ));
+    const failedIntake = intakes.find((result) => result.status === 'rejected');
+    if (failedIntake?.status === 'rejected') {
+      throw failedIntake.reason;
     }
     return sources;
   }
@@ -1773,63 +1816,70 @@ export class SyncEngineLevel implements SyncEngine {
     runtime: SyncRuntime,
     expected: FollowedSyncSource,
   ): Promise<void> {
-    const identity = await this._identityStore.get(expected.actorDid);
-    if (identity === undefined || runtime.disposed || this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
+    const shouldContinue = (): boolean => !runtime.disposed;
+    const preparation = await this.runFollowedSourceIntake(expected.actorDid, async (identity, runIdentityTask) => {
+      if (this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
+        return undefined;
+      }
+      try {
+        const prepared = await this.resolveFollowedSourceAtEndpoint({
+          actorDid  : expected.actorDid,
+          contextId : expected.contextId,
+          protocol  : expected.protocol,
+          roles     : expected.roles,
+          sourceDid : expected.sourceDid,
+        }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
+        return { identity, prepared, runIdentityTask };
+      } catch (error: unknown) {
+        if (await this.handleSyncAuthorizationFailure(expected.actorDid, identity.delegateDid, error)) {
+          return undefined;
+        }
+        throw error;
+      }
+    }, { shouldContinue });
+    if (preparation === undefined) {
       return;
     }
-    const shouldContinue = (): boolean => !runtime.disposed;
-    let prepared: PreparedFollowedSource | undefined;
-    try {
-      prepared = await this.resolveFollowedSourceAtEndpoint({
-        actorDid  : expected.actorDid,
-        contextId : expected.contextId,
-        protocol  : expected.protocol,
-        roles     : expected.roles,
-        sourceDid : expected.sourceDid,
-      }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
-    } catch (error: unknown) {
-      if (await this.handleSyncAuthorizationFailure(expected.actorDid, identity.delegateDid, error)) {
-        return;
-      }
-      throw error;
-    }
+    const { identity, prepared, runIdentityTask } = preparation;
     if (runtime.disposed) {
       return;
     }
     if (this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
       return;
     }
-    if (prepared === undefined) {
-      await this.deleteFollowedSource(expected);
-      return;
-    }
-    if (followedSyncSourceAuthorityEqual(prepared.source, expected)) {
-      this.activateFollowedSource(expected, identity.delegateDid);
+    if (prepared !== undefined && followedSyncSourceAuthorityEqual(prepared.source, expected)) {
+      this.activateFollowedSource(expected, identity.delegateDid, runIdentityTask);
       return;
     }
 
     let accepted: FollowedSyncSource | undefined;
     let replaced: FollowedSyncSource[] = [];
-    await this.runExclusiveIdentityMutation(expected.sourceDid, async (): Promise<void> => {
+    await this.runBackgroundIdentityMutation(expected.sourceDid, async (): Promise<void> => {
       const current = await this._followedSourceStore.get(expected.id);
       const currentIdentity = await this._identityStore.get(expected.actorDid);
       if (
         runtime.disposed ||
         current === undefined ||
         !followedSyncSourceActiveEqual(current, expected) ||
-        currentIdentity?.delegateDid !== identity.delegateDid
+        currentIdentity === undefined ||
+        currentIdentity.delegateDid !== identity.delegateDid
       ) {
+        return;
+      }
+      if (prepared === undefined) {
+        await this.removeFollowedSourceLinksForSources([current]);
+        await this.commitFollowedSourceRemoval(current);
         return;
       }
       await this.admitFollowedSource(prepared, shouldContinue);
       accepted = prepared.source;
       replaced = await this.commitFollowedSource(prepared.source);
-    }, {});
+    }, shouldContinue);
     if (accepted === undefined || runtime.disposed) {
       return;
     }
     await this.removeFollowedSourceLinksForSources(replaced);
-    this.activateFollowedSource(accepted, identity.delegateDid);
+    this.activateFollowedSource(accepted, identity.delegateDid, runIdentityTask);
   }
 
   /** Coalesce catalog wakes and paused-role recovery onto one runtime task. */
@@ -2427,29 +2477,24 @@ export class SyncEngineLevel implements SyncEngine {
   /** Retain transport-close promises until the underlying subscriptions settle. */
   private trackSubscriptionCloses(controllers: SyncLinkController[]): void {
     for (const controller of controllers) {
-      const tenantDid = controller.link.tenantDid;
-      const pendingCloses = this._pendingSubscriptionCloses.get(tenantDid) ?? new Set<Promise<void>>();
-      this._pendingSubscriptionCloses.set(tenantDid, pendingCloses);
+      if (this._pendingSubscriptionCloses.has(controller)) {
+        continue;
+      }
 
       const close = controller.closeSubscriptions();
-      pendingCloses.add(close);
+      this._pendingSubscriptionCloses.set(controller, close);
       const forget = (): void => {
-        pendingCloses.delete(close);
-        if (pendingCloses.size === 0 && this._pendingSubscriptionCloses.get(tenantDid) === pendingCloses) {
-          this._pendingSubscriptionCloses.delete(tenantDid);
-        }
+        this._pendingSubscriptionCloses.delete(controller);
       };
       void close.then(forget, forget);
     }
   }
 
   /** Return every retained close, optionally limited to one identity. */
-  private getPendingSubscriptionCloses(did?: string): Promise<void>[] {
-    if (did !== undefined) {
-      return [...(this._pendingSubscriptionCloses.get(did) ?? [])];
-    }
-
-    return [...this._pendingSubscriptionCloses.values()].flatMap(pending => [...pending]);
+  private getPendingSubscriptionCloses(did?: string, delegateDid?: string): Promise<void>[] {
+    return [...this._pendingSubscriptionCloses]
+      .filter(([controller]) => did === undefined || this.isLinkOwnedByIdentity(controller.link, did, delegateDid))
+      .map(([, close]) => close);
   }
 
   // ---------------------------------------------------------------------------
@@ -2822,7 +2867,10 @@ export class SyncEngineLevel implements SyncEngine {
       to             : 'live'
     });
     if (controller.executor.hasPendingWork) {
-      const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(link.tenantDid);
+      const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(
+        link.authorization.kind === 'role' ? link.authorization.actorDid : link.tenantDid,
+        link.delegateDid,
+      );
       void runIdentityTask(() => this._linkRecoveryCoordinator.resume(controller));
     }
     const nextProbeAt = await this._quotaManager.getNextProbeAtForTarget(target);
@@ -2960,7 +3008,10 @@ export class SyncEngineLevel implements SyncEngine {
    * event loop queued before that never starts.
    */
   private scheduleLinkInitRetry(target: SyncTarget, linkKey: string, delayMs: number): void {
-    const taskGroup = this._lifecycle.getIdentityTaskGroup(target.did);
+    const taskGroup = this._lifecycle.getIdentityTaskGroup(
+      target.authorization.kind === 'role' ? target.authorization.actorDid : target.did,
+      target.delegateDid,
+    );
     this._runtime.armTimeout(SyncEngineLevel.linkInitRetryTimerKey(linkKey), (): void => {
       void this._lifecycle.runIdentityTask(taskGroup, async (): Promise<void> => {
         try {
@@ -3054,10 +3105,10 @@ export class SyncEngineLevel implements SyncEngine {
     return key.startsWith(did + LINK_KEY_SEPARATOR);
   }
 
-  /** Check whether this DID has any active links. */
+  /** Check whether this identity owns any active links, including foreign-context roles. */
   private hasActiveLinksForDid(did: string): boolean {
     for (const controller of this._linkControllers.values()) {
-      if (controller.link.tenantDid === did) { return true; }
+      if (this.isLinkOwnedByIdentity(controller.link, did)) { return true; }
     }
     return false;
   }
@@ -3095,12 +3146,15 @@ export class SyncEngineLevel implements SyncEngine {
     return currentIdentityKeys;
   }
 
-  /** Hot-remove a single identity from the active live sync session. */
-  private async removeIdentityFromLiveSync(did: string, deadline?: SyncLifecycleDeadline): Promise<void> {
-    const taskGroup = this._lifecycle.getIdentityTaskGroup(did);
-    taskGroup.pause();
+  /** End an identity's live work, including subscription closes retained after a stopped runtime. */
+  private async removeIdentityFromLiveSync(did: string, deadline?: SyncLifecycleDeadline, delegateDid?: string): Promise<void> {
+    const taskGroups = this._lifecycle.getIdentityTaskGroups(did, delegateDid);
+    for (const taskGroup of taskGroups) {
+      taskGroup.pause();
+    }
 
-    const controllers = [...this._linkControllers.values()].filter(controller => controller.link.tenantDid === did);
+    const controllers = [...this._linkControllers.values()]
+      .filter(controller => this.isLinkOwnedByIdentity(controller.link, did, delegateDid));
     // Currentness must fall before transport closure can block, and
     // deactivation prevents an in-flight pull from restoring it while allowing
     // already-running durable work to drain before final deactivation.
@@ -3109,17 +3163,18 @@ export class SyncEngineLevel implements SyncEngine {
     }
     this.trackSubscriptionCloses(controllers);
     await this.waitForLifecycleBarrier(
-      Promise.all(this.getPendingSubscriptionCloses(did)),
+      Promise.all(this.getPendingSubscriptionCloses(did, delegateDid)),
       deadline,
       'Live subscriptions did not close',
     );
 
     // Stop queued work first, but retain its runtime state until callbacks that
     // are already in flight finish using it.
-    this.cancelIdentityTimers(did);
-    if (deadline === undefined) {
-      await taskGroup.settle();
-    } else if (!await taskGroup.settle(remainingSyncLifecycleTimeout(deadline))) {
+    this.cancelIdentityTimers(did, delegateDid);
+    const settled = await Promise.all(taskGroups.map(taskGroup => taskGroup.settle(
+      deadline === undefined ? undefined : remainingSyncLifecycleTimeout(deadline),
+    )));
+    if (deadline !== undefined && settled.some(completed => !completed)) {
       throw new Error(
         `SyncEngineLevel: Identity sync operations did not complete within ${deadline.timeout} milliseconds.`,
       );
@@ -3127,10 +3182,12 @@ export class SyncEngineLevel implements SyncEngine {
 
     // A running task may have armed a follow-up timer before observing the
     // paused group. Cancel that timer before discarding the link state.
-    this.cancelIdentityTimers(did);
-    this.discardIdentityLinkState(did);
+    this.cancelIdentityTimers(did, delegateDid);
+    this.discardIdentityLinkState(did, delegateDid);
 
-    this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
+    for (const taskGroup of taskGroups) {
+      this._lifecycle.deleteIdentityTaskGroup(did, taskGroup);
+    }
   }
 
   /** Wait for pre-mutation lifecycle work without abandoning its rejection. */
@@ -3162,23 +3219,35 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Cancel active-session scheduling and pre-session initialization retries for one identity. */
-  private cancelIdentityTimers(did: string): void {
+  private cancelIdentityTimers(did: string, delegateDid?: string): void {
     for (const controller of this._linkControllers.values()) {
-      if (controller.link.tenantDid === did) {
+      if (this.isLinkOwnedByIdentity(controller.link, did, delegateDid)) {
         this._linkRecoveryCoordinator.cancelScheduledWork(controller);
       }
     }
-    this.cancelLinkInitRetriesForDid(did);
+    // A delegate-only removal fences captured init retries through their
+    // paused task group; cancelling by DID would also discard the replacement's retries.
+    if (delegateDid === undefined) {
+      this.cancelLinkInitRetriesForDid(did);
+    }
   }
 
-  private discardIdentityLinkState(did: string): void {
+  private isLinkOwnedByIdentity(link: ReplicationLinkState, did: string, delegateDid?: string): boolean {
+    const identityDid = link.authorization.kind === 'role' ? link.authorization.actorDid : link.tenantDid;
+    return identityDid === did && (delegateDid === undefined || link.delegateDid === delegateDid);
+  }
+
+  private discardIdentityLinkState(did: string, delegateDid?: string): void {
     for (const [linkKey, controller] of this._linkControllers) {
-      if (controller.link.tenantDid === did) {
+      if (this.isLinkOwnedByIdentity(controller.link, did, delegateDid)) {
         this.removeLinkController(linkKey, controller);
+        this._feedConvergenceManager.clearLink(linkKey);
       }
     }
 
-    this._feedConvergenceManager.clearTenant(did);
+    if (delegateDid === undefined) {
+      this._feedConvergenceManager.clearTenant(did);
+    }
   }
 
   private async tryPruneSupersededDurableLinksForRegisteredIdentity(did: string, options: SyncIdentityOptions): Promise<void> {
@@ -3296,7 +3365,10 @@ export class SyncEngineLevel implements SyncEngine {
       link,
       isStale,
     };
-    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(
+      target.authorization.kind === 'role' ? target.authorization.actorDid : did,
+      target.delegateDid,
+    );
 
     const subscriptionHandler = (subMessage: DwnSubscriptionMessage): Promise<void> =>
       runIdentityTask(() => this.handleLivePullMessage(pullContext, subMessage));
@@ -3336,9 +3408,15 @@ export class SyncEngineLevel implements SyncEngine {
     // Re-establish at the live head. The `reconnected` lifecycle signal runs
     // durable recovery from the persisted checkpoint for the disconnected gap.
     const resubscribeFactory: ResubscribeFactory = async () => {
-      const { message: resumeMsg } = await this.agent.dwn.processRequest(await createSubscribeRequest());
-      if (!resumeMsg) {
-        throw new Error(`SyncEngineLevel: Failed to construct resume MessagesSubscribe for ${dwnUrl}`);
+      const resumeMsg = await runIdentityTask(async (): Promise<GenericMessage> => {
+        const { message } = await this.agent.dwn.processRequest(await createSubscribeRequest());
+        if (!message) {
+          throw new Error(`SyncEngineLevel: Failed to construct resume MessagesSubscribe for ${dwnUrl}`);
+        }
+        return message;
+      });
+      if (resumeMsg === undefined) {
+        throw new Error(`SyncEngineLevel: Resume MessagesSubscribe was cancelled for ${dwnUrl}`);
       }
       return resumeMsg;
     };
@@ -3767,7 +3845,7 @@ export class SyncEngineLevel implements SyncEngine {
 
     const isPushStale = (): boolean =>
       runtime.disposed || !controller.isReplicationGenerationCurrent(subscriptionReplicationGeneration);
-    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did);
+    const runIdentityTask = this._lifecycle.captureIdentityTaskRunner(did, delegateDid);
 
     // Subscribe to the local DWN's EventLog.
     const subscriptionHandler = (subMessage: DwnSubscriptionMessage): Promise<void> =>

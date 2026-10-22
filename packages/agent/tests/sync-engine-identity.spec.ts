@@ -6,6 +6,7 @@ import { Level } from 'level';
 import { RateLimitError } from '@enbox/dwn-clients';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
+import { deferred } from './utils/deferred.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
@@ -83,6 +84,31 @@ describe('SyncEngineLevel — identity management', () => {
       await syncEngine.setIdentityOptions({ did, options: { protocols: ['new'] } });
 
       expect(await syncEngine.getIdentityOptions(did)).toEqual({ protocols: ['new'] });
+    });
+
+    it('should await an actor\'s foreign-context subscription before changing its delegate', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const actorDid = 'did:example:role-actor';
+      const options: SyncIdentityOptions = { delegateDid: 'did:example:first', protocols: 'all' };
+      await engine['_identityStore'].set(actorDid, options);
+      const controller = activateTestLink(engine, 'foreign-context', 'did:example:foreign-source');
+      controller.link.authorization = { kind: 'role', actorDid, protocolRole: 'root/member', roleRecordId: 'member-role' };
+      controller.link.delegateDid = options.delegateDid;
+      const release = deferred();
+      const close = sinon.stub().returns(release.promise);
+      controller.setLiveSubscription({ close });
+      try {
+        await expect(engine.setIdentityOptions({
+          did     : actorDid,
+          options : { delegateDid: 'did:example:second', protocols: 'all' },
+        }, { timeout: 20 })).rejects.toThrow('Live subscriptions did not close');
+
+        expect(close.calledOnce).toBe(true);
+        expect(await engine.getIdentityOptions(actorDid)).toEqual(options);
+      } finally {
+        release.resolve();
+        await engine.stopSync();
+      }
     });
 
     it('should emit the committed registration before later routing work fails', async () => {
@@ -292,6 +318,62 @@ describe('SyncEngineLevel — identity management', () => {
       expect(options).toBeUndefined();
     });
 
+    it('should remove a registration that still uses the expected delegate', async () => {
+      const did = 'did:example:remove-matching-delegate';
+      const delegateDid = 'did:example:delegate';
+      await syncEngine.setIdentityOptions({ did, options: { delegateDid, protocols: 'all' } });
+
+      await syncEngine.removeIdentity(did, { expectedDelegateDid: delegateDid });
+
+      expect(await syncEngine.getIdentityOptions(did)).toBeUndefined();
+    });
+
+    it.each(['did:example:other-delegate', undefined])('should preserve a nonmatching registration using delegate %s', async (delegateDid) => {
+      const did = 'did:example:remove-other-delegate';
+      const options: SyncIdentityOptions = { delegateDid, protocols: 'all' };
+      await syncEngine.setIdentityOptions({ did, options });
+      const removeOptions = sinon.spy(syncEngine['_identityStore'], 'delete');
+      const clearQuota = sinon.spy(syncEngine['_quotaManager'], 'clearTenant');
+
+      await syncEngine.removeIdentity(did, { expectedDelegateDid: 'did:example:deleted-delegate' });
+
+      expect(await syncEngine.getIdentityOptions(did)).toEqual(options);
+      expect(removeOptions.called).toBe(false);
+      expect(clearQuota.called).toBe(false);
+    });
+
+    it('should recheck a delegate replaced by another engine before removal acquires its lock', async () => {
+      const did = 'did:example:remove-replaced-delegate';
+      const oldOptions: SyncIdentityOptions = { delegateDid: 'did:example:old-delegate', protocols: ['https://old.example'] };
+      const newOptions: SyncIdentityOptions = { delegateDid: 'did:example:new-delegate', protocols: ['https://new.example'] };
+      await syncEngine.setIdentityOptions({ did, options: oldOptions });
+      const replacementEngine = new SyncEngineLevel({ db });
+      const validationReached = deferred();
+      const validationGate = deferred();
+      (SyncScopeClosureValidator.prototype.validateClosure as sinon.SinonStub).callsFake(async (): Promise<void> => {
+        validationReached.resolve();
+        await validationGate.promise;
+      });
+      const removeOptions = sinon.spy(syncEngine['_identityStore'], 'delete');
+      const clearQuota = sinon.spy(syncEngine['_quotaManager'], 'clearTenant');
+
+      try {
+        const replacement = replacementEngine.setIdentityOptions({ did, options: newOptions });
+        await validationReached.promise;
+        const removal = syncEngine.removeIdentity(did, { expectedDelegateDid: oldOptions.delegateDid });
+        expect(await syncEngine.getIdentityOptions(did)).toEqual(oldOptions);
+        validationGate.resolve();
+        await Promise.all([replacement, removal]);
+
+        expect(await syncEngine.getIdentityOptions(did)).toEqual(newOptions);
+        expect(removeOptions.called).toBe(false);
+        expect(clearQuota.called).toBe(false);
+      } finally {
+        validationGate.resolve();
+        (replacementEngine as any).closeWakePublishers();
+      }
+    });
+
     it('should be idempotent for an absent identity', async () => {
       const events: unknown[] = [];
       const unsubscribe = syncEngine.on((event): void => { events.push(event); });
@@ -300,6 +382,109 @@ describe('SyncEngineLevel — identity management', () => {
 
       unsubscribe();
       expect(events).toEqual([]);
+    });
+
+    it('should fence old delegate init retries while keeping replacement retries and future captures viable', async () => {
+      const clock = sinon.useFakeTimers();
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:delegate-retry-removal';
+      const first = { did, delegateDid: 'did:example:first', authorization: { kind: 'delegate' }, authorizationEpoch: 'first' };
+      const second = { ...first, delegateDid: 'did:example:second', authorizationEpoch: 'second' };
+      const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'failed' });
+      await engine['_identityStore'].set(did, { delegateDid: second.delegateDid, protocols: 'all' });
+      try {
+        engine['scheduleLinkInitRetry'](first as any, `${did}^remote^projection^first`, 1000);
+        engine['scheduleLinkInitRetry'](second as any, `${did}^remote^projection^second`, 1000);
+
+        await engine.removeIdentity(did, { expectedDelegateDid: first.delegateDid });
+        engine['_lifecycle'].resumeTaskIntake();
+        engine['_lifecycle'].getIdentityTaskGroup(did, first.delegateDid).resume();
+        await clock.tickAsync(1000);
+
+        expect(initialize.calledOnceWithExactly(second)).toBe(true);
+        expect(await engine.getIdentityOptions(did)).toEqual({ delegateDid: second.delegateDid, protocols: 'all' });
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('should fence an init retry rearmed by old delegate work that finishes during removal', async () => {
+      const clock = sinon.useFakeTimers();
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:delegate-retry-rearm';
+      const target = { did, delegateDid: 'did:example:first', authorization: { kind: 'delegate' }, authorizationEpoch: 'first' };
+      const linkKey = `${did}^remote^projection^first`;
+      const entered = deferred();
+      const release = deferred();
+      const initialize = sinon.stub(engine as any, 'initializeLinkTarget').callsFake(async (): Promise<any> => {
+        entered.resolve();
+        await release.promise;
+        engine['scheduleLinkInitRetry'](target as any, linkKey, 1000);
+        return { status: 'failed' };
+      });
+      await engine['_identityStore'].set(did, { delegateDid: 'did:example:second', protocols: 'all' });
+      try {
+        engine['scheduleLinkInitRetry'](target as any, linkKey, 0);
+        await clock.tickAsync(0);
+        await entered.promise;
+        const group = engine['_lifecycle'].getIdentityTaskGroup(did, target.delegateDid);
+        const removal = engine.removeIdentity(did, { expectedDelegateDid: target.delegateDid });
+        await clock.tickAsync(0);
+        const settled = group.settle(0);
+        await clock.tickAsync(0);
+        expect(await settled).toBe(false);
+        release.resolve();
+        await removal;
+        engine['_lifecycle'].resumeTaskIntake();
+        await clock.tickAsync(1000);
+        expect(initialize.calledOnce).toBe(true);
+      } finally {
+        release.resolve();
+        clock.restore();
+      }
+    });
+
+    it('should retain and await old delegate role closes by actor without closing the replacement', async () => {
+      const engine = new SyncEngineLevel({ db });
+      const actorDid = 'did:example:role-actor';
+      const firstDid = 'did:example:first';
+      const secondDid = 'did:example:second';
+      await engine['_identityStore'].set(actorDid, { delegateDid: secondDid, protocols: 'all' });
+      const release = deferred();
+      const makeRoleLink = (sourceDid: string, delegateDid: string): any => ({
+        authorization      : { kind: 'role', actorDid, protocolRole: 'root/member', roleRecordId: `role-${delegateDid}` },
+        authorizationEpoch : 'role-epoch',
+        connectivity       : 'online',
+        delegateDid,
+        projectionId       : 'projection-id',
+        pull               : {},
+        push               : {},
+        remoteEndpoint     : 'https://dwn.example.com',
+        scope              : { kind: 'context', protocol: 'https://example.com/context', contextId: 'root', protocolPaths: ['root'] },
+        status             : 'live',
+        tenantDid          : sourceDid,
+      });
+      const first = engine['activateLink']('first-role-link', makeRoleLink('did:example:first-source', firstDid));
+      const second = engine['activateLink']('second-role-link', makeRoleLink('did:example:second-source', secondDid));
+      const closeFirst = sinon.stub().returns(release.promise);
+      const closeSecond = sinon.stub().resolves();
+      first.setLiveSubscription({ close: closeFirst });
+      second.setLiveSubscription({ close: closeSecond });
+      try {
+        await expect(engine.removeIdentity(actorDid, { expectedDelegateDid: firstDid, timeout: 20 }))
+          .rejects.toThrow('Live subscriptions did not close');
+        expect(closeFirst.calledOnce).toBe(true);
+        expect(closeSecond.called).toBe(false);
+        expect(second.isActive).toBe(true);
+        release.resolve();
+        await engine.removeIdentity(actorDid, { expectedDelegateDid: firstDid });
+        expect(first.isActive).toBe(false);
+        expect(second.isActive).toBe(true);
+        expect(second.hasLiveSubscription).toBe(true);
+      } finally {
+        release.resolve();
+        await engine.stopSync();
+      }
     });
   });
 
@@ -938,17 +1123,53 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotRemoveStub.firstCall.args[0]).toBe('did:example:hotrem1');
     });
 
-    it('should not call removeIdentityFromLiveSync when live sync is not running', async () => {
+    it('should remove an idle registration without starting live sync', async () => {
       const engine = new SyncEngineLevel({ db });
       await engine.setIdentityOptions({ did: 'did:example:nohotrem-idle', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime();
 
-      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
-
       await engine.removeIdentity('did:example:nohotrem-idle');
 
-      expect(hotRemoveStub.called).toBe(false);
+      expect(await engine.getIdentityOptions('did:example:nohotrem-idle')).toBeUndefined();
+      expect(engine['_runtime'].live).toBe(false);
+      expect(engine['_linkControllers'].size).toBe(0);
+    });
+
+    it.each([undefined, 'did:example:delegate'])('should await a retained close before removing matching delegate %s', async (delegateDid) => {
+      const engine = new SyncEngineLevel({ db });
+      const did = 'did:example:retained-removal-close';
+      const options: SyncIdentityOptions = { protocols: 'all', delegateDid };
+      await engine.setIdentityOptions({ did, options });
+      const controller = activateTestLink(engine, 'retained-removal-close-link', did);
+      controller.link.delegateDid = delegateDid;
+      if (delegateDid !== undefined) {
+        controller.link.authorization = { kind: 'delegate', delegateDid, permissionGrantIds: ['read-grant'] };
+      }
+      const entered = deferred();
+      const release = deferred();
+      const close = sinon.stub().callsFake(async (): Promise<void> => { entered.resolve(); await release.promise; });
+      controller.setLiveSubscription({ close });
+      try {
+        const stop = engine.stopSync(10);
+        await entered.promise;
+        await expect(stop).rejects.toThrow('Live subscriptions did not close');
+        expect(engine['_linkControllers'].size).toBe(0);
+
+        await expect(engine.removeIdentity(did, { expectedDelegateDid: delegateDid, timeout: 10 }))
+          .rejects.toThrow('Live subscriptions did not close');
+        expect(await engine.getIdentityOptions(did)).toEqual(options);
+        expect(close.callCount).toBe(1);
+
+        release.resolve();
+        await engine.removeIdentity(did, { expectedDelegateDid: delegateDid, timeout: 100 });
+        expect(await engine.getIdentityOptions(did)).toBeUndefined();
+        expect(engine['_pendingSubscriptionCloses'].size).toBe(0);
+      } finally {
+        release.resolve();
+        await engine.stopSync();
+        engine['closeWakePublishers']();
+      }
     });
 
     it('should cancel same-key link scheduling before hot-replacing a controller', () => {
@@ -984,14 +1205,24 @@ describe('SyncEngineLevel — identity management', () => {
       runtime.dispose();
     });
 
-    it('should not run live removal for an absent identity', async () => {
+    it('should preserve unrelated live identities when removing an absent identity', async () => {
       const engine = new SyncEngineLevel({ db });
-      (engine as any)._runtime = new SyncRuntime(true);
-      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+      const unrelatedDid = 'did:example:unrelated-live';
+      await engine.setIdentityOptions({ did: unrelatedDid, options: { protocols: 'all' } });
+      const runtime = new SyncRuntime(true);
+      engine['_runtime'] = runtime;
+      const unrelated = activateTestLink(engine, 'unrelated-live-link', unrelatedDid);
+      try {
+        await engine.removeIdentity('did:example:never-registered-live');
 
-      await engine.removeIdentity('did:example:never-registered-live');
-
-      expect(hotRemoveStub.called).toBe(false);
+        expect(await engine.getIdentityOptions('did:example:never-registered-live')).toBeUndefined();
+        expect(await engine.getIdentityOptions(unrelatedDid)).toEqual({ protocols: 'all' });
+        expect(unrelated.isActive).toBe(true);
+      } finally {
+        unrelated.deactivate();
+        runtime.dispose();
+        engine['closeWakePublishers']();
+      }
     });
 
     // --- pending init-retry cancellation on identity mutations ---
@@ -1009,7 +1240,7 @@ describe('SyncEngineLevel — identity management', () => {
 
         const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
         const linkKey = 'did:example:staleretry^https://dwn.example.com^projection-1^epoch-1';
-        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry' }, linkKey, 60_000);
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry', authorization: { kind: 'owner' } }, linkKey, 60_000);
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
 
         await engine.setIdentityOptions({ did: 'did:example:staleretry', options: { protocols: 'all' } });
@@ -1030,7 +1261,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       const initializeReplacement = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
       const linkKey = `${did}^https://dwn.example.com^projection-1^epoch-1`;
-      (engine as any).scheduleLinkInitRetry({ did }, linkKey, 60_000);
+      (engine as any).scheduleLinkInitRetry({ did, authorization: { kind: 'owner' } }, linkKey, 60_000);
 
       const options = { protocols: ['https://new.example'] };
       await engine.setIdentityOptions({ did, options });
@@ -1048,7 +1279,7 @@ describe('SyncEngineLevel — identity management', () => {
 
         const initialize = sinon.stub(engine as any, 'initializeLinkTarget').resolves({ status: 'active' });
         const linkKey = 'did:example:staleretry2^https://dwn.example.com^projection-1^epoch-1';
-        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry2' }, linkKey, 60_000);
+        (engine as any).scheduleLinkInitRetry({ did: 'did:example:staleretry2', authorization: { kind: 'owner' } }, linkKey, 60_000);
         expect((engine as any)._runtime.hasTimers((key: string) => key.startsWith('linkInitRetry:'))).toBe(true);
 
         await engine.removeIdentity('did:example:staleretry2');
@@ -1126,14 +1357,14 @@ describe('SyncEngineLevel — identity management', () => {
     it('cancelLinkInitRetriesForDid should not cancel a retry for a DID that merely extends the mutated DID', async () => {
       const engine = new SyncEngineLevel({ db });
       (engine as any).scheduleLinkInitRetry(
-        { did: 'did:example:alice' },
+        { did: 'did:example:alice', authorization: { kind: 'owner' } },
         'did:example:alice^https://dwn.example.com^projection-1^epoch-1',
         60_000,
       );
       // Underscores are valid DID characters: this is a DIFFERENT identity
       // whose DID happens to extend the one being mutated.
       (engine as any).scheduleLinkInitRetry(
-        { did: 'did:example:alice_extra' },
+        { did: 'did:example:alice_extra', authorization: { kind: 'owner' } },
         'did:example:alice_extra^https://dwn.example.com^projection-1^epoch-1',
         60_000,
       );
@@ -1703,18 +1934,20 @@ describe('SyncEngineLevel — identity management', () => {
       expect(hotAddStub.called).toBe(false);
     });
 
-    it('should not hot-remove when sync was explicitly stopped', async () => {
+    it('should remove a registration after stopping without restarting sync', async () => {
       const engine = new SyncEngineLevel({ db });
       await engine.setIdentityOptions({ did: 'did:example:stop-then-unreg', options: { protocols: 'all' } });
 
       (engine as any)._runtime = new SyncRuntime(true);
       await engine.stopSync();
 
-      const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
+      const stoppedRuntime = engine['_runtime'];
 
       await engine.removeIdentity('did:example:stop-then-unreg');
 
-      expect(hotRemoveStub.called).toBe(false);
+      expect(await engine.getIdentityOptions('did:example:stop-then-unreg')).toBeUndefined();
+      expect(engine['_runtime']).toBe(stoppedRuntime);
+      expect(engine.hasActiveSubscriptions).toBe(false);
     });
   });
 

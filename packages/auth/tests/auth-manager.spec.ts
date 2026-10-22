@@ -1287,6 +1287,134 @@ describe('AuthManager', () => {
   });
 
   describe('deleteIdentity()', () => {
+    test('preserves keys, metadata and the active session when sync removal fails', async () => {
+      const calls: string[] = [];
+      const agent = createMockAgent({
+        syncRemoveIdentity : async (): Promise<void> => { throw new Error('sync drain failed'); },
+        didDelete          : async (): Promise<void> => { calls.push('keys'); },
+        identityDelete     : async (): Promise<void> => { calls.push('metadata'); },
+      });
+      const manager = createTestManager(agent);
+      const session = await manager.connectVault({ password: 'test' });
+      manager.on('identity-removed', (): void => { calls.push('event'); });
+
+      await expect(manager.deleteIdentity(session.did)).rejects.toThrow('sync drain failed');
+      expect(calls).toEqual([]);
+      expect(manager.session).toBe(session);
+      expect(session.signal.aborted).toBe(false);
+    });
+
+    test('keeps the current session alive when an inactive identity is deleted', async () => {
+      const active = createMockIdentity();
+      const inactive = createMockIdentity({ did: { uri: 'did:dht:inactive' } });
+      const manager = createTestManager(createMockAgent({ identityList: async () => [active, inactive] }));
+      const session = await manager.connectVault({ password: 'test' });
+
+      await manager.deleteIdentity(inactive.did.uri);
+
+      expect(manager.session).toBe(session);
+      expect(session.signal.aborted).toBe(false);
+    });
+
+    test('retains a delegate signing key while its revocations are pending', async () => {
+      const storage = new MemoryStorage();
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate' },
+        metadata : { tenant: 'did:dht:testagent', name: 'Delegate', connectedDid: 'did:dht:owner' },
+      });
+      const journal = JSON.stringify([{
+        delegateDid  : identity.did.uri,
+        connectedDid : identity.metadata.connectedDid,
+        revocations  : [{ grantId: 'grant', revocationGrantId: 'revocation-grant' }],
+      }]);
+      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, journal);
+      const calls: string[] = [];
+      const manager = createTestManager(createMockAgent({
+        identityGet    : async () => identity,
+        didDelete      : async (): Promise<void> => { calls.push('keys'); },
+        identityDelete : async (): Promise<void> => { calls.push('metadata'); },
+      }), { storage });
+
+      await expect(manager.deleteIdentity(identity.did.uri)).rejects.toThrow('pending grant revocations');
+      expect(calls).toEqual([]);
+      expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBe(journal);
+    });
+
+    test('accepts a delegate already retired by its active disconnect', async () => {
+      let deleted = false;
+      let keyDeletes = 0;
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate' },
+        metadata : { tenant: 'did:dht:testagent', name: 'Delegate', connectedDid: 'did:dht:owner' },
+      });
+      const agent = createMockAgent({
+        identityList   : async () => deleted ? [] : [identity],
+        didDelete      : async (): Promise<void> => { keyDeletes++; },
+        identityDelete : async (): Promise<void> => { deleted = true; },
+      });
+      const manager = createTestManager(agent);
+      await manager.switchIdentity(identity.did.uri);
+      expect(manager.session?.delegateDid).toBe(identity.did.uri);
+
+      await manager.deleteIdentity(identity.did.uri);
+      expect(manager.session).toBeUndefined();
+      expect(deleted).toBe(true);
+      expect(keyDeletes).toBe(1);
+    });
+
+    test('retains active delegate metadata when key deletion fails during disconnect', async () => {
+      let metadataDeleted = false;
+      const identity = createMockIdentity({
+        did      : { uri: 'did:jwk:delegate' },
+        metadata : { tenant: 'did:dht:testagent', name: 'Delegate', connectedDid: 'did:dht:owner' },
+      });
+      const manager = createTestManager(createMockAgent({
+        identityList   : async () => metadataDeleted ? [] : [identity],
+        didDelete      : async (): Promise<void> => { throw new Error('key store unavailable'); },
+        identityDelete : async (): Promise<void> => { metadataDeleted = true; },
+      }));
+      await manager.switchIdentity(identity.did.uri);
+
+      await expect(manager.deleteIdentity(identity.did.uri)).rejects.toThrow('key store unavailable');
+      expect(metadataDeleted).toBe(false);
+    });
+
+    test('rejects deletion from a locked vault before accessing identities', async () => {
+      let lookedUp = false;
+      const manager = createTestManager(createMockAgent({
+        vaultIsLocked : () => true,
+        identityGet   : async () => { lookedUp = true; return createMockIdentity(); },
+      }));
+
+      await expect(manager.deleteIdentity('did:dht:testuser123')).rejects.toThrow('vault must be unlocked');
+      expect(lookedUp).toBe(false);
+    });
+
+    for (const teardown of ['lock', 'disconnect', 'shutdown'] as const) {
+      test(`keeps keys if ${teardown} invalidates identity lookup`, async () => {
+        let finishLookup!: (identity: ReturnType<typeof createMockIdentity>) => void;
+        let markLookupStarted!: () => void;
+        const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve; });
+        const lookupResult = new Promise<ReturnType<typeof createMockIdentity>>((resolve) => { finishLookup = resolve; });
+        let keyDeletes = 0;
+        const manager = createTestManager(createMockAgent({
+          identityGet: async () => {
+            markLookupStarted();
+            return lookupResult;
+          },
+          didDelete: async (): Promise<void> => { keyDeletes++; },
+        }));
+
+        const deletion = manager.deleteIdentity('did:dht:testuser123');
+        await lookupStarted;
+        const teardownResult = manager[teardown]();
+        finishLookup(createMockIdentity());
+        await expect(deletion).rejects.toThrow('invalidated');
+        await teardownResult;
+        expect(keyDeletes).toBe(0);
+      });
+    }
+
     test('deletes DID and identity', async () => {
       const didDeleteCalls: any[] = [];
       const identityDeleteCalls: any[] = [];
@@ -1341,6 +1469,25 @@ describe('AuthManager', () => {
 
       expect(events).toHaveLength(1);
       expect(events[0].didUri).toBe('did:dht:testuser123');
+    });
+
+    test('allows the removal event to select a remaining identity', async () => {
+      const remainingIdentity = createMockIdentity({ did: { uri: 'did:dht:remaining' } });
+      const identities = new Map([
+        ['did:dht:testuser123', createMockIdentity()],
+        [remainingIdentity.did.uri, remainingIdentity],
+      ]);
+      const manager = createTestManager(createMockAgent({
+        identityGet    : async ({ didUri }) => identities.get(didUri),
+        identityDelete : async ({ didUri }): Promise<void> => { identities.delete(didUri); },
+      }));
+      let switchResult: ReturnType<AuthManager['switchIdentity']> | undefined;
+      manager.on('identity-removed', (): void => {
+        switchResult = manager.switchIdentity(remainingIdentity.did.uri);
+      });
+
+      await manager.deleteIdentity('did:dht:testuser123');
+      expect((await switchResult)?.did).toBe(remainingIdentity.did.uri);
     });
 
     test('throws when DID deletion fails to prevent orphaned keys', async () => {

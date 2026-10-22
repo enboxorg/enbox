@@ -945,7 +945,7 @@ describe('SyncLinkRecoveryCoordinator', () => {
     const controller = activate(fixture);
 
     expect(fixture.coordinator.scheduleReconcile(controller, 1000)).toBe(true);
-    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID)).toBe(true);
+    expect(fixture.operations.captureIdentityTaskRunner.calledOnceWithExactly(DID, undefined)).toBe(true);
     fixture.operations.captureIdentityTaskRunner.resetHistory();
     expect(fixture.coordinator.scheduleReconcile(controller, 2000)).toBe(false);
     expect(fixture.coordinator.scheduleReconcile(controller, 500)).toBe(true);

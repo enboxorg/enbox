@@ -174,6 +174,28 @@ function mockGrantRecord(grantId: string): any {
 }
 
 describe('grant revocation on disconnect', () => {
+  test('explicit deletion retains active delegate keys when disconnect leaves pending revocations', async () => {
+    const storage = new MemoryStorage();
+    const agent = buildRevocationAgent({
+      grantRecords : { 'grant-1': mockGrantRecord('grant-1') },
+      rpcError     : true,
+    });
+    const keyDeletion = spyOn(agent.did, 'delete');
+    const metadataDeletion = spyOn(agent.identity, 'delete');
+    const manager = createTestManager(agent, { storage });
+    await manager.switchIdentity('did:jwk:delegate123');
+    await seedDelegatedSession(storage);
+
+    await expect(manager.deleteIdentity('did:jwk:delegate123')).rejects.toThrow('pending grant revocations');
+
+    expect(manager.session).toBeUndefined();
+    expect(keyDeletion).not.toHaveBeenCalled();
+    expect(metadataDeletion).not.toHaveBeenCalled();
+    expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).not.toBeNull();
+    keyDeletion.mockRestore();
+    metadataDeletion.mockRestore();
+  });
+
 
   // 1. Partial disconnect clears ALL session markers and persists retry context
   test('partial disconnect clears session markers and persists retry context', async () => {
@@ -649,6 +671,7 @@ describe('grant revocation on disconnect', () => {
     (agent.identity as any).delete = async ({ didUri }: any): Promise<void> => {
       deletedIdentities.push(didUri);
     };
+    const removeSyncIdentity = spyOn(agent.sync, 'removeIdentity');
 
     const session = await createTestManager(agent, { storage }).restoreSession();
 
@@ -658,6 +681,10 @@ describe('grant revocation on disconnect', () => {
     expect(await storage.get(STORAGE_KEYS.DELEGATE_DID)).toBe(activeDelegateDid);
     expect(await storage.get(STORAGE_KEYS.CONNECTED_DID)).toBe(activeConnectedDid);
     expect(await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT)).toBeNull();
+    expect(removeSyncIdentity).toHaveBeenCalledWith('did:dht:owner456', {
+      expectedDelegateDid : 'did:jwk:delegate123',
+      timeout             : 0,
+    });
     expect(deletedIdentities).toEqual(['did:jwk:delegate123']);
   });
 

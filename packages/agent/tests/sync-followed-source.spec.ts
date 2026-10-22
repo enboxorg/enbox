@@ -102,7 +102,7 @@ async function storeFollowedSource(engine: SyncEngineLevel, followed: FollowedSy
   const internal = engine as any;
   const replaced = await internal.commitFollowedSource(followed);
   await internal.removeFollowedSourceLinksForSources(replaced);
-  internal.activateFollowedSource(followed, undefined);
+  internal.activateFollowedSource(followed, undefined, internal._lifecycle.captureIdentityTaskRunner(followed.actorDid));
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeout = 1000): Promise<void> {
@@ -755,12 +755,258 @@ describe('SyncEngineLevel — followed sources', () => {
 
     const following = engine.followSource(sourceInput(followed));
     await resolutionStarted.promise;
-    await engine.clear();
-    expect(await engine.listFollowedSources()).toEqual([]);
+    let cleared = false;
+    const clearing = engine.clear().then((): void => { cleared = true; });
+    await Promise.resolve();
+    expect(cleared).toBe(false);
     releaseResolution.resolve();
 
     await expect(following).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
+    await clearing;
     expect(await engine.listFollowedSources()).toEqual([]);
+  });
+
+  it('should allow explicit follow and pull after stopping without reopening background intake', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine.stopSync();
+    sinon.stub(engine as never, 'resolveFollowedSource').resolves({ batch: supportBatch(followed.id), source: followed });
+    sinon.stub(engine as never, 'admitFollowedSource').resolves();
+    const initialize = sinon.spy(engine as never, 'initializeLinkTargetWithRetry');
+    const reconcile = sinon.stub(engine as never, 'reconcileTarget').resolves({ pullDrained: true });
+    const background = sinon.stub().resolves();
+
+    await expect(engine.followSource(sourceInput(followed))).resolves.toEqual(followed);
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
+    await engine['_lifecycle'].runBackgroundTask(background);
+
+    expect(initialize.notCalled).toBe(true);
+    expect(reconcile.calledOnce).toBe(true);
+    expect(background.notCalled).toBe(true);
+  });
+
+  it.each(['follow', 'refresh'] as const)('should not commit %s preparation after an owner actor unregisters', async (mode) => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    const replacement = source('replacement-role', followed.contextId, 'notebook/collaborator');
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    if (mode === 'refresh') {
+      await engine['_followedSourceStore'].replace(followed);
+    }
+    const entered = deferred();
+    const release = deferred();
+    sinon.stub(engine as never, mode === 'follow' ? 'resolveFollowedSource' : 'resolveFollowedSourceAtEndpoint').callsFake(async () => {
+      entered.resolve();
+      await release.promise;
+      return { batch: supportBatch(replacement.id), source: replacement };
+    });
+    const admit = sinon.stub(engine as never, 'admitFollowedSource').resolves();
+    const preparation = mode === 'follow'
+      ? engine.followSource(sourceInput(followed))
+      : engine['refreshFollowedSourceAuthority'](engine['_runtime'], followed);
+    const result = preparation.catch((error: unknown): unknown => error);
+    await entered.promise;
+    const removal = engine.removeIdentity(followed.actorDid);
+    release.resolve();
+    await removal;
+
+    if (mode === 'follow') {
+      expect(await result).toBeInstanceOf(FollowedSourceNotReadyError);
+      expect(await engine.listFollowedSources()).toEqual([]);
+    } else {
+      await result;
+      expect(await engine.listFollowedSources()).toEqual([followed]);
+    }
+    expect(admit.notCalled).toBe(true);
+    expect(await engine.getIdentityOptions(followed.actorDid)).toBeUndefined();
+  });
+
+  it('should reject queued preparation after removal without capturing a fresh owner group', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    const resolve = sinon.stub(engine as never, 'resolveFollowedSource');
+    await engine['_lifecycle'].acquireSync();
+    const removal = engine.removeIdentity(followed.actorDid);
+    const following = engine.followSource(sourceInput(followed));
+    engine['_lifecycle'].releaseSync();
+    await removal;
+    await expect(following).rejects.toBeInstanceOf(FollowedSourceNotReadyError);
+    expect(resolve.notCalled).toBe(true);
+    expect(engine['_lifecycle'].getIdentityTaskGroups(followed.actorDid)).toEqual([]);
+  });
+
+  it('should preserve a followed source when paused intake skips authority inspection', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
+    engine['_lifecycle'].getIdentityTaskGroup(followed.actorDid).pause();
+    const resolve = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
+
+    await engine['refreshFollowedSourceAuthority'](engine['_runtime'], followed);
+
+    expect(resolve.notCalled).toBe(true);
+    expect(await engine.listFollowedSources()).toEqual([followed]);
+  });
+
+  it('should let stop settle a catalog refresh before its late activation can queue behind the transition', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
+    engine['_runtime'] = new SyncRuntime(true);
+    const entered = deferred();
+    const release = deferred();
+    sinon.stub(engine as never, 'removeObsoleteFollowedSourceLinks').callsFake(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const activate = sinon.spy(engine as never, 'activateFollowedSource');
+    engine['scheduleFollowedSourceRefresh']();
+    await entered.promise;
+    const stopping = engine.stopSync(100);
+    release.resolve();
+
+    await expect(stopping).resolves.toBeUndefined();
+    expect(activate.notCalled).toBe(true);
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
+  });
+
+  it.each(['stop', 'clear'] as const)('should settle a catalog refresh when %s is already queued behind another mutation', async (mode) => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
+    engine['_runtime'] = new SyncRuntime(true);
+    const refreshEntered = deferred();
+    const releaseRefresh = deferred();
+    sinon.stub(engine as never, 'removeObsoleteFollowedSourceLinks').callsFake(async () => {
+      refreshEntered.resolve();
+      await releaseRefresh.promise;
+    });
+    engine['scheduleFollowedSourceRefresh']();
+    await refreshEntered.promise;
+    const mutationEntered = deferred();
+    const releaseMutation = deferred();
+    const mutation = engine['runExclusiveIdentityMutation']('did:example:other', async (): Promise<void> => {
+      mutationEntered.resolve();
+      await releaseMutation.promise;
+    }, {});
+    await mutationEntered.promise;
+    const teardown = mode === 'stop' ? engine.stopSync(100) : engine.clear({ timeout: 100 });
+    releaseRefresh.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    releaseMutation.resolve();
+    await mutation;
+
+    await expect(teardown).resolves.toBeUndefined();
+    expect(await engine['_lifecycle'].waitForBackgroundTasks(0)).toBe(true);
+  });
+
+  it.each(['stop', 'clear'] as const)('should retain a failed catalog wave until sibling intake settles during %s', async (mode) => {
+    const engine = new SyncEngineLevel({ db });
+    const first = source();
+    const second = { ...source('role-b', 'notebook-b'), actorDid: 'did:example:second' };
+    await Promise.all([first, second].map(async followed => {
+      await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+      await engine['_followedSourceStore'].replace(followed);
+    }));
+    engine['_runtime'] = new SyncRuntime(true);
+    const entered = deferred();
+    const release = deferred();
+    const failure = new Error('first actor lookup failed');
+    const get = engine['_identityStore'].get.bind(engine['_identityStore']);
+    sinon.stub(engine['_identityStore'], 'get').callsFake(async (did) => {
+      if (did === first.actorDid) {
+        throw failure;
+      }
+      entered.resolve();
+      await release.promise;
+      return get(did);
+    });
+    const activate = sinon.spy(engine as never, 'activateFollowedSource');
+    engine['scheduleFollowedSourceRefresh']();
+    let finished = false;
+    const refresh = engine['_followedSourceRefresh']!.catch((error: unknown): unknown => error).finally((): void => { finished = true; });
+    await entered.promise;
+    expect(finished).toBe(false);
+    const teardown = mode === 'stop' ? engine.stopSync(100) : engine.clear({ timeout: 100 });
+    release.resolve();
+
+    expect(await refresh).toBe(failure);
+    await expect(teardown).resolves.toBeUndefined();
+    expect(activate.notCalled).toBe(true);
+  });
+
+  it('should preserve a replacement delegate source when an old authority inspection reports absence', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    const first = { delegateDid: 'did:example:first', protocols: 'all' as const };
+    const second = { delegateDid: 'did:example:second', protocols: 'all' as const };
+    await engine['_identityStore'].set(followed.actorDid, first);
+    await engine['_followedSourceStore'].replace(followed);
+    const entered = deferred();
+    const release = deferred();
+    sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint').callsFake(async () => {
+      entered.resolve();
+      await release.promise;
+      return undefined;
+    });
+    const refresh = engine['refreshFollowedSourceAuthority'](engine['_runtime'], followed);
+    await entered.promise;
+    await engine['_identityStore'].set(followed.actorDid, second);
+    const removal = engine.removeIdentity(followed.actorDid, { expectedDelegateDid: first.delegateDid });
+    release.resolve();
+    await Promise.all([refresh, removal]);
+
+    expect(await engine.listFollowedSources()).toEqual([followed]);
+    expect(await engine.getIdentityOptions(followed.actorDid)).toEqual(second);
+  });
+
+  it('should keep a delayed activation fenced after unregistering and re-registering the same actor', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    engine['_runtime'] = new SyncRuntime(true);
+    sinon.stub(engine as never, 'resolveFollowedSource').resolves({ batch: supportBatch(followed.id), source: followed });
+    sinon.stub(engine as never, 'admitFollowedSource').resolves();
+    sinon.stub(engine as never, 'refreshRoleLinksForActor').resolves();
+    const initialize = sinon.stub(engine as never, 'initializeLinkTargetWithRetry').resolves();
+    const committed = deferred();
+    const release = deferred();
+    sinon.stub(engine as never, 'removeFollowedSourceLinksForSources').callsFake(async () => {
+      committed.resolve();
+      await release.promise;
+    });
+    const following = engine.followSource(sourceInput(followed));
+    await committed.promise;
+    await engine.removeIdentity(followed.actorDid);
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    engine['_lifecycle'].getIdentityTaskGroup(followed.actorDid).resume();
+    release.resolve();
+    await following;
+    await engine['_lifecycle'].waitForBackgroundTasks();
+
+    expect(initialize.notCalled).toBe(true);
+    expect(await engine.listFollowedSources()).toEqual([followed]);
+    await engine.stopSync();
+  });
+
+  it('should not report an owner pull current after a sibling unregisters its actor', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const sibling = new SyncEngineLevel({ db });
+    const followed = source();
+    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_followedSourceStore'].replace(followed);
+    sinon.stub(engine as never, 'reconcileTarget').callsFake(async () => {
+      await sibling.removeIdentity(followed.actorDid);
+      return { pullDrained: true };
+    });
+
+    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+    expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
   });
 
   it('should apply followed-context changes from a sibling engine', async () => {
@@ -1462,6 +1708,41 @@ describe('SyncEngineLevel — followed sources', () => {
     await internal.refreshRoleLinksForActor(followed.actorDid);
 
     expect(await internal.replicationLinkStore.getLinksForTenant(SOURCE_DID)).toEqual([]);
+  });
+
+  it('should await a removed source subscription before unregistering its actor', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const followed = source();
+    const delegateDid = 'did:example:delegate';
+    const options = { delegateDid, protocols: 'all' as const };
+    await engine['_identityStore'].set(followed.actorDid, options);
+    await engine['_followedSourceStore'].replace(followed);
+    const target = await engine['targetResolver'].buildTargetForSource(followed, delegateDid);
+    const link = await createRoleLink(engine, target);
+    const controller = engine['activateLink'](linkKey(link), link);
+    const release = deferred();
+    const close = sinon.stub().returns(release.promise);
+    controller.setLiveSubscription({ close });
+
+    try {
+      await engine.deleteFollowedSource(followed);
+      expect(await engine.getFollowedSource(followed.id)).toBeUndefined();
+      expect(engine['_linkControllers'].size).toBe(0);
+
+      await expect(engine.removeIdentity(followed.actorDid, { expectedDelegateDid: delegateDid, timeout: 10 }))
+        .rejects.toThrow('Live subscriptions did not close');
+      expect(await engine.getIdentityOptions(followed.actorDid)).toEqual(options);
+      expect(close.calledOnce).toBe(true);
+
+      release.resolve();
+      await engine.removeIdentity(followed.actorDid, { expectedDelegateDid: delegateDid, timeout: 100 });
+      expect(await engine.getIdentityOptions(followed.actorDid)).toBeUndefined();
+      expect(engine['_pendingSubscriptionCloses'].size).toBe(0);
+    } finally {
+      release.resolve();
+      await engine.stopSync();
+      engine['closeWakePublishers']();
+    }
   });
 
   it('should retain followed sources and cache healthy targets until their actor registers again', async () => {
