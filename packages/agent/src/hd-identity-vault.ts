@@ -37,14 +37,14 @@ export type HdIdentityVaultInitializeParams = {
     */
    recoveryPhrase?: string;
 
-   /**
-    * Optional dwnEndpoints to register didService endpoints during HdIdentityVault initialization
-    *
-    * The dwnEndpoints are used to register a DWN endpoint during DidDht.create(). This allows the
-    * agent to properly recover connectedDids from DWN. Also, this pattern can be used on the server
-    * side in place of the agentDid-->connectedDids pattern.
-    */
+   /** Retain the generated phrase and required registration policy until owner setup completes. @internal */
+   pendingSetup?: { registrationRequired: boolean };
+
+   /** Explicit endpoints for a new DID or recovery without an existing usable public route. */
     dwnEndpoints?: string[];
+
+    /** Leave new recovery endpoints unpublished until the caller prepares their remote tenancy. */
+    deferDwnEndpointBootstrap?: boolean;
 
  };
 
@@ -64,6 +64,8 @@ type HdIdentityVaultResetPasswordInternalParams =
   HdIdentityVaultResetPasswordWithRecoveryPhraseParams & {
     /** Preserve a usable existing route until coordinated recovery finishes. */
     deferDwnEndpointReplacement?: boolean;
+    /** Leave new recovery endpoints unpublished until the caller prepares their remote tenancy. */
+    deferDwnEndpointBootstrap?: boolean;
   };
 
 type HdIdentityVaultDidResolver = Pick<DidResolver, 'resolve'> & {
@@ -80,10 +82,15 @@ type HdIdentityVaultDerivedMaterial = {
   portableDid: PortableDid;
 };
 
+/** Setup material belongs only in the encrypted vault record, never public DID metadata. */
+type PendingVaultSetup = { recoveryPhrase: string; registrationRequired: boolean };
+type StoredVaultDid = PortableDid & { pendingSetup?: PendingVaultSetup };
+
 type HdIdentityVaultReconcileRecoveredDidParams = {
   portableDid: PortableDid;
   replacementEndpoints?: string[];
   deferReplacement?: boolean;
+  deferBootstrap?: boolean;
   useStoredOnNotFound?: boolean;
 };
 
@@ -213,7 +220,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * decrypt + LevelDB read on every call, while still returning a fresh
    * BearerDid instance each time so callers cannot mutate shared state.
    */
-  private _cachedPortableDid: PortableDid | undefined;
+  private _cachedPortableDid: StoredVaultDid | undefined;
 
   /** Resolver supplied by the owning agent so recovery refreshes its normal cache. */
   private _didResolver: HdIdentityVaultDidResolver = DidDht;
@@ -359,24 +366,35 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with a {@link BearerDid}.
    */
   public async getDid(): Promise<BearerDid> {
-    // Verify the identity vault is unlocked.
-    if (this.isLocked()) {
-      throw new Error(`HdIdentityVault: Vault has not been initialized and unlocked.`);
-    }
-
-    // If the decrypted PortableDid is not yet cached, decrypt it from the
-    // vault store.  This avoids the expensive LevelDB read + JWE decrypt on
-    // every call while the vault is unlocked.
-    if (!this._cachedPortableDid) {
-      this._cachedPortableDid = await this.decryptStoredPortableDid(this._contentEncryptionKey!);
-    }
-
     // Always return a fresh BearerDid from a deep copy of the cached
     // PortableDid.  BearerDid is mutable (document, metadata, keyManager
     // are public) and BearerDid.import() takes document/metadata by
     // reference, so without the clone a caller mutating a returned DID
     // would corrupt the cache for all subsequent getDid() calls.
-    return await BearerDid.import({ portableDid: structuredClone(this._cachedPortableDid) });
+    const portableDid = structuredClone(await this.getCachedPortableDid());
+    delete portableDid.pendingSetup;
+    return await BearerDid.import({ portableDid });
+  }
+
+  /** Read durable unfinished setup while unlocked, under the caller's native vault lifecycle lock. @internal */
+  public async getPendingSetup(): Promise<PendingVaultSetup | undefined> {
+    const pendingSetup = (await this.getCachedPortableDid(true)).pendingSetup;
+    return pendingSetup === undefined ? undefined : {
+      recoveryPhrase       : pendingSetup.recoveryPhrase,
+      registrationRequired : pendingSetup.registrationRequired,
+    };
+  }
+
+  /** Retire setup after session persistence; the caller must serialize native vault mutations. @internal */
+  public async clearPendingSetup(): Promise<void> {
+    const cachedDid = await this.getCachedPortableDid(true);
+    if (cachedDid.pendingSetup === undefined) {
+      return;
+    }
+    const portableDid = { ...cachedDid };
+    delete portableDid.pendingSetup;
+    await this._store.set('did', await this.encryptPortableDid(portableDid, this._contentEncryptionKey!));
+    this._cachedPortableDid = portableDid;
   }
 
   /**
@@ -437,23 +455,35 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with the recovery phrase used during the initialization, which
    *          should be securely stored by the user.
    */
-  public async initialize({ password, recoveryPhrase, dwnEndpoints }:
+  public async initialize({ password, recoveryPhrase, pendingSetup, dwnEndpoints, deferDwnEndpointBootstrap = false }:
     HdIdentityVaultInitializeParams
   ): Promise<string> {
     // Verify that the identity vault was not previously initialized.
     if (await this.isInitialized()) {
       throw new Error(`HdIdentityVault: Vault has already been initialized.`);
     }
+    if (pendingSetup !== undefined && (pendingSetup === null || typeof pendingSetup !== 'object'
+      || typeof pendingSetup.registrationRequired !== 'boolean')) {
+      throw new TypeError('HdIdentityVault: Pending setup requires a boolean registration policy.');
+    }
 
     const isRecovery = recoveryPhrase !== undefined;
     const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
-    const portableDid = isRecovery
+    const portableDid: StoredVaultDid = isRecovery
       ? await this.reconcileRecoveredDid({
         portableDid          : derivedMaterial.portableDid,
         replacementEndpoints : dwnEndpoints,
         deferReplacement     : true,
+        deferBootstrap       : deferDwnEndpointBootstrap,
       })
       : await this.publishPortableDid(derivedMaterial.portableDid);
+
+    if (pendingSetup !== undefined && !isRecovery) {
+      portableDid.pendingSetup = {
+        recoveryPhrase       : derivedMaterial.recoveryPhrase,
+        registrationRequired : pendingSetup.registrationRequired,
+      };
+    }
 
     await this._store.set('contentEncryptionKey', derivedMaterial.contentEncryptionKeyJwe);
     await this._store.set(
@@ -482,6 +512,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     password,
     dwnEndpoints,
     deferDwnEndpointReplacement = false,
+    deferDwnEndpointBootstrap = false,
   }: HdIdentityVaultResetPasswordInternalParams): Promise<void> {
     if (await this.isInitialized() === false) {
       throw new Error(
@@ -507,6 +538,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         portableDid          : storedPortableDid,
         replacementEndpoints : dwnEndpoints,
         deferReplacement     : deferDwnEndpointReplacement,
+        deferBootstrap       : deferDwnEndpointBootstrap,
         useStoredOnNotFound  : true,
       });
       await this._store.set(
@@ -943,6 +975,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     portableDid,
     replacementEndpoints,
     deferReplacement = false,
+    deferBootstrap = false,
     useStoredOnNotFound = false,
   }: HdIdentityVaultReconcileRecoveredDidParams): Promise<PortableDid> {
     const resolution = this._didResolver.refreshResolution === undefined
@@ -954,6 +987,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         portableDid,
         replacementEndpoints,
         deferReplacement,
+        deferBootstrap,
         useStoredOnNotFound,
       });
     }
@@ -972,6 +1006,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       }
       const publicDocument = replaceDwnServiceEndpointUrls(resolvedDocument, replacementEndpoints);
       const localDocument = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
+      if (deferBootstrap) {
+        return { ...portableDid, document: localDocument, metadata: { ...portableDid.metadata, published: false } };
+      }
       return this.publishPortableDid(portableDid, publicDocument, localDocument);
     }
 
@@ -993,25 +1030,26 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     portableDid,
     replacementEndpoints,
     deferReplacement = false,
+    deferBootstrap = false,
     useStoredOnNotFound = false,
   }: HdIdentityVaultReconcileRecoveredDidParams): Promise<PortableDid> {
-    if (useStoredOnNotFound && (replacementEndpoints === undefined || deferReplacement)) {
-      const storedEndpoints = getDwnEndpointStatus(portableDid.uri, portableDid.document);
-      if (storedEndpoints.status === 'ready') {
-        return this.publishPortableDid(portableDid);
-      }
-      if (replacementEndpoints === undefined) {
-        throw new Error(storedEndpoints.message);
-      }
+    const storedEndpoints = useStoredOnNotFound && (replacementEndpoints === undefined || deferReplacement)
+      ? getDwnEndpointStatus(portableDid.uri, portableDid.document)
+      : undefined;
+    if (storedEndpoints?.status === 'ready' && portableDid.metadata.published !== false) {
+      return this.publishPortableDid(portableDid);
     }
-    if (replacementEndpoints !== undefined) {
-      const document = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
-      return this.publishPortableDid(portableDid, document, document);
+    if (replacementEndpoints === undefined) {
+      if (storedEndpoints?.status === 'ready') {
+        throw new Error('HdIdentityVault: Unpublished recovery endpoints require explicit DWN endpoints to complete recovery.');
+      }
+      throw new Error(storedEndpoints?.message ??
+        `HdIdentityVault: Recovered DID '${portableDid.uri}' was not found. Provide DWN endpoints explicitly to bootstrap recovery.`);
     }
-    throw new Error(
-      `HdIdentityVault: Recovered DID '${portableDid.uri}' was not found. ` +
-      'Provide DWN endpoints explicitly to bootstrap recovery.'
-    );
+    const document = replaceDwnServiceEndpointUrls(portableDid.document, replacementEndpoints);
+    return deferBootstrap
+      ? { ...portableDid, document, metadata: { ...portableDid.metadata, published: false } }
+      : this.publishPortableDid(portableDid, document, document);
   }
 
   /** Publish using locally controlled keys while allowing the public document to remain authoritative. */
@@ -1067,7 +1105,17 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     });
   }
 
-  private async decryptStoredPortableDid(contentEncryptionKey: Jwk): Promise<PortableDid> {
+  private async getCachedPortableDid(refresh = false): Promise<StoredVaultDid> {
+    if (this.isLocked()) {
+      throw new Error('HdIdentityVault: Vault has not been initialized and unlocked.');
+    }
+    if (refresh || this._cachedPortableDid === undefined) {
+      this._cachedPortableDid = await this.decryptStoredPortableDid(this._contentEncryptionKey!);
+    }
+    return this._cachedPortableDid;
+  }
+
+  private async decryptStoredPortableDid(contentEncryptionKey: Jwk): Promise<StoredVaultDid> {
     const { plaintext: portableDidBytes } = await CompactJwe.decrypt({
       jwe        : await this.getStoredDid(),
       key        : contentEncryptionKey,
@@ -1082,6 +1130,13 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     const portableDid = Convert.uint8Array(portableDidBytes).toObject();
     if (!isPortableDid(portableDid)) {
       throw new Error('HdIdentityVault: Unable to decode malformed DID in identity vault');
+    }
+    const pendingSetup: unknown = (portableDid as StoredVaultDid).pendingSetup;
+    if (pendingSetup !== undefined && (pendingSetup === null || typeof pendingSetup !== 'object'
+      || !('recoveryPhrase' in pendingSetup) || typeof pendingSetup.recoveryPhrase !== 'string'
+      || !validateMnemonic(pendingSetup.recoveryPhrase, wordlist)
+      || !('registrationRequired' in pendingSetup) || typeof pendingSetup.registrationRequired !== 'boolean')) {
+      throw new Error('HdIdentityVault: Unable to decode malformed pending vault setup.');
     }
 
     return portableDid;

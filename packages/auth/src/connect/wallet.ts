@@ -13,7 +13,6 @@ import type { FlowContext } from './lifecycle.js';
 import type { WalletConnectOptions } from '../types.js';
 
 import { ConnectDeniedError } from '../errors.js';
-import { registerWithDwnEndpoints } from '../registration.js';
 import { validateConnectResultGrants } from './validate-grants.js';
 import { WalletConnect } from '../wallet-connect-client.js';
 import { assertFlowActive, commitFlowSession, ensureVaultReady, finalizeDelegateSession, importDelegateAndSetupSync, resolvePassword, runFlowMutation } from './lifecycle.js';
@@ -75,26 +74,6 @@ export async function walletConnect(
   const {
     delegatePortableDid, connectedDid, delegateGrants, sessionRevocations,
   } = result;
-
-  // Provider authentication may wait on application UI, so keep it outside
-  // the lifecycle mutex and re-check teardown before importing the delegate.
-  if (ctx.registration) {
-    const dwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid, refresh: true });
-    await registerWithDwnEndpoints(
-      {
-        userAgent,
-        dwnEndpoints,
-        agentDid     : connectedDid,
-        connectedDid,
-        secretStore  : userAgent.secrets,
-        storage      : storage,
-        assertActive : ctx.assertActive,
-        runMutation  : ctx.runMutation,
-      },
-      ctx.registration,
-    );
-    assertFlowActive(ctx);
-  }
 
   return commitFlowSession(ctx, async (): Promise<AuthSession> => {
     // Import delegate DID, process grants, and set up sync.

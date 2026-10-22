@@ -10,41 +10,30 @@
  * @internal
  */
 
-import type { DwnEndpointResolution } from '@enbox/dids';
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
-import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter } from '../types.js';
+import type { IdentitySyncProtocols, RegistrationOptions } from '../types.js';
 
 import { DidErrorCode, getDwnEndpointStatus } from '@enbox/dids';
 import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
 
-import { applyIdentitySyncScope } from './lifecycle.js';
-import { registerWithDwnEndpoints } from '../registration.js';
+import { registerDwnTenants } from '../registration.js';
+import { applyIdentitySyncScope, registerSyncScopeForIdentity } from './lifecycle.js';
 
 type RecoveryLifecycle = {
+  operationSignal: AbortSignal;
   /** Throws when teardown invalidated the recovery flow. */
-  assertActive?: () => void;
+  assertActive: () => void;
   /** Serializes agent mutations against session teardown. */
-  runMutation?: <T>(operation: () => Promise<T>) => Promise<T>;
+  runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
 };
 
 type RecoveredIdentityRouting = {
   bootstrapEndpoints?: string[];
+  prepareBootstrap?: boolean;
   ownedDid: string;
   replacementEndpoints?: string[];
   routingDid: string;
-  status: DwnEndpointResolution;
 };
-
-function assertRecoveryActive(lifecycle: RecoveryLifecycle): void {
-  lifecycle.assertActive?.();
-}
-
-async function runRecoveryMutation<T>(
-  lifecycle: RecoveryLifecycle,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return lifecycle.runMutation === undefined ? operation() : lifecycle.runMutation(operation);
-}
 
 /**
  * Internal protocols that store recovery-critical data in the agent DID's DWN.
@@ -70,41 +59,6 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
   });
 }
 
-async function registerRecoveredIdentityTenant(params: {
-  userAgent: EnboxUserAgent;
-  dwnEndpoints: string[];
-  agentDid: string;
-  connectedDid: string;
-  registration?: RegistrationOptions;
-  storage: StorageAdapter;
-} & RecoveryLifecycle): Promise<boolean> {
-  const { userAgent, dwnEndpoints, agentDid, connectedDid, registration, storage, assertActive, runMutation } = params;
-
-  if (registration === undefined) {
-    return true;
-  }
-
-  try {
-    return await registerWithDwnEndpoints(
-      {
-        userAgent,
-        dwnEndpoints,
-        agentDid,
-        connectedDid,
-        secretStore: userAgent.secrets,
-        storage,
-        assertActive,
-        runMutation,
-      },
-      registration,
-    );
-  } catch {
-    // Best effort — the DID may already be registered, or the
-    // endpoint may be temporarily unreachable.
-    return false;
-  }
-}
-
 async function resolveRecoveredIdentityRouting(
   identity: BearerIdentity,
   userAgent: EnboxUserAgent,
@@ -113,13 +67,15 @@ async function resolveRecoveredIdentityRouting(
   const ownedDid = identity.did.uri;
   const routingDid = identity.metadata.connectedDid ?? ownedDid;
   const status = await userAgent.identity.getDwnEndpointStatus({ didUri: routingDid, refresh: true });
-  const routing = { ownedDid, routingDid, status };
+  const routing = { ownedDid, routingDid };
   const ownsRoutingDid = ownedDid === routingDid;
 
   if (status.status === 'ready') {
+    // Repeating the current route is recovery, not new tenant preparation.
     return {
       ...routing,
-      replacementEndpoints: ownsRoutingDid ? replacementDwnEndpoints : undefined,
+      replacementEndpoints: ownsRoutingDid && status.endpoints.join('\n') !== replacementDwnEndpoints?.join('\n')
+        ? replacementDwnEndpoints : undefined,
     };
   }
   if (!ownsRoutingDid
@@ -132,7 +88,8 @@ async function resolveRecoveredIdentityRouting(
       return {
         ...routing,
         bootstrapEndpoints   : storedStatus.endpoints,
-        replacementEndpoints : replacementDwnEndpoints,
+        replacementEndpoints : storedStatus.endpoints.join('\n') === replacementDwnEndpoints?.join('\n')
+          ? undefined : replacementDwnEndpoints,
       };
     }
     if (replacementDwnEndpoints === undefined) {
@@ -143,20 +100,35 @@ async function resolveRecoveredIdentityRouting(
   if (replacementDwnEndpoints === undefined) {
     throw new Error(status.message);
   }
-  return { ...routing, bootstrapEndpoints: replacementDwnEndpoints };
+  return { ...routing, bootstrapEndpoints: replacementDwnEndpoints, prepareBootstrap: true };
+}
+
+/** Prepare tenancy before publishing newly requested recovery endpoints. */
+async function setRecoveredDwnEndpoints(
+  params: RecoveryLifecycle & { userAgent: EnboxUserAgent },
+  didUri: string,
+  endpoints: string[],
+  registration?: RegistrationOptions,
+): Promise<void> {
+  const { userAgent } = params;
+  if (registration !== undefined) {
+    await registerDwnTenants(params, { dids: [didUri], dwnEndpoints: endpoints }, registration);
+    params.assertActive();
+  }
+  await params.runMutation(() => userAgent.identity.setDwnEndpoints({ didUri, endpoints }));
 }
 
 /**
  * Recover identities and their data from remote DWN endpoints.
  *
- * Assumes the agent DID is already registered for sync (via
- * {@link registerAgentDidForSync}) and as a DWN tenant.
+ * Assumes the agent DID is registered for sync (via
+ * {@link registerAgentDidForSync}) and keeps its existing remote tenancy.
  *
  * Phase 1 — pull identity metadata and DID private keys stored in the
  *   agent DID's DWN.
  *
- * Phase 2 — register each recovered identity DID as a tenant and for
- *   explicitly scoped sync, then pull the requested protocol data. If no
+ * Phase 2 — restore explicitly scoped sync for each recovered identity,
+ *   then pull the requested protocol data. If no
  *   `identitySyncProtocols` is provided, auth recovers identity metadata only
  *   and leaves product-scoped record sync to the application.
  *
@@ -168,11 +140,10 @@ export async function recoverIdentitiesFromRemote(params: {
   replacementDwnEndpoints?: string[];
   identitySyncProtocols?: IdentitySyncProtocols;
   registration?: RegistrationOptions;
-  storage: StorageAdapter;
 } & RecoveryLifecycle): Promise<BearerIdentity[]> {
-  const { userAgent, replacementDwnEndpoints, identitySyncProtocols, registration, storage } = params;
+  const { userAgent, replacementDwnEndpoints, identitySyncProtocols, registration } = params;
   // Phase 1: pull identity metadata + encrypted DID keys.
-  const identities = await runRecoveryMutation(params, async (): Promise<BearerIdentity[]> => {
+  const identities = await params.runMutation(async (): Promise<BearerIdentity[]> => {
     await userAgent.sync.sync('pull');
     return userAgent.identity.list();
   });
@@ -185,50 +156,40 @@ export async function recoverIdentitiesFromRemote(params: {
     resolveRecoveredIdentityRouting(identity, userAgent, replacementDwnEndpoints)
   ));
 
-  // Register each recovered identity DID as a DWN tenant. Register for sync
-  // only when the application supplied an explicit identity protocol scope.
-  // Tenant registration must come first — sync('pull') reads the durable
-  // MessagesQuery feed, which requires the DID to be a recognised tenant.
-  let registeredIdentityForSync = false;
-  for (const { bootstrapEndpoints, ownedDid, routingDid, status } of resolvedIdentities) {
-    let resolvedEndpoints = status.status === 'ready' ? status.endpoints : undefined;
+  // Preserve existing tenancy. Newly requested bootstrap endpoints must be
+  // prepared before publication or scoped recovery can start using them.
+  // Sync stores one authorization per routing owner. Prefer a recovered local
+  // owner, otherwise keep the first delegate with usable grants.
+  const localOwnerDids = new Set(resolvedIdentities
+    .filter(({ ownedDid, routingDid }) => ownedDid === routingDid)
+    .map(({ routingDid }) => routingDid));
+  const registeredRoutingDids = new Set<string>();
+  for (const { bootstrapEndpoints, prepareBootstrap, ownedDid, routingDid } of resolvedIdentities) {
     if (bootstrapEndpoints !== undefined) {
-      await runRecoveryMutation(
-        params,
-        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: bootstrapEndpoints }),
+      await setRecoveredDwnEndpoints( // NOSONAR S9382: prepare each owner before publishing new endpoints.
+        params, ownedDid, bootstrapEndpoints, prepareBootstrap ? registration : undefined,
       );
-      resolvedEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: routingDid });
-    }
-    if (resolvedEndpoints === undefined) {
-      throw new Error(`Recovered DID '${routingDid}' does not advertise a DWN endpoint.`);
     }
 
-    // Registration may wait on app-owned provider-auth UI, so it must remain
-    // outside the lifecycle mutation mutex. Re-check the flow before making
-    // any further local agent mutations.
-    await registerRecoveredIdentityTenant({
-      userAgent,
-      dwnEndpoints : resolvedEndpoints,
-      agentDid     : routingDid,
-      connectedDid : routingDid,
-      registration,
-      storage,
-      assertActive : params.assertActive,
-      runMutation  : params.runMutation,
-    });
-    assertRecoveryActive(params);
-    registeredIdentityForSync = await runRecoveryMutation(
-      params,
-      () => applyIdentitySyncScope({
+    if (identitySyncProtocols === undefined || registeredRoutingDids.has(routingDid)
+      || (ownedDid !== routingDid && localOwnerDids.has(routingDid))) {
+      continue;
+    }
+    const registered = await params.runMutation( // NOSONAR S9382: prepare each recovered signer before the data pull.
+      () => registerSyncScopeForIdentity({
         userAgent,
         connectedDid : routingDid,
-        scope        : identitySyncProtocols,
+        delegateDid  : ownedDid === routingDid ? undefined : ownedDid,
+        identitySyncProtocols,
       }),
-    ) || registeredIdentityForSync;
+    );
+    if (registered) {
+      registeredRoutingDids.add(routingDid);
+    }
   }
 
-  await runRecoveryMutation(params, async (): Promise<void> => {
-    if (registeredIdentityForSync) {
+  await params.runMutation(async (): Promise<void> => {
+    if (registeredRoutingDids.size > 0) {
       // Phase 2: pull explicitly scoped protocol configurations and records.
       await userAgent.sync.sync('pull');
     }
@@ -238,26 +199,9 @@ export async function recoverIdentitiesFromRemote(params: {
   // authoritative endpoints and completed both pulls.
   for (const { ownedDid, replacementEndpoints } of resolvedIdentities) {
     if (replacementEndpoints !== undefined) {
-      const isReplacementReady = await registerRecoveredIdentityTenant({
-        userAgent,
-        dwnEndpoints : replacementEndpoints,
-        agentDid     : ownedDid,
-        connectedDid : ownedDid,
-        registration,
-        storage,
-        assertActive : params.assertActive,
-        runMutation  : params.runMutation,
-      });
-      assertRecoveryActive(params);
-      if (!isReplacementReady) {
-        continue;
-      }
-      await runRecoveryMutation(
-        params,
-        () => userAgent.identity.setDwnEndpoints({ didUri: ownedDid, endpoints: replacementEndpoints }),
-      );
+      await setRecoveredDwnEndpoints(params, ownedDid, replacementEndpoints, registration); // NOSONAR S9382: preserve owner publication order.
     }
   }
 
-  return runRecoveryMutation(params, () => userAgent.identity.list());
+  return params.runMutation(() => userAgent.identity.list());
 }

@@ -99,7 +99,7 @@ function createTestManager(
   manager._isConnecting = false;
   manager._isShutDown = false;
   manager._isShuttingDown = false;
-  manager._lifecycleGeneration = 0;
+  manager._lifecycleController = new AbortController();
   manager._lifecycleCommitTail = Promise.resolve();
   manager._shutdownPromise = undefined;
   manager._defaultPassword = overrides.password;
@@ -377,6 +377,7 @@ describe('AuthManager', () => {
         recoveryPhrase              : 'test phrase',
         password                    : 'new-password',
         deferDwnEndpointReplacement : true,
+        deferDwnEndpointBootstrap   : false,
       }]);
       expect(session.did).toBe('did:dht:testuser123');
     });

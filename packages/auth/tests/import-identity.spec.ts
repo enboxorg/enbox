@@ -210,17 +210,17 @@ describe('importFromPortable', () => {
     expect(events).toEqual(['identity-added']);
   });
 
-  test('calls registration when registration options are provided', async () => {
+  test('does not register remote tenants when importing an existing identity', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
 
-    let registrationSucceeded = false;
+    let registrationRequests = 0;
     const agent = createMockAgent({
       identityImport   : async () => createMockIdentity(),
-      rpcGetServerInfo : async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
-      }),
+      rpcGetServerInfo : async () => {
+        registrationRequests++;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
     });
 
     await importFromPortable(
@@ -229,14 +229,12 @@ describe('importFromPortable', () => {
         emitter,
         storage,
         registration : {
-          onSuccess : () => { registrationSucceeded = true; },
-          onFailure : () => {},
         },
       },
       { portableIdentity: {} as any },
     );
 
-    expect(registrationSucceeded).toBe(true);
+    expect(registrationRequests).toBe(0);
   });
 
   test('registers sync with protocols: all for delegate with unscoped Messages.Read grant', async () => {

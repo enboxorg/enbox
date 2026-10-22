@@ -1,3 +1,5 @@
+import type { DwnTenantRegistrationResult } from './types.js';
+
 export class RecoveryPhraseMismatchError extends Error {
   public readonly code = 'RECOVERY_PHRASE_MISMATCH';
 
@@ -47,5 +49,16 @@ export class PasswordProviderUnavailableError extends Error {
   constructor(message = '[@enbox/auth] Password provider is unavailable.') {
     super(message);
     this.name = 'PasswordProviderUnavailableError';
+  }
+}
+
+/** Reports all failed pairs after attempting every requested tenant registration. */
+export class DwnTenantRegistrationError extends AggregateError {
+  public readonly result: DwnTenantRegistrationResult;
+
+  constructor(result: DwnTenantRegistrationResult) {
+    super(result.failed.map((failure) => failure.error), 'Unable to register every requested DWN tenant.');
+    this.name = 'DwnTenantRegistrationError';
+    this.result = result;
   }
 }

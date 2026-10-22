@@ -9,7 +9,6 @@ import type { AuthSession } from '../identity-session.js';
 import type { FlowContext } from './lifecycle.js';
 import type { ImportFromPortableOptions } from '../types.js';
 
-import { registerWithDwnEndpoints } from '../registration.js';
 import { assertFlowActive, commitFlowSession, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, runFlowMutation, startSyncInBackgroundIfEnabled } from './lifecycle.js';
 
 /**
@@ -32,26 +31,6 @@ export async function importFromPortable(
   }));
 
   const { connectedDid, delegateDid } = resolveIdentityDids(identity);
-
-  // Register with DWN endpoints (if registration options are provided).
-  // For portable imports, extract endpoints from the DID document's DWN service.
-  if (ctx.registration) {
-    const dwnEndpoints = await userAgent.identity.getDwnEndpoints({ didUri: connectedDid, refresh: true });
-    await registerWithDwnEndpoints(
-      {
-        userAgent    : userAgent,
-        dwnEndpoints,
-        agentDid     : connectedDid,
-        connectedDid,
-        secretStore  : userAgent.secrets,
-        storage      : storage,
-        assertActive : ctx.assertActive,
-        runMutation  : ctx.runMutation,
-      },
-      ctx.registration,
-    );
-    assertFlowActive(ctx);
-  }
 
   return commitFlowSession(ctx, async (): Promise<AuthSession> => {
     // Register sync. For delegates, derive scope from grants (not 'all').

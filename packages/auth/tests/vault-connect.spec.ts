@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
+import { DwnTenantRegistrationError } from '../src/errors.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
 import { vaultConnect as runVaultConnect } from '../src/connect/vault.js';
@@ -260,16 +261,18 @@ describe('vaultConnect', () => {
   test('registers the newly created identity tenant when registration options are provided', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
-    let registrationSuccesses = 0;
+    let registrationRequests = 0;
+    let created = false;
+    const identity = createMockIdentity();
 
     const agent = createMockAgent({
       firstLaunch      : async () => true,
-      identityList     : async () => [],
-      identityCreate   : async () => createMockIdentity(),
-      rpcGetServerInfo : async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
-      }),
+      identityList     : async () => created ? [identity] : [],
+      identityCreate   : async () => { created = true; return identity; },
+      rpcGetServerInfo : async () => {
+        registrationRequests++;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
     });
 
     await vaultConnect(
@@ -278,14 +281,12 @@ describe('vaultConnect', () => {
         emitter,
         storage,
         registration : {
-          onSuccess : () => { registrationSuccesses++; },
-          onFailure : () => {},
         },
       },
       { createIdentity: true },
     );
 
-    expect(registrationSuccesses).toBe(2);
+    expect(registrationRequests).toBe(2);
   });
 
   test('registers agent DID for sync even without identity creation', async () => {
@@ -456,7 +457,7 @@ describe('vaultConnect', () => {
         userAgent    : agent,
         emitter      : new AuthEventEmitter(),
         storage      : new MemoryStorage(),
-        registration : { onSuccess: () => {}, onFailure: () => {} },
+        registration : {},
       },
       {
         recoveryPhrase : 'phrase',
@@ -468,9 +469,7 @@ describe('vaultConnect', () => {
 
     expect(sequence).toEqual([
       'vault-unlock',
-      'prepare:https://advertised.example',
       'pull',
-      'prepare:https://advertised.example',
       'prepare:https://replacement.example',
       'identity-migrate',
       'prepare:https://replacement.example',
@@ -484,7 +483,6 @@ describe('vaultConnect', () => {
 
   test('leaves recovered routing unchanged when replacement tenant preparation fails', async () => {
     const sequence: string[] = [];
-    let registrationFailures = 0;
     const agent = createMockAgent({
       firstLaunch                  : async () => false,
       identityList                 : async () => [createMockIdentity()],
@@ -509,14 +507,12 @@ describe('vaultConnect', () => {
       },
     });
 
-    await vaultConnect(
+    await expect(vaultConnect(
       {
         userAgent    : agent,
         emitter      : new AuthEventEmitter(),
         storage      : new MemoryStorage(),
         registration : {
-          onSuccess : () => {},
-          onFailure : () => { registrationFailures++; },
         },
       },
       {
@@ -525,17 +521,13 @@ describe('vaultConnect', () => {
         dwnEndpoints   : ['https://replacement.example'],
         sync           : 'off',
       },
-    );
+    )).rejects.toBeInstanceOf(DwnTenantRegistrationError);
 
     expect(sequence).toEqual([
       'vault-unlock',
-      'prepare:https://advertised.example',
       'pull',
-      'prepare:https://advertised.example',
-      'prepare:https://replacement.example',
       'prepare:https://replacement.example',
     ]);
-    expect(registrationFailures).toBe(2);
   });
 
   test('handles wallet-connected identity (connectedDid set)', async () => {
@@ -759,19 +751,19 @@ describe('vaultConnect', () => {
     expect(setCalls).toEqual(['http://127.0.0.1:55557']);
   });
 
-  test('calls registration when registration options are provided', async () => {
+  test('does not register existing tenants during ordinary vault unlock', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const identity = createMockIdentity();
 
-    let registrationSucceeded = false;
+    let registrationRequests = 0;
     const agent = createMockAgent({
       firstLaunch      : async () => false,
       identityList     : async () => [identity],
-      rpcGetServerInfo : async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
-      }),
+      rpcGetServerInfo : async () => {
+        registrationRequests++;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
     });
 
     await vaultConnect(
@@ -780,14 +772,12 @@ describe('vaultConnect', () => {
         emitter,
         storage,
         registration : {
-          onSuccess : () => { registrationSucceeded = true; },
-          onFailure : () => {},
         },
       },
       {},
     );
 
-    expect(registrationSucceeded).toBe(true);
+    expect(registrationRequests).toBe(0);
   });
 
   test('createIdentity: false skips identity creation and uses agent DID', async () => {

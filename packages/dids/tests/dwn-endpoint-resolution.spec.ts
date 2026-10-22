@@ -2,7 +2,12 @@ import type { DidDocument } from '../src/types/did-core.js';
 
 import { describe, expect, it, mock } from 'bun:test';
 
-import { getDwnEndpointStatus, replaceDwnServiceEndpointUrls, resolveDwnEndpointStatus } from '../src/dwn-endpoint-resolution.js';
+import {
+  getDwnEndpointStatus,
+  normalizeDwnEndpointUrls,
+  replaceDwnServiceEndpointUrls,
+  resolveDwnEndpointStatus,
+} from '../src/dwn-endpoint-resolution.js';
 
 const didUri = 'did:example:alice';
 
@@ -30,8 +35,21 @@ describe('DWN endpoint resolution', () => {
     });
   });
 
-  it('rejects endpoint URLs with a query or fragment', () => {
-    const result = getDwnEndpointStatus(didUri, dwnDocument('https://dwn.example/path?tenant=alice#fragment'));
+  it.each([
+    ['https://DWN.example:443///', 'https://dwn.example'],
+    ['https://DWN.example/tenant///', 'https://dwn.example/tenant'],
+    ['https://DWN.example/tenant//child///', 'https://dwn.example/tenant//child'],
+    ['https://DWN.example/tenant%2F///', 'https://dwn.example/tenant%2F'],
+  ])('normalizes %s idempotently while preserving internal path separators', (rawEndpoint, canonicalEndpoint) => {
+    const normalized = normalizeDwnEndpointUrls([rawEndpoint]);
+
+    expect(normalized).toEqual([canonicalEndpoint]);
+    expect(normalizeDwnEndpointUrls(normalized)).toEqual(normalized);
+    expect(normalizeDwnEndpointUrls([rawEndpoint, canonicalEndpoint])).toEqual(normalized);
+  });
+
+  it.each(['?tenant=alice', '#fragment'])('rejects endpoint URLs containing %s', (suffix) => {
+    const result = getDwnEndpointStatus(didUri, dwnDocument(`https://dwn.example/path${suffix}`));
 
     expect(result.status).toBe('service-malformed');
   });

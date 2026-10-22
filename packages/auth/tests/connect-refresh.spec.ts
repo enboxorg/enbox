@@ -65,7 +65,7 @@ function createTestManager(agent: EnboxUserAgent, options: {
   internals._isConnecting = false;
   internals._isShutDown = false;
   internals._isShuttingDown = false;
-  internals._lifecycleGeneration = 0;
+  internals._lifecycleController = new AbortController();
   internals._lifecycleCommitTail = Promise.resolve();
   internals._shutdownPromise = undefined;
   internals._connectHandler = options.connectHandler;

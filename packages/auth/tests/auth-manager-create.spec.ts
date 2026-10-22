@@ -9,6 +9,7 @@ import { EnboxUserAgent } from '@enbox/agent';
 
 import { AuthManager } from '../src/auth-manager.js';
 import { MemoryStorage } from '../src/storage/storage.js';
+import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import {
@@ -118,6 +119,41 @@ describe('AuthManager.create()', () => {
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     expect(manager.state).toBe('unlocked');
+  });
+
+  for (const locked of [false, true]) {
+    test(`erases plaintext credentials at startup for an existing ${locked ? 'locked' : 'unlocked'} vault`, async (): Promise<void> => {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE_KEYS.REGISTRATION_TOKENS, 'old plaintext bearer credentials');
+      const read = sinon.spy(storage, 'get');
+      const agent = createMockAgent({ vaultIsLocked: (): boolean => locked });
+      const encrypted = new Uint8Array([1, 2, 3]);
+      await agent.secrets.put(STORAGE_KEYS.REGISTRATION_TOKENS, encrypted);
+      const secretRead = sinon.spy(agent.secrets, 'get');
+      const secretWrite = sinon.spy(agent.secrets, 'put');
+      const secretDelete = sinon.spy(agent.secrets, 'delete');
+      const network = sinon.spy(agent.rpc, 'getServerInfo');
+
+      const manager = await AuthManager.create({ agent, storage });
+
+      expect(manager.state).toBe(locked ? 'locked' : 'unlocked');
+      expect(read.calledWith(STORAGE_KEYS.REGISTRATION_TOKENS)).toBe(false);
+      expect(await storage.get(STORAGE_KEYS.REGISTRATION_TOKENS)).toBeNull();
+      expect(network.called).toBe(false);
+      expect(secretRead.called || secretWrite.called || secretDelete.called).toBe(false);
+      expect(await agent.secrets.get(STORAGE_KEYS.REGISTRATION_TOKENS)).toEqual(encrypted);
+    });
+  }
+
+  test('starts normally when old plaintext credential erasure fails', async (): Promise<void> => {
+    const storage = new MemoryStorage();
+    const remove = sinon.stub(storage, 'remove').rejects(new Error('storage unavailable'));
+    const agent = createMockAgent({ vaultIsLocked: (): boolean => true });
+
+    const manager = await AuthManager.create({ agent, storage });
+
+    expect(manager.state).toBe('locked');
+    expect(remove.calledOnceWithExactly(STORAGE_KEYS.REGISTRATION_TOKENS)).toBe(true);
   });
 
   test('passes dataPath to EnboxUserAgent.create', async () => {

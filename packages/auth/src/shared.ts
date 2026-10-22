@@ -9,6 +9,7 @@ export { AuthSession } from './identity-session.js';
 export { AuthEventEmitter } from './events.js';
 export {
   ConnectDeniedError,
+  DwnTenantRegistrationError,
   PasswordProviderUnavailableError,
   RecoveryPhraseMismatchError,
   isConnectDeniedError,
@@ -28,8 +29,6 @@ export {
 export { normalizePermissionPolicy, normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
 export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
-
-export { loadTokensFromStorage, saveTokensToStorage } from './registration.js';
 
 export {
   applyLocalDwnDiscovery,
@@ -87,6 +86,10 @@ export type {
   ConnectionStatus,
   ConnectionStatusGrant,
   DisconnectOptions,
+  DwnTenantRegistrationFailure,
+  DwnTenantRegistrationOptions,
+  DwnTenantRegistrationPair,
+  DwnTenantRegistrationResult,
   HandlerConnectOptions,
   HeadlessConnectOptions,
   IdentityInfo,
