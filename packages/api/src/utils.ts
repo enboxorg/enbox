@@ -4,7 +4,7 @@ import { Convert, universalTypeOf } from '@enbox/common';
  * Converts various data types to a `Blob` object, automatically detecting the data type or using
  * the specified `dataFormat` to set the Blob's MIME type.
  *
- * This function supports plain text, JSON objects, binary data (Uint8Array, ArrayBuffer), and Blob
+ * This function supports plain text, JSON objects, binary data (Uint8Array, ArrayBuffer), and Blob/File
  * inputs and will attempt to automatically detect the type of the data if `dataFormat` is not
  * explicitly provided.
  *
@@ -24,7 +24,7 @@ import { Convert, universalTypeOf } from '@enbox/common';
  * ```
  *
  * @param data - The data to be converted into a `Blob`. This can be a string, an object, binary
- *               data (Uint8Array or ArrayBuffer), or a Blob.
+ *               data (Uint8Array or ArrayBuffer), or a Blob/File.
  * @param dataFormat - An optional MIME type string that specifies the format of the data. Common
  *                     types include 'text/plain' for string data, 'application/json' for JSON
  *                     objects, and 'application/octet-stream' for binary data. If not provided, the
@@ -48,12 +48,13 @@ export function dataToBlob(data: any, dataFormat?: string): {
   // on `dataFormat`, so we must use the canonical MIME type without parameters.
   let detectedMimeType: string | undefined;
 
-  // Already encoded Blob and byte values always win over format-based legacy
+  // Already encoded Blob/File and byte values always win over format-based
   // conversion. This prevents an explicit JSON format from serializing their
   // container object instead of preserving their bytes.
   const detectedType = universalTypeOf(data);
-  if (detectedType === 'Blob') {
-    dataBlob = data;
+  if (detectedType === 'Blob' || detectedType === 'File') {
+    // Normalize foreign instances once so native consumers share this realm's Blob brand.
+    dataBlob = data instanceof Blob ? data : new Blob([data], { type: data.type });
   } else if (detectedType === 'Uint8Array' || detectedType === 'ArrayBuffer') {
     detectedMimeType = 'application/octet-stream';
     dataBlob = new Blob([data], { type: detectedMimeType });

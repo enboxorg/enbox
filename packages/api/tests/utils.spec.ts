@@ -67,6 +67,32 @@ describe('Enbox API Utils', () => {
       expect(result.dataFormat).toBe('application/octet-stream');
     });
 
+    it('should preserve binary File bytes and infer its MIME type', async () => {
+      const bytes = new Uint8Array([0, 255, 10, 123, 125]);
+      const file = new File([bytes], 'upload.png', { type: 'image/png' });
+      const result = dataToBlob(file);
+
+      expect(new Uint8Array(await result.dataBlob.arrayBuffer())).toEqual(bytes);
+      expect(result.dataFormat).toBe('image/png');
+    });
+
+    it.skipIf(typeof document === 'undefined')('should preserve File bytes from another window with an explicit JSON format', async () => {
+      const frame = document.createElement('iframe');
+      document.body.append(frame);
+      try {
+        const otherWindow = frame.contentWindow as Window & typeof globalThis;
+        const file = new otherWindow.File(['foreign file'], 'foreign.txt', { type: 'text/plain' });
+        expect(file).not.toBeInstanceOf(Blob);
+
+        const result = dataToBlob(file, 'application/json');
+
+        expect(result.dataFormat).toBe('application/json');
+        expect(await result.dataBlob.text()).toBe('foreign file');
+      } finally {
+        frame.remove();
+      }
+    });
+
     it('should throw an error for unsupported data types', () => {
       expect(() => dataToBlob(42)).toThrow('data type not supported.');
     });
