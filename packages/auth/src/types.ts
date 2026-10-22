@@ -147,96 +147,48 @@ export interface RegistrationTokenData {
   refreshToken?: string;
   /** Unix timestamp (ms) when the token expires. Undefined = never expires. */
   expiresAt?: number;
-  /** Provider's token exchange URL (needed for code exchange). */
-  tokenUrl: string;
   /** Provider's refresh URL (needed for token refresh). */
   refreshUrl?: string;
 }
 
 // ─── Options ─────────────────────────────────────────────────────
 
-/**
- * DWN registration configuration.
- *
- * When provided, the agent DID and connected DID will be registered with
- * DWN endpoints after identity creation. Supports two paths:
- *
- * 1. **Provider auth** (`provider-auth-v0`) — the DWN endpoint requires
- *    OAuth-style auth. If {@link onProviderAuthRequired} is provided and
- *    the server advertises provider auth, the app handles the auth flow.
- * 2. **Proof of Work** (default fallback) — the DWN endpoint requires
- *    solving a PoW challenge to register.
- */
-export interface RegistrationOptions {
-  /** Called when all DWN registrations complete successfully. */
-  onSuccess: () => void;
+/** Explicit topology request: every requested DID is registered at every requested endpoint. */
+export type DwnTenantRegistrationOptions = {
+  /** Agent DID or locally managed owner identity DIDs. Delegates are rejected. */
+  dids: readonly string[];
+  /** HTTP(S) DWN URLs without queries or fragments. */
+  dwnEndpoints: readonly string[];
+};
 
-  /** Called when any DWN registration fails. */
-  onFailure: (error: unknown) => void;
+export type DwnTenantRegistrationPair = { did: string; endpoint: string };
+export type DwnTenantRegistrationFailure = DwnTenantRegistrationPair & { error: unknown };
 
-  /**
-   * Called when a DWN endpoint requires provider auth (`'provider-auth-v0'`).
-   *
-   * The app should open the `authorizeUrl` in a browser, capture the
-   * redirect with the auth code, and return the result. If not provided,
-   * endpoints requiring provider auth fall back to PoW registration.
-   */
+/** Completed pair outcomes, also carried by DwnTenantRegistrationError on partial failure. */
+export type DwnTenantRegistrationResult = {
+  registered: DwnTenantRegistrationPair[];
+  failed: DwnTenantRegistrationFailure[];
+};
+
+/** Provider authorization and encrypted token policy shared by creation and explicit registration. */
+export type RegistrationOptions = {
+  /** App-owned OAuth UI. Required for provider-only servers without usable saved credentials. */
   onProviderAuthRequired?: (params: ProviderAuthParams) => Promise<ProviderAuthResult>;
-
-  /**
-   * Pre-existing registration tokens from a previous session, keyed by
-   * DWN endpoint URL. If a valid (non-expired) token exists for an
-   * endpoint, it is used directly without re-running the auth flow.
-   *
-   * When {@link persistTokens} is `true`, this field is ignored —
-   * tokens are loaded automatically from the agent's vault-backed
-   * `SecretStore` (preferred) or the legacy `StorageAdapter` (fallback).
-   */
+  /** Initial credentials for persistTokens:false. Later calls on the same agent use the latest rotated credentials. */
   registrationTokens?: Record<string, RegistrationTokenData>;
-
   /**
-   * Called when new or refreshed registration tokens are obtained.
-   * The app should persist these for future sessions.
-   *
-   * When {@link persistTokens} is `true`, tokens are saved automatically
-   * to the agent's vault-backed `SecretStore` (or the legacy
-   * `StorageAdapter` when no `SecretStore` is available). This callback
-   * is still invoked (if provided) **after** the automatic save, so
-   * consumers can observe token changes without handling persistence
-   * themselves.
+   * Receive updated credentials, including during partial network failure.
+   * With persistTokens:false this is the caller-owned persistence boundary;
+   * an exception rejects registration as a persistence failure.
    */
-  onRegistrationTokens?: (tokens: Record<string, RegistrationTokenData>) => void;
-
+  onRegistrationTokens?: (tokens: Record<string, RegistrationTokenData>) => void | Promise<void>;
   /**
-   * Automatically persist and restore registration tokens.
-   *
-   * When `true`, tokens are loaded before registration and saved back
-   * after new or refreshed tokens are obtained, removing the need for
-   * consumers to implement their own token I/O via
-   * {@link registrationTokens} and {@link onRegistrationTokens}.
-   *
-   * **Storage preference:** tokens are stored in the agent's vault-backed
-   * `SecretStore` (encrypted at rest) when available.  On the first run
-   * after an upgrade, any tokens left in the legacy plaintext
-   * `StorageAdapter` are migrated into the `SecretStore` and the
-   * plaintext copy is removed.  If no `SecretStore` is provided, the
-   * `StorageAdapter` is used as a fallback.
-   *
-   * Defaults to `false` for backward compatibility.
-   *
-   * @example
-   * ```ts
-   * const auth = await AuthManager.create({
-   *   registration: {
-   *     onSuccess: () => {},
-   *     onFailure: (err) => console.error(err),
-   *     persistTokens: true,
-   *   },
-   * });
-   * ```
+   * Restore and merge credentials in the unlocked agent's encrypted SecretStore.
+   * Defaults to true. Set false only when the caller deliberately owns token persistence
+   * through registrationTokens and onRegistrationTokens. Plaintext storage is never read.
    */
   persistTokens?: boolean;
-}
+};
 
 // ─── Connect Handler ─────────────────────────────────────────────
 

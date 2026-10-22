@@ -61,7 +61,7 @@ function createTestManager(params: {
   internals._isConnecting = false;
   internals._isShutDown = false;
   internals._isShuttingDown = false;
-  internals._lifecycleGeneration = 0;
+  internals._lifecycleController = new AbortController();
   internals._lifecycleCommitTail = Promise.resolve();
   internals._shutdownPromise = undefined;
   internals._passwordProvider = params.passwordProvider;
@@ -86,6 +86,33 @@ async function expectNoSessionPersistence(
 }
 
 describe('AuthManager lifecycle callback races', () => {
+  test('lock invalidates a connection while its terminal vault readiness check is pending', async () => {
+    const checking = createDeferred<void>();
+    const release = createDeferred<void>();
+    const storage = new MemoryStorage();
+    const agent = createMockAgent({
+      vaultGetDid: async () => {
+        checking.resolve();
+        await release.promise;
+        return { uri: 'did:dht:testagent', metadata: {} };
+      },
+    });
+    const manager = await AuthManager.create({ agent, storage });
+    let sessionStarts = 0;
+    manager.on('session-start', (): void => { sessionStarts++; });
+    const connection = captureRejection(manager.connectVault({ password: 'test-password', sync: 'off' }));
+    await checking.promise;
+    const locking = manager.lock();
+    release.resolve();
+    const error = await connection;
+    await locking;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('invalidated');
+    expect(sessionStarts).toBe(0);
+    expect(manager.state).toBe('locked');
+    await expectNoSessionPersistence(manager, storage);
+  });
+
   test('lock completes while connectVault waits for its password provider', async () => {
     const providerStarted = createDeferred<void>();
     const password = createDeferred<string>();
@@ -189,12 +216,10 @@ describe('AuthManager lifecycle callback races', () => {
     const providerStarted = createDeferred<void>();
     const providerResult = createDeferred<{ code: string; state: string }>();
     const storage = new MemoryStorage();
-    let registrationFailure: unknown;
-    let registrationSucceeded = false;
     let registrationTokensEmitted = false;
 
     const agent = createMockAgent({
-      firstLaunch      : async (): Promise<boolean> => false,
+      firstLaunch      : async (): Promise<boolean> => true,
       identityList     : async () => [createMockIdentity()],
       rpcGetServerInfo : async () => ({
         registrationRequirements : ['provider-auth-v0'],
@@ -219,8 +244,6 @@ describe('AuthManager lifecycle callback races', () => {
       storage,
       registration: {
         persistTokens          : true,
-        onSuccess              : () => { registrationSucceeded = true; },
-        onFailure              : (error: unknown) => { registrationFailure = error; },
         onRegistrationTokens   : () => { registrationTokensEmitted = true; },
         onProviderAuthRequired : async (params) => {
           providerStarted.resolve();
@@ -246,8 +269,6 @@ describe('AuthManager lifecycle callback races', () => {
       expect(teardownCompletedBeforeProvider).toBe(true);
       expect(connectError).toBeInstanceOf(Error);
       expect((connectError as Error).message).toContain('invalidated');
-      expect(registrationFailure).toBeUndefined();
-      expect(registrationSucceeded).toBe(false);
       expect(registrationTokensEmitted).toBe(false);
       expect(exchangeAuthCode).not.toHaveBeenCalled();
       expect(registerTenantWithToken).not.toHaveBeenCalled();

@@ -55,6 +55,8 @@ export interface FlowContext {
   storage: StorageAdapter;
   /** Signal owned by the AuthManager for the session this flow may create. */
   sessionSignal: AbortSignal;
+  /** Current operation generation, independent from the committed session lifetime. */
+  operationSignal: AbortSignal;
   defaultPassword?: string;
   passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
@@ -66,7 +68,9 @@ export interface FlowContext {
   /** Serializes a local mutation against session teardown. */
   runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
   /** Serializes terminal finalization and installs the returned session. */
-  commitSession: <T extends AuthSession | undefined>(operation: () => Promise<T>) => Promise<T>;
+  commitSession: <T extends AuthSession | undefined>(
+    operation: () => Promise<T>, options?: { completeVaultSetup?: boolean },
+  ) => Promise<T>;
 }
 
 /** Assert that a manager-owned flow is still active. */
@@ -83,8 +87,9 @@ export async function runFlowMutation<T>(ctx: FlowContext, operation: () => Prom
 export async function commitFlowSession<T extends AuthSession | undefined>(
   ctx: FlowContext,
   operation: () => Promise<T>,
+  options?: { completeVaultSetup?: boolean },
 ): Promise<T> {
-  return ctx.commitSession(operation);
+  return ctx.commitSession(operation, options);
 }
 
 // ─── resolvePassword ─────────────────────────────────────────────
@@ -165,41 +170,48 @@ export async function ensureVaultReady(params: {
   password: string;
   isFirstLaunch: boolean;
   recoveryPhrase?: string;
+  pendingSetup?: { registrationRequired: boolean };
   dwnEndpoints?: string[];
+  deferDwnEndpointBootstrap?: boolean;
   onVaultPasswordCommitted?: () => void;
 }): Promise<string | undefined> {
   const { userAgent, emitter, password, isFirstLaunch } = params;
   let recoveryPhrase: string | undefined;
 
-  if (isFirstLaunch) {
-    recoveryPhrase = await userAgent.initialize({
-      password,
-      recoveryPhrase : params.recoveryPhrase,
-      dwnEndpoints   : params.dwnEndpoints,
-    });
-  } else if (params.recoveryPhrase !== undefined) {
-    try {
-      await userAgent.vault.resetPasswordWithRecoveryPhrase({
-        recoveryPhrase              : params.recoveryPhrase,
+  await runAuthSessionLifecycle(async (): Promise<void> => {
+    if (isFirstLaunch) {
+      recoveryPhrase = await userAgent.initialize({
         password,
-        deferDwnEndpointReplacement : true,
-        ...(params.dwnEndpoints === undefined ? {} : {
-          dwnEndpoints: params.dwnEndpoints,
-        }),
+        recoveryPhrase            : params.recoveryPhrase,
+        pendingSetup              : params.pendingSetup,
+        dwnEndpoints              : params.dwnEndpoints,
+        deferDwnEndpointBootstrap : params.deferDwnEndpointBootstrap,
       });
-    } catch (error) {
-      if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {
-        throw new RecoveryPhraseMismatchError();
+    } else if (params.recoveryPhrase !== undefined) {
+      try {
+        await userAgent.vault.resetPasswordWithRecoveryPhrase({
+          recoveryPhrase              : params.recoveryPhrase,
+          password,
+          deferDwnEndpointReplacement : true,
+          deferDwnEndpointBootstrap   : params.deferDwnEndpointBootstrap,
+          ...(params.dwnEndpoints === undefined ? {} : {
+            dwnEndpoints: params.dwnEndpoints,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof HdIdentityVaultRecoveryPhraseMismatchError) {
+          throw new RecoveryPhraseMismatchError();
+        }
+        throw error;
       }
-      throw error;
     }
-  }
+  });
 
   if (params.recoveryPhrase !== undefined) {
     params.onVaultPasswordCommitted?.();
   }
 
-  await userAgent.start({ password });
+  await runAuthSessionLifecycle(() => userAgent.start({ password }));
   emitter.emit('vault-unlocked', {});
 
   return recoveryPhrase;
@@ -542,6 +554,7 @@ export async function applyIdentitySyncScope(params: {
  *   caller supplied an explicit protocol scope. If no scope is supplied, auth
  *   leaves local identity sync registration to the application.
  *
+ * @returns Whether the identity was registered for sync.
  * @internal
  */
 export async function registerSyncScopeForIdentity(params: {
@@ -550,7 +563,7 @@ export async function registerSyncScopeForIdentity(params: {
   delegateDid?: string;
   identitySyncProtocols?: IdentitySyncProtocols;
   lifecycleOptions?: SyncLifecycleOptions;
-}): Promise<void> {
+}): Promise<boolean> {
   const { userAgent, connectedDid, delegateDid, identitySyncProtocols, lifecycleOptions } = params;
   const repairStartedAt = Date.now();
   const timeout = lifecycleOptions?.timeout;
@@ -562,7 +575,7 @@ export async function registerSyncScopeForIdentity(params: {
     ? lifecycleOptions
     : { timeout: Math.max(0, timeout - (Date.now() - repairStartedAt)) };
 
-  await applyIdentitySyncScope({
+  return applyIdentitySyncScope({
     userAgent,
     connectedDid,
     delegateDid,

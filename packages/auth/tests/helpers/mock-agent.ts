@@ -152,7 +152,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
   }));
 
   return {
-    agentDid : { uri: 'did:dht:testagent' },
+    agentDid : { uri: 'did:dht:testagent', metadata: {} },
     secrets  : new InMemorySecretStore(),
 
     firstLaunch : overrides.firstLaunch ?? (async (): Promise<boolean> => false),
@@ -257,11 +257,13 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       changePassword : overrides.vaultChangePassword ?? (async (): Promise<void> => {}),
       resetPasswordWithRecoveryPhrase:
         overrides.vaultResetPasswordWithRecoveryPhrase ?? (async (): Promise<void> => {}),
-      backup      : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
-      restore     : overrides.vaultRestore ?? (async (): Promise<void> => {}),
-      getDid      : overrides.vaultGetDid ?? (async (): Promise<any> => ({ uri: 'did:dht:testagent' })),
-      encryptData : overrides.vaultEncryptData ?? mockEncryptData,
-      decryptData : overrides.vaultDecryptData ?? mockDecryptData,
+      backup            : overrides.vaultBackup ?? (async (): Promise<any> => ({ data: 'backup' })),
+      restore           : overrides.vaultRestore ?? (async (): Promise<void> => {}),
+      getDid            : overrides.vaultGetDid ?? (async (): Promise<any> => ({ uri: 'did:dht:testagent', metadata: {} })),
+      getPendingSetup   : async (): Promise<undefined> => undefined,
+      clearPendingSetup : async (): Promise<void> => {},
+      encryptData       : overrides.vaultEncryptData ?? mockEncryptData,
+      decryptData       : overrides.vaultDecryptData ?? mockDecryptData,
     },
   } as unknown as EnboxUserAgent;
 }

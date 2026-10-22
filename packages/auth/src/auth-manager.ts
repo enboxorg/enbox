@@ -28,6 +28,8 @@ import type {
   ConnectionStatus,
   ConnectOptions,
   DisconnectOptions,
+  DwnTenantRegistrationOptions,
+  DwnTenantRegistrationResult,
   GetConnectionStatusOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
@@ -74,6 +76,7 @@ import {
   readLocalDwnEjectionRecordForPairing,
   requestLocalDwnPairing,
 } from './discovery.js';
+import { clearRegistrationCredentials, registerDwnTenants } from './registration.js';
 import {
   disconnectPersistedSessionWithinLifecycle,
   readRevocationRetryEntries,
@@ -89,7 +92,7 @@ type ConnectionMonitorState = {
 };
 
 type ConnectionAttemptGuard = {
-  lifecycleGeneration: number;
+  lifecycleSignal: AbortSignal;
   monitor?: ConnectionMonitorState;
   sessionLifetime: AbortController;
 };
@@ -156,7 +159,7 @@ export class AuthManager {
   private _isShuttingDown = false;
   private _connectionMonitor?: ConnectionMonitorState;
   private _sessionLifetime?: AbortController;
-  private _lifecycleGeneration = 0;
+  private _lifecycleController = new AbortController();
   private _lifecycleCommitTail: Promise<void> = Promise.resolve();
   private _shutdownPromise?: Promise<void>;
 
@@ -222,6 +225,8 @@ export class AuthManager {
     }
     const emitter = new AuthEventEmitter();
     const storage = options.storage ?? createDefaultStorage();
+    // Erase old plaintext credentials even when startup never unlocks or registers.
+    try { await storage.remove(STORAGE_KEYS.REGISTRATION_TOKENS); } catch { /* best-effort credential erasure */ }
 
     // Run local DWN discovery BEFORE creating the agent. Discovery has
     // zero vault/DWN dependencies — it reads the persisted pairing record
@@ -709,7 +714,7 @@ export class AuthManager {
         await this._storage.clear();
         await Promise.all([
           this._userAgent.secrets.delete(STORAGE_KEYS.DELEGATE_CONTEXT_KEYS).catch(() => {}),
-          this._userAgent.secrets.delete(STORAGE_KEYS.REGISTRATION_TOKENS).catch(() => {}),
+          clearRegistrationCredentials(this._userAgent, this._registration),
         ]);
 
         if (globalThis.localStorage !== undefined) {
@@ -965,6 +970,43 @@ export class AuthManager {
   }
 
   /**
+   * Register exactly the requested owner DIDs at each requested DWN endpoint.
+   * Uses the manager's provider-auth and encrypted-token policy. Unlock/import
+   * never perform this operation implicitly; call it for creation or topology repair.
+   * @throws DwnTenantRegistrationError with completed pair outcomes on partial failure.
+   */
+  public async registerDwnTenants(options: DwnTenantRegistrationOptions): Promise<DwnTenantRegistrationResult> {
+    this._guardShutdown();
+    const lifecycleSignal = this._lifecycleController.signal;
+    const lifetime = this._sessionLifetime;
+    const assertActive = (): void => {
+      this._guardShutdown();
+      if (lifecycleSignal !== this._lifecycleController.signal || lifetime !== this._sessionLifetime) {
+        throw new Error('[@enbox/auth] DWN registration was invalidated by a session lifecycle change.');
+      }
+      if (this._userAgent.vault.isLocked()) {
+        throw new Error('[@enbox/auth] DWN tenant registration requires an unlocked vault.');
+      }
+    };
+    return registerDwnTenants({
+      userAgent       : this._userAgent,
+      operationSignal : lifetime === undefined ? lifecycleSignal : AbortSignal.any([lifecycleSignal, lifetime.signal]),
+      assertActive,
+      runMutation     : async <T>(operation: () => Promise<T>): Promise<T> => {
+        const release = await this._acquireLifecycleCommit();
+        try {
+          assertActive();
+          const result = await operation();
+          assertActive();
+          return result;
+        } finally {
+          release();
+        }
+      },
+    }, options, this._registration);
+  }
+
+  /**
    * Delete a stored identity.
    *
    * Drains and removes its sync registration before deleting keys or metadata.
@@ -976,12 +1018,12 @@ export class AuthManager {
    */
   public async deleteIdentity(didUri: string): Promise<void> {
     this._guardShutdown();
-    const generation = this._lifecycleGeneration;
+    const lifecycleSignal = this._lifecycleController.signal;
     const releaseCommit = await this._acquireLifecycleCommit();
     let removalStarted = false;
     try {
       this._guardShutdown();
-      if (generation !== this._lifecycleGeneration || this._userAgent.vault.isLocked()) {
+      if (lifecycleSignal.aborted || this._userAgent.vault.isLocked()) {
         throw new Error('AuthManager.deleteIdentity: the vault must be unlocked and its lifecycle unchanged.');
       }
 
@@ -989,7 +1031,7 @@ export class AuthManager {
       if (identity === undefined) {
         throw new Error(`[@enbox/auth] Identity not found: ${didUri}`);
       }
-      if (generation !== this._lifecycleGeneration) {
+      if (lifecycleSignal.aborted) {
         throw new Error('AuthManager.deleteIdentity: the identity deletion was invalidated by a lifecycle change.');
       }
 
@@ -1548,6 +1590,7 @@ export class AuthManager {
       emitter                      : this._emitter,
       storage                      : this._storage,
       sessionSignal                : guard.sessionLifetime.signal,
+      operationSignal              : AbortSignal.any([guard.lifecycleSignal, guard.sessionLifetime.signal]),
       defaultPassword              : this._defaultPassword,
       passwordProvider             : this._passwordProvider,
       defaultSync                  : this._defaultSync,
@@ -1557,8 +1600,9 @@ export class AuthManager {
       assertActive                 : (): void => this._assertConnectionAttemptActive(guard),
       runMutation                  : <T>(operation: () => Promise<T>): Promise<T> =>
         this._runConnectionMutation(guard, operation),
-      commitSession: <T extends AuthSession | undefined>(operation: () => Promise<T>): Promise<T> =>
-        this._commitConnectionResult(guard, operation),
+      commitSession: <T extends AuthSession | undefined>(
+        operation: () => Promise<T>, options?: { completeVaultSetup?: boolean },
+      ): Promise<T> => this._commitConnectionResult(guard, operation, options),
     };
   }
 
@@ -1582,9 +1626,9 @@ export class AuthManager {
     this._guardConcurrency();
     this._isConnecting = true;
     const guard: ConnectionAttemptGuard = {
-      lifecycleGeneration : this._lifecycleGeneration,
+      lifecycleSignal : this._lifecycleController.signal,
       monitor,
-      sessionLifetime     : new AbortController(),
+      sessionLifetime : new AbortController(),
     };
 
     try {
@@ -1634,15 +1678,31 @@ export class AuthManager {
   private async _commitConnectionResult<T extends AuthSession | undefined>(
     guard: ConnectionAttemptGuard,
     operation: () => Promise<T>,
-    options: { publishSessionStart?: boolean } = {},
+    options: { publishSessionStart?: boolean; completeVaultSetup?: boolean } = {},
   ): Promise<T> {
-    const { publishSessionStart = true } = options;
+    const { publishSessionStart = true, completeVaultSetup = false } = options;
+    const assertVaultSetupReady = async (): Promise<void> => {
+      const pendingSetup = await this._userAgent.vault.getPendingSetup();
+      const vaultDid = await this._userAgent.vault.getDid();
+      if (vaultDid.metadata.published === false) {
+        throw new Error('Vault recovery endpoints are unpublished. Retry restoreFromPhrase() with explicit dwnEndpoints.');
+      }
+      if (!completeVaultSetup && pendingSetup !== undefined) {
+        throw new Error('Vault setup is incomplete. Retry connectVault() to finish setup and receive the recovery phrase.');
+      }
+    };
     const releaseCommit = await this._acquireLifecycleCommit();
     try {
       return await runAuthSessionLifecycle(async (): Promise<T> => {
         this._assertConnectionAttemptActive(guard);
+        await assertVaultSetupReady();
+        this._assertConnectionAttemptActive(guard);
         const session = await operation();
         if (session !== undefined) {
+          await assertVaultSetupReady();
+          if (completeVaultSetup) {
+            await this._userAgent.vault.clearPendingSetup();
+          }
           const previousSession = this._session;
           const previousDelegateDid = previousSession?.delegateDid;
           if (previousDelegateDid !== undefined && previousDelegateDid !== session.delegateDid) {
@@ -1669,13 +1729,15 @@ export class AuthManager {
 
   private _assertConnectionAttemptActive(guard: ConnectionAttemptGuard): void {
     const monitorInvalidated = guard.monitor !== undefined && this._connectionMonitor !== guard.monitor;
-    if (this._lifecycleGeneration !== guard.lifecycleGeneration || this._isShuttingDown || this._isShutDown || monitorInvalidated) {
+    if (guard.lifecycleSignal.aborted || guard.sessionLifetime.signal.aborted ||
+      this._isShuttingDown || this._isShutDown || monitorInvalidated) {
       throw new Error('[@enbox/auth] Connection attempt was invalidated by a session lifecycle change.');
     }
   }
 
   private _invalidateConnectionAttempts(): void {
-    this._lifecycleGeneration++;
+    this._lifecycleController.abort();
+    this._lifecycleController = new AbortController();
   }
 
   /** Abort and release the current application-session lifetime, if any. */

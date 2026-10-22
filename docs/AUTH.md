@@ -208,24 +208,69 @@ Phrase restore still performs its required one-shot recovery pulls when
 
 ## Registration
 
-For new DID creation, auth registers against the caller-selected or configured
-default endpoints. During recovery, each vault or identity routing DID is
-registered against its own advertised endpoints. Servers may support provider
-auth (`provider-auth-v0`) or proof-of-work registration.
+When registration policy is configured, auth prepares remote tenancy for newly
+created vault and identity DIDs. Unlocking, recovering existing endpoints,
+importing portable identities and importing delegated wallet sessions preserve
+existing remote tenancy without registering it again.
+
+Explicit recovery endpoints that bootstrap a missing vault DID or missing DWN
+service are registered before publication and recovery pulls. If preparation
+fails, the vault remains unlocked with unpublished endpoints; complete recovery
+by retrying `restoreFromPhrase()` with explicit `dwnEndpoints`. Ordinary vault
+connect cannot commit that unfinished recovery.
+
+For a newly created managed identity, an added endpoint or an explicit repair,
+register exactly the selected owner DIDs at exactly the selected endpoints:
 
 ```ts
 const auth = await AuthManager.create({
-  dwnEndpoints: ['https://enbox-dwn.fly.dev'],
   registration: {
-    onSuccess: () => {},
-    onFailure: (error) => reportRegistrationError(error),
-    persistTokens: true,
+    onProviderAuthRequired: async ({ authorizeUrl, state }) => {
+      // Open app-owned provider UI and return its redirect code and state.
+      return showProviderAuthorization(authorizeUrl, state);
+    },
   },
+});
+
+await auth.registerDwnTenants({
+  dids: [identity.did.uri],
+  dwnEndpoints: ['https://enbox-dwn.fly.dev'],
 });
 ```
 
-Use `persistTokens: true` for normal apps so registration tokens survive across
-sessions without custom token storage.
+The vault must be unlocked and every DID must be the agent DID or a locally
+managed owner identity. Delegated and foreign owner DIDs are rejected before
+network requests. The operation uses the manager's `registration` policy;
+registration failures reject creation or replacement; endpoint publication is
+skipped on failure. The operation's promise is authoritative.
+Explicit requests resolve with `{ registered, failed: [] }`, or reject with
+`DwnTenantRegistrationError` whose `result` contains all completed pair outcomes.
+Unreachable endpoints and failed tenant requests do not stop other requested
+pairs from being attempted.
+
+Registration credentials are restored and merged in the vault-backed encrypted
+`SecretStore` by default. Successful token rotations are saved before tenant
+requests, including during partial failure. Locked, unreadable or corrupt
+credential storage fails closed. Set `persistTokens: false` only to deliberately
+own persistence through `registrationTokens` and `onRegistrationTokens`; the
+callback receives the updated credential set even after partial network failure.
+The supplied tokens are initial seeds; later calls on the same agent reuse its
+latest rotated credentials. Explicit storage erasure also forgets those credentials.
+The callback is awaited as a caller-owned persistence boundary; callback errors reject
+registration as persistence failures.
+Manager creation erases old plaintext credentials best-effort, including for
+locked vaults with no registration configured. They are never read or migrated;
+encrypted credentials remain untouched during this cleanup.
+
+Valid saved or refreshable provider credentials require no authorization UI.
+When new authorization is needed, `onProviderAuthRequired` remains app-owned.
+Proof-of-work fallback is used only when the server advertises it.
+
+Concurrent registrations share in-flight work for the same agent/DID/endpoint,
+and token updates are merged rather than overwriting other endpoints. Provider UI
+and pending HTTP responses do not block local teardown. Lock, disconnect,
+shutdown and session replacement prevent subsequent requests, credential writes
+and callbacks; requests already dispatched to a remote server cannot be undone.
 
 ## Storage and Lifecycle
 

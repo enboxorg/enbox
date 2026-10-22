@@ -50,15 +50,14 @@ export type AgentInitializeParams = {
    */
    recoveryPhrase?: string;
 
-  /**
-   * Optional dwnEndpoints to register didService endpoints during EnboxUserAgent initialization
-   *
-   * The dwnEndpoints are used to register DWN endpoints against the agent DID created during
-   * EnboxUserAgent.initialize() =>  DidDht.create(). This allows the
-   * agent to properly recover connectedDids from DWN. Also, this pattern can be used on the server
-   * side in place of the agentDid-->connectedDids pattern.
-   */
+   /** Retain the generated phrase and required registration policy until owner setup completes. @internal */
+   pendingSetup?: { registrationRequired: boolean };
+
+  /** Explicit endpoints for a new agent DID or recovery without an existing usable public route. */
    dwnEndpoints?: string[];
+
+   /** Leave new recovery endpoints unpublished until their remote tenancy is prepared. */
+   deferDwnEndpointBootstrap?: boolean;
 
  };
 
@@ -286,11 +285,13 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
   public async initialize({
     password,
     recoveryPhrase,
+    pendingSetup,
     dwnEndpoints,
+    deferDwnEndpointBootstrap,
   }: AgentInitializeParams): Promise<string> {
     // Initialize the Agent vault.
     recoveryPhrase = await this.vault.initialize({
-      password, recoveryPhrase, dwnEndpoints,
+      password, recoveryPhrase, pendingSetup, dwnEndpoints, deferDwnEndpointBootstrap,
     });
 
     return recoveryPhrase;

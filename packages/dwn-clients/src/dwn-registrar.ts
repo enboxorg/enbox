@@ -11,8 +11,16 @@ export class DwnRegistrar {
    * Registers a new tenant with the given DWN.
    * NOTE: Assumes the user has already accepted the terms of service.
    * NOTE: Currently the DWN Server from `dwn-server` does not require user signature.
+   * Cancellation stops pending HTTP requests and prevents later registration stages.
    */
-  public static async registerTenant(dwnEndpoint: string, did: string): Promise<void> {
+  public static async registerTenant(dwnEndpoint: string, did: string, { signal }: { signal?: AbortSignal } = {}): Promise<void> {
+    signal?.throwIfAborted();
+
+    const requestSignal = (): AbortSignal => {
+      signal?.throwIfAborted();
+      const timeout = AbortSignal.timeout(30_000);
+      return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    };
 
     const registrationEndpoint = concatenateUrl(dwnEndpoint, 'registration');
     const termsOfUseEndpoint = concatenateUrl(registrationEndpoint, 'terms-of-service');
@@ -21,37 +29,45 @@ export class DwnRegistrar {
     // fetch the terms-of-service
     const termsOfServiceGetResponse = await fetch(termsOfUseEndpoint, {
       method : 'GET',
-      signal : AbortSignal.timeout(30_000),
+      signal : requestSignal(),
     });
+    signal?.throwIfAborted();
 
     if (termsOfServiceGetResponse.status !== 200) {
       const statusCode = termsOfServiceGetResponse.status;
       const statusText = termsOfServiceGetResponse.statusText;
       const errorText = await termsOfServiceGetResponse.text();
+      signal?.throwIfAborted();
       throw new Error(`Failed fetching terms-of-service: ${statusCode} ${statusText}: ${errorText}`);
     }
     const termsOfServiceFetched = await termsOfServiceGetResponse.text();
+    signal?.throwIfAborted();
 
     // fetch the proof-of-work challenge
     const proofOfWorkChallengeGetResponse = await fetch(proofOfWorkEndpoint, {
       method : 'GET',
-      signal : AbortSignal.timeout(30_000),
+      signal : requestSignal(),
     });
+    signal?.throwIfAborted();
     const { challengeNonce, maximumAllowedHashValue }: ProofOfWorkChallengeModel =
       await proofOfWorkChallengeGetResponse.json();
+    signal?.throwIfAborted();
 
     // create registration data based on the hash of the terms-of-service and the DID
     const registrationData: RegistrationData = {
       did,
       termsOfServiceHash: await DwnRegistrar.hashAsHexString(termsOfServiceFetched),
     };
+    signal?.throwIfAborted();
 
     // compute the proof-of-work response nonce based on the proof-of-work challenge and the registration data.
     const responseNonce = await DwnRegistrar.findQualifiedResponseNonce({
       challengeNonce,
       maximumAllowedHashValue,
       requestData: JSON.stringify(registrationData),
+      signal,
     });
+    signal?.throwIfAborted();
 
     // send the registration request to the server
     const registrationRequest: RegistrationRequest = {
@@ -66,13 +82,15 @@ export class DwnRegistrar {
       method  : 'POST',
       headers : { 'Content-Type': 'application/json' },
       body    : JSON.stringify(registrationRequest),
-      signal  : AbortSignal.timeout(30_000),
+      signal  : requestSignal(),
     });
+    signal?.throwIfAborted();
 
     if (registrationResponse.status !== 200) {
       const statusCode = registrationResponse.status;
       const statusText = registrationResponse.statusText;
       const errorText = await registrationResponse.text();
+      signal?.throwIfAborted();
       throw new Error(`Registration failed: ${statusCode} ${statusText}: ${errorText}`);
     }
   }
@@ -93,23 +111,34 @@ export class DwnRegistrar {
     maximumAllowedHashValue: string;
     challengeNonce: string;
     requestData: string;
+    /** Stop computation when the registration's owning operation ends. */
+    signal?: AbortSignal;
   }): Promise<string> {
+    input.signal?.throwIfAborted();
     const startTime = Date.now();
 
-    const { maximumAllowedHashValue, challengeNonce, requestData } = input;
+    const { maximumAllowedHashValue, challengeNonce, requestData, signal } = input;
     const maximumAllowedHashValueAsBigInt = BigInt(`0x${maximumAllowedHashValue}`);
 
-    let iterations = 1;
+    let iterations = 0;
     let responseNonce;
     let qualifiedSolutionNonceFound = false;
     do {
+      signal?.throwIfAborted();
       responseNonce = await this.generateNonce();
+      signal?.throwIfAborted();
       const computedHash = await DwnRegistrar.hashAsHexString(challengeNonce + responseNonce + requestData);
+      signal?.throwIfAborted();
       const computedHashAsBigInt = BigInt(`0x${computedHash}`);
 
       qualifiedSolutionNonceFound = computedHashAsBigInt <= maximumAllowedHashValueAsBigInt;
 
       iterations++;
+      // Let browser input and timer-driven cancellation interrupt difficult work.
+      if (!qualifiedSolutionNonceFound && iterations % 1_024 === 0) {
+        await new Promise<void>((resolve): void => { setTimeout(resolve, 0); }); // NOSONAR S9382: required task yield for cancellation.
+        signal?.throwIfAborted();
+      }
     } while (!qualifiedSolutionNonceFound);
 
     // Log final/successful iteration.

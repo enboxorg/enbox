@@ -50,6 +50,25 @@ describe('DwnRegistrar', () => {
   });
 
   describe('findQualifiedResponseNonce', () => {
+    it('should observe timer cancellation during difficult proof of work', async () => {
+      const controller = new AbortController();
+      const reason = new Error('Proof of work cancelled');
+      const nonce = sinon.spy(DwnRegistrar, 'generateNonce');
+      const timer = setTimeout((): void => { controller.abort(reason); }, 0);
+
+      try {
+        await expect(DwnRegistrar.findQualifiedResponseNonce({
+          maximumAllowedHashValue : '0',
+          challengeNonce          : 'challenge',
+          requestData             : 'data',
+          signal                  : controller.signal,
+        })).rejects.toBe(reason);
+        expect(nonce.callCount).toBeGreaterThan(0);
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
     it('should return a nonce that satisfies the difficulty requirement', async () => {
       // Use a very high maximum (easiest difficulty) so it resolves quickly.
       const maximumAllowedHashValue = 'f'.repeat(64);
@@ -114,6 +133,112 @@ describe('DwnRegistrar', () => {
   });
 
   describe('registerTenant', () => {
+    it('should preserve a pre-aborted reason before any network or nonce work', async () => {
+      const controller = new AbortController();
+      const reason = new Error('Registration cancelled');
+      controller.abort(reason);
+      const fetchStub = sinon.stub(globalThis, 'fetch');
+      const nonce = sinon.spy(DwnRegistrar, 'generateNonce');
+
+      await expect(DwnRegistrar.registerTenant('https://dwn.example.com', 'did:example:alice', { signal: controller.signal }))
+        .rejects.toBe(reason);
+      await expect(DwnRegistrar.findQualifiedResponseNonce({
+        maximumAllowedHashValue : 'f'.repeat(64),
+        challengeNonce          : 'challenge',
+        requestData             : 'data',
+        signal                  : controller.signal,
+      })).rejects.toBe(reason);
+
+      expect(fetchStub.called).toBe(false);
+      expect(nonce.called).toBe(false);
+    });
+
+    for (const abortedBy of ['caller', 'timeout'] as const) {
+      it(`should combine caller cancellation with the existing HTTP timeout (aborted by ${abortedBy})`, async () => {
+        const caller = new AbortController();
+        const timeout = new AbortController();
+        const reason = new Error(`${abortedBy} cancelled the request`);
+        const timeoutSignal = sinon.stub(AbortSignal, 'timeout').returns(timeout.signal);
+        const fetchStub = sinon.stub(globalThis, 'fetch').callsFake((_url, options): Promise<Response> => new Promise((_resolve, reject) => {
+          options!.signal!.addEventListener('abort', (): void => { reject(options!.signal!.reason); }, { once: true });
+        }));
+        const registration = DwnRegistrar.registerTenant('https://dwn.example.com', 'did:example:alice', { signal: caller.signal });
+        const combinedSignal = fetchStub.firstCall.args[1]!.signal!;
+        expect(timeoutSignal.calledOnceWithExactly(30_000)).toBe(true);
+        expect(combinedSignal).not.toBe(caller.signal);
+        expect(combinedSignal).not.toBe(timeout.signal);
+
+        (abortedBy === 'caller' ? caller : timeout).abort(reason);
+
+        await expect(registration).rejects.toBe(reason);
+        expect(combinedSignal.aborted).toBe(true);
+        expect(fetchStub.callCount).toBe(1);
+      });
+    }
+
+    for (const stage of ['terms', 'challenge'] as const) {
+      it(`should stop after cancellation while reading the ${stage} response body`, async () => {
+        const controller = new AbortController();
+        const reason = new Error('Registration cancelled during response body');
+        let entered!: () => void;
+        let release!: () => void;
+        const reading = new Promise<void>((resolve): void => { entered = resolve; });
+        const released = new Promise<void>((resolve): void => { release = resolve; });
+        const terms = new Response('Terms');
+        const challenge = { challengeNonce: 'challenge', maximumAllowedHashValue: 'f'.repeat(64) };
+        const challengeResponse = Response.json(challenge);
+        if (stage === 'terms') {
+          sinon.stub(terms, 'text').callsFake(async (): Promise<string> => { entered(); await released; return 'Terms'; });
+        } else {
+          sinon.stub(challengeResponse, 'json').callsFake(async (): Promise<typeof challenge> => { entered(); await released; return challenge; });
+        }
+        const fetchStub = sinon.stub(globalThis, 'fetch');
+        fetchStub.onFirstCall().resolves(terms);
+        fetchStub.onSecondCall().resolves(challengeResponse);
+        const registration = DwnRegistrar.registerTenant('https://dwn.example.com', 'did:example:alice', { signal: controller.signal });
+        await reading;
+
+        controller.abort(reason);
+        release();
+
+        await expect(registration).rejects.toBe(reason);
+        expect(fetchStub.callCount).toBe(stage === 'terms' ? 1 : 2);
+      });
+    }
+
+    for (const stage of ['terms', 'proof'] as const) {
+      it(`should stop after cancellation during the ${stage} hash`, async () => {
+        const controller = new AbortController();
+        const reason = new Error('Registration cancelled during hashing');
+        let entered!: () => void;
+        let release!: () => void;
+        const hashing = new Promise<void>((resolve): void => { entered = resolve; });
+        const released = new Promise<void>((resolve): void => { release = resolve; });
+        const hash = DwnRegistrar.hashAsHexString;
+        let hashes = 0;
+        sinon.stub(DwnRegistrar, 'hashAsHexString').callsFake(async (input): Promise<string> => {
+          if (++hashes === (stage === 'terms' ? 1 : 2)) {
+            entered();
+            await released;
+          }
+          return hash(input);
+        });
+        const nonce = sinon.spy(DwnRegistrar, 'generateNonce');
+        const fetchStub = sinon.stub(globalThis, 'fetch');
+        fetchStub.onFirstCall().resolves(new Response('Terms'));
+        fetchStub.onSecondCall().resolves(Response.json({ challengeNonce: 'challenge', maximumAllowedHashValue: 'f'.repeat(64) }));
+        const registration = DwnRegistrar.registerTenant('https://dwn.example.com', 'did:example:alice', { signal: controller.signal });
+        await hashing;
+
+        controller.abort(reason);
+        release();
+
+        await expect(registration).rejects.toBe(reason);
+        expect(fetchStub.callCount).toBe(2);
+        expect(nonce.callCount).toBe(stage === 'terms' ? 0 : 1);
+      });
+    }
+
     it('should make three fetch calls with correct URLs', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
       sinon.stub(console, 'log');

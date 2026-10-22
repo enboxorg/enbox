@@ -45,7 +45,12 @@ export function normalizeDwnEndpointUrls(values: unknown): string[] | undefined 
         || endpoint.search !== '' || endpoint.hash !== '') {
         throw new TypeError('DWN endpoint URL must use HTTP(S) without a query or fragment.');
       }
-      return endpoint.toString().replace(/\/$/, '');
+      const endpointUrl = endpoint.toString();
+      let endIndex = endpointUrl.length;
+      while (endIndex > 0 && endpointUrl[endIndex - 1] === '/') {
+        endIndex--;
+      }
+      return endpointUrl.slice(0, endIndex);
     });
     return [...new Set(endpoints)];
   } catch {

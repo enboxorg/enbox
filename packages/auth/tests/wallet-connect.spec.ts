@@ -786,22 +786,22 @@ describe('walletConnect', () => {
     expect(syncCalls).not.toContain('pull');
   });
 
-  test('calls registration when registration options are provided', async () => {
+  test('does not register the foreign owner when importing wallet delegation', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     initClientStub.resetHistory();
     initClientStub.onFirstCall().resolves(createInitClientResult());
 
-    let registrationSucceeded = false;
+    let registrationRequests = 0;
     const agent = createMockAgent({
       identityImport: async () => createMockIdentity({
         did      : { uri: 'did:dht:delegate123' },
         metadata : { name: 'Default', tenant: 'did:dht:testagent', connectedDid: 'did:dht:connected456' },
       }),
-      rpcGetServerInfo: async () => ({
-        registrationRequirements : [],
-        maxFileSize              : 10_000_000,
-      }),
+      rpcGetServerInfo: async () => {
+        registrationRequests++;
+        return { registrationRequirements: [], maxFileSize: 10_000_000 };
+      },
     });
 
     await walletConnect(
@@ -811,8 +811,6 @@ describe('walletConnect', () => {
         storage,
         defaultSync  : '15s',
         registration : {
-          onSuccess : () => { registrationSucceeded = true; },
-          onFailure : () => {},
         },
       },
       {
@@ -824,6 +822,6 @@ describe('walletConnect', () => {
       },
     );
 
-    expect(registrationSucceeded).toBe(true);
+    expect(registrationRequests).toBe(0);
   });
 });

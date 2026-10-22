@@ -35,7 +35,7 @@ function createTestManager(
   manager._isConnecting = false;
   manager._isShutDown = false;
   manager._isShuttingDown = false;
-  manager._lifecycleGeneration = 0;
+  manager._lifecycleController = new AbortController();
   manager._lifecycleCommitTail = Promise.resolve();
   manager._shutdownPromise = undefined;
   return manager as AuthManager;
