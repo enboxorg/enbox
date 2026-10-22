@@ -52,7 +52,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -76,23 +76,24 @@ jobs:
 
       - name: Create Release PR or Publish
         id: changesets
-        # changesets/action@v2 requires Changesets CLI v3; this repository
-        # intentionally remains on action v1 while it uses CLI v2.
-        uses: changesets/action@v1
+        # Keep the action aligned with Changesets CLI v3.
+        uses: changesets/action@v2
         with:
+          # Use the App identity so version PR commits trigger CI.
+          github-token: ${{ steps.app-token.outputs.token }}
+          push-with-git-cli: true
           # Uses bun pack + npm publish (via scripts/publish.sh) instead of
           # changeset publish because changeset publish calls npm publish on the
           # raw package dir, which does NOT resolve Bun's workspace:* protocol.
           # See: https://github.com/oven-sh/bun/issues/24124
-          publish: bun run release
+          publish-script: bun run release
           # The version script runs changeset version then bun install to
           # regenerate the lockfile so workspace:* resolves to new versions.
-          version: bun run version
-          commit: "chore: version packages"
-          title: "chore: version packages"
+          version-script: bun run version
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
         env:
-          # App token (not GITHUB_TOKEN) so the version PR's commits trigger
-          # `ci.yml` and produce the required `CI Passed` status check.
+          # The changelog plugin also needs this token in the version script.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

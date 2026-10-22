@@ -18,8 +18,12 @@ env:
   PKARR_RELAY_IMAGE: synonymsoft/pkarr-relay@sha256:779353eb69f20be93f5c3d740a633045ef80f8a480467085da19cc8ea57251a4
 
 jobs:
+  security:
+    name: Security audit
+    uses: ./.github/workflows/security.yml
+
   # ---------------------------------------------------------------------------
-  # Detect whether source code changed. Docs-only PRs skip the entire pipeline
+  # Detect whether source code changed. Docs-only PRs skip package checks; security auditing still runs
   # but the ci-passed gate job still reports success (required for branch protection).
   # ---------------------------------------------------------------------------
   changes:
@@ -284,7 +288,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -318,7 +322,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -377,7 +381,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -446,7 +450,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -523,7 +527,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -669,7 +673,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -805,7 +809,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -934,7 +938,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -1003,7 +1007,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -1080,7 +1084,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       # Merge coverage only when at least one test job actually produced LCOV.
       - name: Check for coverage-producing test jobs
@@ -1421,7 +1425,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Restore bun cache
         uses: actions/cache@v6
@@ -1595,11 +1599,16 @@ jobs:
     name: CI Passed
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
+    needs: [security, changes, lint, build, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-e2e, test-sql-store, test-dwn-server, test-browser, sonar-pr]
     if: always() && !cancelled()
     steps:
       - name: Check results
         run: |
+          if [ "${{ needs.security.result }}" != "success" ]; then
+            echo "::error::security audit failed"
+            exit 1
+          fi
+
           # Docs-only change — nothing to test
           if [ "${{ needs.changes.outputs.src }}" != "true" ]; then
             echo "Skipped: docs-only change"

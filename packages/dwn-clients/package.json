@@ -43,7 +43,7 @@
     "access": "public"
   },
   "engines": {
-    "bun": ">=1.3.14"
+    "bun": ">=1.4.4"
   },
   "dependencies": {
     "@enbox/common": "workspace:*",
@@ -53,9 +53,9 @@
   "devDependencies": {
     "@types/node": "22.19.15",
     "@types/sinon": "17.0.3",
-    "@typescript-eslint/eslint-plugin": "8.32.1",
-    "@typescript-eslint/parser": "8.32.1",
-    "bun-types": "1.3.14",
+    "@typescript-eslint/eslint-plugin": "8.72.0",
+    "@typescript-eslint/parser": "8.72.0",
+    "bun-types": "1.4.3",
     "eslint": "9.7.0",
     "sinon": "18.0.0",
     "typescript": "5.9.3"
