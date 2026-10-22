@@ -81,17 +81,16 @@ bundle. Updating the lockfile or merging a PR does not update running processes
 or existing desktop installations. Check `bun --version` in each deployed
 container or host before considering the runtime rollout complete.
 
-Run `bun run security:audit` to check the entire lockfile and its production
-dependency graph. CI requires this check on every PR and runs it daily on
+Run `bun run security:audit` to check the entire lockfile, including production
+and development dependencies. CI requires this check on every PR and runs it daily on
 `main`, including when the lockfile has not changed. Registry errors and skipped
 registries fail the check. No dependency installation is needed for this audit.
 
-Temporary tooling exceptions live in `.github/security-audit-exceptions.json`.
-Each entry names one advisory, exact locked versions, severity, rationale, and
-expiry. Production findings always fail, including an excepted package that
-becomes a production dependency. Expired or unused exceptions must be removed
-or reassessed. The initial exceptions for `braces` and `sprintf-js` have no
-published fixes and expire on **2026-11-21**; they are not production dependencies.
+Every advisory fails the audit, including development-only tooling dependencies
+and advisories with no published fix. There are no advisory exceptions or
+severity thresholds. Remove the affected dependency chain or upgrade the tools
+that introduce it before merging. Changesets 3 and TypeScript ESLint 8.72 remove
+the former `sprintf-js` and `braces` dependency chains entirely.
 Dependency auditing does not scan Bun's executable or the container's OS packages.
 
 ## Self-Hosting Anywhere

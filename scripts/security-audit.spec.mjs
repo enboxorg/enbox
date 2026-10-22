@@ -9,16 +9,6 @@ const advisory = {
   vulnerable_versions : '<=3.0.3',
 };
 const report = { braces: [advisory] };
-const lock = { packages: { braces: ['braces@3.0.3'] } };
-const exception = {
-  package  : 'braces',
-  advisory : 'GHSA-vfj7-8cjw-p6xm',
-  versions : ['3.0.3'],
-  severity : 'high',
-  expires  : '2026-11-21',
-  reason   : 'Tooling only; no published fix.',
-};
-const now = new Date('2026-10-22T00:00:00Z');
 
 describe('security audit gate', () => {
   it('accepts a clean registry response and valid advisory exit code', () => {
@@ -37,23 +27,21 @@ describe('security audit gate', () => {
     }
   });
 
-  it('accepts only the reviewed tooling advisory and locked version', () => {
-    expect(assessAudit(report, {}, lock, [exception], now)).toEqual([]);
-    expect(assessAudit(report, {}, lock, [], now)).toHaveLength(1);
-    expect(() => assessAudit(report, {}, { packages: { braces: ['braces@3.0.4'] } }, [exception], now)).toThrow();
+  it('blocks every advisory regardless of severity or dependency scope', () => {
+    const severities = ['low', 'moderate', 'high', 'critical'];
+    const findings = assessAudit({
+      braces       : severities.map(severity => ({ ...advisory, severity })),
+      'sprintf-js' : [{ ...advisory, url: 'https://github.com/advisories/GHSA-hp3w-g68c-fv3c' }],
+    });
+    expect(findings).toHaveLength(5);
+    for (const severity of severities) {
+      expect(findings.some(finding => finding.includes(`braces: ${severity} `))).toBe(true);
+    }
+    expect(findings.some(finding => finding.includes('sprintf-js: high '))).toBe(true);
   });
 
-  it('blocks new advisories, severity escalation, and production exposure', () => {
-    const additional = { ...advisory, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' };
-    expect(assessAudit({ braces: [advisory, additional] }, {}, lock, [exception], now)).toHaveLength(1);
-    expect(assessAudit({ braces: [{ ...advisory, severity: 'critical' }] }, {}, lock, [exception], now).length).toBeGreaterThan(0);
-    expect(assessAudit(report, report, lock, [exception], now)).toHaveLength(1);
-  });
-
-  it('requires expired, duplicate, malformed, and unused exceptions to be resolved', () => {
-    expect(() => assessAudit(report, {}, lock, [exception], new Date('2026-11-21T00:00:00Z'))).toThrow();
-    expect(() => assessAudit(report, {}, lock, [exception, exception], now)).toThrow();
-    expect(() => assessAudit(report, {}, lock, [{ ...exception, expires: 'invalid' }], now)).toThrow();
-    expect(assessAudit({}, {}, lock, [exception], now)).toHaveLength(1);
+  it('passes only when the complete audit is empty', () => {
+    expect(assessAudit({})).toEqual([]);
+    expect(assessAudit(report)).toHaveLength(1);
   });
 });
