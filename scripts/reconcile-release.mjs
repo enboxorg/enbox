@@ -3,6 +3,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+const REGISTRY_VISIBILITY_WINDOW_MS = 10 * 60_000;
+
 async function run(args, input) {
   const child = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe', stdin: input === undefined ? 'ignore' : 'pipe' });
   if (input !== undefined) {
@@ -21,6 +23,49 @@ async function checked(args, input) {
     throw new Error(`${args.join(' ')} failed: ${result.stderr}`);
   }
   return result.stdout.trim();
+}
+
+/** Retry only npm's not-yet-visible version response, within one shared deadline. */
+export function registryVisibilityRetryDelay(result, attempt, remainingMs) {
+  if (result.code !== 1 || remainingMs <= 0) {
+    return undefined;
+  }
+  let failure;
+  try {
+    failure = JSON.parse(result.stdout);
+  } catch {
+    return undefined;
+  }
+  if (failure?.error?.code !== 'E404') {
+    return undefined;
+  }
+  return Math.min(1_000 * 2 ** Math.min(attempt, 5), 30_000, remainingMs);
+}
+
+function acknowledgedPublications() {
+  const packages = JSON.parse(process.env.RELEASE_PUBLISHED_PACKAGES || '[]');
+  if (!Array.isArray(packages) || packages.some(pkg =>
+    typeof pkg?.name !== 'string' || pkg.name.length === 0 || typeof pkg.version !== 'string' || pkg.version.length === 0)) {
+    throw new Error('RELEASE_PUBLISHED_PACKAGES must be an array of published names and versions');
+  }
+  return new Set(packages.map(pkg => `${pkg.name}@${pkg.version}`));
+}
+
+async function publishedMetadata(tag, acknowledged, deadline) {
+  const args = ['npm', 'view', tag, '--json', '--prefer-online', '--fetch-timeout=30000', '--fetch-retries=0'];
+  let attempt = 0;
+  while (true) {
+    const result = await run(args);
+    if (result.code === 0) {
+      return JSON.parse(result.stdout);
+    }
+    const delay = acknowledged ? registryVisibilityRetryDelay(result, attempt++, deadline - Date.now()) : undefined;
+    if (delay === undefined) {
+      throw new Error(`${args.join(' ')} failed: ${result.stderr}`);
+    }
+    console.warn(`${tag}: publication acknowledged; registry metadata not visible yet. Retrying in ${delay}ms.`);
+    await Bun.sleep(delay);
+  }
 }
 
 async function getRelease(endpoint) {
@@ -105,6 +150,8 @@ export async function reconcileRelease() {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '')) {
     throw new Error('GITHUB_REPOSITORY must identify the release repository');
   }
+  const acknowledged = acknowledgedPublications();
+  const visibilityDeadline = Date.now() + REGISTRY_VISIBILITY_WINDOW_MS;
   const head = await checked(['git', 'rev-parse', '--verify', 'HEAD']);
   const parent = await checked(['git', 'rev-parse', '--verify', 'HEAD^']);
   const root = JSON.parse(await readFile('package.json', 'utf8'));
@@ -119,7 +166,7 @@ export async function reconcileRelease() {
       try {
         const previous = await run(['git', 'show', `${parent}:${manifest}`]);
         const changedVersion = previous.code !== 0 || JSON.parse(previous.stdout).version !== pkg.version;
-        const published = JSON.parse(await checked(['npm', 'view', tag, '--json', '--prefer-online']));
+        const published = await publishedMetadata(tag, acknowledged.has(tag), visibilityDeadline);
         if (published.name !== pkg.name || published.version !== pkg.version) {
           throw new Error(`registry returned mismatched package metadata for ${tag}`);
         }

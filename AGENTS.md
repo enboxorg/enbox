@@ -375,6 +375,9 @@ Packages are published to npm via **Changesets** and CI. **NEVER bump versions m
   `scripts/reconcile-release.mjs` verifies that identity before completing remote
   tags and GitHub releases. Re-run the original failed Release workflow to recover
   partial metadata writes; historical package versions and tag objects are preserved.
+- Registry reads wait up to ten minutes across the release for npm versions
+  acknowledged by Changesets Action but still returning 404. Other failures
+  remain immediate; commit and tag identity checks are never bypassed.
 - Git tags are created automatically in the format `@enbox/<package>@<version>`.
 - npm auth is handled via `NPM_TOKEN` secret in CI.
 

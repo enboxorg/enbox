@@ -111,3 +111,4 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
