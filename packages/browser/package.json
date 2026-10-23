@@ -10,7 +10,8 @@
   "types": "./dist/types/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
-    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json",
+    "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json && bun run typecheck:contracts",
+    "typecheck:contracts": "bun tsc -p type-tests/tsconfig.json && bun tsc -p type-tests/worker/tsconfig.json",
     "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile --external @enbox/agent --external @enbox/api --external @enbox/auth --external @enbox/auth/browser --external @enbox/common --external @enbox/connect --external @enbox/crypto --external @enbox/dids --external @enbox/dwn-sdk-js --external @enbox/protocols",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
@@ -77,7 +78,8 @@
     "@enbox/protocols": "workspace:*"
   },
   "devDependencies": {
-    "@types/qrcode": "^1.5.6",
+    "@types/node": "22.19.15",
+    "@types/qrcode": "1.5.6",
     "@typescript-eslint/eslint-plugin": "8.72.0",
     "@typescript-eslint/parser": "8.72.0",
     "@vitest/browser-playwright": "4.1.12",
