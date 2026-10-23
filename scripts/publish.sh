@@ -172,7 +172,7 @@ for pkg_dir in "${PACKAGES[@]}"; do
   fi
 
   # Step 2: Publish the tarball with npm (uses .npmrc for auth)
-  if npm publish "$pkg_dir/$tarball" --access public; then
+  if npm publish "$pkg_dir/$tarball" --access public --provenance; then
     echo "Published $name@$version"
     published=$((published + 1))
 

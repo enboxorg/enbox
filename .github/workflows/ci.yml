@@ -1644,6 +1644,15 @@ jobs:
     steps:
       - name: Check results
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::change detection failed"
+            exit 1
+          fi
+          if [ "${{ needs.changes.outputs.src }}" != "true" ] && [ "${{ needs.changes.outputs.src }}" != "false" ]; then
+            echo "::error::change detection did not produce a valid source-change result"
+            exit 1
+          fi
+
           if [ "${{ needs.security.result }}" != "success" ]; then
             echo "::error::security audit failed"
             exit 1
