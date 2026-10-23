@@ -9,7 +9,9 @@ const toNative: FetchEvent = portable;
 void fromNative;
 void toNative;
 
-const callback: CacheCheckCallback = (event) => {
+const callback: CacheCheckCallback = (event, drl) => {
+  const url: string = drl;
+  void url;
   if ('request' in event) {
     event.waitUntil(Promise.resolve());
     const response: Promise<Response | undefined> = event.preloadResponse;
