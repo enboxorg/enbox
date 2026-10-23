@@ -1484,72 +1484,9 @@ jobs:
           name: workspace-build
           path: packages
 
-      - name: Record runner image
-        id: runner-image
-        run: echo "os=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browser
-        id: playwright-browser-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-${{ runner.arch }}-playwright-browser-${{ matrix.browser }}-${{ hashFiles('package.json') }}
-
-      - name: Cache Playwright system deps
-        id: playwright-deps-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/playwright-apt-cache
-          # Keep apt packages within one Ubuntu image family. The restore key
-          # migrates the previous combined cache without another cold download.
-          key: ${{ runner.os }}-${{ runner.arch }}-playwright-deps-${{ steps.runner-image.outputs.os }}-${{ matrix.browser }}-${{ hashFiles('package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-v4-${{ matrix.browser }}-${{ hashFiles('package.json') }}
-
-      - name: Install Playwright system deps (from cache)
-        # On cache hit the .deb files are already saved in ~/playwright-apt-cache.
-        # Install them directly with dpkg — no network needed, takes ~5s.
-        if: steps.playwright-deps-cache.outputs.cache-hit != ''
-        run: |
-          if [ -d ~/playwright-apt-cache ] && ls ~/playwright-apt-cache/*.deb 1>/dev/null 2>&1; then
-            echo "Installing $(ls ~/playwright-apt-cache/*.deb | wc -l) cached .deb packages"
-            if ! sudo dpkg -i ~/playwright-apt-cache/*.deb; then
-              if ! (sudo apt-get update -qq && sudo apt-get install -f -y); then
-                echo "::warning::Cached Playwright dependencies were incompatible; repairing from apt"
-                bunx playwright install-deps ${{ matrix.browser }}
-              fi
-            fi
-          else
-            bunx playwright install-deps ${{ matrix.browser }}
-          fi
-
-      - name: Install Playwright system deps (fresh)
-        # Most Playwright deps are already on the runner image. Firefox/WebKit
-        # need a handful of extra font packages (fonts-ipafont-gothic,
-        # fonts-wqy-zenhei, etc.) that are 3-7 MB each and download at
-        # ~50 KB/s from Azure apt mirrors — often stalling for minutes.
-        #
-        # We snapshot /var/cache/apt/archives before and after so we only
-        # cache the .deb files that Playwright actually installed — not the
-        # hundreds of pre-existing system packages.
-        if: steps.playwright-deps-cache.outputs.cache-hit == ''
-        run: |
-          ls /var/cache/apt/archives/*.deb 2>/dev/null | sort > /tmp/apt-before.txt || true
-          sudo apt-get update -qq
-          bunx playwright install-deps ${{ matrix.browser }}
-          mkdir -p ~/playwright-apt-cache
-          comm -13 /tmp/apt-before.txt <(ls /var/cache/apt/archives/*.deb 2>/dev/null | sort) \
-            | xargs -I{} cp {} ~/playwright-apt-cache/ 2>/dev/null || true
-          echo "Cached $(ls ~/playwright-apt-cache/*.deb 2>/dev/null | wc -l) Playwright .deb packages"
+      - name: Install Playwright browser and system dependencies
         timeout-minutes: 15
-
-      - name: Install Playwright browser
-        # Playwright is pinned in root devDependencies to match the version
-        # resolved for @vitest/browser-playwright's peer dependency.
-        # On cache hit the binary is already present — this is a no-op.
-        if: steps.playwright-browser-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 3
-        run: bunx playwright install ${{ matrix.browser }}
+        run: bunx --no-install playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run browser tests
         id: browser-tests
