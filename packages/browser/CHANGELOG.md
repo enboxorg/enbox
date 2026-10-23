@@ -1,5 +1,11 @@
 # @enbox/browser
 
+## 0.3.82
+
+### Patch Changes
+
+- [#1802](https://github.com/enboxorg/enbox/pull/1802) [`43aa16a`](https://github.com/enboxorg/enbox/commit/43aa16a9522291e262efd49c0971bf0c0f6c40e1) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Make browser declarations usable by strict DOM-only TypeScript consumers without importing service-worker globals. Preserve native fetch-event compatibility through a structural DRL event contract.
+
 ## 0.3.81
 
 ### Patch Changes
