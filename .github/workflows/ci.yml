@@ -1506,31 +1506,9 @@ jobs:
             script="test:browser:coverage"
           fi
 
-          # Firefox's ESM loader can transiently crash with "error loading
-          # dynamically imported module" (affects ~14% of runs, random test
-          # file each time).  Vitest's test-level retry cannot recover from
-          # file-level import failures, so we retry the entire vitest
-          # invocation once per package when running Firefox.
-          max_attempts=1
-          if [ "${{ matrix.browser }}" = "firefox" ]; then
-            max_attempts=2
-          fi
-
           exit_code=0
           for pkg in ${{ matrix.shard.packages }}; do
-            attempt=1
-            pkg_passed=false
-            while [ $attempt -le $max_attempts ]; do
-              if bun run --filter "$pkg" "$script" -- --browser.connectTimeout=120000; then
-                pkg_passed=true
-                break
-              fi
-              if [ $attempt -lt $max_attempts ]; then
-                echo "::warning::Browser tests for $pkg failed on attempt $attempt — retrying…"
-              fi
-              attempt=$((attempt + 1))
-            done
-            if [ "$pkg_passed" = false ]; then
+            if ! bun run --filter "$pkg" "$script" -- --browser.connectTimeout=120000; then
               exit_code=1
             fi
           done

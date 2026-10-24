@@ -140,11 +140,6 @@ export default defineConfig({
       'tests/store-dependent-tests.spec.ts',
     ],
     testTimeout : 30_000,
-    // Retry failed tests once in CI. Firefox's ESM loader can occasionally
-    // crash on dynamic module imports even with noDiscovery enabled — a
-    // single retry is enough to recover from transient loader failures
-    // without masking real bugs (real failures are deterministic and fail both times).
-    retry: isCI ? 1 : 0,
     coverage: {
       provider         : 'istanbul',
       reporter         : ['text', 'lcov'],

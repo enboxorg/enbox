@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const workflow = Bun.YAML.parse(await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
 const gate = workflow.jobs['ci-passed'];
@@ -41,4 +43,51 @@ describe('required CI gate', () => {
     }
     expect(await checkResults({ 'security.result': 'failure', 'changes.outputs.src': 'false' })).not.toBe(0);
   });
+});
+
+/** Run the browser step against a command that would pass if incorrectly retried. */
+async function runBrowserTests(browser, failFirst) {
+  const directory = await mkdtemp(join(tmpdir(), 'enbox-browser-step-'));
+  try {
+    const calls = join(directory, 'calls');
+    const command = join(directory, 'bun');
+    await writeFile(command, `#!/usr/bin/env bash
+printf '%s %s\\n' "$3" "$4" >> "$BROWSER_CALLS"
+if [ "$FAIL_FIRST" = true ] && [ "$3" = '@enbox/common' ] && [ ! -f "$FIRST_FAILURE" ]; then
+  touch "$FIRST_FAILURE"
+  exit 1
+fi
+`);
+    await chmod(command, 0o755);
+    const step = workflow.jobs['test-browser'].steps.find(candidate => candidate.id === 'browser-tests');
+    const script = step.run.replaceAll('${{ matrix.browser }}', browser)
+      .replaceAll('${{ matrix.shard.packages }}', '@enbox/common @enbox/crypto');
+    const child = Bun.spawn(['bash', '-e', '-c', script], {
+      env    : {
+        ...process.env,
+        PATH          : `${directory}:${process.env.PATH}`,
+        BROWSER_CALLS : calls,
+        FAIL_FIRST    : String(failFirst),
+        FIRST_FAILURE : join(directory, 'failed'),
+      },
+      stdout : 'ignore',
+      stderr : 'ignore',
+    });
+    return { code: await child.exited, calls: (await readFile(calls, 'utf8')).trim().split('\n') };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+describe('browser CI failures', () => {
+  for (const failFirst of [false, true]) {
+    it(failFirst ? 'preserves a failed package while running the remaining packages' : 'accepts successful packages', async () => {
+      for (const browser of ['chromium', 'firefox', 'webkit']) {
+        const result = await runBrowserTests(browser, failFirst);
+        expect(result.code).toBe(failFirst ? 1 : 0);
+        const script = browser === 'chromium' ? 'test:browser:coverage' : 'test:browser';
+        expect(result.calls).toEqual([`@enbox/common ${script}`, `@enbox/crypto ${script}`]);
+      }
+    });
+  }
 });
