@@ -47,6 +47,9 @@ export async function createReleaseFixture() {
       RELEASE_GITHUB    : join(directory, 'github'),
       RELEASE_MANIFESTS : join(directory, 'manifests'),
       FAIL_RELEASE_ONCE : '',
+      RELEASE_PUBLISHED_PACKAGES : '',
+      METADATA_DELAY_PACKAGE : '',
+      METADATA_DELAY_CODE : '',
     },
   };
   await writeFile(fixture.calls, '');

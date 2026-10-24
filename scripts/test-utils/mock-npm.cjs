@@ -9,12 +9,23 @@ if (command === 'view') {
   const name = spec.slice(0, separator);
   const version = spec.slice(separator + 1);
   const file = path.join(process.env.RELEASE_REGISTRY, encodeURIComponent(name) + '.json');
+  const delayed = path.join(process.env.RELEASE_REGISTRY, 'metadata-delay-' + encodeURIComponent(name));
+  if (args.includes('--json') && spec === process.env.METADATA_DELAY_PACKAGE && !fs.existsSync(delayed)) {
+    fs.writeFileSync(delayed, 'observed');
+    const code = process.env.METADATA_DELAY_CODE || 'E404';
+    console.log(JSON.stringify({ error: { code } }));
+    console.error('npm error ' + code);
+    process.exit(1);
+  }
   let metadata;
   if (fs.existsSync(file)) {
     metadata = JSON.parse(fs.readFileSync(file, 'utf8'));
   } else if (process.env.ALREADY_PUBLISHED === '1') {
     metadata = { name, version };
   } else {
+    if (args.includes('--json')) {
+      console.log(JSON.stringify({ error: { code: 'E404' } }));
+    }
     console.error('npm error E404');
     process.exit(1);
   }

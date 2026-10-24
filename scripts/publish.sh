@@ -21,10 +21,7 @@ fi
 # lockfile, and Bun's lockfile caches stale workspace versions that `bun install`
 # won't refresh (the specifier workspace:* doesn't change when a version bumps).
 #
-# We use npm for the publish step because `bun publish` has an authentication bug
-# in v1.3.x where it fails to read credentials from .npmrc in CI environments:
-#   https://github.com/oven-sh/bun/issues/24124
-#   https://github.com/oven-sh/bun/issues/18670
+# npm publishes the tested archives with registry authentication and provenance.
 
 PACKAGES=(
   "packages/common"
@@ -172,7 +169,7 @@ for pkg_dir in "${PACKAGES[@]}"; do
   fi
 
   # Step 2: Publish the tarball with npm (uses .npmrc for auth)
-  if npm publish "$pkg_dir/$tarball" --access public; then
+  if npm publish "$pkg_dir/$tarball" --access public --provenance; then
     echo "Published $name@$version"
     published=$((published + 1))
 

@@ -3,6 +3,7 @@ import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createReleaseFixture, git, publish, run } from './test-utils/release-fixture.mjs';
+import { registryVisibilityRetryDelay } from './reconcile-release.mjs';
 
 const fixtures = [];
 afterEach(async () => {
@@ -21,6 +22,66 @@ async function reconcile(fixture, env = {}) {
 }
 
 describe('release metadata recovery', () => {
+  it('bounds registry visibility backoff by the shared remaining time', () => {
+    const missing = { code: 1, stdout: JSON.stringify({ error: { code: 'E404' } }) };
+    expect(registryVisibilityRetryDelay(missing, 0, 600_000)).toBe(1_000);
+    expect(registryVisibilityRetryDelay(missing, 1, 600_000)).toBe(2_000);
+    expect(registryVisibilityRetryDelay(missing, 20, 600_000)).toBe(30_000);
+    expect(registryVisibilityRetryDelay(missing, 20, 100)).toBe(100);
+    expect(registryVisibilityRetryDelay(missing, 20, 0)).toBeUndefined();
+    expect(registryVisibilityRetryDelay(missing, 20, -1)).toBeUndefined();
+  });
+
+  it('does not retry authentication, command, or malformed-response failures', () => {
+    for (const code of ['E401', 'E403', 'E500']) {
+      const failure = { code: 1, stdout: JSON.stringify({ error: { code } }) };
+      expect(registryVisibilityRetryDelay(failure, 0, 600_000)).toBeUndefined();
+    }
+    expect(registryVisibilityRetryDelay({ code: 2, stdout: '{"error":{"code":"E404"}}' }, 0, 600_000)).toBeUndefined();
+    expect(registryVisibilityRetryDelay({ code: 1, stdout: 'not JSON' }, 0, 600_000)).toBeUndefined();
+    expect(registryVisibilityRetryDelay({ code: 1, stdout: '{}' }, 0, 600_000)).toBeUndefined();
+  });
+
+  it('waits for an acknowledged publication to become visible without republishing', async () => {
+    const fixture = await createFixture();
+    const result = await reconcile(fixture, {
+      METADATA_DELAY_PACKAGE: '@enbox/common@1.0.0',
+      RELEASE_PUBLISHED_PACKAGES: JSON.stringify([{ name: '@enbox/common', version: '1.0.0' }]),
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('publication acknowledged; registry metadata not visible yet');
+    const calls = (await readFile(fixture.calls, 'utf8')).trim().split('\n');
+    expect(calls.filter(line => line.startsWith('view @enbox/common@1.0.0 --json'))).toHaveLength(2);
+    expect(calls.filter(line => line.startsWith('publish '))).toHaveLength(2);
+  });
+
+  it('does not wait for missing metadata without publication acknowledgement', async () => {
+    const fixture = await createFixture();
+    expect((await reconcile(fixture, { METADATA_DELAY_PACKAGE: '@enbox/common@1.0.0' })).code).not.toBe(0);
+    const calls = (await readFile(fixture.calls, 'utf8')).trim().split('\n');
+    expect(calls.filter(line => line.startsWith('view @enbox/common@1.0.0 --json'))).toHaveLength(1);
+  });
+
+  it('fails immediately for authentication errors even after publication acknowledgement', async () => {
+    const fixture = await createFixture();
+    const result = await reconcile(fixture, {
+      METADATA_DELAY_PACKAGE: '@enbox/common@1.0.0',
+      METADATA_DELAY_CODE: 'E403',
+      RELEASE_PUBLISHED_PACKAGES: JSON.stringify([{ name: '@enbox/common', version: '1.0.0' }]),
+    });
+    expect(result.code).not.toBe(0);
+    const calls = (await readFile(fixture.calls, 'utf8')).trim().split('\n');
+    expect(calls.filter(line => line.startsWith('view @enbox/common@1.0.0 --json'))).toHaveLength(1);
+  });
+
+  it('rejects malformed publication acknowledgements before registry or remote writes', async () => {
+    const fixture = await createFixture();
+    const before = await readFile(fixture.calls, 'utf8');
+    expect((await reconcile(fixture, { RELEASE_PUBLISHED_PACKAGES: '{}' })).code).not.toBe(0);
+    expect(await readFile(fixture.calls, 'utf8')).toBe(before);
+    expect(await git(fixture, 'ls-remote', '--tags', 'origin')).toBe('');
+  });
+
   it('recovers missing tags and releases after npm succeeds, and is idempotent', async () => {
     const fixture = await createFixture();
     expect(await git(fixture, 'ls-remote', '--tags', 'origin')).toBe('');
@@ -124,7 +185,9 @@ exec '${realGit}' "$@"
     const registry = join(fixture.env.RELEASE_REGISTRY, encodeURIComponent(pkg.name) + '.json');
     const published = JSON.parse(await readFile(registry, 'utf8'));
     await writeFile(registry, JSON.stringify({ ...published, version: pkg.version }));
-    const result = await reconcile(fixture);
+    const result = await reconcile(fixture, {
+      RELEASE_PUBLISHED_PACKAGES: JSON.stringify([{ name: pkg.name, version: pkg.version }]),
+    });
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain('was not published from release commit');
     expect(await git(fixture, 'ls-remote', '--tags', 'origin')).toBe('');

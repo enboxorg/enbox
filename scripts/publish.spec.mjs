@@ -21,6 +21,11 @@ describe('custom publisher Changesets Action v2 receipts', () => {
     const original = await readFile(join(fixture.repo, 'packages/crypto/package.json'), 'utf8');
     const result = await publish(fixture);
     expect(result.code).toBe(0);
+    const calls = (await readFile(fixture.calls, 'utf8')).trim().split('\n');
+    expect(calls.filter(line => line.startsWith('publish '))).toEqual([
+      'publish packages/common/artifact.tgz --access public --provenance',
+      'publish packages/crypto/artifact.tgz --access public --provenance',
+    ]);
     expect(await receipts(fixture)).toEqual(['common', 'crypto'].map(name => ({
       type: 'git-tag', tag: `@enbox/${name}@1.0.0`, packageName: `@enbox/${name}`,
     })));

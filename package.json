@@ -66,6 +66,9 @@
     "typescript": "5.9.3"
   },
   "packageManager": "bun@1.4.4",
+  "overrides": {
+    "undici": "7.30.1"
+  },
   "engines": {
     "bun": ">=1.4.4"
   },
