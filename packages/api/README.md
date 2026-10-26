@@ -82,6 +82,10 @@ idle resources and rejects writes. Register custom cleanup with `onClose` in
 the store factory. The application owns terminal connection disposal; document
 repair and drain policies remain the host's responsibility in this initial API.
 
+Read connection state and invoke connection actions through `application.connection`.
+`application.subscribe()` notifies feature consumers to resolve their current store
+instance; collection and command state remain on those resources.
+
 `getSnapshot()` reads a store's current cached state; it does not create a copy.
 The `State` types describe those published values, while the snapshot methods
 provide the framework-independent observable contract.

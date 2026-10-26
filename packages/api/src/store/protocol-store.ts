@@ -86,8 +86,7 @@ function createTypedProtocolStore<
 >(protocol: TypedProtocol<D, C, G>, scope: StoreScope): ProtocolStore<TypedProtocol<D, C, G>> {
   type P = TypedProtocol<D, C, G>;
   const collections = new Map<string, unknown>();
-  const commandsByScope = new Map<string, unknown>();
-  const refreshersByScope = new Map<string, Set<() => Promise<void>>>();
+  const writeScopes = new Map<string, { commands: unknown; refreshers: Set<() => Promise<void>> }>();
   const typed = (): TypedEnbox<D, C, G> => {
     scope.assertCurrent();
     return scope.getEnbox().using<D, C, G>(protocol);
@@ -100,17 +99,6 @@ function createTypedProtocolStore<
   ): StoreCollection<DataForPath<C, Path>> => {
     type Value = DataForPath<C, Path>;
     type Commands = Pick<StoreCollection<Value>, 'create' | 'patch' | 'delete'>;
-    const mutationKey = JSON.stringify([path, within]);
-    let refreshers = refreshersByScope.get(mutationKey);
-    if (refreshers === undefined) {
-      refreshers = new Set();
-      refreshersByScope.set(mutationKey, refreshers);
-    }
-    const refreshActive = async (): Promise<void> => {
-      // A completed write remains successful even if its canonical reread fails.
-      // Each acquired resource publishes its own materialization failure.
-      await Promise.all([...refreshers].map(refresh => refresh().catch((): void => {})));
-    };
     const resource = createCollectionResource<TypedMaterializedRecord<Value>>(scope, (signal) => typed().records.observe<Path, true>(path, {
       dateSort    : options.dateSort,
       filter      : options.filter,
@@ -119,19 +107,25 @@ function createTypedProtocolStore<
       signal,
       within,
     }), { loadAll: options.loadAll });
-    refreshers.add(resource.refreshIfActive);
 
-    const assertParent = async (id: string): Promise<void> => {
-      if (within === undefined) { return; }
-      // Native patch is path-bound; the preflight also enforces this collection's direct parent.
-      const record = await typed().records.read(path, id);
-      scope.assertCurrent();
-      if (record !== undefined && record.contextId.split('/').slice(0, -1).join('/') !== within) {
-        throw new TypeError(`Store collection: record '${id}' belongs to another parent context.`);
-      }
-    };
-
-    if (!commandsByScope.has(mutationKey)) {
+    const mutationKey = JSON.stringify([path, within]);
+    let writeScope = writeScopes.get(mutationKey);
+    if (writeScope === undefined) {
+      const refreshers = new Set<() => Promise<void>>();
+      const refreshActive = async (): Promise<void> => {
+        // A completed write remains successful even if its canonical reread fails.
+        // Each acquired resource publishes its own materialization failure.
+        await Promise.all([...refreshers].map(refresh => refresh().catch((): void => {})));
+      };
+      const assertParent = async (id: string): Promise<void> => {
+        if (within === undefined) { return; }
+        // Native patch is path-bound; the preflight also enforces this collection's direct parent.
+        const record = await typed().records.read(path, id);
+        scope.assertCurrent();
+        if (record !== undefined && record.contextId.split('/').slice(0, -1).join('/') !== within) {
+          throw new TypeError(`Store collection: record '${id}' belongs to another parent context.`);
+        }
+      };
       const commands: Commands = {
         create: createCommand<Value, TypedRecord<Value>>(scope, async (data) => {
           // Collection paths reject roles at construction, so the native conditional
@@ -155,11 +149,13 @@ function createTypedProtocolStore<
           await refreshActive();
         }),
       };
-      commandsByScope.set(mutationKey, commands);
+      writeScope = { commands, refreshers };
+      writeScopes.set(mutationKey, writeScope);
     }
+    writeScope.refreshers.add(resource.refreshIfActive);
     // Mutation identity depends on path and direct parent, independently of
     // any collection's read filter, window size or retained state.
-    return Object.assign(resource, commandsByScope.get(mutationKey) as Commands);
+    return Object.assign(resource, writeScope.commands as Commands);
   };
 
   return {

@@ -38,6 +38,8 @@ const application = createApplication(definition, {
   connection: createConnectionStore({ application: definition.manifest }),
 });
 const feature: StoreInstance<typeof Notes> = application.store(Notes);
+const connectionState = application.connection.getSnapshot();
+const stop = application.subscribe((): void => {});
 const count: Promise<number> = feature.count.run();
 const title: Promise<string> = application.store(Dashboard).add.run('hello').then(record => record.value()).then(value => value.title);
 const defaults: readonly Promise<string>[] = [
@@ -52,6 +54,11 @@ void title;
 void defaults;
 void explicitCount;
 void undefinedCount;
+void connectionState;
+void stop;
+
+// @ts-expect-error connection state belongs to the native connection, not the feature owner.
+application.getSnapshot();
 
 // @ts-expect-error domain command input remains inferred through dependent stores.
 application.store(Dashboard).add.run(123);

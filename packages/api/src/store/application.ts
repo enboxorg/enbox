@@ -1,5 +1,4 @@
 import type { Enbox } from '../enbox.js';
-import type { ObservableStore } from '../observable-store.js';
 import type { StoreScope } from './scope.js';
 import type { TypedProtocol } from '../protocol-types.js';
 import type { ApplicationManifest, ApplicationManifestProtocolInput } from '../application-manifest.js';
@@ -59,16 +58,12 @@ export function defineApplication<const Stores extends StoreDefinitions>(
   return Object.freeze({ stores, manifest });
 }
 
-/** Own session-scoped features while exposing the native connection's observable state. */
-export interface ApplicationRuntime extends ObservableStore<ConnectionSnapshot> {
-  /** The owned native connection; use its actions for connect and disconnect. */
+/** Own session-scoped features and the native connection's lifetime. */
+export interface ApplicationRuntime {
+  /** The authoritative connection state and actions, including connect and disconnect. */
   readonly connection: ConnectionStore;
-  /** Read the native connection's cached state without creating another connection state model. */
-  getSnapshot: () => ConnectionSnapshot;
-  /** Return the stable initializing state used for server rendering and hydration. */
-  getServerSnapshot(): ConnectionSnapshot;
-  /** Observe connection publications and immediate session-scope invalidation. */
-  subscribe: (listener: (snapshot: ConnectionSnapshot) => void) => () => void;
+  /** Notify on connection publications and immediate scope invalidation; read feature identity with store(). */
+  subscribe: (listener: () => void) => () => void;
   /**
    * Resolve a registered feature once per native session/facade pair, including its dependencies.
    * Disconnected applications supply inert feature instances whose resources remain idle.
@@ -113,19 +108,17 @@ export function createApplication(
 class HeadlessApplication implements ApplicationRuntime {
   public readonly connection: ConnectionStore;
   private readonly _definitions: Set<StoreDefinition>;
-  private readonly _listeners = new Set<(snapshot: ConnectionSnapshot) => void>();
-  private readonly _serverSnapshot: ConnectionSnapshot = Object.freeze({ phase: 'initializing', vaultLocked: true });
+  private readonly _listeners = new Set<() => void>();
   private readonly _pendingCleanup = new Set<Promise<void>>();
   private readonly _unsubscribeConnection: () => void;
   private _sessionScope: SessionScope | undefined;
   private _disposePromise: Promise<void> | undefined;
-  private _disposed = false;
 
   public constructor(definition: ApplicationDefinition, connection: ConnectionStore) {
     this.connection = connection;
     this._definitions = collectStores(definition.stores);
     this._unsubscribeConnection = connection.subscribe((): void => {
-      if (this._disposed) {
+      if (this._disposePromise !== undefined) {
         return;
       }
       this._resolveSessionScope();
@@ -133,11 +126,8 @@ class HeadlessApplication implements ApplicationRuntime {
     });
   }
 
-  public getSnapshot = (): ConnectionSnapshot => this.connection.getSnapshot();
-  public getServerSnapshot = (): ConnectionSnapshot => this._serverSnapshot;
-
-  public subscribe = (listener: (snapshot: ConnectionSnapshot) => void): (() => void) => {
-    if (this._disposed) {
+  public subscribe = (listener: () => void): (() => void) => {
+    if (this._disposePromise !== undefined) {
       throw new StoreRetiredError();
     }
     this._listeners.add(listener);
@@ -145,7 +135,7 @@ class HeadlessApplication implements ApplicationRuntime {
   };
 
   public store<Definition extends StoreDefinition>(definition: Definition): StoreInstance<Definition> {
-    if (this._disposed) {
+    if (this._disposePromise !== undefined) {
       throw new StoreRetiredError();
     }
     if (!this._definitions.has(definition)) {
@@ -154,17 +144,15 @@ class HeadlessApplication implements ApplicationRuntime {
     const sessionScope = this._resolveSessionScope();
     if (!sessionScope.storeInstances.has(definition)) {
       // Reverse teardown must close this feature before the stores it depends on.
-      for (const dependency of Object.values(definition.stores)) {
-        this.store(dependency);
-      }
+      const dependencies = Object.fromEntries(Object.entries(definition.stores).map(([name, dependency]): [string, unknown] =>
+        [name, this.store(dependency)]));
       const storeAbortController = new AbortController();
       const signal = AbortSignal.any([sessionScope.abortController.signal, storeAbortController.signal]);
       const closeCallbacks: (() => void | Promise<void>)[] = [];
       let closePromise: Promise<void> | undefined;
       const close = (): Promise<void> => {
         if (closePromise === undefined) {
-          closePromise = closeResources([...closeCallbacks].reverse(), 'Feature cleanup failed.')
-            .finally((): void => { closeCallbacks.length = 0; });
+          closePromise = closeResources(closeCallbacks.splice(0).reverse(), 'Feature cleanup failed.');
           storeAbortController.abort(new StoreRetiredError());
         }
         return closePromise;
@@ -191,7 +179,7 @@ class HeadlessApplication implements ApplicationRuntime {
         },
       };
       try {
-        const value = definition.instantiate(storeScope, (dependency): unknown => this.store(dependency));
+        const value = definition.instantiate(storeScope, dependencies);
         if (signal.aborted) {
           throw new StoreRetiredError();
         }
@@ -207,7 +195,7 @@ class HeadlessApplication implements ApplicationRuntime {
   }
 
   public initialize(): Promise<ConnectionSnapshot> {
-    if (this._disposed) {
+    if (this._disposePromise !== undefined) {
       return Promise.reject(new StoreRetiredError());
     }
     return this.connection.initialize();
@@ -217,8 +205,7 @@ class HeadlessApplication implements ApplicationRuntime {
     if (this._disposePromise !== undefined) {
       return this._disposePromise;
     }
-    this._disposed = true;
-    // Install the shared completion before abort callbacks can reenter disposal.
+    // Installing the shared completion retires the runtime before cleanup can reenter.
     this._disposePromise = Promise.resolve().then(async (): Promise<void> => {
       try {
         await this._waitForCleanup();
@@ -233,7 +220,7 @@ class HeadlessApplication implements ApplicationRuntime {
   }
 
   private _resolveSessionScope(): SessionScope {
-    if (this._disposed) {
+    if (this._disposePromise !== undefined) {
       throw new StoreRetiredError();
     }
     const snapshot = this.connection.getSnapshot();
@@ -251,7 +238,7 @@ class HeadlessApplication implements ApplicationRuntime {
     this._sessionScope = sessionScope;
     if (authorizationSession !== undefined) {
       const handleSessionAbort = (): void => {
-        if (this._sessionScope !== sessionScope || this._disposed) {
+        if (this._sessionScope !== sessionScope || this._disposePromise !== undefined) {
           return;
         }
         this._resolveSessionScope();
@@ -266,7 +253,7 @@ class HeadlessApplication implements ApplicationRuntime {
   }
 
   private _assertCurrentSessionScope(sessionScope: SessionScope): void {
-    if (this._disposed || sessionScope.abortController.signal.aborted || this._sessionScope !== sessionScope) {
+    if (this._disposePromise !== undefined || sessionScope.abortController.signal.aborted || this._sessionScope !== sessionScope) {
       throw new StoreRetiredError();
     }
     const snapshot = this.connection.getSnapshot();
@@ -291,8 +278,7 @@ class HeadlessApplication implements ApplicationRuntime {
     sessionScope.abortController.abort(new StoreRetiredError());
     sessionScope.storeInstances.clear();
     // Authority ends synchronously; asynchronous releases remain owned until disposal finishes.
-    this._trackCleanup([...sessionScope.closeCallbacks].reverse());
-    sessionScope.closeCallbacks.length = 0;
+    this._trackCleanup(sessionScope.closeCallbacks.splice(0).reverse());
   }
 
   private _trackCleanup(cleanup: (() => void | Promise<void>)[]): void {
@@ -319,12 +305,11 @@ class HeadlessApplication implements ApplicationRuntime {
   }
 
   private _publish(): void {
-    const snapshot = this.getSnapshot();
     const listeners = [...this._listeners];
     for (const listener of listeners) {
       if (this._listeners.has(listener)) {
         try {
-          listener(snapshot);
+          listener();
         } catch {
           // Consumer failures cannot interrupt retirement or other subscribers.
         }

@@ -84,6 +84,10 @@ export function createCollectionResource<Item>(
   };
   const isActiveObservation = (observation: CollectionObservation<Item>): boolean =>
     !closed && !scope.signal.aborted && activeObservation === observation;
+  const assertActiveObservation = (observation: CollectionObservation<Item>): void => {
+    scope.assertCurrent();
+    if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+  };
   const trackClose = (view: ExpandableRecordView<Item>): void => {
     // Register completion before native cleanup can synchronously reenter this owner.
     const cleanup = Promise.resolve().then(() => view.close());
@@ -119,8 +123,7 @@ export function createCollectionResource<Item>(
   const page = (observation: CollectionObservation<Item>): Promise<void> => {
     if (observation.loadMorePromise !== undefined) { return observation.loadMorePromise; }
     const pending = observation.openPromise.then(async (view): Promise<void> => {
-      scope.assertCurrent();
-      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+      assertActiveObservation(observation);
       await view.loadMore();
     });
     observation.loadMorePromise = pending;
@@ -151,15 +154,12 @@ export function createCollectionResource<Item>(
   const refresh = async (observation: CollectionObservation<Item>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
     try {
       const view = await observation.openPromise;
-      scope.assertCurrent();
-      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+      assertActiveObservation(observation);
       await view.refresh();
       if (options.loadAll) { await drainAll(observation); }
-      scope.assertCurrent();
-      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+      assertActiveObservation(observation);
       const state = await view.ready();
-      scope.assertCurrent();
-      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+      assertActiveObservation(observation);
       return state;
     } catch (error: unknown) { fail(observation, error); throw error; }
   };
@@ -173,8 +173,7 @@ export function createCollectionResource<Item>(
       abortController,
       // The owner registers this observation before its opener runs.
       openPromise: Promise.resolve().then(async (): Promise<ExpandableRecordView<Item>> => {
-        scope.assertCurrent();
-        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        assertActiveObservation(observation);
         const view = await openView(AbortSignal.any([abortController.signal, scope.signal]));
         if (!isActiveObservation(observation)) {
           await view.close();
@@ -223,6 +222,16 @@ export function createCollectionResource<Item>(
       if (activeObservation === undefined) { publish(idleState); }
     }
   };
+  const acquireLease = (): (() => void) => {
+    leaseCount += 1;
+    let released = false;
+    return (): void => {
+      if (released) { return; }
+      released = true;
+      leaseCount -= 1;
+      releaseUnused();
+    };
+  };
   const close = async (): Promise<void> => {
     if (!closed) {
       retireObservation();
@@ -249,65 +258,54 @@ export function createCollectionResource<Item>(
     },
     retain: (): (() => void) => {
       if (closed) { return (): void => {}; }
-      leaseCount += 1;
+      const release = acquireLease();
       startAutomaticObservation();
-      let released = false;
-      return (): void => {
-        if (released) { return; }
-        released = true;
-        leaseCount -= 1;
-        releaseUnused();
-      };
+      return release;
     },
     ready: async (readyOptions = {}): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
       readyOptions.signal?.throwIfAborted();
-      leaseCount += 1;
+      const release = acquireLease();
       try {
         const observation = startObservation();
         const view = await whileNotAborted(observation.openPromise, readyOptions.signal);
-        scope.assertCurrent();
-        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        assertActiveObservation(observation);
         if (options.loadAll) { await whileNotAborted(drainAll(observation), readyOptions.signal); }
         const state = await view.ready(readyOptions);
-        scope.assertCurrent();
-        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        assertActiveObservation(observation);
         readyOptions.signal?.throwIfAborted();
         return state;
-      } finally { leaseCount -= 1; releaseUnused(); }
+      } finally { release(); }
     },
     retry: (): Promise<void> => {
       try { scope.assertCurrent(); } catch (error: unknown) { return Promise.reject(error); }
       if (retrying !== undefined) { return retrying; }
-      leaseCount += 1;
+      const release = acquireLease();
       // Publish the shared completion before retiring subscriptions can request another retry.
       const pending = Promise.resolve().then(async (): Promise<void> => {
         scope.assertCurrent();
         retireObservation();
         const observation = startObservation();
         await observation.openPromise;
-        scope.assertCurrent();
-        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        assertActiveObservation(observation);
       }).finally((): void => {
         if (retrying === pending) { retrying = undefined; }
-        leaseCount -= 1;
-        releaseUnused();
+        release();
       });
       retrying = pending;
       return pending;
     },
     loadMore: (): Promise<void> => {
+      let release: (() => void) | undefined;
       try {
         scope.assertCurrent();
-        leaseCount += 1;
-        let pending: Promise<void>;
-        try { pending = page(startObservation()); } catch (error: unknown) { leaseCount -= 1; releaseUnused(); throw error; }
-        return pending.finally((): void => { leaseCount -= 1; releaseUnused(); });
-      } catch (error: unknown) { return Promise.reject(error); }
+        release = acquireLease();
+        return page(startObservation()).finally(release);
+      } catch (error: unknown) { release?.(); return Promise.reject(error); }
     },
     refresh: async (): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
       scope.assertCurrent();
-      leaseCount += 1;
-      try { return await refresh(startObservation()); } finally { leaseCount -= 1; releaseUnused(); }
+      const release = acquireLease();
+      try { return await refresh(startObservation()); } finally { release(); }
     },
     refreshIfActive: async (): Promise<void> => {
       const observation = activeObservation;

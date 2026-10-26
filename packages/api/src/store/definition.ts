@@ -18,8 +18,8 @@ export interface StoreDefinition<Value = unknown> {
   readonly protocols: StoreProtocols;
   /** Features that must be resolved before this feature is constructed. */
   readonly stores: StoreDefinitions;
-  /** @internal Instantiate declared dependencies for a single authorization scope. */
-  instantiate(scope: StoreScope, resolve: (definition: StoreDefinition) => unknown): Value;
+  /** @internal Construct a feature from dependencies already resolved in its authorization scope. */
+  instantiate(scope: StoreScope, dependencies: Readonly<Record<string, unknown>>): Value;
 }
 
 /** The feature value returned by a definition's factory. */
@@ -80,11 +80,9 @@ export function defineStore<
   return Object.freeze({
     protocols,
     stores,
-    instantiate(scope: StoreScope, resolve: (definition: StoreDefinition) => unknown): Value {
+    instantiate(scope: StoreScope, dependencies: Readonly<Record<string, unknown>>): Value {
       const bindings = Object.fromEntries(Object.entries(protocols).map(([name, protocol]): [string, ProtocolStore<TypedProtocol>] =>
         [name, createProtocolStore(protocol, scope)]));
-      const dependencies = Object.fromEntries(Object.entries(stores).map(([name, definition]): [string, unknown] =>
-        [name, resolve(definition)]));
       return create({
         // The declared keys pair each original protocol with its own typed binding.
         protocols : bindings as unknown as StoreContext<Protocols, Stores>['protocols'],

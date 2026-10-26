@@ -24,7 +24,6 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
 
   private _requestRevision = 0;
   private readonly _refreshes = new Set<{
-    requestRevision: number;
     resolve(state: Extract<TState, { status: 'ready' }>): void;
     reject(error: unknown): void;
   }>();
@@ -78,7 +77,7 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
       return Promise.reject(new Error('Cannot refresh a closed view.'));
     }
     const result = new Promise<Extract<TState, { status: 'ready' }>>((resolve, reject): void => {
-      this._refreshes.add({ requestRevision: this._requestRevision + 1, resolve, reject });
+      this._refreshes.add({ resolve, reject });
     });
     this.requestMaterialization();
     return result;
@@ -132,10 +131,8 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
     if (!this.canPublishMaterialization(requestRevision) || (state.status !== 'ready' && state.status !== 'error')) {
       return;
     }
+    // Each refresh advances the request revision, so this latest pass covers every pending waiter.
     for (const pending of this._refreshes) {
-      if (pending.requestRevision > requestRevision) {
-        continue;
-      }
       this._refreshes.delete(pending);
       if (state.status === 'error') {
         pending.reject(state.error);

@@ -95,7 +95,8 @@ describe('headless application stores', () => {
     expect(native.initialized()).toBe(false);
     expect(app.store(Notes)).toBe(feature);
     expect(feature.notes.getSnapshot().status).toBe('idle');
-    expect(app.getServerSnapshot()).toEqual({ phase: 'initializing', vaultLocked: true });
+    expect(feature.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
+    expect(feature.notes.getServerSnapshot()).toBe(feature.notes.getServerSnapshot());
     await expect(feature.notes.create.run({ title: 'Disconnected' })).rejects.toBeInstanceOf(StoreNotConnectedError);
     await app.initialize();
     expect(native.initialized()).toBe(true);
@@ -116,6 +117,7 @@ describe('headless application stores', () => {
     const record = await first.notes.create.run({ title: 'Shared canonical state' });
     expect(app.store(Notes).notes).toBe(first.notes);
     expect(first.notes.getSnapshot().records.some(row => row.record.id === record.id)).toBe(true);
+    expect(first.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
     native.publish({ ...native.connection.getSnapshot(), vaultLocked: false });
     expect(app.store(Notes)).toBe(first);
     native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
@@ -204,7 +206,7 @@ describe('headless application stores', () => {
     try {
       app.store(Notes);
       native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
-      expect(app.getSnapshot().enbox).toBe(latestFacade);
+      expect(app.connection.getSnapshot().enbox).toBe(latestFacade);
       expect(app.store(Notes)).toBe(successor);
       expect(created).toBe(2);
       expect(successor?.signal.aborted).toBe(false);
@@ -217,18 +219,25 @@ describe('headless application stores', () => {
 
   it('closes dependents before dependencies and cleans up failed factories exactly once', async (): Promise<void> => {
     const closed: string[] = [];
+    let baseCreates = 0;
     const base = defineStore({ protocols : { notes: Protocol }, create    : ({ onClose }): object => {
+      baseCreates += 1;
       onClose((): void => { closed.push('base'); }); return {};
     } });
-    const feature = defineStore({ protocols : {}, stores    : { base }, create    : ({ stores, onClose }): object => {
-      onClose((): void => { closed.push('feature'); }); return stores.base;
+    const feature = defineStore({ protocols : {}, stores    : { base, alias: base }, create    : ({ stores, onClose }): {
+      base: object; alias: object;
+    } => {
+      onClose((): void => { closed.push('feature'); }); return { base: stores.base, alias: stores.alias };
     } });
     const failed = defineStore({ protocols : {}, create    : ({ onClose }): never => {
       onClose((): void => { closed.push('failed'); }); throw new Error('Factory failed');
     } });
     const native = controlledConnection({ phase: 'disconnected' });
     const app = createApplication(defineApplication({ stores: { feature, failed } }), native);
-    app.store(feature);
+    const instance = app.store(feature);
+    expect(instance.base).toBe(instance.alias);
+    expect(instance.base).toBe(app.store(base));
+    expect(baseCreates).toBe(1);
     expect(() => app.store(failed)).toThrow('Factory failed');
     await app.dispose();
     expect(closed.filter(value => value === 'failed')).toHaveLength(1);
