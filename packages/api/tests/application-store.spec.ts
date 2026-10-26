@@ -146,7 +146,7 @@ describe('headless application stores', () => {
     await app.dispose();
   });
 
-  it('preserves a successor resolved synchronously while the previous generation aborts', async (): Promise<void> => {
+  it('preserves a successor resolved synchronously while the previous session scope aborts', async (): Promise<void> => {
     const closed: number[] = [];
     let created = 0;
     let reenter = (): void => {};

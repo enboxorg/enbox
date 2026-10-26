@@ -33,8 +33,8 @@ export type {
 export { defineStore } from './store/definition.js';
 export type { DefineStoreOptions, StoreContext, StoreDefinition, StoreDefinitions, StoreInstance, StoreProtocols } from './store/definition.js';
 export type { ProtocolStore, StoreCollection, StoreCollectionFamily, StoreCollectionOptions } from './store/protocol-store.js';
-export type { StoreCommand, StoreCommandSnapshot } from './store/command.js';
-export type { StoreCollectionResource, StoreCollectionSnapshot } from './store/resource.js';
+export type { StoreCommand, StoreCommandState } from './store/command.js';
+export type { StoreCollectionResource, StoreCollectionState } from './store/resource.js';
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';

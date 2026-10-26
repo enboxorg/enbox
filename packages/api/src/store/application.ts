@@ -9,11 +9,13 @@ import type { StoreDefinition, StoreDefinitions, StoreInstance } from './definit
 import { defineApplicationManifest } from '../application-manifest.js';
 import { StoreNotConnectedError, StoreRetiredError } from './scope.js';
 
+/** Static feature registration and the protocol manifest derived from its dependencies. */
 export type ApplicationDefinition<Stores extends StoreDefinitions = StoreDefinitions> = Readonly<{
   stores: Stores;
   manifest: ApplicationManifest;
 }>;
 
+/** Features to register, with application-level protocol and permission policy. */
 export type DefineApplicationOptions<Stores extends StoreDefinitions> = {
   stores: Stores;
   /** Additional protocols and explicit permission overrides for store dependencies. */
@@ -57,31 +59,50 @@ export function defineApplication<const Stores extends StoreDefinitions>(
   return Object.freeze({ stores, manifest });
 }
 
-/** One headless resource owner around the native connection store. */
+/** Own session-scoped features while exposing the native connection's observable state. */
 export interface ApplicationRuntime extends ObservableStore<ConnectionSnapshot> {
+  /** The owned native connection; use its actions for connect and disconnect. */
   readonly connection: ConnectionStore;
+  /** Read the native connection's cached state without creating another connection state model. */
+  getSnapshot: () => ConnectionSnapshot;
+  /** Return the stable initializing state used for server rendering and hydration. */
   getServerSnapshot(): ConnectionSnapshot;
+  /** Observe connection publications and immediate session-scope invalidation. */
+  subscribe: (listener: (snapshot: ConnectionSnapshot) => void) => () => void;
+  /**
+   * Resolve a registered feature once per native session/facade pair, including its dependencies.
+   * Disconnected applications supply inert feature instances whose resources remain idle.
+   */
   store<Definition extends StoreDefinition>(definition: Definition): StoreInstance<Definition>;
+  /** Initialize the owned connection and restore its saved session. */
   initialize(): Promise<ConnectionSnapshot>;
-  /** Retire resource generations and dispose the owned native connection. */
+  /** Permanently retire stores, await their cleanup, and dispose the native connection once. */
   dispose(): Promise<void>;
 }
 
+/** Supply the native connection whose lifetime will belong to this application. */
 export type CreateApplicationOptions = {
   /** The application takes ownership of this connection's terminal disposal. */
   connection: ConnectionStore;
 };
 
-type Generation = {
-  abort: AbortController;
+/**
+ * Own feature instances and cleanup for one exact SDK session/facade pair.
+ * A disconnected scope supplies idle stores without SDK authority.
+ */
+type SessionScope = {
+  abortController: AbortController;
   enbox: Enbox | undefined;
-  session: ConnectionSnapshot['session'];
-  instances: Map<StoreDefinition, unknown>;
-  cleanup: (() => void | Promise<void>)[];
-  detachSession?: () => void;
+  authorizationSession: ConnectionSnapshot['session'];
+  storeInstances: Map<StoreDefinition, unknown>;
+  closeCallbacks: (() => void | Promise<void>)[];
+  detachSessionAbort?: () => void;
 };
 
-/** Create an application without initializing authentication, storage, or protocol views. */
+/**
+ * Create the owner for registered features and the supplied connection.
+ * Construction subscribes to connection changes; initialize() starts session restoration.
+ */
 export function createApplication(
   definition: ApplicationDefinition,
   options: CreateApplicationOptions,
@@ -94,20 +115,20 @@ class HeadlessApplication implements ApplicationRuntime {
   private readonly _definitions: Set<StoreDefinition>;
   private readonly _listeners = new Set<(snapshot: ConnectionSnapshot) => void>();
   private readonly _serverSnapshot: ConnectionSnapshot = Object.freeze({ phase: 'initializing', vaultLocked: true });
-  private readonly _retirements = new Set<Promise<void>>();
-  private readonly _unsubscribe: () => void;
-  private _generation: Generation | undefined;
+  private readonly _pendingCleanup = new Set<Promise<void>>();
+  private readonly _unsubscribeConnection: () => void;
+  private _sessionScope: SessionScope | undefined;
   private _disposePromise: Promise<void> | undefined;
   private _disposed = false;
 
   public constructor(definition: ApplicationDefinition, connection: ConnectionStore) {
     this.connection = connection;
     this._definitions = collectStores(definition.stores);
-    this._unsubscribe = connection.subscribe((): void => {
+    this._unsubscribeConnection = connection.subscribe((): void => {
       if (this._disposed) {
         return;
       }
-      this._reconcile();
+      this._resolveSessionScope();
       this._publish();
     });
   }
@@ -130,50 +151,51 @@ class HeadlessApplication implements ApplicationRuntime {
     if (!this._definitions.has(definition)) {
       throw new TypeError('Application.store: register the feature in defineApplication before resolving it.');
     }
-    const generation = this._reconcile();
-    if (!generation.instances.has(definition)) {
+    const sessionScope = this._resolveSessionScope();
+    if (!sessionScope.storeInstances.has(definition)) {
+      // Reverse teardown must close this feature before the stores it depends on.
       for (const dependency of Object.values(definition.stores)) {
         this.store(dependency);
       }
-      const lifetime = new AbortController();
-      const signal = AbortSignal.any([generation.abort.signal, lifetime.signal]);
-      const cleanup: (() => void | Promise<void>)[] = [];
+      const storeAbortController = new AbortController();
+      const signal = AbortSignal.any([sessionScope.abortController.signal, storeAbortController.signal]);
+      const closeCallbacks: (() => void | Promise<void>)[] = [];
       let closePromise: Promise<void> | undefined;
       const close = (): Promise<void> => {
         if (closePromise === undefined) {
-          closePromise = closeResources([...cleanup].reverse(), 'Feature cleanup failed.')
-            .finally((): void => { cleanup.length = 0; });
-          lifetime.abort(new StoreRetiredError());
+          closePromise = closeResources([...closeCallbacks].reverse(), 'Feature cleanup failed.')
+            .finally((): void => { closeCallbacks.length = 0; });
+          storeAbortController.abort(new StoreRetiredError());
         }
         return closePromise;
       };
-      generation.cleanup.push(close);
-      const scope: StoreScope = {
+      sessionScope.closeCallbacks.push(close);
+      const storeScope: StoreScope = {
         signal,
         assertCurrent: (): void => {
           if (signal.aborted) {
             throw new StoreRetiredError();
           }
-          this._assertCurrent(generation);
+          this._assertCurrentSessionScope(sessionScope);
         },
         getEnbox: (): Enbox => {
-          scope.assertCurrent();
-          return generation.enbox!;
+          storeScope.assertCurrent();
+          return sessionScope.enbox!;
         },
         onClose: (release: () => void | Promise<void>): void => {
           if (signal.aborted) {
             this._trackCleanup([release]);
           } else {
-            cleanup.push(release);
+            closeCallbacks.push(release);
           }
         },
       };
       try {
-        const value = definition.instantiate(scope, (dependency): unknown => this.store(dependency));
+        const value = definition.instantiate(storeScope, (dependency): unknown => this.store(dependency));
         if (signal.aborted) {
           throw new StoreRetiredError();
         }
-        generation.instances.set(definition, value);
+        sessionScope.storeInstances.set(definition, value);
       } catch (error) {
         const closing = close();
         this._trackCleanup([(): Promise<void> => closing]);
@@ -181,7 +203,7 @@ class HeadlessApplication implements ApplicationRuntime {
       }
     }
     // The definition token indexes only its own factory result.
-    return generation.instances.get(definition) as StoreInstance<Definition>;
+    return sessionScope.storeInstances.get(definition) as StoreInstance<Definition>;
   }
 
   public initialize(): Promise<ConnectionSnapshot> {
@@ -199,93 +221,97 @@ class HeadlessApplication implements ApplicationRuntime {
     // Install the shared completion before abort callbacks can reenter disposal.
     this._disposePromise = Promise.resolve().then(async (): Promise<void> => {
       try {
-        await this._drainRetirements();
+        await this._waitForCleanup();
       } finally {
         await this.connection.dispose();
       }
     });
-    this._unsubscribe();
+    this._unsubscribeConnection();
     this._listeners.clear();
-    this._retire(this._generation);
+    this._retireSessionScope(this._sessionScope);
     return this._disposePromise;
   }
 
-  private _reconcile(): Generation {
+  private _resolveSessionScope(): SessionScope {
     if (this._disposed) {
       throw new StoreRetiredError();
     }
     const snapshot = this.connection.getSnapshot();
-    const session = snapshot.session?.signal.aborted === true ? undefined : snapshot.session;
-    const enbox = session === undefined ? undefined : snapshot.enbox;
-    const current = this._generation;
-    if (current !== undefined && current.enbox === enbox && current.session === session) {
-      return current;
+    // A session can abort before the connection publishes its replacement state.
+    const authorizationSession = snapshot.session?.signal.aborted === true ? undefined : snapshot.session;
+    const enbox = authorizationSession === undefined ? undefined : snapshot.enbox;
+    const currentScope = this._sessionScope;
+    if (currentScope !== undefined && currentScope.enbox === enbox && currentScope.authorizationSession === authorizationSession) {
+      return currentScope;
     }
-    const generation: Generation = {
-      abort: new AbortController(), enbox, session, instances: new Map(), cleanup: [],
+    const sessionScope: SessionScope = {
+      abortController: new AbortController(), enbox, authorizationSession, storeInstances: new Map(), closeCallbacks: [],
     };
-    this._generation = generation;
-    if (session !== undefined) {
-      const abort = (): void => {
-        if (this._generation !== generation || this._disposed) {
+    // Old abort callbacks can resolve stores synchronously, so expose their successor first.
+    this._sessionScope = sessionScope;
+    if (authorizationSession !== undefined) {
+      const handleSessionAbort = (): void => {
+        if (this._sessionScope !== sessionScope || this._disposed) {
           return;
         }
-        this._reconcile();
+        this._resolveSessionScope();
         this._publish();
       };
-      session.signal.addEventListener('abort', abort, { once: true });
-      generation.detachSession = (): void => session.signal.removeEventListener('abort', abort);
+      authorizationSession.signal.addEventListener('abort', handleSessionAbort, { once: true });
+      sessionScope.detachSessionAbort = (): void => authorizationSession.signal.removeEventListener('abort', handleSessionAbort);
     }
-    this._retire(current);
-    // Abort listeners may resolve this successor or publish a still newer binding.
-    return this._reconcile();
+    this._retireSessionScope(currentScope);
+    // A cleanup callback may replace the connection again; return its latest scope.
+    return this._resolveSessionScope();
   }
 
-  private _assertCurrent(generation: Generation): void {
-    if (this._disposed || generation.abort.signal.aborted || this._generation !== generation) {
+  private _assertCurrentSessionScope(sessionScope: SessionScope): void {
+    if (this._disposed || sessionScope.abortController.signal.aborted || this._sessionScope !== sessionScope) {
       throw new StoreRetiredError();
     }
     const snapshot = this.connection.getSnapshot();
-    const session = snapshot.session?.signal.aborted === true ? undefined : snapshot.session;
-    const enbox = session === undefined ? undefined : snapshot.enbox;
-    if (generation.enbox !== enbox || generation.session !== session) {
+    const authorizationSession = snapshot.session?.signal.aborted === true ? undefined : snapshot.session;
+    const enbox = authorizationSession === undefined ? undefined : snapshot.enbox;
+    if (sessionScope.enbox !== enbox || sessionScope.authorizationSession !== authorizationSession) {
       throw new StoreRetiredError();
     }
-    if (generation.enbox === undefined || generation.session === undefined) {
+    if (sessionScope.enbox === undefined || sessionScope.authorizationSession === undefined) {
       throw new StoreNotConnectedError();
     }
   }
 
-  private _retire(generation: Generation | undefined): void {
-    if (generation === undefined) {
+  private _retireSessionScope(sessionScope: SessionScope | undefined): void {
+    if (sessionScope === undefined) {
       return;
     }
-    if (this._generation === generation) {
-      this._generation = undefined;
+    if (this._sessionScope === sessionScope) {
+      this._sessionScope = undefined;
     }
-    generation.detachSession?.();
-    generation.abort.abort(new StoreRetiredError());
-    generation.instances.clear();
-    this._trackCleanup([...generation.cleanup].reverse());
-    generation.cleanup.length = 0;
+    sessionScope.detachSessionAbort?.();
+    sessionScope.abortController.abort(new StoreRetiredError());
+    sessionScope.storeInstances.clear();
+    // Authority ends synchronously; asynchronous releases remain owned until disposal finishes.
+    this._trackCleanup([...sessionScope.closeCallbacks].reverse());
+    sessionScope.closeCallbacks.length = 0;
   }
 
   private _trackCleanup(cleanup: (() => void | Promise<void>)[]): void {
     const promise = closeResources(cleanup, 'Store resource cleanup failed.');
-    this._retirements.add(promise);
-    void promise.then((): void => { this._retirements.delete(promise); }, (cause: unknown): void => {
-      this._retirements.delete(promise);
+    this._pendingCleanup.add(promise);
+    void promise.then((): void => { this._pendingCleanup.delete(promise); }, (cause: unknown): void => {
+      this._pendingCleanup.delete(promise);
       console.warn('[@enbox/api] Store cleanup failed.', cause);
     });
   }
 
-  private async _drainRetirements(errors: unknown[] = []): Promise<void> {
-    const results = await Promise.allSettled(this._retirements);
+  private async _waitForCleanup(errors: unknown[] = []): Promise<void> {
+    const results = await Promise.allSettled(this._pendingCleanup);
     for (const result of results) {
       if (result.status === 'rejected') { errors.push(result.reason); }
     }
-    if (this._retirements.size > 0) {
-      return this._drainRetirements(errors);
+    // Cleanup callbacks can register follow-up releases while earlier ones finish.
+    if (this._pendingCleanup.size > 0) {
+      return this._waitForCleanup(errors);
     }
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Application resource cleanup failed.');

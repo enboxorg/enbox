@@ -146,7 +146,7 @@ describe('protocol stores with a real local DWN', () => {
     }
   });
 
-  it('does not retarget captured commands after the generation ends', async () => {
+  it('does not retarget captured commands after the authorization scope closes', async () => {
     const context = await createEnboxTestContext({ application });
     const fixture = storeFixture(context);
     try {

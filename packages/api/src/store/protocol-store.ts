@@ -25,15 +25,23 @@ type CodecsOf<P extends TypedProtocol> = P['codecs'];
 type GroupsOf<P extends TypedProtocol> = P['roleGroups'];
 type CollectionPath<P extends TypedProtocol> = Exclude<ProtocolPaths<DefinitionOf<P>>, ProtocolRolePaths<DefinitionOf<P>>> & string;
 
-/** One shared materialized collection and its generation-bound record commands. */
+/**
+ * Shared materialized rows and commands for one locally owned path and direct parent.
+ * Accepted writes refresh retained selections before completion; reread failures remain query errors.
+ * Collection state reports replication freshness separately from write acceptance.
+ */
 export interface StoreCollection<Value> extends StoreCollectionResource<TypedMaterializedRecord<Value>> {
+  /** Create a record using the protocol codec and this collection's parent scope. */
   readonly create: StoreCommand<Value, TypedRecord<Value>>;
+  /** Apply a native patch or pure producer after checking the record's direct parent. */
   readonly patch: StoreCommand<Readonly<{ id: string; patch: RecordPatchInput<Value> }>, TypedRecord<Value>>;
+  /** Delete a record by ID within this collection's parent scope. */
   readonly delete: StoreCommand<string, void>;
 }
 
-/** A nested path acquires one independently owned collection per exact direct parent. */
+/** Keyed locally owned collections for one nested protocol path. */
 export interface StoreCollectionFamily<Value> {
+  /** Resolve a stable handle for an exact direct-parent context ID without opening a view. */
   within(parentContextId: string): StoreCollection<Value>;
 }
 
@@ -42,16 +50,22 @@ export type StoreCollectionOptions<
   P extends TypedProtocol,
   Path extends CollectionPath<P>,
 > = Omit<RecordQuery<DefinitionOf<P>, Path>, 'from' | 'within' | 'protocolRole' | 'pagination'> & Readonly<{
+  /** Initial row limit and loadMore() increment; defaults to 20 and must be a positive safe integer. */
   pagination?: Readonly<{ limit: number }>;
-  /** Explicitly expand the native retained prefix until every matching row is loaded. */
+  /** Expand all matching local pages; ready() waits for that expansion when enabled. */
   loadAll?: boolean;
 }>;
 
-/** A protocol namespace retains inferred paths and values without opening storage. */
+/** Session-scoped protocol bindings that retain path and payload types without opening storage. */
 export interface ProtocolStore<P extends TypedProtocol> {
+  /** The original protocol definition and codecs. */
   readonly protocol: P;
-  /** Native typed operations for domain commands outside collection conveniences. */
+  /** Resolve native operations inside a domain command; accessing this requires a usable authorization scope. */
   readonly records: TypedEnbox<DefinitionOf<P>, CodecsOf<P>, GroupsOf<P>>['records'];
+  /**
+   * Resolve a shared selection, or a keyed family for a nested path, without opening a view.
+   * Filters and pagination affect reads; commands retain their protocol path and parent scope.
+   */
   collection<Path extends CollectionPath<P>>(
     path: Path,
     options?: StoreCollectionOptions<P, NoInfer<Path>>,
@@ -60,7 +74,7 @@ export interface ProtocolStore<P extends TypedProtocol> {
     : StoreCollection<DataForPath<CodecsOf<P>, Path>>;
 }
 
-/** Create an inert protocol store bound permanently to one application generation. */
+/** @internal Create inert protocol bindings owned by one captured authorization scope. */
 export function createProtocolStore<P extends TypedProtocol>(protocol: P, scope: StoreScope): ProtocolStore<P> {
   return createTypedProtocolStore(protocol, scope) as unknown as ProtocolStore<P>;
 }
@@ -109,6 +123,7 @@ function createTypedProtocolStore<
 
     const assertParent = async (id: string): Promise<void> => {
       if (within === undefined) { return; }
+      // Native patch is path-bound; the preflight also enforces this collection's direct parent.
       const record = await typed().records.read(path, id);
       scope.assertCurrent();
       if (record !== undefined && record.contextId.split('/').slice(0, -1).join('/') !== within) {

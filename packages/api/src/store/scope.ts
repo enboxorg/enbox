@@ -1,10 +1,14 @@
 import type { Enbox } from '../enbox.js';
 
-/** Resources and commands belonging to one exact authorization generation. */
+/** @internal SDK access and cleanup for one feature within an application session scope. */
 export interface StoreScope {
+  /** Ends this feature's authority before its asynchronous cleanup runs. */
   readonly signal: AbortSignal;
+  /** Return the captured SDK facade after validating the current session scope. */
   getEnbox(): Enbox;
+  /** Require a connected, current scope; throws when inactive or retired. */
   assertCurrent(): void;
+  /** Register resource release; late registrations are scheduled immediately. */
   onClose(close: () => void | Promise<void>): void;
 }
 

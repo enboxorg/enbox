@@ -3,30 +3,39 @@ import type { StoreScope } from './scope.js';
 
 import { toStoreError } from './scope.js';
 
-/** Immutable progress for one store command. */
-export type StoreCommandSnapshot<Input> = Readonly<{
+/** Immutable progress shared by every consumer of one command. */
+export type StoreCommandState<Input> = Readonly<{
+  /** Unresolved invocations belonging to the current authorization scope. */
   pendingCount: number;
-  /** Inputs of all unresolved invocations, ordered from oldest to newest. */
+  /** Unresolved inputs in start order, retained by reference; repeated inputs remain distinct. */
   pendingVariables: readonly Input[];
+  /** Display error owned by the latest invocation. */
   error: Error | undefined;
 }>;
 
-/** A generation-bound operation whose native outcome remains available to callers. */
-export interface StoreCommand<Input, Output> extends ObservableStore<StoreCommandSnapshot<Input>> {
-  getServerSnapshot(): StoreCommandSnapshot<Input>;
+/** An authorization-bound operation with shared progress and unchanged operation outcomes. */
+export interface StoreCommand<Input, Output> extends ObservableStore<StoreCommandState<Input>> {
+  /** Return cached idle progress for server rendering and hydration. */
+  getServerSnapshot(): StoreCommandState<Input>;
+  /**
+   * Dispatch once through the captured authorization scope and preserve the result or rejection.
+   * Retirement prevents new dispatch; operations already issued can still finish.
+   */
   run(input: Input): Promise<Output>;
+  /** Clear the displayed error without cancelling pending operations. */
   reset(): void;
+  /** Check whether the captured authorization is still usable; UI lifetimes, drafts, and navigation remain caller-owned. */
   isCurrent(): boolean;
 }
 
-/** Create an observable command without starting application work. */
+/** @internal Bind observable progress to a scope without dispatching application work. */
 export function createCommand<Input, Output>(
   scope: StoreScope,
   operation: (input: Input) => Promise<Output> | Output,
 ): StoreCommand<Input, Output> {
-  const idle = Object.freeze({ pendingCount: 0, pendingVariables: Object.freeze([]), error: undefined });
-  let snapshot: StoreCommandSnapshot<Input> = idle;
-  const listeners = new Set<(state: StoreCommandSnapshot<Input>) => void>();
+  const idleState = Object.freeze({ pendingCount: 0, pendingVariables: Object.freeze([]), error: undefined });
+  let state: StoreCommandState<Input> = idleState;
+  const listeners = new Set<(state: StoreCommandState<Input>) => void>();
   const pending = new Map<number, Input>();
   let latest = 0;
   let retired = false;
@@ -36,7 +45,7 @@ export function createCommand<Input, Output>(
     try { scope.assertCurrent(); return true; } catch { return false; }
   };
   const publish = (error: Error | undefined): void => {
-    snapshot = Object.freeze({
+    state = Object.freeze({
       pendingCount     : pending.size,
       pendingVariables : Object.freeze([...pending.values()]),
       error,
@@ -44,7 +53,7 @@ export function createCommand<Input, Output>(
     const subscribers = [...listeners];
     for (const listener of subscribers) {
       if (listeners.has(listener)) {
-        try { listener(snapshot); } catch { /* Consumer failures do not change command outcomes. */ }
+        try { listener(state); } catch { /* Consumer failures do not change command outcomes. */ }
       }
     }
   };
@@ -52,11 +61,11 @@ export function createCommand<Input, Output>(
     if (retired) { return; }
     retired = true;
     pending.clear();
-    snapshot = idle;
+    state = idleState;
     const subscribers = [...listeners];
     for (const listener of subscribers) {
       if (listeners.has(listener)) {
-        try { listener(snapshot); } catch { /* The scope must still retire. */ }
+        try { listener(state); } catch { /* The scope must still retire. */ }
       }
     }
     listeners.clear();
@@ -66,8 +75,8 @@ export function createCommand<Input, Output>(
   scope.onClose(retire);
 
   return {
-    getSnapshot       : (): StoreCommandSnapshot<Input> => snapshot,
-    getServerSnapshot : (): StoreCommandSnapshot<Input> => idle,
+    getSnapshot       : (): StoreCommandState<Input> => state,
+    getServerSnapshot : (): StoreCommandState<Input> => idleState,
     isCurrent         : current,
     subscribe         : (listener): (() => void) => {
       if (retired) { return (): void => {}; }
@@ -98,12 +107,12 @@ export function createCommand<Input, Output>(
         (): void => {
           if (id === undefined || !current()) { return; }
           pending.delete(id);
-          publish(snapshot.error);
+          publish(state.error);
         },
         (error: unknown): void => {
           if (id === undefined || !current()) { return; }
           pending.delete(id);
-          publish(id === latest ? toStoreError(error) : snapshot.error);
+          publish(id === latest ? toStoreError(error) : state.error);
         },
       );
       return promise;

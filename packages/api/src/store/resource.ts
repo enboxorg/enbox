@@ -4,8 +4,8 @@ import type { ExpandableRecordView, RecordViewState } from '../record-view.js';
 
 import { StoreNotConnectedError, StoreRetiredError, toStoreError } from './scope.js';
 
-/** An unopened or inactive collection retains no rows. */
-export type StoreCollectionSnapshot<Item> = RecordViewState<Item> | Readonly<{
+/** Native collection state plus an empty idle state when no observation or usable session is available. */
+export type StoreCollectionState<Item> = RecordViewState<Item> | Readonly<{
   status: 'idle';
   records: readonly Item[];
   hasMore: false;
@@ -13,65 +13,79 @@ export type StoreCollectionSnapshot<Item> = RecordViewState<Item> | Readonly<{
   error?: never;
 }>;
 
-/** A shared lazy resource over one native materialized record view. */
-export interface StoreCollectionResource<Item> extends ObservableStore<StoreCollectionSnapshot<Item>> {
-  getServerSnapshot(): StoreCollectionSnapshot<Item>;
-  /** Keep this selection live until release; concurrent consumers share one native view. */
+/**
+ * A shared lazy observation of one native materialized selection.
+ * Subscriptions and retain() keep it live; async controls hold temporary leases.
+ * Constructing or reading the handle does not open a view.
+ */
+export interface StoreCollectionResource<Item> extends ObservableStore<StoreCollectionState<Item>> {
+  /** Return cached empty idle state for server rendering and hydration. */
+  getServerSnapshot(): StoreCollectionState<Item>;
+  /** Keep the selection live until the returned idempotent release function runs or its session ends. */
   retain(): () => void;
   /**
-   * Temporarily retain usable local rows, including every page when loadAll is enabled.
-   * The waiter releases its ownership on settlement; use retain() for a persistent consumer.
+   * Wait for usable local rows, including all pages when loadAll is enabled.
+   * This waiter releases its lease on settlement; cancellation affects only this waiter.
+   * Use retain() when the observation must remain live afterwards.
    */
   ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>>;
-  /** Reopen the native view. Subscriber and explicit retain() ownership remain unchanged. */
+  /**
+   * Reopen the view and wait for attachment, rather than usable rows.
+   * Concurrent retries share completion; existing subscriptions and leases remain in effect.
+   */
   retry(): Promise<void>;
+  /** Expand the native prefix by one configured page; concurrent calls share work and failures remain observable. */
   loadMore(): Promise<void>;
-  /** Rematerialize the native query without claiming remote replication currentness. */
+  /** Recompute usable local rows, including loadAll pages, without implying remote replication is current. */
   refresh(): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>>;
 }
 
-/** @internal Mutation commands refresh acquired selections without opening unused views. */
+/** @internal Mutation commands refresh retained selections without opening unused views. */
 export interface StoreCollectionController<Item> extends StoreCollectionResource<Item> {
+  /** Refresh only an existing observation; an unused selection remains unopened. */
   refreshIfActive(): Promise<void>;
 }
 
-type Attempt<Item> = {
-  controller: AbortController;
-  opening: Promise<ExpandableRecordView<Item>>;
+/** One pending or attached native view, with cancellation and serialized pagination controls. */
+type CollectionObservation<Item> = {
+  abortController: AbortController;
+  openPromise: Promise<ExpandableRecordView<Item>>;
   view?: ExpandableRecordView<Item>;
   unsubscribe?: () => void;
-  paging?: Promise<void>;
-  loadingAll?: Promise<void>;
+  loadMorePromise?: Promise<void>;
+  loadAllPromise?: Promise<void>;
 };
 
 /** @internal Keep native view ownership outside framework bindings. */
 export function createCollectionResource<Item>(
   scope: StoreScope,
-  open: (signal: AbortSignal) => Promise<ExpandableRecordView<Item>>,
+  openView: (signal: AbortSignal) => Promise<ExpandableRecordView<Item>>,
   options: Readonly<{ loadAll?: boolean }> = {},
 ): StoreCollectionController<Item> {
-  const idle = Object.freeze({ status: 'idle' as const, records: Object.freeze([]), hasMore: false as const, current: false as const });
-  let snapshot: StoreCollectionSnapshot<Item> = idle;
-  let attempt: Attempt<Item> | undefined;
-  let retained = 0;
+  const idleState = Object.freeze({ status: 'idle' as const, records: Object.freeze([]), hasMore: false as const, current: false as const });
+  let state: StoreCollectionState<Item> = idleState;
+  let activeObservation: CollectionObservation<Item> | undefined;
+  let leaseCount = 0;
   let closed = false;
   let retrying: Promise<void> | undefined;
-  const listeners = new Set<(state: StoreCollectionSnapshot<Item>) => void>();
+  const listeners = new Set<(state: StoreCollectionState<Item>) => void>();
   const cleanups = new Set<Promise<void>>();
   const openings = new Set<Promise<ExpandableRecordView<Item>>>();
 
-  const publish = (state: StoreCollectionSnapshot<Item>): void => {
-    if (closed || snapshot === state) { return; }
-    snapshot = state;
+  const publish = (nextState: StoreCollectionState<Item>): void => {
+    if (closed || state === nextState) { return; }
+    state = nextState;
     const subscribers = [...listeners];
     for (const listener of subscribers) {
       if (listeners.has(listener)) {
-        try { listener(state); } catch { /* Consumer failures do not affect a native view. */ }
+        try { listener(nextState); } catch { /* Consumer failures do not affect a native view. */ }
       }
     }
   };
-  const valid = (candidate: Attempt<Item>): boolean => !closed && !scope.signal.aborted && attempt === candidate;
+  const isActiveObservation = (observation: CollectionObservation<Item>): boolean =>
+    !closed && !scope.signal.aborted && activeObservation === observation;
   const trackClose = (view: ExpandableRecordView<Item>): void => {
+    // Register completion before native cleanup can synchronously reenter this owner.
     const cleanup = Promise.resolve().then(() => view.close());
     cleanups.add(cleanup);
     void cleanup.then(
@@ -82,134 +96,137 @@ export function createCollectionResource<Item>(
       },
     );
   };
-  const retire = (): void => {
-    const previous = attempt;
-    attempt = undefined;
+  const retireObservation = (): void => {
+    const previous = activeObservation;
+    // Detach first so cleanup callbacks cannot reclaim the retiring view.
+    activeObservation = undefined;
     if (previous === undefined) { return; }
     previous.unsubscribe?.();
-    previous.controller.abort();
+    previous.abortController.abort();
     if (previous.view !== undefined) { trackClose(previous.view); }
   };
-  const fail = (candidate: Attempt<Item>, error: unknown): void => {
-    if (!valid(candidate)) { return; }
+  const fail = (observation: CollectionObservation<Item>, error: unknown): void => {
+    if (!isActiveObservation(observation)) { return; }
     publish(Object.freeze({
       status  : 'error',
-      records : snapshot.records,
-      hasMore : snapshot.hasMore,
+      records : state.records,
+      hasMore : state.hasMore,
       current : false,
       error   : toStoreError(error),
     }));
   };
 
-  const page = (candidate: Attempt<Item>): Promise<void> => {
-    if (candidate.paging !== undefined) { return candidate.paging; }
-    const pending = candidate.opening.then(async (view): Promise<void> => {
+  const page = (observation: CollectionObservation<Item>): Promise<void> => {
+    if (observation.loadMorePromise !== undefined) { return observation.loadMorePromise; }
+    const pending = observation.openPromise.then(async (view): Promise<void> => {
       scope.assertCurrent();
-      if (!valid(candidate)) { throw new StoreRetiredError(); }
+      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
       await view.loadMore();
     });
-    candidate.paging = pending;
+    observation.loadMorePromise = pending;
     void pending.then(
-      (): void => { candidate.paging = undefined; },
-      (error: unknown): void => { candidate.paging = undefined; fail(candidate, error); },
+      (): void => { observation.loadMorePromise = undefined; },
+      (error: unknown): void => { observation.loadMorePromise = undefined; fail(observation, error); },
     );
     return pending;
   };
 
-  const drainAll = (candidate: Attempt<Item>): Promise<void> => {
-    if (candidate.loadingAll !== undefined) { return candidate.loadingAll; }
-    const pending = candidate.opening.then((view): Promise<void> => {
+  const drainAll = (observation: CollectionObservation<Item>): Promise<void> => {
+    if (observation.loadAllPromise !== undefined) { return observation.loadAllPromise; }
+    const pending = observation.openPromise.then((view): Promise<void> => {
       const expand = (): Promise<void> => {
-        if (!valid(candidate) || !view.getSnapshot().hasMore) { return Promise.resolve(); }
-        return page(candidate).then(expand);
+        if (!isActiveObservation(observation) || !view.getSnapshot().hasMore) { return Promise.resolve(); }
+        return page(observation).then(expand);
       };
-      return view.ready({ signal: candidate.controller.signal }).then(expand);
+      return view.ready({ signal: observation.abortController.signal }).then(expand);
     });
-    candidate.loadingAll = pending;
+    observation.loadAllPromise = pending;
     void pending.then(
-      (): void => { candidate.loadingAll = undefined; },
-      (error: unknown): void => { candidate.loadingAll = undefined; fail(candidate, error); },
+      (): void => { observation.loadAllPromise = undefined; },
+      (error: unknown): void => { observation.loadAllPromise = undefined; fail(observation, error); },
     );
     return pending;
   };
 
-  const refresh = async (candidate: Attempt<Item>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
+  const refresh = async (observation: CollectionObservation<Item>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
     try {
-      const view = await candidate.opening;
+      const view = await observation.openPromise;
       scope.assertCurrent();
-      if (!valid(candidate)) { throw new StoreRetiredError(); }
+      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
       await view.refresh();
-      if (options.loadAll) { await drainAll(candidate); }
+      if (options.loadAll) { await drainAll(observation); }
       scope.assertCurrent();
-      if (!valid(candidate)) { throw new StoreRetiredError(); }
+      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
       const state = await view.ready();
       scope.assertCurrent();
-      if (!valid(candidate)) { throw new StoreRetiredError(); }
+      if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
       return state;
-    } catch (error: unknown) { fail(candidate, error); throw error; }
+    } catch (error: unknown) { fail(observation, error); throw error; }
   };
 
-  const start = (): Attempt<Item> => {
+  const startObservation = (): CollectionObservation<Item> => {
     scope.assertCurrent();
     if (closed) { throw new Error('Store collection is closed.'); }
-    if (attempt !== undefined) { return attempt; }
-    const controller = new AbortController();
-    const candidate: Attempt<Item> = {
-      controller,
-      opening: Promise.resolve().then(async (): Promise<ExpandableRecordView<Item>> => {
+    if (activeObservation !== undefined) { return activeObservation; }
+    const abortController = new AbortController();
+    const observation: CollectionObservation<Item> = {
+      abortController,
+      // The owner registers this observation before its opener runs.
+      openPromise: Promise.resolve().then(async (): Promise<ExpandableRecordView<Item>> => {
         scope.assertCurrent();
-        if (!valid(candidate)) { throw new StoreRetiredError(); }
-        const view = await open(AbortSignal.any([controller.signal, scope.signal]));
-        if (!valid(candidate)) {
+        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        const view = await openView(AbortSignal.any([abortController.signal, scope.signal]));
+        if (!isActiveObservation(observation)) {
           await view.close();
           throw new StoreRetiredError();
         }
-        candidate.view = view;
+        observation.view = view;
+        // Attach before reading state, then check again in case subscribe() reentered cleanup.
         const unsubscribe = view.subscribe((state): void => {
-          if (valid(candidate)) {
+          if (isActiveObservation(observation)) {
             publish(state);
             if (options.loadAll && state.status === 'ready' && state.hasMore) {
-              void drainAll(candidate).catch((): void => {});
+              void drainAll(observation).catch((): void => {});
             }
           }
         });
-        if (!valid(candidate)) {
+        if (!isActiveObservation(observation)) {
           unsubscribe();
           return view;
         }
-        candidate.unsubscribe = unsubscribe;
+        observation.unsubscribe = unsubscribe;
         publish(view.getSnapshot());
         return view;
       }),
     };
-    attempt = candidate;
-    openings.add(candidate.opening);
-    void candidate.opening.then(
-      (): void => { openings.delete(candidate.opening); },
-      (): void => { openings.delete(candidate.opening); },
+    activeObservation = observation;
+    openings.add(observation.openPromise);
+    void observation.openPromise.then(
+      (): void => { openings.delete(observation.openPromise); },
+      (): void => { openings.delete(observation.openPromise); },
     );
     publish(Object.freeze({ status: 'loading', records: Object.freeze([]), hasMore: false, current: false }));
-    void candidate.opening.catch((error: unknown): void => { fail(candidate, error); });
-    if (options.loadAll) { void drainAll(candidate).catch((): void => {}); }
-    return candidate;
+    void observation.openPromise.catch((error: unknown): void => { fail(observation, error); });
+    if (options.loadAll) { void drainAll(observation).catch((): void => {}); }
+    return observation;
   };
-  const startAutomatic = (): void => {
-    try { start(); } catch (error: unknown) {
+  const startAutomaticObservation = (): void => {
+    try { startObservation(); } catch (error: unknown) {
       if (!(error instanceof StoreNotConnectedError) && !closed && !scope.signal.aborted) {
         publish(Object.freeze({ status: 'error', records: Object.freeze([]), hasMore: false, current: false, error: toStoreError(error) }));
       }
     }
   };
   const releaseUnused = (): void => {
-    if (retained === 0 && listeners.size === 0 && !closed) {
-      retire();
-      if (attempt === undefined) { publish(idle); }
+    if (leaseCount === 0 && listeners.size === 0 && !closed) {
+      retireObservation();
+      if (activeObservation === undefined) { publish(idleState); }
     }
   };
   const close = async (): Promise<void> => {
     if (!closed) {
-      retire();
-      publish(idle);
+      retireObservation();
+      publish(idleState);
       closed = true;
       listeners.clear();
       scope.signal.removeEventListener('abort', abort);
@@ -222,56 +239,57 @@ export function createCollectionResource<Item>(
   scope.onClose(close);
 
   return {
-    getSnapshot       : (): StoreCollectionSnapshot<Item> => snapshot,
-    getServerSnapshot : (): StoreCollectionSnapshot<Item> => idle,
+    getSnapshot       : (): StoreCollectionState<Item> => state,
+    getServerSnapshot : (): StoreCollectionState<Item> => idleState,
     subscribe         : (listener): (() => void) => {
       if (closed) { return (): void => {}; }
       listeners.add(listener);
-      startAutomatic();
+      startAutomaticObservation();
       return (): void => { listeners.delete(listener); releaseUnused(); };
     },
     retain: (): (() => void) => {
       if (closed) { return (): void => {}; }
-      retained += 1;
-      startAutomatic();
+      leaseCount += 1;
+      startAutomaticObservation();
       let released = false;
       return (): void => {
         if (released) { return; }
         released = true;
-        retained -= 1;
+        leaseCount -= 1;
         releaseUnused();
       };
     },
     ready: async (readyOptions = {}): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
       readyOptions.signal?.throwIfAborted();
-      retained += 1;
+      leaseCount += 1;
       try {
-        const candidate = start();
-        const view = await whileNotAborted(candidate.opening, readyOptions.signal);
+        const observation = startObservation();
+        const view = await whileNotAborted(observation.openPromise, readyOptions.signal);
         scope.assertCurrent();
-        if (!valid(candidate)) { throw new StoreRetiredError(); }
-        if (options.loadAll) { await whileNotAborted(drainAll(candidate), readyOptions.signal); }
+        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+        if (options.loadAll) { await whileNotAborted(drainAll(observation), readyOptions.signal); }
         const state = await view.ready(readyOptions);
         scope.assertCurrent();
-        if (!valid(candidate)) { throw new StoreRetiredError(); }
+        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
         readyOptions.signal?.throwIfAborted();
         return state;
-      } finally { retained -= 1; releaseUnused(); }
+      } finally { leaseCount -= 1; releaseUnused(); }
     },
     retry: (): Promise<void> => {
       try { scope.assertCurrent(); } catch (error: unknown) { return Promise.reject(error); }
       if (retrying !== undefined) { return retrying; }
-      retained += 1;
+      leaseCount += 1;
+      // Publish the shared completion before retiring subscriptions can request another retry.
       const pending = Promise.resolve().then(async (): Promise<void> => {
         scope.assertCurrent();
-        retire();
-        const candidate = start();
-        await candidate.opening;
+        retireObservation();
+        const observation = startObservation();
+        await observation.openPromise;
         scope.assertCurrent();
-        if (!valid(candidate)) { throw new StoreRetiredError(); }
+        if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
       }).finally((): void => {
         if (retrying === pending) { retrying = undefined; }
-        retained -= 1;
+        leaseCount -= 1;
         releaseUnused();
       });
       retrying = pending;
@@ -280,20 +298,20 @@ export function createCollectionResource<Item>(
     loadMore: (): Promise<void> => {
       try {
         scope.assertCurrent();
-        retained += 1;
+        leaseCount += 1;
         let pending: Promise<void>;
-        try { pending = page(start()); } catch (error: unknown) { retained -= 1; releaseUnused(); throw error; }
-        return pending.finally((): void => { retained -= 1; releaseUnused(); });
+        try { pending = page(startObservation()); } catch (error: unknown) { leaseCount -= 1; releaseUnused(); throw error; }
+        return pending.finally((): void => { leaseCount -= 1; releaseUnused(); });
       } catch (error: unknown) { return Promise.reject(error); }
     },
     refresh: async (): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
       scope.assertCurrent();
-      retained += 1;
-      try { return await refresh(start()); } finally { retained -= 1; releaseUnused(); }
+      leaseCount += 1;
+      try { return await refresh(startObservation()); } finally { leaseCount -= 1; releaseUnused(); }
     },
     refreshIfActive: async (): Promise<void> => {
-      const candidate = attempt;
-      if (candidate !== undefined && valid(candidate)) { await refresh(candidate); }
+      const observation = activeObservation;
+      if (observation !== undefined && isActiveObservation(observation)) { await refresh(observation); }
     },
   };
 }

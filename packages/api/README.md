@@ -63,10 +63,10 @@ collection for equivalent selections. Independent parent selections coexist.
 The initial collection convenience supports locally owned records; shared
 contexts continue through the native context-bound API.
 
-Collection snapshots preserve native materialized rows (`{ record, value }`),
+Published `StoreCollectionState` values preserve native materialized rows (`{ record, value }`),
 bounded pagination, and the distinction between local readiness and replication
 `current`. `loadAll: true` explicitly expands every matching page. Commands expose
-`run()`, immutable pending/error snapshots, and the original operation outcome.
+`run()`, readonly `StoreCommandState` values, and the original operation outcome.
 Successful collection writes refresh active canonical views. A subsequent query
 failure is published by that view without turning an accepted write into a
 failed write.
@@ -81,6 +81,10 @@ new instance with `application.store(NotesStore)`; an inactive session provides
 idle resources and rejects writes. Register custom cleanup with `onClose` in
 the store factory. The application owns terminal connection disposal; document
 repair and drain policies remain the host's responsibility in this initial API.
+
+`getSnapshot()` reads a store's current cached state; it does not create a copy.
+The `State` types describe those published values, while the snapshot methods
+provide the framework-independent observable contract.
 
 ## Connect
 
