@@ -15,8 +15,12 @@ const Notes = defineStore({
     const notes = protocols.notes.collection('note');
     return {
       notes,
-      add   : command((title: string) => notes.create.run({ title })),
-      count : command((): number => notes.getSnapshot().records.length),
+      add           : command((title: string) => notes.create.run({ title })),
+      count         : command((): number => notes.getSnapshot().records.length),
+      defaultTitle  : command((title = 'Untitled'): string => title),
+      optionalTitle : command((title?: string): string => title ?? 'Untitled'),
+      asyncTitle    : command(async (title = 'Untitled'): Promise<string> => title),
+      explicitCount : command<void, number>((): number => notes.getSnapshot().records.length),
     };
   },
 });
@@ -36,10 +40,28 @@ const application = createApplication(definition, {
 const feature: StoreInstance<typeof Notes> = application.store(Notes);
 const count: Promise<number> = feature.count.run();
 const title: Promise<string> = application.store(Dashboard).add.run('hello').then(record => record.value()).then(value => value.title);
+const defaults: readonly Promise<string>[] = [
+  feature.defaultTitle.run(), feature.defaultTitle.run('Hello'), feature.defaultTitle.run(undefined),
+  feature.optionalTitle.run(), feature.optionalTitle.run('Hello'), feature.optionalTitle.run(undefined),
+  feature.asyncTitle.run(), feature.asyncTitle.run('Hello'),
+];
+const explicitCount: Promise<number> = feature.explicitCount.run();
+const undefinedCount: Promise<number> = feature.count.run(undefined);
 void count;
 void title;
+void defaults;
+void explicitCount;
+void undefinedCount;
 
 // @ts-expect-error domain command input remains inferred through dependent stores.
 application.store(Dashboard).add.run(123);
 // @ts-expect-error payload codecs remain authoritative through application resolution.
 feature.notes.create.run({ title: false });
+// @ts-expect-error required command inputs remain required.
+feature.add.run();
+// @ts-expect-error defaulted command inputs retain their declared value type.
+feature.defaultTitle.run(123);
+// @ts-expect-error optional command inputs retain their declared value type.
+feature.optionalTitle.run(false);
+// @ts-expect-error zero-input commands do not accept arbitrary values.
+feature.count.run('extra');

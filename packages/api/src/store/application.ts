@@ -141,20 +141,8 @@ class HeadlessApplication implements ApplicationRuntime {
       let closePromise: Promise<void> | undefined;
       const close = (): Promise<void> => {
         if (closePromise === undefined) {
-          closePromise = Promise.resolve().then(async (): Promise<void> => {
-            const errors: unknown[] = [];
-            for (const release of [...cleanup].reverse()) {
-              try {
-                await release();
-              } catch (error) {
-                errors.push(error);
-              }
-            }
-            cleanup.length = 0;
-            if (errors.length > 0) {
-              throw new AggregateError(errors, 'Feature cleanup failed.');
-            }
-          });
+          closePromise = closeResources([...cleanup].reverse(), 'Feature cleanup failed.')
+            .finally((): void => { cleanup.length = 0; });
           lifetime.abort(new StoreRetiredError());
         }
         return closePromise;
@@ -211,27 +199,21 @@ class HeadlessApplication implements ApplicationRuntime {
     // Install the shared completion before abort callbacks can reenter disposal.
     this._disposePromise = Promise.resolve().then(async (): Promise<void> => {
       try {
-        const errors: unknown[] = [];
-        while (this._retirements.size > 0) {
-          const results = await Promise.allSettled([...this._retirements]);
-          for (const result of results) {
-            if (result.status === 'rejected') { errors.push(result.reason); }
-          }
-        }
-        if (errors.length > 0) {
-          throw new AggregateError(errors, 'Application resource cleanup failed.');
-        }
+        await this._drainRetirements();
       } finally {
         await this.connection.dispose();
       }
     });
     this._unsubscribe();
     this._listeners.clear();
-    this._retire();
+    this._retire(this._generation);
     return this._disposePromise;
   }
 
   private _reconcile(): Generation {
+    if (this._disposed) {
+      throw new StoreRetiredError();
+    }
     const snapshot = this.connection.getSnapshot();
     const session = snapshot.session?.signal.aborted === true ? undefined : snapshot.session;
     const enbox = session === undefined ? undefined : snapshot.enbox;
@@ -239,7 +221,6 @@ class HeadlessApplication implements ApplicationRuntime {
     if (current !== undefined && current.enbox === enbox && current.session === session) {
       return current;
     }
-    this._retire();
     const generation: Generation = {
       abort: new AbortController(), enbox, session, instances: new Map(), cleanup: [],
     };
@@ -249,13 +230,15 @@ class HeadlessApplication implements ApplicationRuntime {
         if (this._generation !== generation || this._disposed) {
           return;
         }
-        this._retire();
+        this._reconcile();
         this._publish();
       };
       session.signal.addEventListener('abort', abort, { once: true });
       generation.detachSession = (): void => session.signal.removeEventListener('abort', abort);
     }
-    return generation;
+    this._retire(current);
+    // Abort listeners may resolve this successor or publish a still newer binding.
+    return this._reconcile();
   }
 
   private _assertCurrent(generation: Generation): void {
@@ -273,12 +256,13 @@ class HeadlessApplication implements ApplicationRuntime {
     }
   }
 
-  private _retire(): void {
-    const generation = this._generation;
+  private _retire(generation: Generation | undefined): void {
     if (generation === undefined) {
       return;
     }
-    this._generation = undefined;
+    if (this._generation === generation) {
+      this._generation = undefined;
+    }
     generation.detachSession?.();
     generation.abort.abort(new StoreRetiredError());
     generation.instances.clear();
@@ -287,19 +271,7 @@ class HeadlessApplication implements ApplicationRuntime {
   }
 
   private _trackCleanup(cleanup: (() => void | Promise<void>)[]): void {
-    const promise = Promise.resolve().then(async (): Promise<void> => {
-      const errors: unknown[] = [];
-      for (const close of cleanup) {
-        try {
-          await close();
-        } catch (error) {
-          errors.push(error);
-        }
-      }
-      if (errors.length > 0) {
-        throw new AggregateError(errors, 'Store resource cleanup failed.');
-      }
-    });
+    const promise = closeResources(cleanup, 'Store resource cleanup failed.');
     this._retirements.add(promise);
     void promise.then((): void => { this._retirements.delete(promise); }, (cause: unknown): void => {
       this._retirements.delete(promise);
@@ -307,9 +279,23 @@ class HeadlessApplication implements ApplicationRuntime {
     });
   }
 
+  private async _drainRetirements(errors: unknown[] = []): Promise<void> {
+    const results = await Promise.allSettled(this._retirements);
+    for (const result of results) {
+      if (result.status === 'rejected') { errors.push(result.reason); }
+    }
+    if (this._retirements.size > 0) {
+      return this._drainRetirements(errors);
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Application resource cleanup failed.');
+    }
+  }
+
   private _publish(): void {
     const snapshot = this.getSnapshot();
-    for (const listener of [...this._listeners]) {
+    const listeners = [...this._listeners];
+    for (const listener of listeners) {
       if (this._listeners.has(listener)) {
         try {
           listener(snapshot);
@@ -319,6 +305,23 @@ class HeadlessApplication implements ApplicationRuntime {
       }
     }
   }
+}
+
+/** Release dependents before dependencies, retaining every failure until all callbacks finish. */
+function closeResources(cleanup: readonly (() => void | Promise<void>)[], message: string): Promise<void> {
+  const errors: unknown[] = [];
+  const completion = cleanup.reduce((previous, close): Promise<void> => previous.then(async (): Promise<void> => {
+    try {
+      await close();
+    } catch (error) {
+      errors.push(error);
+    }
+  }), Promise.resolve());
+  return completion.then((): void => {
+    if (errors.length > 0) {
+      throw new AggregateError(errors, message);
+    }
+  });
 }
 
 function collectStores(stores: StoreDefinitions): Set<StoreDefinition> {

@@ -19,6 +19,24 @@ function createScope(): { scope: StoreScope; retire(): void } {
 }
 
 describe('store commands', () => {
+  it('notifies a newly subscribed listener only on later publications', async () => {
+    const { scope } = createScope();
+    let finish!: () => void;
+    const operation = new Promise<void>((resolve): void => { finish = resolve; });
+    const command = createCommand(scope, () => operation);
+    const received: number[] = [];
+    command.subscribe((snapshot): void => {
+      if (snapshot.pendingCount === 1) {
+        command.subscribe((next): void => { received.push(next.pendingCount); });
+      }
+    });
+    const pending = command.run(undefined);
+    expect(received).toEqual([]);
+    finish();
+    await pending;
+    expect(received).toEqual([0]);
+  });
+
   it('preserves arbitrary rejected values while safely publishing a display error', async () => {
     const { scope } = createScope();
     const reason: object = Object.create(null);

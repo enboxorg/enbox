@@ -63,7 +63,8 @@ export function createCollectionResource<Item>(
   const publish = (state: StoreCollectionSnapshot<Item>): void => {
     if (closed || snapshot === state) { return; }
     snapshot = state;
-    for (const listener of [...listeners]) {
+    const subscribers = [...listeners];
+    for (const listener of subscribers) {
       if (listeners.has(listener)) {
         try { listener(state); } catch { /* Consumer failures do not affect a native view. */ }
       }
@@ -117,9 +118,12 @@ export function createCollectionResource<Item>(
 
   const drainAll = (candidate: Attempt<Item>): Promise<void> => {
     if (candidate.loadingAll !== undefined) { return candidate.loadingAll; }
-    const pending = candidate.opening.then(async (view): Promise<void> => {
-      await view.ready({ signal: candidate.controller.signal });
-      while (valid(candidate) && view.getSnapshot().hasMore) { await page(candidate); }
+    const pending = candidate.opening.then((view): Promise<void> => {
+      const expand = (): Promise<void> => {
+        if (!valid(candidate) || !view.getSnapshot().hasMore) { return Promise.resolve(); }
+        return page(candidate).then(expand);
+      };
+      return view.ready({ signal: candidate.controller.signal }).then(expand);
     });
     candidate.loadingAll = pending;
     void pending.then(
@@ -210,8 +214,8 @@ export function createCollectionResource<Item>(
       listeners.clear();
       scope.signal.removeEventListener('abort', abort);
     }
-    await Promise.allSettled([...openings]);
-    await Promise.all([...cleanups]);
+    await Promise.allSettled(openings);
+    await Promise.all(cleanups);
   };
   const abort = (): void => { void close().catch((): void => {}); };
   scope.signal.addEventListener('abort', abort, { once: true });

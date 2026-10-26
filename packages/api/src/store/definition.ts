@@ -21,11 +21,22 @@ export interface StoreDefinition<Value = unknown> {
 export type StoreInstance<Definition extends StoreDefinition> =
   Definition extends StoreDefinition<infer Value> ? Value : never;
 
+type CommandOperation = (input: never) => unknown;
+type CommandInput<Operation extends CommandOperation> = Parameters<Operation> extends [] ? void : Parameters<Operation>[0];
+type InferredCommand<Operation extends CommandOperation> =
+  Omit<StoreCommand<CommandInput<Operation>, Awaited<ReturnType<Operation>>>, 'run'> & {
+    run(...input: [] extends Parameters<Operation>
+      ? [input?: CommandInput<Operation>] : [input: CommandInput<Operation>]
+    ): Promise<Awaited<ReturnType<Operation>>>;
+  };
+
 export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreDefinitions> = Readonly<{
   protocols: { readonly [Name in keyof Protocols]: ProtocolStore<Protocols[Name]> };
   stores: { readonly [Name in keyof Stores]: StoreInstance<Stores[Name]> };
   signal: AbortSignal;
-  command<Output>(operation: () => Output | Promise<Output>): StoreCommand<void, Output>;
+  command<Operation extends CommandOperation>(
+    operation: Operation,
+  ): InferredCommand<Operation>;
   command<Input, Output>(operation: (input: Input) => Output | Promise<Output>): StoreCommand<Input, Output>;
   onClose(close: () => void | Promise<void>): void;
 }>;

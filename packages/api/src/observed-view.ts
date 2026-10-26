@@ -101,36 +101,47 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
     }
 
     this._materializing = true;
-    void this.drainMaterializations();
+    this.drainMaterializations();
   }
 
-  private async drainMaterializations(): Promise<void> {
-    try {
-      while (!this._closed && this._materializationRequested) {
-        // Clear before the pass so a wake during it schedules a trailing pass.
-        this._materializationRequested = false;
-        const generation = this._requestGeneration;
-        await this.materialize(generation);
-        if (!this.canPublishMaterialization(generation)) {
-          continue;
-        }
-        const state = this._state;
-        if (state.status === 'ready' || state.status === 'error') {
-          for (const pending of this._refreshes) {
-            if (pending.generation > generation) {
-              continue;
-            }
-            this._refreshes.delete(pending);
-            if (state.status === 'error') {
-              pending.reject(state.error);
-            } else {
-              pending.resolve(state as Extract<TState, { status: 'ready' }>);
-            }
-          }
-        }
-      }
-    } finally {
+  private drainMaterializations(): void {
+    if (this._closed || !this._materializationRequested) {
       this._materializing = false;
+      return;
+    }
+    // Clear before the pass so a wake during it schedules a trailing pass.
+    this._materializationRequested = false;
+    const generation = this._requestGeneration;
+    // Each completed pass schedules its successor without retaining a promise
+    // chain for the lifetime of a continuously active subscription.
+    void this.materializePass(generation).then((): void => { this.drainMaterializations(); });
+  }
+
+  private async materializePass(generation: number): Promise<void> {
+    try {
+      await this.materialize(generation);
+      this.settleRefreshes(generation);
+    } catch (error) {
+      this._materializing = false;
+      throw error;
+    }
+  }
+
+  private settleRefreshes(generation: number): void {
+    const state = this._state;
+    if (!this.canPublishMaterialization(generation) || (state.status !== 'ready' && state.status !== 'error')) {
+      return;
+    }
+    for (const pending of this._refreshes) {
+      if (pending.generation > generation) {
+        continue;
+      }
+      this._refreshes.delete(pending);
+      if (state.status === 'error') {
+        pending.reject(state.error);
+      } else {
+        pending.resolve(state as Extract<TState, { status: 'ready' }>);
+      }
     }
   }
 

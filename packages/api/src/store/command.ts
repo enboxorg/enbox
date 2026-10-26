@@ -41,7 +41,8 @@ export function createCommand<Input, Output>(
       pendingVariables : Object.freeze([...pending.values()]),
       error,
     });
-    for (const listener of [...listeners]) {
+    const subscribers = [...listeners];
+    for (const listener of subscribers) {
       if (listeners.has(listener)) {
         try { listener(snapshot); } catch { /* Consumer failures do not change command outcomes. */ }
       }
@@ -52,7 +53,8 @@ export function createCommand<Input, Output>(
     retired = true;
     pending.clear();
     snapshot = idle;
-    for (const listener of [...listeners]) {
+    const subscribers = [...listeners];
+    for (const listener of subscribers) {
       if (listeners.has(listener)) {
         try { listener(snapshot); } catch { /* The scope must still retire. */ }
       }

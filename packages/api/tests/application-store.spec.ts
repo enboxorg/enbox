@@ -146,6 +146,75 @@ describe('headless application stores', () => {
     await app.dispose();
   });
 
+  it('preserves a successor resolved synchronously while the previous generation aborts', async (): Promise<void> => {
+    const closed: number[] = [];
+    let created = 0;
+    let reenter = (): void => {};
+    let successor: { id: number; signal: AbortSignal } | undefined;
+    const Notes = defineStore({
+      protocols: { notes: Protocol },
+      create({ signal, onClose }): { id: number; signal: AbortSignal } {
+        const id = ++created;
+        onClose((): void => { closed.push(id); });
+        if (id === 1) {
+          signal.addEventListener('abort', (): void => reenter(), { once: true });
+        }
+        return { id, signal };
+      },
+    });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    reenter = (): void => { successor = app.store(Notes); };
+    try {
+      const original = app.store(Notes);
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.store(Notes)).toBe(successor);
+      expect(created).toBe(2);
+      expect(original.signal.aborted).toBe(true);
+      expect(successor?.signal.aborted).toBe(false);
+      await app.dispose();
+      expect(successor?.signal.aborted).toBe(true);
+      expect(closed).toEqual([1, 2]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it('returns the latest binding when an abort listener replaces the connection again', async (): Promise<void> => {
+    let created = 0;
+    let reenter = (): void => {};
+    let successor: { id: number; signal: AbortSignal } | undefined;
+    const Notes = defineStore({
+      protocols: { notes: Protocol },
+      create({ signal }): { id: number; signal: AbortSignal } {
+        const id = ++created;
+        if (id === 1) {
+          signal.addEventListener('abort', (): void => reenter(), { once: true });
+        }
+        return { id, signal };
+      },
+    });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const latestFacade = new Proxy(context.enbox, {});
+    reenter = (): void => {
+      native.publish({ phase: 'connected', enbox: latestFacade, session: context.session });
+      successor = app.store(Notes);
+    };
+    try {
+      app.store(Notes);
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.getSnapshot().enbox).toBe(latestFacade);
+      expect(app.store(Notes)).toBe(successor);
+      expect(created).toBe(2);
+      expect(successor?.signal.aborted).toBe(false);
+      await app.dispose();
+      expect(successor?.signal.aborted).toBe(true);
+    } finally {
+      await app.dispose();
+    }
+  });
+
   it('closes dependents before dependencies and cleans up failed factories exactly once', async (): Promise<void> => {
     const closed: string[] = [];
     const base = defineStore({ protocols : { notes: Protocol }, create    : ({ onClose }): object => {

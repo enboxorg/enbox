@@ -25,6 +25,19 @@ class ControlledView extends ObservedView<State> {
 async function microtasks(): Promise<void> { for (let i = 0; i < 5; i += 1) { await Promise.resolve(); } }
 
 describe('ObservedView refresh barriers', () => {
+  it('materializes a wake issued by a refresh consumer before the drain becomes idle', async () => {
+    const view = new ControlledView();
+    const refreshed = view.refresh().then((): void => { view.wake(); });
+    view.passes[0].finish({ status: 'ready', value: 1 });
+    await refreshed;
+    await microtasks();
+    expect(view.passes).toHaveLength(2);
+    view.passes[1].finish({ status: 'ready', value: 2 });
+    await microtasks();
+    expect(view.getSnapshot()).toEqual({ status: 'ready', value: 2 });
+    await view.close();
+  });
+
   it('serializes refresh after an older pass and never resolves it from stale work', async () => {
     const view = new ControlledView();
     const published: State[] = [];
