@@ -11,6 +11,77 @@ lower-level agent, auth, or DWN packages.
 bun add @enbox/api
 ```
 
+## Application stores
+
+Declare named resources and domain commands once, then share their instances
+between UI components and headless controllers:
+
+```ts
+import {
+  createApplication,
+  createConnectionStore,
+  defineApplication,
+  defineStore,
+} from '@enbox/api';
+import { NotesProtocol } from './protocol.js';
+
+export const NotesStore = defineStore({
+  protocols: { notes: NotesProtocol },
+  create({ protocols, command }) {
+    const notes = protocols.notes.collection('note');
+    const addNote = command((title: string) =>
+      notes.create.run({ title: title.trim() }));
+    return { notes, addNote };
+  },
+});
+
+const definition = defineApplication({ stores: { notes: NotesStore } });
+const application = createApplication(definition, {
+  connection: createConnectionStore({ application: definition.manifest }),
+});
+await application.initialize();
+// Connect using application.connection.connect() or connectVault() as needed.
+
+const feature = application.store(NotesStore);
+const release = feature.notes.retain();
+const stop = feature.notes.subscribe(snapshot => render(snapshot.records));
+try {
+  const initial = await feature.notes.ready();
+  render(initial.records);
+  await feature.addNote.run('Hello');
+} finally {
+  stop();
+  release();
+}
+await application.dispose();
+```
+
+Definitions and collection handles perform no I/O. Subscriptions and explicit
+leases retain a native view; readiness waits hold temporary leases. Nested
+paths produce keyed families: `pages.within(parentContextId)` returns the same
+collection for equivalent selections. Independent parent selections coexist.
+The initial collection convenience supports locally owned records; shared
+contexts continue through the native context-bound API.
+
+Collection snapshots preserve native materialized rows (`{ record, value }`),
+bounded pagination, and the distinction between local readiness and replication
+`current`. `loadAll: true` explicitly expands every matching page. Commands expose
+`run()`, immutable pending/error snapshots, and the original operation outcome.
+Successful collection writes refresh active canonical views. A subsequent query
+failure is published by that view without turning an accepted write into a
+failed write.
+
+`defineApplication` collects transitive store protocol dependencies into one
+manifest. Its optional `protocols` list adds protocols or supplies explicit
+permission policies. Conflicting protocol registrations are rejected.
+
+Feature instances belong to exact session/facade references. Replacement or
+session abort retires their commands and clears resource snapshots. Resolve the
+new instance with `application.store(NotesStore)`; an inactive session provides
+idle resources and rejects writes. Register custom cleanup with `onClose` in
+the store factory. The application owns terminal connection disposal; document
+repair and drain policies remain the host's responsibility in this initial API.
+
 ## Connect
 
 ```ts

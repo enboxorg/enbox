@@ -23,6 +23,11 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
   private _state: TState;
 
   private _requestGeneration = 0;
+  private readonly _refreshes = new Set<{
+    generation: number;
+    resolve(state: Extract<TState, { status: 'ready' }>): void;
+    reject(error: unknown): void;
+  }>();
 
   private readonly _handleLifetimeAbort = (): void => {
     const sessionEnded = this._sessionSignal?.aborted === true;
@@ -67,6 +72,18 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
     return this._closePromise;
   }
 
+  /** Wait for a canonical local materialization requested after this call. */
+  public refresh(): Promise<Extract<TState, { status: 'ready' }>> {
+    if (this._closed) {
+      return Promise.reject(new Error('Cannot refresh a closed view.'));
+    }
+    const result = new Promise<Extract<TState, { status: 'ready' }>>((resolve, reject): void => {
+      this._refreshes.add({ generation: this._requestGeneration + 1, resolve, reject });
+    });
+    this.requestMaterialization();
+    return result;
+  }
+
   protected get isClosed(): boolean {
     return this._closed;
   }
@@ -92,7 +109,25 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
       while (!this._closed && this._materializationRequested) {
         // Clear before the pass so a wake during it schedules a trailing pass.
         this._materializationRequested = false;
-        await this.materialize(this._requestGeneration);
+        const generation = this._requestGeneration;
+        await this.materialize(generation);
+        if (!this.canPublishMaterialization(generation)) {
+          continue;
+        }
+        const state = this._state;
+        if (state.status === 'ready' || state.status === 'error') {
+          for (const pending of this._refreshes) {
+            if (pending.generation > generation) {
+              continue;
+            }
+            this._refreshes.delete(pending);
+            if (state.status === 'error') {
+              pending.reject(state.error);
+            } else {
+              pending.resolve(state as Extract<TState, { status: 'ready' }>);
+            }
+          }
+        }
       }
     } finally {
       this._materializing = false;
@@ -129,6 +164,10 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
 
     this._closed = true;
     this._closeController.abort();
+    for (const pending of this._refreshes) {
+      pending.reject(this._closeController.signal.reason);
+    }
+    this._refreshes.clear();
     this._requestGeneration += 1;
     this._materializationRequested = false;
     this._listeners.clear();
