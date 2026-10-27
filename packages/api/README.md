@@ -108,8 +108,8 @@ the direct parent for nested paths. An absent path match is an idempotent no-op;
 read or authorization failures propagate. Collection deletion therefore requires
 read authorization as well as delete authorization.
 
-Subscriptions and explicit `retain()` leases keep a native view live. **All async
-controls hold temporary leases**: `ready`, `retry`, `refresh`, and `loadMore`
+Subscriptions and explicit `retain()` leases keep a native view live. **Collection
+view controls hold temporary leases**: `ready`, `retry`, `refresh`, and `loadMore`
 release their own interest when they settle. Without another lease or subscriber,
 `getSnapshot()` then returns idle with no rows. Use the value returned by
 `ready()`/`refresh()` for one-shot work, or keep a subscription/lease for live
@@ -124,6 +124,49 @@ replacement or disposal. This slice does not implement bounded handle eviction.
 Each distinct filter creates a distinct cached handle. Active write refreshers
 are registered only while a native observation exists, so a write visits active
 selections rather than the session's query history.
+
+### Selected collection ownership
+
+For navigation or another controller that follows one parent at a time, create
+a selection owner from the family's canonical handles. Inside a feature whose
+protocol declares `notebook/page`:
+
+```ts
+const pages = protocols.notes.collection('notebook/page', { loadAll: true });
+const activePages = pages.createSelection();
+return { pages, activePages };
+```
+
+After resolving that feature in a connected application:
+
+```ts
+await feature.activePages.select(notebook.contextId);
+const { parentContextId, records } = feature.activePages.getSnapshot();
+console.log(parentContextId, records.map(row => row.value));
+await feature.activePages.select(null);
+```
+
+`createSelection()` opens nothing and returns a new independent owner each
+time. `select(parentContextId)` subscribes to the canonical collection and
+waits for usable local rows, including configured `loadAll` pages. It keeps
+that subscription until replacement, null, `close()`, or scope abort; no extra
+`retain()` is needed. Repeating the current parent preserves its observation.
+Removing a selection listener does not clear the owner's chosen parent.
+
+The cached state publishes `parentContextId` together with the collection's
+rows and status. Use that value rather than a separate context getter when
+matching a callback to its data. Replacing the parent cancels this owner's
+pending readiness wait with `StoreRetiredError`; other owners and direct
+family consumers keep their subscriptions. Commands and view controls remain
+on `pages.within(parentContextId)`, so captured handles stay bound to their
+original parent.
+
+For a shorter-lived controller, pass its signal to
+`pages.createSelection({ signal })` or call `close()` explicitly. Closure is
+terminal for that selection owner. Construction, reads, and the idle server
+snapshot perform no I/O; React's `useStore(activePages)` can subscribe directly.
+This metadata convenience does not add member-context routing or document
+lifecycle management.
 
 ### State and completion
 
@@ -820,6 +863,7 @@ covers its service worker, persistent storage, and build setup.
 | `StoreCollection` / `StoreCollectionFamily` | Data-only owned CRUD and keyed direct-parent collections. |
 | `StoreCollectionOptions` | Protocol-derived read filters, pagination, and `loadAll` policy. |
 | `StoreCollectionResource` / `StoreCollectionState` | Lazy collection ownership, async controls, and idle/native read state. |
+| `StoreCollectionSelection` / `StoreCollectionSelectionState` | Independent selected-parent ownership with atomic parent and collection state. |
 | `StoreCommand` / `StoreCommandState` | One-input domain operations and shared pending/error state. |
 | `StoreNotConnectedError` / `StoreRetiredError` | Unavailable or retired store scope failures. |
 | `createConnectionStore()` | Owns restore, connect, refresh, disconnect, and facade cleanup for applications. |

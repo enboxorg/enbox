@@ -165,6 +165,7 @@ export const NotebookStore = defineStore({
     return {
       notebooks,
       pages,
+      activePages: pages.createSelection(),
       createNotebook: command((name: string) =>
         notebooks.create.run({ name: name.trim() })),
     };
@@ -248,6 +249,50 @@ rejection through `run()`. A locally accepted write can still be replicating.
 This collection convenience covers owned records. Use the context-bound API
 below for shared records and membership operations; role records are managed
 through context membership rather than ordinary collection CRUD.
+
+### Select one parent for a controller
+
+The feature above exposes both the canonical `pages` family and an independent
+`activePages` selection owner. After connection:
+
+```ts
+const feature = runtime.store(NotebookStore);
+const notebook = await feature.createNotebook.run('Launch notes');
+await feature.activePages.select(notebook.contextId);
+const state = feature.activePages.getSnapshot();
+console.log(state.parentContextId, state.records.map(row => row.value));
+
+// Other controllers can keep observing a different notebook independently.
+const otherNotebook = await feature.createNotebook.run('Reference notes');
+const comparisonLifetime = new AbortController();
+const comparison = feature.pages.createSelection({ signal: comparisonLifetime.signal });
+try {
+  await comparison.select(otherNotebook.contextId);
+  console.log(comparison.getSnapshot().records);
+} finally {
+  comparisonLifetime.abort();
+}
+await feature.activePages.select(null);
+```
+
+Each `createSelection()` returns a new owner and opens nothing.
+`select(parentContextId)` keeps one canonical collection subscription until
+another parent, null, close, or owner abort. It waits for usable local rows,
+including configured `loadAll` pages; selecting the same parent preserves the
+observation. This persistent selection ownership needs no extra `retain()`.
+
+`StoreCollectionSelectionState` publishes `parentContextId`, rows, and query
+status together in one cached value. Superseding a selection rejects its
+pending wait with `StoreRetiredError` and cannot forward its late rows into the
+new parent. Other selection owners and `pages.within(parentContextId)` handles
+retain their own interests; commands and pagination stay on those canonical
+handles. The selection owner exposes no mutable command proxy.
+
+`close()` permanently releases only this owner's subscription. An optional
+caller signal supplies a shorter lifetime than the feature's session. React
+can read the same owner with `useStore(feature.activePages)`; constructing it
+or reading its idle server state opens no view. Shared-context routing and
+document lifecycles remain outside this selected-metadata helper.
 
 ### Permission policy
 

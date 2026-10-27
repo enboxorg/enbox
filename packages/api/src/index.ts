@@ -35,6 +35,7 @@ export type { DefineStoreOptions, StoreContext, StoreDefinition, StoreDefinition
 export type { ProtocolStore, StoreCollection, StoreCollectionFamily, StoreCollectionOptions } from './store/protocol-store.js';
 export type { StoreCommand, StoreCommandState } from './store/command.js';
 export type { StoreCollectionResource, StoreCollectionState } from './store/resource.js';
+export type { StoreCollectionSelection, StoreCollectionSelectionState } from './store/collection-selection.js';
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
