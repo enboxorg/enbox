@@ -109,7 +109,6 @@ describe('store commands', () => {
     await expect(second).rejects.toBe(failure);
     expect(command.getSnapshot().pendingCount).toBe(0);
     expect(command.getSnapshot().error).toBe(failure);
-    expect(command.getServerSnapshot().pendingCount).toBe(0);
   });
 
   it('keeps older failures from overwriting a newer outcome', async () => {

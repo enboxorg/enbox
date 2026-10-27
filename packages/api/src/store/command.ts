@@ -15,8 +15,6 @@ export type StoreCommandState<Input> = Readonly<{
 
 /** An authorization-bound operation with shared progress and unchanged operation outcomes. */
 export interface StoreCommand<Input, Output> extends ObservableStore<StoreCommandState<Input>> {
-  /** Return cached idle progress for server rendering and hydration. */
-  getServerSnapshot(): StoreCommandState<Input>;
   /**
    * Dispatch once through the captured authorization scope and preserve the result or rejection.
    * Retirement prevents new dispatch; operations already issued can still finish.
@@ -78,10 +76,9 @@ export function createCommand<Input, Output>(
   if (scope.signal.aborted) { retire(); }
 
   return {
-    getSnapshot       : (): StoreCommandState<Input> => state,
-    getServerSnapshot : (): StoreCommandState<Input> => idleState,
-    isCurrent         : current,
-    subscribe         : (listener): (() => void) => {
+    getSnapshot : (): StoreCommandState<Input> => state,
+    isCurrent   : current,
+    subscribe   : (listener): (() => void) => {
       if (retired) { return (): void => {}; }
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };

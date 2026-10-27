@@ -166,15 +166,13 @@ describe('store resource selections', () => {
     } finally { stop(); await owner.close(); }
   });
 
-  it('is inert until explicitly selected and preserves cached empty server state', async () => {
+  it('is inert until explicitly selected and publishes cached state', async () => {
     const owner = fixture();
     const source = owner.resource('A');
     const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const idle = selection.getSnapshot();
-    const server = selection.getServerSnapshot();
     const unsubscribe = selection.subscribe((): void => {});
     expect(selection.getSnapshot()).toBe(idle);
-    expect(selection.getServerSnapshot()).toBe(server);
     expect(idle).toMatchObject({ status: 'idle', selection: null });
     expect(owner.resolutions()).toBe(0);
     expect(source.opens()).toBe(0);
@@ -185,7 +183,6 @@ describe('store resource selections', () => {
     expect(selection.getSnapshot()).toBe(selection.getSnapshot());
     expect(selection.getSnapshot().records).toBe(source.resource.getSnapshot().records);
     expect(Object.isFrozen(selection.getSnapshot())).toBe(true);
-    expect(selection.getServerSnapshot()).toBe(server);
     unsubscribe();
     expect(source.resource.getSnapshot().status).toBe('ready');
     selection.close();

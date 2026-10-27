@@ -25,8 +25,6 @@ export type StoreResourceState<State extends ResourceViewState, Selection = neve
 ) & Readonly<{ isLoadingMore: boolean }> & SelectionState<Selection>;
 
 interface ResourceOwner<State extends ResourceViewState, Selection> extends ObservableStore<StoreResourceState<State, Selection>> {
-  /** Cached idle state for server rendering and hydration; never opens a view. */
-  getServerSnapshot(): StoreResourceState<State, Selection>;
   /** Keep this resource live until the returned idempotent release runs or its owner ends. */
   retain(): () => void;
   /** Wait for usable local state with a temporary lease; cancellation affects this waiter alone. */
@@ -111,7 +109,6 @@ export type StoreCollectionState<Item> = (RecordViewState<Item> | Readonly<{
 /** Typed owned-collection convenience over the common resource owner. */
 export interface StoreCollectionResource<Item> extends StoreResource<RecordViewState<Item>>, Refresh<RecordViewState<Item>, never>, Pagination {
   getSnapshot(): StoreCollectionState<Item>;
-  getServerSnapshot(): StoreCollectionState<Item>;
 }
 /** @internal Mutation barriers refresh existing observations without opening unused resources. */
 export interface StoreCollectionController<Item> extends StoreCollectionResource<Item> {
@@ -211,8 +208,7 @@ function createOwner(parentScope: StoreScope, config: ResourceConfiguration, opt
   }) as StoreResourceState<ResourceViewState, unknown>;
   const idle = (key: unknown): StoreResourceState<ResourceViewState, unknown> =>
     snapshot({ ...options.emptyPayload, status: 'idle' }, key);
-  const serverState = idle(config.selection);
-  let state = serverState;
+  let state = idle(config.selection);
 
   const assertOpen = (): void => {
     if (closed || signal.aborted) { throw new StoreRetiredError(); }
@@ -475,10 +471,9 @@ function createOwner(parentScope: StoreScope, config: ResourceConfiguration, opt
   if (signal.aborted) { abort(); }
 
   return {
-    getSnapshot       : (): StoreResourceState<ResourceViewState, unknown> => state,
-    getServerSnapshot : (): StoreResourceState<ResourceViewState, unknown> => serverState,
+    getSnapshot : (): StoreResourceState<ResourceViewState, unknown> => state,
     close,
-    subscribe         : (listener): (() => void) => {
+    subscribe   : (listener): (() => void) => {
       if (closed) { return (): void => {}; }
       const notify = (next: StoreResourceState<ResourceViewState, unknown>): void => { listener(next); };
       listeners.add(notify);

@@ -165,8 +165,8 @@ using them. `selection` is published atomically with its data.
 
 Use `resource(config, { signal })` for a shorter controller lifetime. Mutations
 stay on fixed collection handles or explicit domain commands: changing a read
-selection never retargets an already captured write handle. `getSnapshot()` and
-`getServerSnapshot()` are inert. React reads any resource with `useStore()`.
+selection never retargets an already captured write handle. `getSnapshot()`
+opens no observation. React reads any resource with `useStore()`.
 
 ### State and completion
 
@@ -253,8 +253,8 @@ handoff and guarded drains remain with the host's existing lifecycle in this
 application layer. Use `app.connection.disconnect()` for native sign-out.
 
 `getSnapshot()` reads a store's current cached state, without creating a copy.
-`State` names describe published values; snapshot methods are the observable
-read contract, including deterministic resource state during SSR and hydration.
+`State` names describe published values; `getSnapshot()` and `subscribe()` are
+the observable read contract shared by UI and headless consumers.
 
 ## Connect
 

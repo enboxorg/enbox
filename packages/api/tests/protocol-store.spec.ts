@@ -265,7 +265,6 @@ describe('protocol stores with a real local DWN', () => {
       await notes.delete.run(first.id);
       expect(notes.getSnapshot().records).toHaveLength(1);
       expect(notes.getSnapshot().records[0].record.id).toBe(second.id);
-      expect(notes.getServerSnapshot().status).toBe('idle');
       release();
       expect(notes.getSnapshot().status).toBe('idle');
     } finally {

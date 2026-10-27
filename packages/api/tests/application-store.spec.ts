@@ -98,9 +98,8 @@ describe('headless application stores', () => {
     const feature = app.store(Notes);
     expect(native.initialized()).toBe(false);
     expect(app.store(Notes)).toBe(feature);
-    expect(feature.notes.getSnapshot().status).toBe('idle');
-    expect(feature.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false, isLoadingMore: false });
-    expect(feature.notes.getServerSnapshot()).toBe(feature.notes.getServerSnapshot());
+    expect(feature.notes.getSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false, isLoadingMore: false });
+    expect(feature.notes.getSnapshot()).toBe(feature.notes.getSnapshot());
     await expect(feature.notes.create.run({ title: 'Disconnected' })).rejects.toBeInstanceOf(StoreNotConnectedError);
     expect(feature.notes.create.getSnapshot()).toMatchObject({ pendingCount: 0, pendingVariables: [], error: undefined });
     await app.initialize();
@@ -122,7 +121,6 @@ describe('headless application stores', () => {
     const record = await first.notes.create.run({ title: 'Shared canonical state' });
     expect(app.store(Notes).notes).toBe(first.notes);
     expect(first.notes.getSnapshot().records.some(row => row.record.id === record.id)).toBe(true);
-    expect(first.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false, isLoadingMore: false });
     let notifications = 0;
     const stop = app.subscribe((): void => { notifications += 1; });
     native.publish({ ...native.connection.getSnapshot(), vaultLocked: false });

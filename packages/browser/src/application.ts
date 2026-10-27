@@ -45,7 +45,7 @@ export function createApplication<const Stores extends StoreDefinitions>(
     throw new TypeError('createApplication: choose wallet options or a connectHandler.');
   }
   for (const key of ['application', 'connectHandler', 'auth', 'agent']) {
-    if (options.connection !== undefined && Object.prototype.hasOwnProperty.call(options.connection, key)) {
+    if (options.connection !== undefined && Object.hasOwn(options.connection, key)) {
       throw new TypeError(`createApplication: connection.${key} is owned by the application.`);
     }
   }
