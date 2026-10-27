@@ -1502,8 +1502,11 @@ jobs:
       - name: Match browser home ownership
         run: chown "$(id -u):$(id -g)" "$HOME"
 
+      # Restore in every cell, but save only once below. Otherwise nine jobs
+      # compress the same cache before all but one lose the reservation race.
       - name: Restore bun cache
-        uses: actions/cache@v6
+        id: bun-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -1569,6 +1572,13 @@ jobs:
         run: |
           echo "::error::Browser tests failed in shard '${{ matrix.shard.name }}' / ${{ matrix.browser }} (coverage was still collected)"
           exit 1
+
+      - name: Save browser bun cache
+        if: matrix.shard.name == 'crypto' && matrix.browser == 'chromium' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — runs so required checks pass even when the

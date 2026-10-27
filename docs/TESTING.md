@@ -198,6 +198,8 @@ digest in `.github/workflows/ci.yml`. Browsers and Linux libraries are already
 installed, so jobs do not download apt packages. When updating Playwright in
 `package.json`, update the image version and digest too; the workflow policy
 tests check that the versions match.
+All browser jobs restore the Bun package cache; only the `crypto / chromium`
+job saves it, avoiding duplicate compression in the other matrix jobs.
 
 Browser test failures block merging. Browser coverage is collected on Chromium;
 Firefox and WebKit run the same suites without instrumentation. The Chromium
