@@ -77,7 +77,7 @@ describe('version-only release detection', () => {
   it('accepts version bumps with matching lockfile metadata, changelogs, and consumed changesets', () => {
     const changes = releaseChanges();
     // Bun lockfiles support comments and trailing commas.
-    changes[1].after = changes[1].after.replace('{', '{\n// release metadata\n').replace(/}$/, ',}');
+    changes[1].after = `{\n// release metadata\n${changes[1].after.slice(1, -1)},\n}`;
     expect(isReleaseMetadataOnly(changes)).toBe(true);
   });
 

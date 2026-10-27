@@ -1497,6 +1497,11 @@ jobs:
       - name: Setup Bun
         run: npm install --global bun@1.4.4
 
+      # Actions mounts a home directory owned by the runner's host user. Firefox
+      # requires it to belong to the user running the browser in the container.
+      - name: Match browser home ownership
+        run: chown "$(id -u):$(id -g)" "$HOME"
+
       - name: Restore bun cache
         uses: actions/cache@v6
         with:
