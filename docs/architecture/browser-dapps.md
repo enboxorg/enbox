@@ -12,8 +12,9 @@ An Enbox dapp has two browser execution contexts with different lifetimes:
 ```text
 page
   UI
-  one ConnectionStore
-  Enbox facade and observable record views
+  one application runtime
+    native ConnectionStore and Enbox facade
+    session-owned feature stores and observable resources
   live WebSocket sync and subscriptions
            │
            │ ordinary fetch / <img src> for DRLs
@@ -26,8 +27,8 @@ service worker
 DWN servers, wallet connect, and DID resolution
 ```
 
-The page owns the session, typed APIs, live views, and sockets. The service
-worker owns the fetch boundary for Decentralized Resource Locators (DRLs) and
+The page owns the runtime, session, typed APIs, live views, and sockets. The
+service worker owns the fetch boundary for Decentralized Resource Locators (DRLs) and
 the offline application shell. Browsers may terminate a worker between events,
 so it cannot host a durable application session or open WebSocket.
 
@@ -42,8 +43,11 @@ Omit the connection store's `sync` option for the normal live mode. Enbox uses
 WebSocket transports for live sync and subscriptions and a periodic durable
 settle pass to repair missed notifications.
 
-- Use `records.observe()` for a bounded collection that must remain correct as
-  records enter, change, or leave its filter.
+- Define named owned collections and domain commands with `defineStore()`.
+  Components and controllers resolve the same feature instance from the runtime;
+  equivalent selections share native views and command progress.
+- Use `records.observe()` directly for native views outside those conveniences,
+  including context-bound shared records.
 - Use `records.subscribe()` for an incremental or append-only event stream.
 - Use a one-shot `query()` for searches and snapshots.
 - Use `ConnectionStore.subscribe()` for auth, sync, connectivity, facade
@@ -55,16 +59,26 @@ live path with application polling.
 
 ## Session and storage lifetime
 
-Create one manifest-backed `ConnectionStore` for the application and keep it
-for the application lifetime. Use `BrowserConnectHandler`, call `initialize()`
-once at startup, and invoke `connect()` directly from a user action when a
-wallet is needed. Configure `monitor: { autoRefresh: {} }` for delegated grant
-renewal.
+Compose feature definitions with `defineApplication()`, then give its `manifest`
+to the native connection passed to `createApplication()`. Keep that runtime and
+connection for the page's application lifetime. The runtime owns feature
+instances and cleanup; `runtime.connection` owns native auth, sync state, and
+connection actions. It remains the sole connection state model.
 
-A refresh can publish a replacement `enbox` facade. Bind views and
-subscriptions to the current facade and recreate them when it changes. The
-ecosystem wallet has provider responsibilities that require lower-level auth
-ownership; ordinary dapps should follow the connection-store boundary in
+Use `BrowserConnectHandler`, prepare worker control before startup, and invoke
+wallet approval directly from a user action. `EnboxProvider application={runtime}`
+initializes by default; headless hosts call `runtime.initialize()` themselves.
+Configure `monitor: { autoRefresh: {} }` for delegated grant renewal.
+
+Session or facade replacement retires captured feature controls and releases
+their resources. React's `useFeature` follows that replacement; `useStore`
+retains each observed resource after commit and releases it on cleanup.
+Headless consumers use explicit leases. Native views opened outside feature
+stores retain their caller-owned lifetime and must be rebound and closed by
+that caller when authority changes.
+
+The ecosystem wallet has provider responsibilities that require lower-level
+auth ownership; ordinary dapps should follow the runtime/connection boundary in
 [`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx).
 
 Keep the browser Level stack, which resolves to `browser-level` over IndexedDB.

@@ -4,9 +4,9 @@ description: Scaffold a wallet-connected, offline-capable Enbox dapp with live r
 ---
 
 This guide is the default starting point for a browser dapp. It produces the
-same runtime boundaries used by Enbox applications such as Notesd: wallet-owned
-identity, a local IndexedDB replica, WebSocket-first sync, observable records,
-and a service worker for the offline shell and DWeb resources.
+same application and feature-store structure used by the create-dapp starter
+and Notesd: wallet-owned identity, a local IndexedDB replica, shared observable
+resources, and a service worker for the offline shell and DWeb resources.
 
 ## Create the project
 
@@ -16,28 +16,21 @@ The example uses React and Vite, but the Enbox pieces are framework-neutral.
 bun create vite my-dapp --template react-ts
 cd my-dapp
 bun install
-bun add @enbox/browser
+bun add @enbox/browser @enbox/react
 bun add --dev vite-plugin-pwa workbox-precaching workbox-routing
 ```
 
-Use `@enbox/browser` as the only Enbox dependency unless the application needs
-a lower-level API that it does not re-export. Its browser-conditioned entrypoint
-contains the high-level API, auth lifecycle, wallet connect handler, and DWeb
-helpers. Current releases do not need Node-global or standard-library shims.
+`@enbox/browser` supplies the platform-neutral API plus browser wallet and DWeb
+helpers. `@enbox/react` subscribes to the same headless stores. The Enbox pieces
+need no Node-global or standard-library shims in a Vite browser build.
 
 ## Define the application boundary
 
 Give the protocol and schema stable HTTPS identifiers owned by the application.
 Changing them later creates a different data model.
 
-```ts title="src/enbox/application.ts"
-import {
-  BrowserConnectHandler,
-  createConnectionStore,
-  defineApplicationManifest,
-  defineProtocol,
-  recordCodecs,
-} from '@enbox/browser';
+```ts title="src/features/notes/protocol.ts"
+import { defineProtocol, recordCodecs } from '@enbox/browser';
 
 export type Note = {
   body: string;
@@ -54,74 +47,101 @@ export const NotesProtocol = defineProtocol({
       encryptionRequired : true,
     },
   },
-  structure: {
-    note: {},
+  structure: { note: {} },
+} as const, { note: recordCodecs.json<Note>() });
+```
+
+Name resources and domain actions once. Input drafts and navigation remain UI
+state; protocol paths and record defaults belong to the feature:
+
+```ts title="src/features/notes/store.ts"
+import { defineStore } from '@enbox/browser';
+import { NotesProtocol } from './protocol.js';
+
+export const NotesStore = defineStore({
+  protocols: { notes: NotesProtocol },
+  create({ protocols, command }) {
+    const notes = protocols.notes.collection('note', { pagination: { limit: 50 } });
+    return {
+      notes,
+      addNote: command((title: string) => notes.create.run({ title: title.trim(), body: '' })),
+      loadMore: command(() => notes.loadMore()),
+      retry: command(() => notes.retry()),
+    };
   },
-} as const, {
-  note: recordCodecs.json<Note>(),
-});
-
-export const application = defineApplicationManifest({
-  protocols: [NotesProtocol],
-} as const);
-
-export const connectionStore = createConnectionStore({
-  application,
-  connectHandler : BrowserConnectHandler({
-    appName : 'Notes',
-    appIcon : '/icon.svg',
-  }),
-  monitor: { autoRefresh: {} },
 });
 ```
 
-The manifest is the source for protocol installation, delegated permissions,
-sync registration, and grant refresh. Keep one connection store for the
-application lifetime. `monitor.autoRefresh` matters: wallet approvals issue
-one-hour grants by default, and the store uses the manifest to renew them.
+Compose features into a static application definition. Its `manifest` is the
+source for protocol installation, delegated permissions, sync registration,
+and grant refresh:
 
-On startup, initialize the store once. In React, consume its frozen snapshot
-with `useSyncExternalStore`:
+```ts title="src/app/application.ts"
+import { defineApplication } from '@enbox/browser';
+import { NotesStore } from '../features/notes/store.js';
 
-```tsx
-import { useSyncExternalStore } from 'react';
-import { connectionStore } from './enbox/application.js';
+export const applicationDefinition = defineApplication({
+  stores: { notes: NotesStore },
+});
+```
 
-export function Connection(): JSX.Element {
-  const snapshot = useSyncExternalStore(
-    connectionStore.subscribe,
-    connectionStore.getSnapshot,
-    connectionStore.getSnapshot,
-  );
+Keep one runtime and native connection for the browser application lifetime:
 
-  if (snapshot.phase === 'initializing' || snapshot.phase === 'connecting') {
-    return <p>Connecting…</p>;
-  }
+```ts title="src/app/runtime.ts"
+import { BrowserConnectHandler, createApplication, createConnectionStore } from '@enbox/browser';
+import { applicationDefinition } from './application.js';
 
-  if (snapshot.phase !== 'connected') {
-    return (
-      <main>
-        {snapshot.error && <p role="alert">Connection failed. Try again.</p>}
-        <button onClick={() => void connectionStore.connect()}>
-          {snapshot.walletReapprovalRequired ? 'Reconnect wallet' : 'Connect wallet'}
-        </button>
-      </main>
-    );
-  }
+let runtime: ReturnType<typeof createApplication> | undefined;
 
-  return <Notes enbox={snapshot.enbox} sync={snapshot.sync} />;
+export function getApplication() {
+  return runtime ??= createApplication(applicationDefinition, {
+    connection: createConnectionStore({
+      application: applicationDefinition.manifest,
+      connectHandler: BrowserConnectHandler({ appName: 'Notes', appIcon: '/icon.svg' }),
+      monitor: { autoRefresh: {} },
+    }),
+  });
 }
 ```
 
-`connect()` drives the browser popup or phone handoff and asks the wallet for
-the manifest's permissions. It publishes denials and other flow errors in the
-returned snapshot, so the UI reads state instead of parsing error messages.
-Call `connectionStore.disconnect()` for sign-out.
+`applicationDefinition` describes the application; `getApplication()` returns
+its live owner. `monitor.autoRefresh` renews delegated grants using the same
+manifest. `EnboxProvider` initializes the supplied runtime by default and
+leaves its terminal disposal to this browser owner.
 
-If automatic refresh or a protocol-coverage repair replaces
-`snapshot.enbox`, recreate all views and subscriptions bound to the previous
-facade. A React effect whose dependency is `snapshot.enbox` has the right
-lifetime.
+Connection UI uses the provider's guarded actions and published flow errors:
+
+```tsx title="src/app/App.tsx"
+import { useEnboxConnection } from '@enbox/react';
+import { Notes } from '../features/notes/components/Notes.js';
+
+export function App() {
+  const connection = useEnboxConnection();
+  const busy = connection.isConnecting || connection.isDisconnecting;
+  return <main>
+    {connection.connectionError && <p role="alert">Could not connect. Try again.</p>}
+    {connection.isConnected ? <>
+      {connection.walletRepair && <button disabled={busy}
+        onClick={() => { void connection.connect().catch(() => {}); }}>Reconnect wallet</button>}
+      <Notes disabled={busy || connection.walletRepair !== undefined} />
+      <button disabled={busy}
+        onClick={() => { void connection.disconnect().catch(() => {}); }}>Sign out</button>
+    </> : <button disabled={busy}
+      onClick={() => { void connection.connect().catch(() => {}); }}>
+      {connection.isConnecting ? 'Connecting…' : 'Connect wallet'}
+    </button>}
+  </main>;
+}
+```
+
+`connect()` starts wallet approval directly from the user action. Connection
+actions publish their errors and reject actionable failures; this UI handles
+the promise and renders the hook's state. Native connection state/actions
+remain available through `getApplication().connection`.
+
+When authorization or the SDK facade changes, the runtime retires old feature
+instances and `useFeature` resolves their replacements. Components and
+controllers share each named resource; they do not recreate query effects.
 
 ## Install the DWeb service worker
 
@@ -196,17 +216,19 @@ registering a second worker.
 
 ```tsx title="src/main.tsx"
 import { prepareBrowser } from '@enbox/browser';
+import { EnboxProvider } from '@enbox/react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { Connection } from './Connection.js';
-import { connectionStore } from './enbox/application.js';
+import { App } from './app/App.js';
+import { getApplication } from './app/runtime.js';
 
-async function startApplication(): Promise<void> {
-  await connectionStore.initialize();
+function startApplication(): void {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <Connection />
+      <EnboxProvider application={getApplication()}>
+        <App />
+      </EnboxProvider>
     </StrictMode>,
   );
 }
@@ -264,63 +286,65 @@ the helper is called, after the external registrar has returned a registration.
 In React, keep that registrar mounted outside the SDK subtree being gated, and
 mount or initialize the subtree only after preparation succeeds.
 
-The page owns the connection store and WebSockets. The service worker owns
+The page owns the runtime, native connection, and WebSockets. The service worker owns
 fetch interception and precaching; browsers may terminate it between events,
 so it must not host the long-lived Enbox session.
 
 ## Make records drive the UI
 
-The default sync mode is live and WebSocket first. Do not set `sync` on the
-connection store and do not add a refresh timer. Use an observed collection for
-the UI:
+The default sync mode is live and WebSocket first. Leave `sync` unset and
+subscribe to the feature's collection. Calling this component in multiple
+places shares its native observation and mutation progress:
 
-```ts
-const notes = snapshot.enbox.using(NotesProtocol);
-const lifetime = new AbortController();
-const view = await notes.records.observe('note', {
-  materialize : true,
-  pagination  : { limit: 100 },
-  signal      : lifetime.signal,
-});
+```tsx title="src/features/notes/components/Notes.tsx"
+import { useFeature, useStore } from '@enbox/react';
+import { useState } from 'react';
+import { NotesStore } from '../store.js';
 
-function render(): void {
-  const state = view.getSnapshot();
-  if (state.status === 'error') {
-    showError(state.error);
-    return;
-  }
-
-  showNotes(state.records, {
-    caughtUp : state.current,
-    loading  : state.status === 'loading',
-  });
+export function Notes({ disabled = false }: { disabled?: boolean }) {
+  const feature = useFeature(NotesStore);
+  const notes = useStore(feature.notes);
+  const creation = useStore(feature.addNote);
+  const paging = useStore(feature.loadMore);
+  const [title, setTitle] = useState('');
+  return <section>
+    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote.run(title); }}>
+      <input aria-label="Note title" required value={title}
+        disabled={disabled || creation.pendingCount > 0} onChange={(event) => setTitle(event.target.value)} />
+      <button disabled={disabled || creation.pendingCount > 0}>Add note</button>
+    </form>
+    {creation.error && <p role="alert">Could not save the note.</p>}
+    {notes.status === 'loading' && <p>Loading notes…</p>}
+    {notes.status === 'error' && <p role="alert">Could not load notes.
+      <button disabled={disabled} onClick={() => { void feature.retry.run(); }}>Try again</button>
+    </p>}
+    <ul>{notes.records.map(({ record, value }) => <li key={record.id}>{value.title}</li>)}</ul>
+    {notes.hasMore && <button disabled={disabled || paging.pendingCount > 0}
+      onClick={() => { void feature.loadMore.run(); }}>More notes</button>}
+  </section>;
 }
-
-const unsubscribe = view.subscribe(render);
-render();
-
-const created = await notes.records.create('note', {
-  data: { title: 'First note', body: 'Hello from Enbox.' },
-});
-console.log(created.id, await created.value());
-
-// When the component unmounts or snapshot.enbox changes:
-unsubscribe();
-lifetime.abort();
-await view.close();
 ```
 
 `ready` means the local result can render. `current` means the relevant remote
 replicas have caught up. Keep usable local data on screen while offline and
 show freshness separately. Use `records.subscribe()` for an incremental,
-append-only history; use `query()` for a one-time search. With
-`materialize: true`, every row is `{ record, value }`: the decoded note value
-sits beside its live record handle.
+append-only history; use `query()` for a one-time search inside domain
+operations. Rows are `{ record, value }`: decoded values sit beside their
+native record handles.
+
+The runtime owns the native views, while `useStore` retains them after commit
+and releases that interest on unmount. Headless controllers resolve the same
+feature with `getApplication().store(NotesStore)` and use explicit `retain()`
+leases. `ready()` alone temporarily holds the resource until it settles.
+Commands publish pending/error state and return their operation result;
+application UI still owns draft changes and navigation after an awaited call.
 
 Record handles are live class instances. Pass them through or copy fields such
 as `id` and `contextId` explicitly; spreading a handle does not serialize its
-accessor properties. Nested paths must always receive the exact parent
-`contextId` through `parentContextId` on create and `within` on reads or views.
+accessor properties. A nested collection returns a family whose
+`within(parentContextId)` binds its direct parent. Native record operations
+supply that context through `parentContextId` on creates and `within` on reads
+or views.
 
 ## Add multi-party data
 

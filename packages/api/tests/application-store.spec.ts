@@ -1,0 +1,271 @@
+import type { EnboxTestContext } from '../src/testing.js';
+import type { ConnectionSnapshot, ConnectionStore } from '../src/connection-store.js';
+
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+
+import { createEnboxTestContext } from '../src/testing.js';
+import { defineProtocol } from '../src/define-protocol.js';
+import { defineStore } from '../src/store/definition.js';
+import { recordCodecs } from '../src/record-codec.js';
+import { createApplication, defineApplication } from '../src/store/application.js';
+import { StoreNotConnectedError, StoreRetiredError } from '../src/store/scope.js';
+
+const Protocol = defineProtocol({
+  protocol  : 'https://example.com/protocols/application-stores',
+  published : true,
+  types     : { note: { dataFormats: ['application/json'] } },
+  structure : { note: {} },
+} as const, { note: recordCodecs.json<{ title: string }>() });
+
+function controlledConnection(initial: ConnectionSnapshot): {
+  connection: ConnectionStore;
+  publish(snapshot: ConnectionSnapshot): void;
+  disposed(): boolean;
+  initialized(): boolean;
+} {
+  let snapshot = initial;
+  let disposed = false;
+  let initialized = false;
+  const listeners = new Set<(state: ConnectionSnapshot) => void>();
+  const current = async (): Promise<ConnectionSnapshot> => snapshot;
+  const connection: ConnectionStore = {
+    getSnapshot : (): ConnectionSnapshot => snapshot,
+    subscribe   : (listener): (() => void) => {
+      listeners.add(listener);
+      return (): void => { listeners.delete(listener); };
+    },
+    initialize          : async (): Promise<ConnectionSnapshot> => { initialized = true; return snapshot; },
+    connect             : current,
+    connectVault        : current,
+    refresh             : current,
+    refreshDwnEndpoints : current,
+    retryRemote         : current,
+    disconnect          : current,
+    dispose             : async (): Promise<void> => { disposed = true; listeners.clear(); },
+  };
+  return {
+    connection,
+    publish: (next): void => {
+      snapshot = next;
+      for (const listener of [...listeners]) { listener(next); }
+    },
+    disposed    : (): boolean => disposed,
+    initialized : (): boolean => initialized,
+  };
+}
+
+describe('headless application stores', () => {
+  let context: EnboxTestContext;
+  beforeAll(async (): Promise<void> => {
+    context = await createEnboxTestContext({ application: defineApplication({
+      stores: { notes: defineStore({ protocols: { notes: Protocol }, create: (): object => ({}) }) },
+    }).manifest });
+  });
+  afterAll(async (): Promise<void> => { await context.close(); });
+
+  it('collects static dependencies once and applies explicit permission policy', (): void => {
+    let creates = 0;
+    const base = defineStore({ protocols: { notes: Protocol }, create: (): object => { creates++; return {}; } });
+    const feature = defineStore({
+      protocols: { notes: Protocol }, stores: { base }, create: ({ stores }): object => stores.base,
+    });
+    const definition = defineApplication({
+      stores: { feature }, protocols: [{ protocol: Protocol, permissions: ['read'] }],
+    });
+    expect(creates).toBe(0);
+    expect(definition.manifest.protocols).toHaveLength(1);
+    expect(definition.manifest.protocols[0].permissions).toEqual(['read']);
+    expect(Object.isFrozen(definition.stores)).toBe(true);
+    const conflicting = defineProtocol(Protocol.definition, Protocol.codecs);
+    expect(() => defineApplication({
+      stores: { base }, protocols: [conflicting],
+    })).toThrow('conflicts with a store dependency');
+    expect(() => defineApplication({
+      stores: { base }, protocols: [Protocol, Protocol],
+    })).toThrow('duplicate explicit protocol');
+  });
+
+  it('creates inert inactive handles and rejects disconnected commands', async (): Promise<void> => {
+    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
+      notes: protocols.notes.collection('note'),
+    }) });
+    const native = controlledConnection({ phase: 'disconnected' });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const feature = app.store(Notes);
+    expect(native.initialized()).toBe(false);
+    expect(app.store(Notes)).toBe(feature);
+    expect(feature.notes.getSnapshot().status).toBe('idle');
+    expect(feature.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
+    expect(feature.notes.getServerSnapshot()).toBe(feature.notes.getServerSnapshot());
+    await expect(feature.notes.create.run({ title: 'Disconnected' })).rejects.toBeInstanceOf(StoreNotConnectedError);
+    expect(feature.notes.create.getSnapshot()).toMatchObject({ pendingCount: 0, pendingVariables: [], error: undefined });
+    await app.initialize();
+    expect(native.initialized()).toBe(true);
+    await app.dispose();
+    expect(native.disposed()).toBe(true);
+    expect(() => app.store(Notes)).toThrow(StoreRetiredError);
+  });
+
+  it('shares real record views, preserves sync-only identity, and retires replacement scopes', async (): Promise<void> => {
+    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
+      notes: protocols.notes.collection('note'),
+    }) });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const first = app.store(Notes);
+    const release = first.notes.retain();
+    await first.notes.ready();
+    const record = await first.notes.create.run({ title: 'Shared canonical state' });
+    expect(app.store(Notes).notes).toBe(first.notes);
+    expect(first.notes.getSnapshot().records.some(row => row.record.id === record.id)).toBe(true);
+    expect(first.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
+    let notifications = 0;
+    const stop = app.subscribe((): void => { notifications += 1; });
+    native.publish({ ...native.connection.getSnapshot(), vaultLocked: false });
+    expect(app.store(Notes)).toBe(first);
+    expect(notifications).toBe(1);
+    native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+    expect(notifications).toBe(2);
+    stop();
+    const replacement = app.store(Notes);
+    expect(replacement).not.toBe(first);
+    expect(first.notes.getSnapshot().records).toHaveLength(0);
+    await expect(first.notes.create.run({ title: 'Obsolete' })).rejects.toBeInstanceOf(StoreRetiredError);
+    release();
+    await app.dispose();
+  });
+
+  it('notifies scope consumers when an earlier native subscriber resolves the replacement first', async (): Promise<void> => {
+    const Notes = defineStore({ protocols: { notes: Protocol }, create: ({ signal }) => ({ signal }) });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const stopEarlier = native.connection.subscribe((): void => { app.store(Notes); });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const original = app.store(Notes);
+    let notifications = 0;
+    app.subscribe((): void => { notifications += 1; });
+    try {
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.store(Notes)).not.toBe(original);
+      expect(original.signal.aborted).toBe(true);
+      expect(notifications).toBe(1);
+    } finally {
+      stopEarlier();
+      await app.dispose();
+    }
+  });
+
+  it('publishes session-abort retirement before the native snapshot changes', async (): Promise<void> => {
+    const lifetime = new AbortController();
+    const session = new Proxy(context.session, { get: (target, key): unknown =>
+      key === 'signal' ? lifetime.signal : Reflect.get(target, key) });
+    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
+      notes: protocols.notes.collection('note'),
+    }) });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const first = app.store(Notes);
+    let changed = false;
+    app.subscribe((): void => { changed = app.store(Notes) !== first; });
+    lifetime.abort();
+    expect(changed).toBe(true);
+    expect(app.store(Notes).notes.getSnapshot().status).toBe('idle');
+    await expect(app.store(Notes).notes.create.run({ title: 'Inactive' })).rejects.toBeInstanceOf(StoreNotConnectedError);
+    await app.dispose();
+  });
+
+  it('preserves a successor resolved synchronously while the previous session scope aborts', async (): Promise<void> => {
+    const closed: number[] = [];
+    let created = 0;
+    let reenter = (): void => {};
+    let successor: { id: number; signal: AbortSignal } | undefined;
+    const Notes = defineStore({
+      protocols: { notes: Protocol },
+      create({ signal, onClose }): { id: number; signal: AbortSignal } {
+        const id = ++created;
+        onClose((): void => { closed.push(id); });
+        if (id === 1) {
+          signal.addEventListener('abort', (): void => reenter(), { once: true });
+        }
+        return { id, signal };
+      },
+    });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    reenter = (): void => { successor = app.store(Notes); };
+    try {
+      const original = app.store(Notes);
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.store(Notes)).toBe(successor);
+      expect(created).toBe(2);
+      expect(original.signal.aborted).toBe(true);
+      expect(successor?.signal.aborted).toBe(false);
+      await app.dispose();
+      expect(successor?.signal.aborted).toBe(true);
+      expect(closed).toEqual([1, 2]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it('returns the latest binding when an abort listener replaces the connection again', async (): Promise<void> => {
+    let created = 0;
+    let reenter = (): void => {};
+    let successor: { id: number; signal: AbortSignal } | undefined;
+    const Notes = defineStore({
+      protocols: { notes: Protocol },
+      create({ signal }): { id: number; signal: AbortSignal } {
+        const id = ++created;
+        if (id === 1) {
+          signal.addEventListener('abort', (): void => reenter(), { once: true });
+        }
+        return { id, signal };
+      },
+    });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const latestFacade = new Proxy(context.enbox, {});
+    reenter = (): void => {
+      native.publish({ phase: 'connected', enbox: latestFacade, session: context.session });
+      successor = app.store(Notes);
+    };
+    try {
+      app.store(Notes);
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.connection.getSnapshot().enbox).toBe(latestFacade);
+      expect(app.store(Notes)).toBe(successor);
+      expect(created).toBe(2);
+      expect(successor?.signal.aborted).toBe(false);
+      await app.dispose();
+      expect(successor?.signal.aborted).toBe(true);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it('closes dependents before dependencies and cleans up failed factories exactly once', async (): Promise<void> => {
+    const closed: string[] = [];
+    let baseCreates = 0;
+    const base = defineStore({ protocols : { notes: Protocol }, create    : ({ onClose }): object => {
+      baseCreates += 1;
+      onClose((): void => { closed.push('base'); }); return {};
+    } });
+    const feature = defineStore({ protocols : {}, stores    : { base, alias: base }, create    : ({ stores, onClose }): {
+      base: object; alias: object;
+    } => {
+      onClose((): void => { closed.push('feature'); }); return { base: stores.base, alias: stores.alias };
+    } });
+    const failed = defineStore({ protocols : {}, create    : ({ onClose }): never => {
+      onClose((): void => { closed.push('failed'); }); throw new Error('Factory failed');
+    } });
+    const native = controlledConnection({ phase: 'disconnected' });
+    const app = createApplication(defineApplication({ stores: { feature, failed } }), native);
+    const instance = app.store(feature);
+    expect(instance.base).toBe(instance.alias);
+    expect(instance.base).toBe(app.store(base));
+    expect(baseCreates).toBe(1);
+    expect(() => app.store(failed)).toThrow('Factory failed');
+    await app.dispose();
+    expect(closed.filter(value => value === 'failed')).toHaveLength(1);
+    expect(closed.indexOf('feature')).toBeLessThan(closed.indexOf('base'));
+  });
+});

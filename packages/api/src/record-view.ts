@@ -62,6 +62,9 @@ export interface RecordView<Item = Record> extends ObservableStore<RecordViewSta
   /** Resolve after the first local query makes records, including an empty result, usable. */
   ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyRecordViewState<Item>>;
 
+  /** Recompute the canonical local selection and await its usable result; replication may still be catching up. */
+  refresh(): Promise<ReadyRecordViewState<Item>>;
+
   /** Fence callbacks and close the underlying local subscriptions without publishing new state. */
   close(): Promise<void>;
 }
@@ -182,6 +185,11 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
     });
+  }
+
+  /** Recompute this selection through the native serialized materialization drain. */
+  public refresh(): Promise<ReadyRecordViewState<Item>> {
+    return this.refreshMaterialization();
   }
 
   /** Install the wake subscription before starting the first query. */

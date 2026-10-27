@@ -12,8 +12,8 @@ bun add @enbox/browser
 ```
 
 Follow [Build a browser dapp](/docs/guides/browser-dapp) for the complete
-application scaffold. It is the canonical source for connection-store usage,
-the required service worker, live records, offline behavior, and deployment.
+application scaffold. It is the canonical source for feature-store/runtime
+setup, the required service worker, live records, offline behavior, and deployment.
 
 [Browser package behavior](/docs/guides/browser-bundlers) documents conditional
 exports, lower-level imports, and persistent storage.
@@ -23,6 +23,9 @@ exports, lower-level imports, and persistent storage.
 | Export | Description |
 |---|---|
 | `Enbox` | High-level application API from `@enbox/api` |
+| `defineStore()` | Named protocol resources and domain commands shared by UI and headless consumers |
+| `defineApplication()` | Static feature composition and its derived protocol/permission manifest |
+| `createApplication()` | Session-owned feature instances and resource cleanup around one native connection |
 | `createConnectionStore()` | Application connection lifecycle and observable snapshots |
 | `defineProtocol()` | Typed protocol definition helper |
 | `recordCodecs` | JSON, text, bytes, Blob, and private-file envelope codecs |

@@ -8,7 +8,7 @@ import { waitForViewReady } from './view-ready.js';
  * rematerialization drain shared by the observed views. Subclasses own their
  * subscriptions (released from {@link closeOwnedResources}) and their state
  * computation ({@link materialize}); stale passes are fenced by the request
- * generation supplied to each materialization.
+ * revision supplied to each materialization.
  */
 export abstract class ObservedView<TState extends ViewState> implements ObservableStore<TState> {
   protected readonly _closeController = new AbortController();
@@ -22,7 +22,11 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
   private _materializationRequested = false;
   private _state: TState;
 
-  private _requestGeneration = 0;
+  private _requestRevision = 0;
+  private readonly _refreshes = new Set<{
+    resolve(state: Extract<TState, { status: 'ready' }>): void;
+    reject(error: unknown): void;
+  }>();
 
   private readonly _handleLifetimeAbort = (): void => {
     const sessionEnded = this._sessionSignal?.aborted === true;
@@ -67,6 +71,18 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
     return this._closePromise;
   }
 
+  /** Wait for a canonical local materialization requested after this call. */
+  protected refreshMaterialization(): Promise<Extract<TState, { status: 'ready' }>> {
+    if (this._closed) {
+      return Promise.reject(new Error('Cannot refresh a closed view.'));
+    }
+    const result = new Promise<Extract<TState, { status: 'ready' }>>((resolve, reject): void => {
+      this._refreshes.add({ resolve, reject });
+    });
+    this.requestMaterialization();
+    return result;
+  }
+
   protected get isClosed(): boolean {
     return this._closed;
   }
@@ -77,25 +93,59 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
       return;
     }
 
-    this._requestGeneration += 1;
+    this._requestRevision += 1;
     this._materializationRequested = true;
     if (this._materializing || !this.mayStartMaterialization()) {
       return;
     }
 
     this._materializing = true;
-    void this.drainMaterializations();
+    this.drainMaterializations();
   }
 
-  private async drainMaterializations(): Promise<void> {
-    try {
-      while (!this._closed && this._materializationRequested) {
-        // Clear before the pass so a wake during it schedules a trailing pass.
-        this._materializationRequested = false;
-        await this.materialize(this._requestGeneration);
-      }
-    } finally {
+  private drainMaterializations(): void {
+    if (this._closed || !this._materializationRequested) {
       this._materializing = false;
+      return;
+    }
+    // Clear before the pass so a wake during it schedules a trailing pass.
+    this._materializationRequested = false;
+    const requestRevision = this._requestRevision;
+    // Each completed pass schedules its successor without retaining a promise
+    // chain for the lifetime of a continuously active subscription.
+    void this.materializePass(requestRevision).then((): void => { this.drainMaterializations(); });
+  }
+
+  private async materializePass(requestRevision: number): Promise<void> {
+    try {
+      await this.materialize(requestRevision);
+      this.settleRefreshes(requestRevision);
+    } catch (error) {
+      if (this.canPublishMaterialization(requestRevision)) {
+        this.rejectRefreshes(error);
+        console.warn('[@enbox/api] View materialization failed.', error);
+      }
+    }
+  }
+
+  private rejectRefreshes(reason: unknown): void {
+    for (const pending of this._refreshes) { pending.reject(reason); }
+    this._refreshes.clear();
+  }
+
+  private settleRefreshes(requestRevision: number): void {
+    const state = this._state;
+    if (!this.canPublishMaterialization(requestRevision) || (state.status !== 'ready' && state.status !== 'error')) {
+      return;
+    }
+    // Each refresh advances the request revision, so this latest pass covers every pending waiter.
+    for (const pending of this._refreshes) {
+      this._refreshes.delete(pending);
+      if (state.status === 'error') {
+        pending.reject(state.error);
+      } else {
+        pending.resolve(state as Extract<TState, { status: 'ready' }>);
+      }
     }
   }
 
@@ -118,8 +168,8 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
   }
 
   /** Whether a materialization is still the newest requested pass. */
-  protected canPublishMaterialization(generation: number): boolean {
-    return !this._closed && generation === this._requestGeneration;
+  protected canPublishMaterialization(requestRevision: number): boolean {
+    return !this._closed && requestRevision === this._requestRevision;
   }
 
   private async closeView(): Promise<void> {
@@ -129,7 +179,8 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
 
     this._closed = true;
     this._closeController.abort();
-    this._requestGeneration += 1;
+    this.rejectRefreshes(this._closeController.signal.reason);
+    this._requestRevision += 1;
     this._materializationRequested = false;
     this._listeners.clear();
     this._callerSignal?.removeEventListener('abort', this._handleLifetimeAbort);
@@ -141,7 +192,7 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
   protected abstract closeOwnedResources(): Promise<void>;
 
   /** Execute and publish one requested pass without owning the outer drain loop. */
-  protected abstract materialize(generation: number): Promise<void>;
+  protected abstract materialize(requestRevision: number): Promise<void>;
 
   /** Apply state specific to the first caller or owning-session lifetime that ends. */
   protected abstract handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void;
