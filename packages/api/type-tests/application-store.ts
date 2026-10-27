@@ -61,7 +61,7 @@ void stop;
 application.getSnapshot();
 
 // @ts-expect-error feature instances are constructed by the application, not a public definition method.
-Notes.instantiate;
+void Notes.instantiate;
 
 // @ts-expect-error domain command input remains inferred through dependent stores.
 application.store(Dashboard).add.run(123);

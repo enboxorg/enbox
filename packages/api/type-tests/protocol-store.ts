@@ -55,7 +55,7 @@ store.collection('settings');
 // @ts-expect-error nested singleton paths also require native singleton semantics.
 store.collection('folder/settings');
 // @ts-expect-error native access is explicit rather than an eager records getter.
-store.records;
+void store.records;
 // @ts-expect-error nested collections require a direct parent selection before reading rows.
 store.collection('folder/note').getSnapshot();
 // @ts-expect-error root collections do not accept a parent selection.
