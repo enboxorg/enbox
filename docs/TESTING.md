@@ -193,10 +193,25 @@ CI runs a **3x3 matrix** (3 package shards x 3 browsers = 9 parallel jobs):
 | `dwn-sdk-js` | `@enbox/dwn-sdk-js` |
 | `dids-agent-api` | `@enbox/dids`, `@enbox/browser`, `@enbox/agent`, `@enbox/api` |
 
+Each browser job runs in the official Playwright image, pinned by version and
+digest in `.github/workflows/ci.yml`. Browsers and Linux libraries are already
+installed, so jobs do not download apt packages. When updating Playwright in
+`package.json`, update the image version and digest too; the workflow policy
+tests check that the versions match.
+All browser jobs restore the Bun package cache; only the `crypto / chromium`
+job saves it, avoiding duplicate compression in the other matrix jobs.
+
 Browser test failures block merging. Browser coverage is collected on Chromium;
 Firefox and WebKit run the same suites without instrumentation. The Chromium
 LCOV output is merged with Node coverage for SonarCloud; CI does not post a
 separate browser-coverage PR comment.
+
+The `changeset-release/main` PR keeps security, lint, build, and packed consumer
+checks, but skips source tests and PR coverage analysis when the complete diff
+contains only package version bumps, matching lockfile workspace versions,
+changelogs, and deleted changesets. Any source, manifest configuration, or locked
+dependency change uses the normal test graph. Pushes to `main` still run the
+full suite and coverage analysis.
 
 ## Coverage
 

@@ -32,6 +32,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       src: ${{ steps.src-filter.outputs.src }}
+      release_metadata_only: ${{ steps.release-metadata.outputs.only == 'true' }}
       needs_common_crypto: ${{ steps.propagate.outputs.needs_common_crypto }}
       needs_lightweight: ${{ steps.propagate.outputs.needs_lightweight }}
       needs_dids: ${{ steps.propagate.outputs.needs_dids }}
@@ -69,7 +70,28 @@ jobs:
               - '!docs/**'
               - '!.changeset/**'
 
+      # A branch name alone is insufficient: verify the complete diff, including
+      # every lockfile resolution, before skipping source tests on release PRs.
+      - name: Setup Bun for release metadata verification
+        if: github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Verify version-only release changes
+        id: release-metadata
+        if: github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          bun scripts/ci-release-metadata.mjs "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      # Verified release metadata still runs security, lint, build, and packed
+      # consumer checks. Missing package flags leave source test jobs skipped.
       - name: Detect per-package changes
+        if: steps.release-metadata.outputs.only != 'true'
         uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -1113,7 +1135,8 @@ jobs:
     timeout-minutes: 12
     needs: [changes, test-lightweight, test-dwn-sdk, test-agent, test-api-clients, test-sql-store, test-dwn-server, test-browser]
     if: >-
-      always() && !cancelled() && needs.changes.outputs.src == 'true'
+      always() && !cancelled() && needs.changes.outputs.src == 'true' &&
+      needs.changes.outputs.release_metadata_only != 'true'
 
     steps:
       - name: Checkout repository
@@ -1304,6 +1327,7 @@ jobs:
     if: >-
       always() && !cancelled() &&
       needs.changes.outputs.src == 'true' &&
+      needs.changes.outputs.release_metadata_only != 'true' &&
       github.event_name == 'pull_request' &&
       vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORG != ''
 
@@ -1430,14 +1454,20 @@ jobs:
   # without moving the merged SonarCloud number. Firefox/WebKit therefore run
   # uninstrumented as pure correctness checks.
   #
-  # Trade-off: 9 jobs instead of 3, but each job only installs one Playwright
-  # browser (~20s) and runs ~1/3 the tests, so wall-clock time drops from
-  # ~3 min (old 3-shard, 3-browser sequential) to ~1 min.
+  # Preinstalled browsers and system libraries avoid repeated apt downloads and
+  # slow Ubuntu mirrors. Keep the image version aligned with package.json;
+  # scripts/ci-workflows.spec.mjs checks this in the security job.
   # ---------------------------------------------------------------------------
   test-browser:
     name: 'Test: Browser (${{ matrix.shard.name }} / ${{ matrix.browser }})'
     runs-on: ubuntu-latest
-    timeout-minutes: 21
+    timeout-minutes: 8
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.1-noble@sha256:2f29369043d81d6d69a815ceb80760f55e85f5020371ad06a4d996f18503ad1c
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
     needs: [build, changes]
     if: needs.changes.outputs.needs_browser_tests == 'true'
     strategy:
@@ -1462,13 +1492,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # The Playwright image lacks unzip, which setup-bun requires. The official
+      # npm distribution installs the same pinned runtime without apt.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
+        run: npm install --global bun@1.4.4
 
+      # Actions mounts a home directory owned by the runner's host user. Firefox
+      # requires it to belong to the user running the browser in the container.
+      - name: Match browser home ownership
+        run: chown "$(id -u):$(id -g)" "$HOME"
+
+      # Restore in every cell, but save only once below. Otherwise nine jobs
+      # compress the same cache before all but one lose the reservation race.
       - name: Restore bun cache
-        uses: actions/cache@v6
+        id: bun-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-store-${{ hashFiles('**/bun.lock') }}
@@ -1483,10 +1521,6 @@ jobs:
         with:
           name: workspace-build
           path: packages
-
-      - name: Install Playwright browser and system dependencies
-        timeout-minutes: 15
-        run: bunx --no-install playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run browser tests
         id: browser-tests
@@ -1538,6 +1572,13 @@ jobs:
         run: |
           echo "::error::Browser tests failed in shard '${{ matrix.shard.name }}' / ${{ matrix.browser }} (coverage was still collected)"
           exit 1
+
+      - name: Save browser bun cache
+        if: matrix.shard.name == 'crypto' && matrix.browser == 'chromium' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
 
   # ---------------------------------------------------------------------------
   # Gate job for branch protection — runs so required checks pass even when the
