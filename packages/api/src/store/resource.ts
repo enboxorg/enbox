@@ -121,7 +121,7 @@ export function createCollectionResource<Item>(
     activeObservation = undefined;
     if (previous === undefined) { return; }
     // Acquire cleanup ownership before unsubscribe or abort callbacks can reenter close().
-    if (previous.view !== undefined) { trackClose(previous.view); }
+    if (previous.view !== undefined) { void trackClose(previous.view); }
     options.onObservationChange?.(false);
     try { previous.unsubscribe?.(); } finally { previous.abortController.abort(); }
   };
