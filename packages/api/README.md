@@ -193,10 +193,13 @@ retirement. A sync-only publication does not replace the feature: handlers
 compare `app.store(...)` identity before recreating their own setup. React's
 `useFeature` already performs that comparison and avoids those rerenders.
 
-Register custom release callbacks with `onClose`. They run after invalidation,
-in reverse registration order. Late releases registered during disposal are
-awaited; registering after disposal has settled cannot extend an already settled
-promise. `dispose()` is terminal resource/connection teardown, not a request to
+Register custom release callbacks with `onClose` before starting owned work,
+and return the completion of its entire asynchronous release. Registered
+callbacks run after invalidation in reverse registration order. Late releases
+registered during disposal are awaited by the application, but do not extend
+the feature's dependency teardown sequence; registering after disposal has
+settled cannot extend an already settled promise.
+`dispose()` is terminal resource/connection teardown, not a request to
 flush application buffers, discard documents, or sign out. Unsaved document
 handoff and guarded drains remain with the host's existing lifecycle in this
 initial metadata slice. Use `app.connection.disconnect()` for native sign-out.

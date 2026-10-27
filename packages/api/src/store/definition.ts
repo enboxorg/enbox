@@ -35,9 +35,12 @@ type SingleInputOperation<Operation extends CommandOperation> =
 // Preserve the author's required, optional, or absent input when exposing run().
 type InferredCommand<Operation extends CommandOperation> =
   Omit<StoreCommand<CommandInput<Operation>, Awaited<ReturnType<Operation>>>, 'run'> & {
-    run(...input: [] extends Parameters<Operation>
-      ? [input?: CommandInput<Operation>] : [input: CommandInput<Operation>]
-    ): Promise<Awaited<ReturnType<Operation>>>;
+    // Preserve function unions so callers must satisfy every possible operation.
+    run: Parameters<Operation> extends []
+      ? (input?: void) => Promise<Awaited<ReturnType<Operation>>>
+      : Operation extends CommandOperation
+        ? (...input: Parameters<Operation>) => Promise<Awaited<ReturnType<Operation>>>
+        : never;
   };
 
 /** Session-owned dependencies and lifecycle controls supplied to a feature factory. */
@@ -50,7 +53,11 @@ export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreD
   command<Operation extends CommandOperation>(
     operation: Operation & SingleInputOperation<Operation>,
   ): InferredCommand<Operation>;
-  /** Register resource cleanup, run after scope invalidation in reverse registration order. */
+  /**
+   * Register cleanup before starting owned work; return its complete asynchronous release.
+   * Callbacks run after invalidation in reverse order. Late registrations remain application-owned
+   * but do not extend this feature's dependency teardown sequence.
+   */
   onClose(close: () => void | Promise<void>): void;
 }>;
 

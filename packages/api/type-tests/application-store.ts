@@ -92,3 +92,32 @@ defineStore({ protocols: {}, create({ command }) {
   command((...titles: string[]) => titles.join(','));
   return {};
 } });
+
+declare const zeroOrRequired: (() => string) | ((title: string) => string);
+declare const optionalOrRequired: ((title?: string) => string) | ((title: string) => string);
+declare const disjointInputs: ((title: string) => string) | ((count: number) => number);
+declare const matchingInputs: ((title: string) => string) | ((title: string) => Promise<number>);
+
+defineStore({ protocols: {}, create({ command }) {
+  const mixedArity = command(zeroOrRequired);
+  const mixedOptionality = command(optionalOrRequired);
+  const mixedInputs = command(disjointInputs);
+  const mixedResults = command(matchingInputs);
+  const required: Promise<string> = mixedArity.run('A title');
+  const optional: Promise<string> = mixedOptionality.run('A title');
+  const result: Promise<string | number> = mixedResults.run('A title');
+  void required;
+  void optional;
+  void result;
+  // @ts-expect-error one possible operation requires its argument.
+  mixedArity.run();
+  // @ts-expect-error zero-argument alternatives do not make required values accept undefined.
+  mixedArity.run(undefined);
+  // @ts-expect-error optional alternatives do not make required arguments optional.
+  mixedOptionality.run();
+  // @ts-expect-error the selected operation may require a number instead of a string.
+  mixedInputs.run('A title');
+  // @ts-expect-error the selected operation may require a string instead of a number.
+  mixedInputs.run(1);
+  return { mixedArity, mixedOptionality, mixedInputs, mixedResults };
+} });
