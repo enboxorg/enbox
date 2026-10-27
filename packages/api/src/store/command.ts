@@ -9,7 +9,7 @@ export type StoreCommandState<Input> = Readonly<{
   pendingCount: number;
   /** Unresolved inputs in start order, retained by reference; repeated inputs remain distinct. */
   pendingVariables: readonly Input[];
-  /** Display error owned by the latest invocation. */
+  /** Display error from the latest invocation admitted to the current scope; initial scope rejection leaves state unchanged. */
   error: Error | undefined;
 }>;
 

@@ -20,10 +20,10 @@ export class StoreNotConnectedError extends Error {
   }
 }
 
-/** Captured resources never acquire replacement-session authority. */
+/** A captured command or observation has outlived its owning scope. */
 export class StoreRetiredError extends Error {
   public constructor() {
-    super('This store belongs to a retired application session.');
+    super('This store operation belongs to a retired scope.');
     this.name = 'StoreRetiredError';
   }
 }

@@ -187,6 +187,11 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     });
   }
 
+  /** Recompute this selection through the native serialized materialization drain. */
+  public refresh(): Promise<ReadyRecordViewState<Item>> {
+    return this.refreshMaterialization();
+  }
+
   /** Install the wake subscription before starting the first query. */
   public async open(): Promise<void> {
     try {

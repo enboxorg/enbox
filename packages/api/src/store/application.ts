@@ -6,6 +6,7 @@ import type { ConnectionSnapshot, ConnectionStore } from '../connection-store.js
 import type { StoreDefinition, StoreDefinitions, StoreInstance } from './definition.js';
 
 import { defineApplicationManifest } from '../application-manifest.js';
+import { instantiateStore } from './definition.js';
 import { StoreNotConnectedError, StoreRetiredError } from './scope.js';
 
 /** Static feature registration and the protocol manifest derived from its dependencies. */
@@ -62,7 +63,7 @@ export function defineApplication<const Stores extends StoreDefinitions>(
 export interface ApplicationRuntime {
   /** The authoritative connection state and actions, including connect and disconnect. */
   readonly connection: ConnectionStore;
-  /** Notify on connection publications and immediate scope invalidation; read feature identity with store(). */
+  /** Invalidate feature lookups on native connection publications or scope retirement; compare the resolved instance identity. */
   subscribe: (listener: () => void) => () => void;
   /**
    * Resolve a registered feature once per native session/facade pair, including its dependencies.
@@ -110,6 +111,7 @@ class HeadlessApplication implements ApplicationRuntime {
   private readonly _definitions: Set<StoreDefinition>;
   private readonly _listeners = new Set<() => void>();
   private readonly _pendingCleanup = new Set<Promise<void>>();
+  private readonly _cleanupFailures: unknown[] = [];
   private readonly _unsubscribeConnection: () => void;
   private _sessionScope: SessionScope | undefined;
   private _disposePromise: Promise<void> | undefined;
@@ -179,7 +181,8 @@ class HeadlessApplication implements ApplicationRuntime {
         },
       };
       try {
-        const value = definition.instantiate(storeScope, dependencies);
+        const value = instantiateStore(definition, storeScope, dependencies);
+        assertSynchronousFeature(value);
         if (signal.aborted) {
           throw new StoreRetiredError();
         }
@@ -207,10 +210,16 @@ class HeadlessApplication implements ApplicationRuntime {
     }
     // Installing the shared completion retires the runtime before cleanup can reenter.
     this._disposePromise = Promise.resolve().then(async (): Promise<void> => {
+      await this._waitForCleanup();
       try {
-        await this._waitForCleanup();
-      } finally {
         await this.connection.dispose();
+      } catch (error) {
+        this._cleanupFailures.push(error);
+      }
+      // Native teardown may cause a resource to register one final release.
+      await this._waitForCleanup();
+      if (this._cleanupFailures.length > 0) {
+        throw new AggregateError(this._cleanupFailures, 'Application resource cleanup failed.');
       }
     });
     this._unsubscribeConnection();
@@ -286,21 +295,16 @@ class HeadlessApplication implements ApplicationRuntime {
     this._pendingCleanup.add(promise);
     void promise.then((): void => { this._pendingCleanup.delete(promise); }, (cause: unknown): void => {
       this._pendingCleanup.delete(promise);
+      this._cleanupFailures.push(cause);
       console.warn('[@enbox/api] Store cleanup failed.', cause);
     });
   }
 
-  private async _waitForCleanup(errors: unknown[] = []): Promise<void> {
-    const results = await Promise.allSettled(this._pendingCleanup);
-    for (const result of results) {
-      if (result.status === 'rejected') { errors.push(result.reason); }
-    }
+  private async _waitForCleanup(): Promise<void> {
+    await Promise.allSettled(this._pendingCleanup);
     // Cleanup callbacks can register follow-up releases while earlier ones finish.
     if (this._pendingCleanup.size > 0) {
-      return this._waitForCleanup(errors);
-    }
-    if (errors.length > 0) {
-      throw new AggregateError(errors, 'Application resource cleanup failed.');
+      return this._waitForCleanup();
     }
   }
 
@@ -316,6 +320,14 @@ class HeadlessApplication implements ApplicationRuntime {
       }
     }
   }
+}
+
+/** Invalid asynchronous factories must not escape as feature instances or unhandled rejections. */
+function assertSynchronousFeature(value: unknown): void {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) { return; }
+  if (typeof Reflect.get(value, 'then') !== 'function') { return; }
+  void Promise.resolve(value).catch((): void => {});
+  throw new TypeError('defineStore: create must return a synchronous feature value.');
 }
 
 /** Release dependents before dependencies, retaining every failure until all callbacks finish. */

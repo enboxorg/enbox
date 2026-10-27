@@ -106,7 +106,8 @@ describe('RecordView local DWN integration', () => {
         data : { title: 'Created' },
         tags : { status: 'draft' },
       });
-      await waitFor(() => view.getSnapshot().records.some((record) => record.id === created.id));
+      const refreshed = await view.refresh();
+      expect(refreshed.records.some((record) => record.id === created.id)).toBe(true);
       const observed = view.getSnapshot().records[0];
       expect(await observed.value()).toEqual({ title: 'Created' });
 

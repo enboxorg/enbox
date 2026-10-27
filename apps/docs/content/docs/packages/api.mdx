@@ -1,6 +1,6 @@
 ---
 title: "@enbox/api"
-description: The application-facing TypeScript API for typed records, live views, and encrypted shared contexts.
+description: Protocol-backed application stores, typed records, live views, and encrypted shared contexts.
 ---
 
 `@enbox/api` is the main package for Enbox applications. It turns a protocol
@@ -20,8 +20,10 @@ storage defaults. Non-browser applications can install `@enbox/api` directly.
 
 ## Application bootstrap
 
-A typical app declares its data model once, registers it in an application
-manifest, and lets a connection store own session and protocol readiness.
+A typical app defines its protocol, names shared resources and domain actions
+in a feature store, then composes those features into one application runtime.
+The runtime owns feature lifetimes; its native connection owns authentication,
+protocol readiness, and replication.
 
 ### 1. Define the model
 
@@ -29,10 +31,10 @@ This example makes each `notebook/page` an encrypted collaborative context.
 Members can edit; viewers can read. `roleGroups` records that policy once so
 owner and member call sites do not repeat role paths or precedence.
 
-```ts
+```ts title="src/features/notebooks/protocol.ts"
 import { defineProtocol, recordCodecs } from '@enbox/browser';
 
-const definition = {
+export const NotebookProtocol = defineProtocol({
   protocol  : 'https://example.com/protocols/notebooks',
   published : true,
   types     : {
@@ -78,9 +80,7 @@ const definition = {
       },
     },
   },
-} as const;
-
-export const NotebookProtocol = defineProtocol(definition, {
+} as const, {
   notebook : recordCodecs.json<{ name: string }>(),
   page     : recordCodecs.json<{ summary: string }>(),
   title    : recordCodecs.json<{ title: string }>(),
@@ -144,51 +144,140 @@ as a `Blob`. A remote with a lower limit can still reject a write. Treat the
 decoded `mimeType` as untrusted and allowlist renderable types before displaying
 file content inline.
 
-### 2. Register and connect the application
+### 2. Define a feature store
+
+Keep resource paths and application defaults in an ordinary module. This store
+shares notebook observations and command progress between UI components and
+headless controllers:
+
+```ts title="src/features/notebooks/store.ts"
+import { defineStore } from '@enbox/browser';
+import { NotebookProtocol } from './protocol.js';
+
+export const NotebookStore = defineStore({
+  protocols: { notebooks: NotebookProtocol },
+  create({ protocols, command }) {
+    const notebooks = protocols.notebooks.collection('notebook', {
+      pagination: { limit: 50 },
+    });
+    const pages = protocols.notebooks.collection('notebook/page');
+
+    return {
+      notebooks,
+      pages,
+      createNotebook: command((name: string) =>
+        notebooks.create.run({ name: name.trim() })),
+    };
+  },
+});
+```
+
+Definitions and resource handles perform no I/O. A collection opens when a
+consumer subscribes, retains it, or awaits a control such as `ready()`.
+`pages.within(notebook.contextId)` resolves a keyed child collection; multiple
+notebooks can be observed concurrently. Query filters and pagination influence
+reads, while writes remain bound to the protocol path and direct parent.
+
+### 3. Compose the application and connect
 
 ```ts
 import {
   BrowserConnectHandler,
+  createApplication,
   createConnectionStore,
-  defineApplicationManifest,
+  defineApplication,
 } from '@enbox/browser';
-import { NotebookProtocol } from './notebook-protocol.js';
+import { NotebookStore } from '../features/notebooks/store.js';
 
-export const application = defineApplicationManifest({
-  protocols: [NotebookProtocol],
-} as const);
+export const applicationDefinition = defineApplication({
+  stores: { notebooks: NotebookStore },
+});
 
-const store = createConnectionStore({
-  application,
-  connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
-  monitor: { autoRefresh: {} },
+export const runtime = createApplication(applicationDefinition, {
+  connection: createConnectionStore({
+    application: applicationDefinition.manifest,
+    connectHandler: BrowserConnectHandler({ appName: 'Notebook' }),
+    monitor: { autoRefresh: {} },
+  }),
 });
 ```
 
 See [Build a browser dapp](/docs/guides/browser-dapp) for the canonical startup
-flow. It initializes the store before rendering, calls `connect()` directly
-from a user action when needed, and registers the required DWeb service worker.
-Once connected, select the typed API with
-`snapshot.enbox.using(NotebookProtocol)`.
+flow. Prepare the required service worker before initializing the runtime.
+`EnboxProvider application={runtime}` initializes it by default; headless hosts
+call `await runtime.initialize()`. Wallet approval starts from a user action
+through `runtime.connection.connect()` or the React connection hook.
 
-The manifest is the canonical list of protocols and delegated permissions.
-The store restores sessions, requests the required grants, installs protocols
-locally, registers sync, and publishes a replacement `enbox` when a refreshed
-session replaces the old one. Use `store.subscribe()` and `getSnapshot()` with
-React `useSyncExternalStore` or the equivalent primitive in another framework.
-Create exactly one store for each application/data-path pairing and keep it for
-the application lifetime. Separate stores intentionally do not coordinate
-lifecycle actions or snapshots, even when they target the same `dataPath`.
-Connection sync is `syncing`, `caught-up`, or `error`; `ready` is reserved for
-views whose local data is usable. `RecordView.current` separately indicates
-whether its replica is caught up.
+The names describe different roles: `applicationDefinition` is static feature
+composition, its `manifest` contains the canonical protocols and delegated
+permission policy, and `runtime` owns the live instances. Keep one runtime and
+connection for each application/data-path pairing. The manifest is derived
+from the stores' transitive protocol dependencies.
 
-`snapshot.sync.remotes` reports health only for the connected DID's currently
-advertised DWN endpoints. Call `store.retryRemote(endpoint)` to freshly validate
-routing before retrying that endpoint's quota-blocked messages.
+Read auth, sync, connectivity, and wallet-reapproval state through
+`runtime.connection`. A replacement session or facade retires old feature
+instances; resolve the current one with `runtime.store(NotebookStore)`.
+React's `useFeature(NotebookStore)` follows that replacement automatically,
+and `useStore(feature.notebooks)` reads the shared collection state.
 
-Owner connections are local-first. Use `store.connectVault()` for an explicit
-owner/vault flow. Hosted protocol publication is opt-in through
+For a headless consumer after connection:
+
+```ts
+const feature = runtime.store(NotebookStore);
+const release = feature.notebooks.retain();
+try {
+  const initial = await feature.notebooks.ready();
+  console.log(initial.records);
+  const notebook = await feature.createNotebook.run('Launch notes');
+  const pages = feature.pages.within(notebook.contextId);
+  const page = await pages.create.run({ summary: 'Release planning' });
+  console.log(page.id);
+} finally {
+  release();
+}
+```
+
+Subscriptions and `retain()` keep a collection live. `ready()` alone holds a
+temporary lease and returns usable local rows. `pagination.limit` sets the
+initial window and each `loadMore()` increment; `loadAll: true` explicitly
+expands all matching local pages. A ready collection can have `current: false`
+while replication catches up. Query failures appear in collection state;
+commands expose shared pending/error state and preserve their native result or
+rejection through `run()`. A locally accepted write can still be replicating.
+
+This collection convenience covers owned records. Use the context-bound API
+below for shared records and membership operations; role records are managed
+through context membership rather than ordinary collection CRUD.
+
+### Permission policy
+
+Override a store dependency's delegated permission request in the application
+definition, without declaring the protocol a second time in each feature:
+
+```ts
+import { NotebookProtocol } from '../features/notebooks/protocol.js';
+
+const readOnlyDefinition = defineApplication({
+  stores: { notebooks: NotebookStore },
+  protocols: [{ protocol: NotebookProtocol, permissions: ['read'] }],
+});
+```
+
+These permissions control wallet grants. The owner/vault flow retains the
+owner's authority; this option does not turn an owner session into a read-only
+identity. Native authorization still decides whether an operation is allowed.
+
+### Native connection controls
+
+`runtime.connection` restores sessions, installs protocols locally, registers
+sync, and publishes native connection state. Its sync phase is `syncing`,
+`caught-up`, or `error`; resource `ready` means local data is usable.
+`runtime.connection.getSnapshot().sync?.remotes` reports health only for the
+connected DID's advertised endpoints. Call `runtime.connection.retryRemote(endpoint)`
+to revalidate routing and retry quota-blocked messages for that endpoint.
+
+Owner connections are local-first. Use `runtime.connection.connectVault()` for
+an explicit owner/vault flow. Hosted protocol publication is opt-in through
 `requireHostedReadiness`; an offline or endpoint-less owner can otherwise use
 the app locally. Invitation receiving does require the protocol to have been
 installed on the recipient's hosted DWN, so apps should perform hosted
@@ -209,10 +298,15 @@ still disables live sync.
 
 ## Typed records
 
-`enbox.using(NotebookProtocol).records` is the ordinary collection API. It
+Use the native typed API inside domain operations or for capabilities beyond
+the owned collection conveniences. `enbox.using(NotebookProtocol).records`
 injects the protocol URI, path, schema, codec, and active tenant.
 
 ```ts
+const enbox = runtime.connection.getSnapshot().enbox;
+if (enbox === undefined) throw new Error('Connect before reading application records.');
+const notebooks = enbox.using(NotebookProtocol);
+
 // Create
 const notebook = await notebooks.records.create('notebook', {
   data: { name: 'Launch notes' },
@@ -708,7 +802,7 @@ until foreign-context revocation is made verifier-visible.
 
 ## Advanced entry points
 
-Most applications should use a connection store. Lower-level
+Application stores use the native connection store. Lower-level
 entry points remain available when another layer owns lifecycle:
 
 ```ts
@@ -750,13 +844,17 @@ hand-writing role records or key delivery.
 
 ## Cleanup
 
-Close views and subscriptions when their UI owner is released. When the user
-signs out, disconnect and dispose the connection store:
+Release explicit leases and subscriptions when their consumer is finished.
+React's `useStore` releases its resource interest on unmount. Sign-out uses the
+native connection; terminal application shutdown disposes the owner:
 
 ```ts
-await store.disconnect();
-await store.dispose();
+await runtime.connection.disconnect();
+await runtime.dispose();
 ```
 
-After disconnect, use the replacement `enbox` from a later connected snapshot;
-do not retain APIs or context handles from the ended session.
+The runtime retires old feature instances and closes their resources when the
+session or facade changes. Native views opened outside those stores retain
+their caller-owned lifetime and must be closed explicitly. After reconnecting,
+resolve the current feature again; captured controls from the ended session
+remain retired.

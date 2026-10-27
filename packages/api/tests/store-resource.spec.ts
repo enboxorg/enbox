@@ -58,6 +58,36 @@ function nativeView(): { view: ExpandableRecordView<string>; closes(): number; p
 }
 
 describe('store collection resources', () => {
+  it.each(['retry', 'refresh', 'loadMore'] as const)('%s releases its temporary lease when no consumer retains the view', async (control) => {
+    const owner = fixture();
+    const native = nativeView();
+    const resource = createCollectionResource(owner.scope, async () => native.view);
+    await resource[control]();
+    expect(resource.getSnapshot()).toMatchObject({ status: 'idle', records: [] });
+    await owner.close();
+    expect(native.closes()).toBe(1);
+  });
+
+  it('reports active observation changes without activating an unused handle', async () => {
+    const owner = fixture();
+    const native = nativeView();
+    const changes: boolean[] = [];
+    const resource = createCollectionResource(owner.scope, async () => native.view, {
+      onObservationChange: (active): void => { changes.push(active); },
+    });
+    expect(changes).toEqual([]);
+    const release = resource.retain();
+    expect(changes).toEqual([true]);
+    await resource.ready();
+    const unsubscribe = resource.subscribe((): void => {});
+    release();
+    expect(changes).toEqual([true]);
+    unsubscribe();
+    expect(changes).toEqual([true, false]);
+    await owner.close();
+    expect(changes).toEqual([true, false]);
+  });
+
   it('shares one native view across consumers and closes after the last lease', async () => {
     const owner = fixture();
     const native = nativeView();

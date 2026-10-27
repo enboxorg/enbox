@@ -32,11 +32,18 @@ export interface StoreCollectionResource<Item> extends ObservableStore<StoreColl
   /**
    * Reopen the view and wait for attachment, rather than usable rows.
    * Concurrent retries share completion; existing subscriptions and leases remain in effect.
+   * Retain or subscribe when the replacement observation must remain live after this call.
    */
   retry(): Promise<void>;
-  /** Expand the native prefix by one configured page; concurrent calls share work and failures remain observable. */
+  /**
+   * Expand the native prefix by one configured page; concurrent calls share work and failures remain observable.
+   * Retain or subscribe to preserve the expanded prefix after this temporary control lease ends.
+   */
   loadMore(): Promise<void>;
-  /** Recompute usable local rows, including loadAll pages, without implying remote replication is current. */
+  /**
+   * Recompute usable local rows, including loadAll pages, without implying remote replication is current.
+   * The returned state does not retain the observation; retain or subscribe for later updates.
+   */
   refresh(): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>>;
 }
 
@@ -60,16 +67,22 @@ type CollectionObservation<Item> = {
 export function createCollectionResource<Item>(
   scope: StoreScope,
   openView: (signal: AbortSignal) => Promise<ExpandableRecordView<Item>>,
-  options: Readonly<{ loadAll?: boolean }> = {},
+  options: Readonly<{
+    loadAll?: boolean;
+    /** Keep protocol write refreshers limited to observations with an active owner. */
+    onObservationChange?: (active: boolean) => void;
+  }> = {},
 ): StoreCollectionController<Item> {
   const idleState = Object.freeze({ status: 'idle' as const, records: Object.freeze([]), hasMore: false as const, current: false as const });
   let state: StoreCollectionState<Item> = idleState;
   let activeObservation: CollectionObservation<Item> | undefined;
   let leaseCount = 0;
   let closed = false;
+  let closePromise: Promise<void> | undefined;
   let retrying: Promise<void> | undefined;
   const listeners = new Set<(state: StoreCollectionState<Item>) => void>();
   const cleanups = new Set<Promise<void>>();
+  const cleanupFailures: unknown[] = [];
   const openings = new Set<Promise<ExpandableRecordView<Item>>>();
 
   const publish = (nextState: StoreCollectionState<Item>): void => {
@@ -88,7 +101,7 @@ export function createCollectionResource<Item>(
     scope.assertCurrent();
     if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
   };
-  const trackClose = (view: ExpandableRecordView<Item>): void => {
+  const trackClose = (view: ExpandableRecordView<Item>): Promise<void> => {
     // Register completion before native cleanup can synchronously reenter this owner.
     const cleanup = Promise.resolve().then(() => view.close());
     cleanups.add(cleanup);
@@ -96,18 +109,21 @@ export function createCollectionResource<Item>(
       (): void => { cleanups.delete(cleanup); },
       (error: unknown): void => {
         cleanups.delete(cleanup);
+        cleanupFailures.push(error);
         console.warn('[@enbox/api] Store resource cleanup failed.', error);
       },
     );
+    return cleanup;
   };
   const retireObservation = (): void => {
     const previous = activeObservation;
     // Detach first so cleanup callbacks cannot reclaim the retiring view.
     activeObservation = undefined;
     if (previous === undefined) { return; }
-    previous.unsubscribe?.();
-    previous.abortController.abort();
+    // Acquire cleanup ownership before unsubscribe or abort callbacks can reenter close().
     if (previous.view !== undefined) { trackClose(previous.view); }
+    options.onObservationChange?.(false);
+    try { previous.unsubscribe?.(); } finally { previous.abortController.abort(); }
   };
   const fail = (observation: CollectionObservation<Item>, error: unknown): void => {
     if (!isActiveObservation(observation)) { return; }
@@ -166,7 +182,7 @@ export function createCollectionResource<Item>(
 
   const startObservation = (): CollectionObservation<Item> => {
     scope.assertCurrent();
-    if (closed) { throw new Error('Store collection is closed.'); }
+    if (closed) { throw new StoreRetiredError(); }
     if (activeObservation !== undefined) { return activeObservation; }
     const abortController = new AbortController();
     const observation: CollectionObservation<Item> = {
@@ -176,7 +192,7 @@ export function createCollectionResource<Item>(
         assertActiveObservation(observation);
         const view = await openView(AbortSignal.any([abortController.signal, scope.signal]));
         if (!isActiveObservation(observation)) {
-          await view.close();
+          await trackClose(view);
           throw new StoreRetiredError();
         }
         observation.view = view;
@@ -204,6 +220,7 @@ export function createCollectionResource<Item>(
       (): void => { openings.delete(observation.openPromise); },
       (): void => { openings.delete(observation.openPromise); },
     );
+    options.onObservationChange?.(true);
     publish(Object.freeze({ status: 'loading', records: Object.freeze([]), hasMore: false, current: false }));
     void observation.openPromise.catch((error: unknown): void => { fail(observation, error); });
     if (options.loadAll) { void drainAll(observation).catch((): void => {}); }
@@ -232,16 +249,30 @@ export function createCollectionResource<Item>(
       releaseUnused();
     };
   };
-  const close = async (): Promise<void> => {
-    if (!closed) {
+  const waitForCleanup = async (): Promise<void> => {
+    await Promise.allSettled(openings);
+    await Promise.allSettled(cleanups);
+    // Late openers and reentrant cleanup can register another owned close while earlier work finishes.
+    if (openings.size > 0 || cleanups.size > 0) { return waitForCleanup(); }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(cleanupFailures, 'Store resource cleanup failed.');
+    }
+  };
+  const close = (): Promise<void> => {
+    if (closePromise !== undefined) { return closePromise; }
+    // Install terminal completion before retiring subscriptions can synchronously reenter.
+    closePromise = Promise.resolve().then(waitForCleanup);
+    try {
       retireObservation();
+    } catch (error) {
+      cleanupFailures.push(error);
+    } finally {
       publish(idleState);
       closed = true;
       listeners.clear();
       scope.signal.removeEventListener('abort', abort);
     }
-    await Promise.allSettled(openings);
-    await Promise.all(cleanups);
+    return closePromise;
   };
   const abort = (): void => { void close().catch((): void => {}); };
   scope.signal.addEventListener('abort', abort, { once: true });

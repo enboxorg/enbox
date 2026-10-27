@@ -31,6 +31,73 @@ function connectionFixture(): { connection: ConnectionStore; disposals(): number
 async function microtasks(): Promise<void> { for (let i = 0; i < 12; i += 1) { await Promise.resolve(); } }
 
 describe('application store lifecycle boundaries', () => {
+  it('rejects asynchronous factory values and retires their resources immediately', async () => {
+    let signal: AbortSignal | undefined;
+    let releases = 0;
+    const feature = defineStore({
+      protocols: {},
+      create(context): object {
+        signal = context.signal;
+        context.onClose((): void => { releases += 1; });
+        return Promise.reject(new Error('Invalid asynchronous initialization'));
+      },
+    });
+    const native = connectionFixture();
+    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    expect(() => app.store(feature)).toThrow('create must return a synchronous feature value');
+    expect(signal?.aborted).toBe(true);
+    await app.dispose();
+    expect(releases).toBe(1);
+  });
+
+  it('reports a failed cleanup even when it settled before disposal began', async () => {
+    const warning = sinon.stub(console, 'warn');
+    const feature = defineStore({
+      protocols: {},
+      create({ onClose }): never {
+        onClose((): never => { throw new Error('Earlier cleanup failed'); });
+        throw new Error('Factory failed');
+      },
+    });
+    const native = connectionFixture();
+    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    try {
+      expect(() => app.store(feature)).toThrow('Factory failed');
+      await microtasks();
+      expect(warning.called).toBe(true);
+      await expect(app.dispose()).rejects.toBeInstanceOf(AggregateError);
+      expect(native.disposals()).toBe(1);
+    } finally {
+      await app.dispose().catch((): void => {});
+      warning.restore();
+    }
+  });
+
+  it('awaits a release registered while native connection disposal is pending', async () => {
+    let register!: (close: () => Promise<void>) => void;
+    let completeConnection!: () => void;
+    let completeRelease!: () => void;
+    let disposalStarted = false;
+    let disposed = false;
+    const nativeClose = new Promise<void>((resolve): void => { completeConnection = resolve; });
+    const lateRelease = new Promise<void>((resolve): void => { completeRelease = resolve; });
+    const feature = defineStore({ protocols: {}, create({ onClose }): object { register = onClose; return {}; } });
+    const native = connectionFixture();
+    native.connection.dispose = async (): Promise<void> => { disposalStarted = true; await nativeClose; };
+    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    app.store(feature);
+    const disposing = app.dispose().then((): void => { disposed = true; });
+    await microtasks();
+    expect(disposalStarted).toBe(true);
+    register(() => lateRelease);
+    completeConnection();
+    await microtasks();
+    expect(disposed).toBe(false);
+    completeRelease();
+    await disposing;
+    expect(disposed).toBe(true);
+  });
+
   it('revokes a failed factory scope before its error returns to the caller', async () => {
     let leakedSignal: AbortSignal | undefined;
     let cleanupCalls = 0;

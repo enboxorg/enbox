@@ -1,19 +1,22 @@
+import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
+import { createContextView } from '../src/context-view.js';
 import { ObservedView } from '../src/observed-view.js';
 
 type State = Readonly<{ status: 'ready'; value: number }> | Readonly<{ status: 'error'; error: Error }>;
 
 class ControlledView extends ObservedView<State> {
-  public readonly passes: Array<{ generation: number; finish(state: State): void }> = [];
+  public readonly passes: Array<{ generation: number; finish(state: State): void; fail(reason: unknown): void }> = [];
   public closes = 0;
 
   public constructor() { super(Object.freeze({ status: 'ready', value: 0 })); }
 
+  public refresh(): Promise<Extract<State, { status: 'ready' }>> { return this.refreshMaterialization(); }
   public wake(): void { this.requestMaterialization(); }
 
   protected async materialize(generation: number): Promise<void> {
-    const state = await new Promise<State>((resolve): void => { this.passes.push({ generation, finish: resolve }); });
+    const state = await new Promise<State>((resolve, reject): void => { this.passes.push({ generation, finish: resolve, fail: reject }); });
     if (this.canPublishMaterialization(generation)) { this.publish(state); }
   }
 
@@ -25,6 +28,74 @@ class ControlledView extends ObservedView<State> {
 async function microtasks(): Promise<void> { for (let i = 0; i < 5; i += 1) { await Promise.resolve(); } }
 
 describe('ObservedView refresh barriers', () => {
+  it('keeps record refresh out of the public context-catalog surface', async () => {
+    const catalog = await createContextView({
+      list                 : async () => ['context'],
+      openWakeSubscription : async () => ({ close: async (): Promise<void> => {} }),
+    });
+    try {
+      expect(await catalog.ready()).toEqual({ status: 'ready', contexts: ['context'] });
+      expect('refresh' in catalog).toBe(false);
+    } finally {
+      await catalog.close();
+    }
+  });
+
+  it.each(['sync', 'async'] as const)('rejects refresh after an unexpected %s materialization throw and permits immediate retry', async (kind) => {
+    const failure = new Error('Unexpected materialization failure');
+    const warning = sinon.stub(console, 'warn');
+    class ThrowingView extends ObservedView<State> {
+      private _fail = true;
+
+      public constructor() { super({ status: 'ready', value: 0 }); }
+      public refresh(): Promise<Extract<State, { status: 'ready' }>> { return this.refreshMaterialization(); }
+      protected materialize(): Promise<void> {
+        if (this._fail) {
+          this._fail = false;
+          if (kind === 'async') { return Promise.reject(failure); }
+          throw failure;
+        }
+        this.publish({ status: 'ready', value: 1 });
+        return Promise.resolve();
+      }
+      protected async closeOwnedResources(): Promise<void> {}
+      protected handleLifetimeAbort(): void {}
+    }
+    const view = new ThrowingView();
+    try {
+      const retried = view.refresh().catch((error: unknown) => {
+        expect(error).toBe(failure);
+        return view.refresh();
+      });
+      expect(await retried).toEqual({ status: 'ready', value: 1 });
+      expect(warning.calledOnce).toBe(true);
+      await microtasks();
+    } finally {
+      await view.close();
+      warning.restore();
+    }
+  });
+
+  it('preserves newer refresh requests when an obsolete materialization throws', async () => {
+    const warning = sinon.stub(console, 'warn');
+    const view = new ControlledView();
+    try {
+      const first = view.refresh();
+      const second = view.refresh();
+      const outcomes = Promise.all([first, second]);
+      view.passes[0].fail(new Error('Obsolete query failed'));
+      await microtasks();
+      expect(view.passes).toHaveLength(2);
+      const state = { status: 'ready', value: 2 } as const;
+      view.passes[1].finish(state);
+      expect(await outcomes).toEqual([state, state]);
+      expect(warning.called).toBe(false);
+    } finally {
+      await view.close();
+      warning.restore();
+    }
+  });
+
   it('settles every pending refresh after interleaved refresh requests and ordinary wakes', async () => {
     const view = new ControlledView();
     const first = view.refresh();

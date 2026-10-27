@@ -15,12 +15,12 @@ const Notes = defineStore({
     const notes = protocols.notes.collection('note');
     return {
       notes,
-      add           : command((title: string) => notes.create.run({ title })),
-      count         : command((): number => notes.getSnapshot().records.length),
-      defaultTitle  : command((title = 'Untitled'): string => title),
-      optionalTitle : command((title?: string): string => title ?? 'Untitled'),
-      asyncTitle    : command(async (title = 'Untitled'): Promise<string> => title),
-      explicitCount : command<void, number>((): number => notes.getSnapshot().records.length),
+      add            : command((title: string) => notes.create.run({ title })),
+      count          : command((): number => notes.getSnapshot().records.length),
+      defaultTitle   : command((title = 'Untitled'): string => title),
+      optionalTitle  : command((title?: string): string => title ?? 'Untitled'),
+      asyncTitle     : command(async (title = 'Untitled'): Promise<string> => title),
+      annotatedCount : command((): number => notes.getSnapshot().records.length),
     };
   },
 });
@@ -47,18 +47,21 @@ const defaults: readonly Promise<string>[] = [
   feature.optionalTitle.run(), feature.optionalTitle.run('Hello'), feature.optionalTitle.run(undefined),
   feature.asyncTitle.run(), feature.asyncTitle.run('Hello'),
 ];
-const explicitCount: Promise<number> = feature.explicitCount.run();
+const annotatedCount: Promise<number> = feature.annotatedCount.run();
 const undefinedCount: Promise<number> = feature.count.run(undefined);
 void count;
 void title;
 void defaults;
-void explicitCount;
+void annotatedCount;
 void undefinedCount;
 void connectionState;
 void stop;
 
 // @ts-expect-error connection state belongs to the native connection, not the feature owner.
 application.getSnapshot();
+
+// @ts-expect-error feature instances are constructed by the application, not a public definition method.
+Notes.instantiate;
 
 // @ts-expect-error domain command input remains inferred through dependent stores.
 application.store(Dashboard).add.run(123);
@@ -72,3 +75,20 @@ feature.defaultTitle.run(123);
 feature.optionalTitle.run(false);
 // @ts-expect-error zero-input commands do not accept arbitrary values.
 feature.count.run('extra');
+
+// @ts-expect-error a feature factory is synchronous, not an asynchronous initialization workflow.
+defineStore({ protocols: {}, create: async () => ({ ready: true }) });
+
+declare const needsInitialization: boolean;
+// @ts-expect-error a synchronous branch does not make an asynchronous factory branch valid.
+defineStore({ protocols: {}, create: () => needsInitialization ? { ready: true } : Promise.resolve({ ready: true }) });
+
+defineStore({ protocols: {}, create({ command }) {
+  // @ts-expect-error commands accept one input; group several values in one object.
+  command((title: string, amount?: number) => `${title}:${amount}`);
+  // @ts-expect-error a defaulted second parameter is still a second command input.
+  command((title: string, amount = 1) => `${title}:${amount}`);
+  // @ts-expect-error variadic command arguments cannot be forwarded by a single-input command.
+  command((...titles: string[]) => titles.join(','));
+  return {};
+} });

@@ -72,7 +72,7 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
   }
 
   /** Wait for a canonical local materialization requested after this call. */
-  public refresh(): Promise<Extract<TState, { status: 'ready' }>> {
+  protected refreshMaterialization(): Promise<Extract<TState, { status: 'ready' }>> {
     if (this._closed) {
       return Promise.reject(new Error('Cannot refresh a closed view.'));
     }
@@ -121,9 +121,16 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
       await this.materialize(requestRevision);
       this.settleRefreshes(requestRevision);
     } catch (error) {
-      this._materializing = false;
-      throw error;
+      if (this.canPublishMaterialization(requestRevision)) {
+        this.rejectRefreshes(error);
+        console.warn('[@enbox/api] View materialization failed.', error);
+      }
     }
+  }
+
+  private rejectRefreshes(reason: unknown): void {
+    for (const pending of this._refreshes) { pending.reject(reason); }
+    this._refreshes.clear();
   }
 
   private settleRefreshes(requestRevision: number): void {
@@ -172,10 +179,7 @@ export abstract class ObservedView<TState extends ViewState> implements Observab
 
     this._closed = true;
     this._closeController.abort();
-    for (const pending of this._refreshes) {
-      pending.reject(this._closeController.signal.reason);
-    }
-    this._refreshes.clear();
+    this.rejectRefreshes(this._closeController.signal.reason);
     this._requestRevision += 1;
     this._materializationRequested = false;
     this._listeners.clear();

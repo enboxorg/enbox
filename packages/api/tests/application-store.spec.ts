@@ -98,6 +98,7 @@ describe('headless application stores', () => {
     expect(feature.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
     expect(feature.notes.getServerSnapshot()).toBe(feature.notes.getServerSnapshot());
     await expect(feature.notes.create.run({ title: 'Disconnected' })).rejects.toBeInstanceOf(StoreNotConnectedError);
+    expect(feature.notes.create.getSnapshot()).toMatchObject({ pendingCount: 0, pendingVariables: [], error: undefined });
     await app.initialize();
     expect(native.initialized()).toBe(true);
     await app.dispose();
@@ -118,15 +119,39 @@ describe('headless application stores', () => {
     expect(app.store(Notes).notes).toBe(first.notes);
     expect(first.notes.getSnapshot().records.some(row => row.record.id === record.id)).toBe(true);
     expect(first.notes.getServerSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false });
+    let notifications = 0;
+    const stop = app.subscribe((): void => { notifications += 1; });
     native.publish({ ...native.connection.getSnapshot(), vaultLocked: false });
     expect(app.store(Notes)).toBe(first);
+    expect(notifications).toBe(1);
     native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+    expect(notifications).toBe(2);
+    stop();
     const replacement = app.store(Notes);
     expect(replacement).not.toBe(first);
     expect(first.notes.getSnapshot().records).toHaveLength(0);
     await expect(first.notes.create.run({ title: 'Obsolete' })).rejects.toBeInstanceOf(StoreRetiredError);
     release();
     await app.dispose();
+  });
+
+  it('notifies scope consumers when an earlier native subscriber resolves the replacement first', async (): Promise<void> => {
+    const Notes = defineStore({ protocols: { notes: Protocol }, create: ({ signal }) => ({ signal }) });
+    const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
+    const stopEarlier = native.connection.subscribe((): void => { app.store(Notes); });
+    const app = createApplication(defineApplication({ stores: { notes: Notes } }), native);
+    const original = app.store(Notes);
+    let notifications = 0;
+    app.subscribe((): void => { notifications += 1; });
+    try {
+      native.publish({ phase: 'connected', enbox: new Proxy(context.enbox, {}), session: context.session });
+      expect(app.store(Notes)).not.toBe(original);
+      expect(original.signal.aborted).toBe(true);
+      expect(notifications).toBe(1);
+    } finally {
+      stopEarlier();
+      await app.dispose();
+    }
   });
 
   it('publishes session-abort retirement before the native snapshot changes', async (): Promise<void> => {
