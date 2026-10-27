@@ -101,7 +101,7 @@ describe('headless application stores', () => {
     expect(feature.notes.getSnapshot()).toEqual({ status: 'idle', records: [], hasMore: false, current: false, isLoadingMore: false });
     expect(feature.notes.getSnapshot()).toBe(feature.notes.getSnapshot());
     await expect(feature.notes.create.run({ title: 'Disconnected' })).rejects.toBeInstanceOf(StoreNotConnectedError);
-    expect(feature.notes.create.getSnapshot()).toMatchObject({ pendingCount: 0, pendingVariables: [], error: undefined });
+    expect(feature.notes.create.getSnapshot()).toMatchObject({ pendingCount: 0, pendingInputs: [], error: undefined });
     await app.initialize();
     expect(native.initialized()).toBe(true);
     await app.dispose();

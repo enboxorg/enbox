@@ -38,10 +38,9 @@ import { NotesProtocol } from './protocol.js';
 
 export const NotesStore = defineStore({
   protocols: { notes: NotesProtocol },
-  create({ protocols, command }) {
+  create({ protocols }) {
     const notes = protocols.notes.collection('note');
-    const addNote = command((title: string) =>
-      notes.create.run({ title: title.trim() }));
+    const addNote = (title: string) => notes.create.run({ title: title.trim() });
     return { notes, addNote };
   },
 });
@@ -71,7 +70,7 @@ try {
   try {
     const initial = await feature.notes.ready();
     console.log(initial.records.map(row => row.value));
-    await feature.addNote.run('Hello');
+    await feature.addNote('Hello');
   } finally {
     stop();
   }
@@ -82,7 +81,7 @@ try {
 
 Definitions and collection handles perform no I/O. A feature factory declares
 handles and commands synchronously. Capture `protocols.notes.native` as a
-function if needed, and invoke it inside a command or an owned resource opener;
+function if needed, and invoke it inside a command or an observation opener;
 calling `native()` requires a usable session. It returns the existing full
 `TypedEnbox`, including `records` and `contexts`, rather than a second SDK.
 Resolve it for each operation; a captured native client follows the SDK's own
@@ -96,7 +95,7 @@ lifetime and does not acquire store progress tracking or canonical-view refresh.
 | Nested records | A nested path produces a family; `pages.within(parentContextId)` resolves an exact direct-parent collection. |
 | A `$recordLimit.max: 1` slot | `protocols.notes.native().records.set(...)`; singleton paths are excluded from `collection()`. |
 | Tags, publication, timestamps, recipients, full update, or prune | Existing native record operations through `protocols.notes.native().records`, called inside a domain command. |
-| Invitations, memberships, accepted shares, or member writes | Existing `protocols.notes.native().contexts` and context-bound `records`; observe them with the same `resource()` factory shown below. |
+| Invitations, memberships, accepted shares, or member writes | Existing `protocols.notes.native().contexts` and context-bound `records`; observe them with the same `observe()` factory shown below. |
 
 Collection commands accept data-only inputs; read filters never become write
 fields. Deletion first reads the ID at the declared protocol path, then checks
@@ -121,31 +120,31 @@ Each distinct filter creates a distinct cached handle. Active write refreshers
 are registered only while a native observation exists, so a write visits active
 selections rather than the session's query history.
 
-### One resource owner for native views and changing inputs
+### Declare shared observations
 
-The feature's `resource` factory owns native observations of records, accepted
+The feature's `observe` factory owns native observations of records, accepted
 shares, or members. The returned handle always has the same subscription,
 readiness, retry, and cleanup rules. The native view determines its payload
 and whether `refresh()` or `loadMore()` is available.
 
 ```ts
-// Inside defineStore({ create({ protocols, resource }) { ... } }):
+// Inside defineStore({ create({ protocols, observe }) { ... } }):
 const native = protocols.notes.native;
-const acceptedShares = resource(signal => native().contexts.observe({ access: 'member', signal }));
+const acceptedShares = observe(signal => native().contexts.observe({ access: 'member', signal }));
 const pages = protocols.notes.collection('notebook/page');
-const activePages = resource({
-  selection: null as string | null,
-  source: parentContextId => pages.within(parentContextId),
+const activePages = observe({
+  source: (parentContextId: string) => pages.within(parentContextId),
 });
 return { acceptedShares, pages, activePages };
 ```
 
-A fixed resource opens when subscribed, retained, or awaited. To change a native
-query, declare `{ selection, open: (selection, signal) => nativeView }` instead
-of `source`. `open` owns the native view and closes it; `source` borrows an
-existing resource and releases only its own subscription. Protocol collections
-use this same owner internally. Native `records.observe()` and context APIs
-remain available for custom code; there is no separate records/context store.
+`observe(open)` declares a fixed native observation. It opens when subscribed,
+retained, or awaited. `observe({ open })` declares an observation whose input is
+chosen later with `select(input)`. `observe({ source })` selects an existing
+observable store instead. It releases only its own subscription when the input
+changes; an `open` callback transfers ownership of the native view it returns.
+Protocol collections use this same owner internally. Native `records.observe()`
+and context APIs remain available for custom code.
 
 ```ts
 await feature.activePages.select(notebook.contextId);
@@ -156,17 +155,20 @@ if (state.status === 'ready') {
 await feature.activePages.select(null);
 ```
 
-`select(key)` retains the chosen source until replacement, null, `close()`, or
-owner abort and waits for usable local data, including `loadAll` expansion.
-Repeating the key preserves its observation. A superseded wait rejects with
-`StoreRetiredError`; unrelated subscribers keep their own interests. Native
-payload fields can be absent before attachment, so narrow on `status` before
-using them. `selection` is published atomically with its data.
+A changing-input observation starts idle with `selection: null`. `select(input)`
+retains the chosen source until replacement, null, `close()`, or owner abort. It
+waits for usable data, including `loadAll` expansion. Repeating the input preserves
+its observation. Calling `ready()` or another read control before choosing an
+input rejects with a `TypeError`.
 
-Use `resource(config, { signal })` for a shorter controller lifetime. Mutations
+A superseded wait rejects with `StoreRetiredError`; unrelated subscribers keep
+their observations. Native payload fields can be absent before attachment, so
+narrow on `status` before using them. `selection` is published with its data.
+
+Use `observe(config, { signal })` for a shorter controller lifetime. Mutations
 stay on fixed collection handles or explicit domain commands: changing a read
 selection never retargets an already captured write handle. `getSnapshot()`
-opens no observation. React reads any resource with `useStore()`.
+opens no observation. React reads the returned store with `useStore()`.
 
 ### State and completion
 
@@ -195,8 +197,8 @@ semantics and do not automatically add that collection refresh barrier.
 `isLoadingMore` reports shared page expansion; `retry()` reopens and awaits usable
 local data, while `refresh()` recomputes the existing native view.
 
-`StoreCommandState` contains shared pending inputs and the latest invocation's
-display error. Initial scope rejection happens before dispatch and leaves that
+`StoreCommandState.pendingInputs` lists unresolved command inputs. The state
+also contains the shared pending count and the latest invocation's display error. Initial scope rejection happens before dispatch and leaves that
 state unchanged; callers receive the rejected promise. Command inputs are one
 value (use an object for several fields), optionally defaulted or omitted.
 `run()` preserves the operation's result or rejection; it adds no automatic
@@ -208,7 +210,7 @@ drafts, and component completion effects remain caller-owned.
 |---|---|
 | `app.store()`, `app.subscribe()`, `native()`, `command.reset()` | Synchronous methods throw for invalid ownership/authority; an unregistered definition is a `TypeError`. |
 | `initialize()`, command `run()`, and async view controls | Return promises; unavailable/retired scopes reject with `StoreNotConnectedError`/`StoreRetiredError`, and native operation failures retain their original cause. |
-| Command/resource subscription after retirement | Returns an inert unsubscribe; retaining a closed resource is also inert. Reading its cached state opens nothing. |
+| Command/observation subscription after retirement | Returns an inert unsubscribe; retaining a closed observed store is also inert. Reading its cached state opens nothing. |
 | `app.dispose()` | Revokes store scopes, waits for registered cleanup and native connection disposal, and rejects with `AggregateError` for recorded cleanup/teardown failures. |
 
 ### Permissions and lifetime
@@ -869,8 +871,8 @@ covers its service worker, persistent storage, and build setup.
 | `ProtocolStore` | Inert collection authoring plus explicit `native()` access to the full typed SDK. |
 | `StoreCollection` / `StoreCollectionFamily` | Data-only owned CRUD and keyed direct-parent collections. |
 | `StoreCollectionOptions` | Protocol-derived read filters, pagination, and `loadAll` policy. |
-| `StoreCollectionResource` / `StoreCollectionState` | Lazy collection ownership, async controls, and idle/native read state. |
-| `ResourceFactory` / `StoreResource` / `StoreResourceState` | Common ownership and state for fixed or keyed native observations and borrowed resources. |
+| `StoreCollectionState` | Collection rows, pagination progress, and idle/native read state. |
+| `ObservationFactory` / `ObservedStore` / `ObservedStoreState` | Common ownership and state for fixed or changing-input observations and borrowed collections. |
 | `StoreCommand` / `StoreCommandState` | One-input domain operations and shared pending/error state. |
 | `StoreNotConnectedError` / `StoreRetiredError` | Unavailable or retired store scope failures. |
 | `createConnectionStore()` | Owns restore, connect, refresh, disconnect, and facade cleanup for applications. |

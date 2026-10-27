@@ -9,7 +9,7 @@ import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
-import { createCollectionResource, createResourceFactory } from '../src/store/resource.js';
+import { createObservationFactory, createObservedCollection } from '../src/store/observed-store.js';
 import { describe, expect, it } from 'bun:test';
 
 function deferred<Value>(): { promise: Promise<Value>; resolve(value: Value): void; reject(error: unknown): void } {
@@ -28,7 +28,7 @@ function fixture(): { scope: StoreScope; registrations(): number; close(): Promi
       assertCurrent : (): void => {
         if (controller.signal.aborted) { throw new StoreRetiredError(); }
       },
-      getEnbox : (): never => { throw new Error('Resource fixture supplies native views directly.'); },
+      getEnbox : (): never => { throw new Error('Observation fixture supplies native views directly.'); },
       onClose  : (close): (() => void) => { closes.add(close); return (): void => { closes.delete(close); }; },
     },
     registrations : (): number => closes.size,
@@ -71,13 +71,13 @@ function nativeView(): { view: ExpandableRecordView<string>; closes(): number; p
   };
 }
 
-describe('store collection resources', () => {
+describe('observed collections', () => {
   it.each(['retry', 'refresh', 'loadMore'] as const)('%s releases its temporary lease when no consumer retains the view', async (control) => {
     const owner = fixture();
     const native = nativeView();
-    const resource = createCollectionResource(owner.scope, async () => native.view);
-    await resource[control]();
-    expect(resource.getSnapshot()).toMatchObject({ status: 'idle', records: [] });
+    const store = createObservedCollection(owner.scope, async () => native.view);
+    await store[control]();
+    expect(store.getSnapshot()).toMatchObject({ status: 'idle', records: [] });
     await owner.close();
     expect(native.closes()).toBe(1);
   });
@@ -86,50 +86,76 @@ describe('store collection resources', () => {
     const owner = fixture();
     const native = nativeView();
     const changes: boolean[] = [];
-    const resource = createCollectionResource(owner.scope, async () => native.view, {
+    const store = createObservedCollection(owner.scope, async () => native.view, {
       onObservationChange: (active): void => { changes.push(active); },
     });
     expect(changes).toEqual([]);
-    const release = resource.retain();
+    const release = store.retain();
     expect(changes).toEqual([true]);
-    await resource.ready();
-    const unsubscribe = resource.subscribe((): void => {});
+    await store.ready();
+    const unsubscribe = store.subscribe((): void => {});
     release();
     expect(changes).toEqual([true]);
     unsubscribe();
     expect(changes).toEqual([true, false]);
     await owner.close();
     expect(changes).toEqual([true, false]);
+  });
+
+  it('supplies a stable private write-refresh control without retaining an abandoned observation', async () => {
+    const owner = fixture();
+    const native = nativeView();
+    const pending = deferred<Extract<RecordViewState<string>, { status: 'ready' }>>();
+    const requested = deferred<void>();
+    native.view.refresh = (): typeof pending.promise => { requested.resolve(); return pending.promise; };
+    const callbacks: Array<() => Promise<void>> = [];
+    let opens = 0;
+    const observed = createObservedCollection(owner.scope, async () => { opens++; return native.view; }, {
+      onObservationChange: (_active, refresh): void => { callbacks.push(refresh); },
+    });
+    const release = observed.retain();
+    await observed.ready();
+    const refreshing = callbacks[0]().catch((error: unknown): unknown => error);
+    await requested.promise;
+    release();
+    expect(observed.getSnapshot().status).toBe('idle');
+    expect(await refreshing).toBeInstanceOf(StoreRetiredError);
+    expect(callbacks[1]).toBe(callbacks[0]);
+    await callbacks[1]();
+    expect(opens).toBe(1);
+    pending.resolve({ status: 'ready', records: [], current: false, hasMore: false });
+    await owner.close();
+    expect(native.closes()).toBe(1);
   });
 
   it('shares one native view across consumers and closes after the last lease', async () => {
     const owner = fixture();
     const native = nativeView();
     let opens = 0;
-    const resource = createCollectionResource(owner.scope, async () => { opens += 1; return native.view; });
-    expect(resource.getSnapshot().status).toBe('idle');
+    const store = createObservedCollection(owner.scope, async () => { opens += 1; return native.view; });
+    expect(store.getSnapshot().status).toBe('idle');
     expect(opens).toBe(0);
-    const release = resource.retain();
-    const unsubscribe = resource.subscribe((): void => {});
-    await resource.ready();
+    const release = store.retain();
+    const unsubscribe = store.subscribe((): void => {});
+    await store.ready();
     expect(opens).toBe(1);
     release();
     expect(native.closes()).toBe(0);
     unsubscribe();
     await owner.close();
     expect(native.closes()).toBe(1);
-    expect(resource.getSnapshot().status).toBe('idle');
+    expect(store.getSnapshot().status).toBe('idle');
   });
 
-  it('ready does not retain visited resources and honors the loadAll policy', async () => {
+  it('ready does not retain visited stores and honors the loadAll policy', async () => {
     const owner = fixture();
     const native = nativeView();
-    const resource = createCollectionResource(owner.scope, async () => native.view, { loadAll: true });
-    const result = await resource.ready();
+    const store = createObservedCollection(owner.scope, async () => native.view, { loadAll: true });
+    const result = await store.ready();
     expect(result.records).toEqual(['first', 'second']);
     expect(result.hasMore).toBe(false);
     expect(native.pages()).toBe(1);
-    expect(resource.getSnapshot().status).toBe('idle');
+    expect(store.getSnapshot().status).toBe('idle');
     await owner.close();
     expect(native.closes()).toBe(1);
   });
@@ -139,32 +165,32 @@ describe('store collection resources', () => {
     const native = nativeView();
     let finish!: (view: ExpandableRecordView<string>) => void;
     const opening = new Promise<ExpandableRecordView<string>>((resolve) => { finish = resolve; });
-    const resource = createCollectionResource(owner.scope, () => opening);
-    resource.retain();
+    const store = createObservedCollection(owner.scope, () => opening);
+    store.retain();
     await Promise.resolve();
     const closing = owner.close();
-    expect(resource.getSnapshot().status).toBe('idle');
+    expect(store.getSnapshot().status).toBe('idle');
     finish(native.view);
     await closing;
     expect(native.closes()).toBe(1);
-    expect(resource.getSnapshot().records).toEqual([]);
+    expect(store.getSnapshot().records).toEqual([]);
   });
 
   it('cancels one readiness waiter without cancelling another consumer', async () => {
     const owner = fixture();
     const native = nativeView();
     let finish!: (view: ExpandableRecordView<string>) => void;
-    const resource = createCollectionResource(owner.scope, () => new Promise(resolve => { finish = resolve; }));
-    const release = resource.retain();
+    const store = createObservedCollection(owner.scope, () => new Promise(resolve => { finish = resolve; }));
+    const release = store.retain();
     const waiter = new AbortController();
-    const pending = resource.ready({ signal: waiter.signal });
+    const pending = store.ready({ signal: waiter.signal });
     await Promise.resolve();
     const reason = new Error('Selection changed');
     waiter.abort(reason);
     await expect(pending).rejects.toBe(reason);
     finish(native.view);
-    await resource.ready();
-    expect(resource.getSnapshot().status).toBe('ready');
+    await store.ready();
+    expect(store.getSnapshot().status).toBe('ready');
     expect(native.closes()).toBe(0);
     release();
     await owner.close();
@@ -176,12 +202,12 @@ describe('store collection resources', () => {
     const native = nativeView();
     const failure = new Error('Canonical reread failed');
     native.view.refresh = async (): Promise<never> => { throw failure; };
-    const resource = createCollectionResource(owner.scope, async () => native.view);
-    const release = resource.retain();
-    await resource.ready();
-    await expect(resource.refreshIfActive()).rejects.toBe(failure);
-    expect(resource.getSnapshot().status).toBe('error');
-    expect(resource.getSnapshot().records).toEqual(['first']);
+    const store = createObservedCollection(owner.scope, async () => native.view);
+    const release = store.retain();
+    await store.ready();
+    await expect(store.refresh()).rejects.toBe(failure);
+    expect(store.getSnapshot().status).toBe('error');
+    expect(store.getSnapshot().records).toEqual(['first']);
     release();
     await owner.close();
   });
@@ -192,21 +218,21 @@ describe('store collection resources', () => {
     const replacement = nativeView();
     let opens = 0;
     let finish!: (view: ExpandableRecordView<string>) => void;
-    const resource = createCollectionResource(owner.scope, async () => {
+    const store = createObservedCollection(owner.scope, async () => {
       opens += 1;
       return opens === 1 ? first.view : new Promise(resolve => { finish = resolve; });
     });
-    const release = resource.retain();
-    await resource.ready();
-    const retry = resource.retry();
-    expect(resource.retry()).toBe(retry);
+    const release = store.retain();
+    await store.ready();
+    const retry = store.retry();
+    expect(store.retry()).toBe(retry);
     await Promise.resolve();
     await Promise.resolve();
     expect(opens).toBe(2);
     finish(replacement.view);
     await retry;
-    expect(resource.getSnapshot()).toEqual({ ...replacement.view.getSnapshot(), isLoadingMore: false });
-    expect(resource.getSnapshot()).toBe(resource.getSnapshot());
+    expect(store.getSnapshot()).toEqual({ ...replacement.view.getSnapshot(), isLoadingMore: false });
+    expect(store.getSnapshot()).toBe(store.getSnapshot());
     release();
     await owner.close();
     expect(first.closes()).toBe(1);
@@ -222,12 +248,12 @@ describe('store collection resources', () => {
     const subscribe = first.view.subscribe;
     first.view.subscribe = (listener): (() => void) => {
       const unsubscribe = subscribe(listener);
-      return (): void => { unsubscribe(); nested = resource.retry(); };
+      return (): void => { unsubscribe(); nested = store.retry(); };
     };
-    const resource = createCollectionResource(owner.scope, async () => ++opens === 1 ? first.view : replacement.view);
-    const release = resource.retain();
-    await resource.ready();
-    const retry = resource.retry();
+    const store = createObservedCollection(owner.scope, async () => ++opens === 1 ? first.view : replacement.view);
+    const release = store.retain();
+    await store.ready();
+    const retry = store.retry();
     await retry;
     expect(nested).toBe(retry);
     expect(opens).toBe(2);
@@ -244,10 +270,10 @@ describe('store collection resources', () => {
     const subscribe = first.view.subscribe;
     first.view.subscribe = (listener): (() => void) => {
       const unsubscribe = subscribe(listener);
-      return (): void => { unsubscribe(); nested = resource.retry(); };
+      return (): void => { unsubscribe(); nested = store.retry(); };
     };
-    const resource = createCollectionResource(owner.scope, async () => ++opens === 1 ? first.view : replacement.view);
-    const retry = resource.retry();
+    const store = createObservedCollection(owner.scope, async () => ++opens === 1 ? first.view : replacement.view);
+    const retry = store.retry();
     await retry;
     expect(nested).toBeDefined();
     expect(nested).not.toBe(retry);
@@ -261,9 +287,9 @@ describe('store collection resources', () => {
   it.each(['ready', 'refresh'] as const)('fences %s after native readiness settles but before its result is forwarded', async (operation) => {
     const owner = fixture();
     const native = nativeView();
-    const resource = createCollectionResource(owner.scope, async () => native.view);
-    const release = resource.retain();
-    await resource.ready();
+    const store = createObservedCollection(owner.scope, async () => native.view);
+    const release = store.retain();
+    await store.ready();
     const ready = native.view.ready;
     let closing: Promise<void> | undefined;
     native.view.ready = (): ReturnType<typeof ready> => {
@@ -272,8 +298,8 @@ describe('store collection resources', () => {
       return settled;
     };
     try {
-      await expect(resource[operation]()).rejects.toBeInstanceOf(StoreRetiredError);
-      expect(resource.getSnapshot().records).toEqual([]);
+      await expect(store[operation]()).rejects.toBeInstanceOf(StoreRetiredError);
+      expect(store.getSnapshot().records).toEqual([]);
     } finally {
       release();
       await closing;
@@ -283,14 +309,28 @@ describe('store collection resources', () => {
   });
 });
 
-describe('store native resources', () => {
+describe('observed stores', () => {
+  it('consumes readiness rejected during synchronous owner retirement', async () => {
+    const owner = fixture();
+    const caller = new AbortController();
+    const native = nativeView();
+    native.view.ready = (options = {}): Promise<never> => {
+      caller.abort();
+      return Promise.reject(options.signal?.reason);
+    };
+    const store = createObservationFactory(owner.scope)(async () => native.view, { signal: caller.signal });
+    await expect(store.ready()).rejects.toBeInstanceOf(StoreRetiredError);
+    await owner.close();
+    expect(native.closes()).toBe(1);
+  });
+
   it('preserves native context payloads and reopens the same owner on retry', async () => {
     const owner = fixture();
     let contexts: readonly { id: string }[] = [{ id: 'first' }];
     let wake!: () => void;
     let opens = 0;
     let closes = 0;
-    const resource = createResourceFactory(owner.scope)(signal => createContextView({
+    const store = createObservationFactory(owner.scope)(signal => createContextView({
       callerSignal         : signal,
       list                 : async () => contexts,
       openWakeSubscription : async (notify) => {
@@ -299,42 +339,41 @@ describe('store native resources', () => {
         return { close: async (): Promise<void> => { closes += 1; } };
       },
     }));
-    expect(resource.getSnapshot()).toEqual({ status: 'idle', isLoadingMore: false });
-    const stop = resource.subscribe((): void => {});
+    expect(store.getSnapshot()).toEqual({ status: 'idle', isLoadingMore: false });
+    const stop = store.subscribe((): void => {});
     try {
-      expect((await resource.ready()).contexts).toEqual([{ id: 'first' }]);
+      expect((await store.ready()).contexts).toEqual([{ id: 'first' }]);
       contexts = [{ id: 'second' }];
       wake();
-      await resource.retry();
-      expect(resource.getSnapshot()).toEqual({ status: 'ready', contexts, isLoadingMore: false });
+      await store.retry();
+      expect(store.getSnapshot()).toEqual({ status: 'ready', contexts, isLoadingMore: false });
       expect(opens).toBe(2);
       expect(closes).toBe(1);
     } finally { stop(); await owner.close(); }
     expect(closes).toBe(2);
   });
 
-  it('keeps keyed native choices alive without a separate subscriber and closes obsolete late views', async () => {
+  it('keeps selectable native choices alive without a separate subscriber and closes obsolete late views', async () => {
     const owner = fixture();
     const first = nativeView();
     const second = nativeView();
     const opening = deferred<ExpandableRecordView<string>>();
     const requested = deferred<void>();
-    const resource = createResourceFactory(owner.scope)({
-      selection : null as string | null,
-      open      : async (key) => {
+    const store = createObservationFactory(owner.scope)({
+      open: async (key: string) => {
         if (key === 'first') { requested.resolve(); return opening.promise; }
         return second.view;
       },
     });
-    const selecting = resource.select('first');
+    const selecting = store.select('first');
     const retired = selecting.catch((error: unknown) => error);
     await requested.promise;
-    await resource.select('second');
+    await store.select('second');
     expect(await retired).toBeInstanceOf(StoreRetiredError);
     opening.resolve(first.view);
-    expect(resource.getSnapshot()).toMatchObject({ status: 'ready', selection: 'second' });
+    expect(store.getSnapshot()).toMatchObject({ status: 'ready', selection: 'second' });
     expect(second.closes()).toBe(0);
-    await resource.select(null);
+    await store.select(null);
     await owner.close();
     expect(first.closes()).toBe(1);
     expect(second.closes()).toBe(1);
@@ -348,18 +387,18 @@ describe('store native resources', () => {
     const requested = deferred<void>();
     first.view[operation] = (): Promise<never> => { requested.resolve(); return pending.promise; };
     let opens = 0;
-    const resource = createResourceFactory(owner.scope)(async () => ++opens === 1 ? first.view : replacement.view);
-    const release = resource.retain();
+    const store = createObservationFactory(owner.scope)(async () => ++opens === 1 ? first.view : replacement.view);
+    const release = store.retain();
     try {
-      await resource.ready();
-      const result = resource[operation]();
+      await store.ready();
+      const result = store[operation]();
       const retired = result.catch((error: unknown) => error);
       await requested.promise;
-      await resource.retry();
+      await store.retry();
       pending.reject(new Error('Obsolete query failed'));
       expect(await retired).toBeInstanceOf(StoreRetiredError);
-      expect(resource.getSnapshot().status).toBe('ready');
-      expect(resource.getSnapshot().error).toBeUndefined();
+      expect(store.getSnapshot().status).toBe('ready');
+      expect(store.getSnapshot().error).toBeUndefined();
     } finally { release(); await owner.close(); }
   });
 
@@ -370,16 +409,16 @@ describe('store native resources', () => {
     let requests = 0;
     const loadMore = native.view.loadMore;
     native.view.loadMore = async (): Promise<void> => { requests += 1; await page.promise; await loadMore(); };
-    const resource = createResourceFactory(owner.scope)(async () => native.view);
-    const release = resource.retain();
-    await resource.ready();
-    const first = resource.loadMore();
-    const second = resource.loadMore();
-    expect(resource.getSnapshot().isLoadingMore).toBe(true);
+    const store = createObservationFactory(owner.scope)(async () => native.view);
+    const release = store.retain();
+    await store.ready();
+    const first = store.loadMore();
+    const second = store.loadMore();
+    expect(store.getSnapshot().isLoadingMore).toBe(true);
     page.resolve();
     await Promise.all([first, second]);
     expect(requests).toBe(1);
-    expect(resource.getSnapshot()).toMatchObject({ records: ['first', 'second'], isLoadingMore: false });
+    expect(store.getSnapshot()).toMatchObject({ records: ['first', 'second'], isLoadingMore: false });
     release();
     await owner.close();
   });
@@ -390,12 +429,12 @@ describe('store native resources', () => {
     const failure = new Error('Next page failed');
     let requests = 0;
     native.view.loadMore = async (): Promise<void> => { requests += 1; throw failure; };
-    const resource = createResourceFactory(owner.scope)(async () => native.view, { loadAll: true });
+    const store = createObservationFactory(owner.scope)(async () => native.view, { loadAll: true });
     const failed = deferred<void>();
-    const stop = resource.subscribe((state): void => { if (state.status === 'error') { failed.resolve(); } });
+    const stop = store.subscribe((state): void => { if (state.status === 'error') { failed.resolve(); } });
     try {
       await failed.promise;
-      expect(resource.getSnapshot()).toMatchObject({ status: 'error', records: ['first'], error: failure, isLoadingMore: false });
+      expect(store.getSnapshot()).toMatchObject({ status: 'error', records: ['first'], error: failure, isLoadingMore: false });
       await Promise.resolve();
       await Promise.resolve();
       expect(requests).toBe(1);
@@ -409,27 +448,26 @@ describe('store native resources', () => {
     const page = deferred<void>();
     const requested = deferred<void>();
     first.view.loadMore = (): Promise<void> => { requested.resolve(); return page.promise; };
-    const resource = createResourceFactory(owner.scope)({
-      selection : null as string | null,
-      open      : async key => key === 'first' ? first.view : second.view,
+    const store = createObservationFactory(owner.scope)({
+      open: async (key: string) => key === 'first' ? first.view : second.view,
     }, { loadAll: true });
-    const selecting = resource.select('first').catch((error: unknown) => error);
+    const selecting = store.select('first').catch((error: unknown) => error);
     await requested.promise;
-    await resource.select('second');
+    await store.select('second');
     page.reject(new Error('Obsolete page failed'));
     expect(await selecting).toBeInstanceOf(StoreRetiredError);
-    expect(resource.getSnapshot()).toMatchObject({ status: 'ready', selection: 'second', records: ['first', 'second'], hasMore: false });
+    expect(store.getSnapshot()).toMatchObject({ status: 'ready', selection: 'second', records: ['first', 'second'], hasMore: false });
     await owner.close();
   });
 
-  it('rejects ambiguous keyed configuration and non-boolean pagination policies before opening', async () => {
+  it('rejects ambiguous selectable configuration and non-boolean pagination policies before opening', async () => {
     const owner = fixture();
-    const resource = createResourceFactory(owner.scope);
+    const store = createObservationFactory(owner.scope);
     const native = nativeView();
     const open = async (): Promise<ExpandableRecordView<string>> => native.view;
-    expect(() => resource({ selection: null, open, source: () => resource(open) } as never)).toThrow(TypeError);
-    expect(() => resource({ open } as never)).toThrow(TypeError);
-    expect(() => resource(open, { loadAll: 'true' } as never)).toThrow(TypeError);
+    expect(() => store({ open, source: () => store(open) } as never)).toThrow(TypeError);
+    expect(() => store({} as never)).toThrow(TypeError);
+    expect(() => store(open, { loadAll: 'true' } as never)).toThrow(TypeError);
     await owner.close();
     expect(native.closes()).toBe(0);
   });
@@ -444,12 +482,12 @@ describe('store native resources', () => {
     replacement.view.close = (): Promise<void> => slowClose.promise;
     const warn = sinon.stub(console, 'warn');
     let opens = 0;
-    const resource = createResourceFactory(owner.scope)(async () => ++opens === 1 ? first.view : replacement.view);
-    const release = resource.retain();
+    const store = createObservationFactory(owner.scope)(async () => ++opens === 1 ? first.view : replacement.view);
+    const release = store.retain();
     try {
-      await resource.ready();
-      await resource.retry();
-      const closing = resource.close();
+      await store.ready();
+      await store.retry();
+      const closing = store.close();
       let settled = false;
       const result = closing.catch((error: AggregateError): void => {
         settled = true;
@@ -465,15 +503,15 @@ describe('store native resources', () => {
     } finally { release(); slowClose.resolve(); warn.restore(); }
   });
 
-  it('releases a closed caller resource registration after cleanup while scope disposal still awaits pending release', async () => {
+  it('releases a closed caller store registration after cleanup while scope disposal still awaits pending release', async () => {
     const owner = fixture();
     const caller = new AbortController();
     const native = nativeView();
     const nativeClosing = deferred<void>();
     native.view.close = (): Promise<void> => nativeClosing.promise;
-    const resource = createResourceFactory(owner.scope)(async () => native.view, { signal: caller.signal });
-    const release = resource.retain();
-    await resource.ready();
+    const store = createObservationFactory(owner.scope)(async () => native.view, { signal: caller.signal });
+    const release = store.retain();
+    await store.ready();
     caller.abort();
     expect(owner.registrations()).toBe(1);
     let disposed = false;
@@ -495,20 +533,20 @@ describe('store native resources', () => {
     let nativeCloses = 0;
     native.view.close = (): Promise<void> => {
       nativeCloses += 1;
-      if (stage === 'close') { reentrant = resource.close(); }
+      if (stage === 'close') { reentrant = store.close(); }
       return closing.promise;
     };
     const subscribe = native.view.subscribe;
     native.view.subscribe = (listener): (() => void) => {
       const stop = subscribe(listener);
-      return (): void => { stop(); if (stage === 'unsubscribe') { reentrant = resource.close(); } };
+      return (): void => { stop(); if (stage === 'unsubscribe') { reentrant = store.close(); } };
     };
-    const resource = createResourceFactory(owner.scope)(async signal => {
-      if (stage === 'abort') { signal.addEventListener('abort', (): void => { reentrant = resource.close(); }, { once: true }); }
+    const store = createObservationFactory(owner.scope)(async signal => {
+      if (stage === 'abort') { signal.addEventListener('abort', (): void => { reentrant = store.close(); }, { once: true }); }
       return native.view;
     });
-    if (stage === 'close') { await resource.ready(); }
-    else { await expect(resource.ready()).rejects.toBeInstanceOf(StoreRetiredError); }
+    if (stage === 'close') { await store.ready(); }
+    else { await expect(store.ready()).rejects.toBeInstanceOf(StoreRetiredError); }
     await Promise.resolve();
     expect(reentrant).toBeDefined();
     let finished = false;
@@ -522,9 +560,9 @@ describe('store native resources', () => {
     await owner.close();
   });
 
-  it('observes encrypted records, singleton children, and owned contexts through the same resource factory', async () => {
+  it('observes encrypted records, singleton children, and owned contexts through the same observe helper', async () => {
     const protocol = defineProtocol({
-      protocol  : 'https://api.example.test/store-resource/native', published : false,
+      protocol  : 'https://api.example.test/store-store/native', published : false,
       types     : {
         note    : { dataFormats: ['application/json'], encryptionRequired: true },
         preview : { dataFormats: ['application/json'], encryptionRequired: true },
@@ -542,11 +580,11 @@ describe('store native resources', () => {
     const context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [protocol] }) });
     const owner = fixture();
     const typed = context.enbox.using(protocol);
-    const resource = createResourceFactory(owner.scope);
-    const notes = resource(signal => typed.records.observe<'note', { children: readonly ['note/preview'] }>('note', {
+    const store = createObservationFactory(owner.scope);
+    const notes = store(signal => typed.records.observe<'note', { children: readonly ['note/preview'] }>('note', {
       pagination: { limit: 1 }, materialize: { children: ['note/preview'] }, signal,
     }));
-    const contexts = resource(signal => typed.contexts.observe({ signal }));
+    const contexts = store(signal => typed.contexts.observe({ signal }));
     const stopNotes = notes.retain();
     const stopContexts = contexts.retain();
     try {

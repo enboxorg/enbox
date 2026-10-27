@@ -51,7 +51,7 @@ function storeFixture(context: EnboxTestContext): {
     assertCurrent: (): void => {
       if (signal.aborted) { throw new StoreRetiredError(); }
     },
-    getEnbox : () => context.enbox,
+    getEnbox : () => { scope.assertCurrent(); return context.enbox; },
     onClose  : (close): (() => void) => {
       closes.push(close);
       return (): void => {

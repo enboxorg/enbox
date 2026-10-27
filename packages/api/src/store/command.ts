@@ -8,7 +8,7 @@ export type StoreCommandState<Input> = Readonly<{
   /** Unresolved invocations belonging to the current authorization scope. */
   pendingCount: number;
   /** Unresolved inputs in start order, retained by reference; repeated inputs remain distinct. */
-  pendingVariables: readonly Input[];
+  pendingInputs: readonly Input[];
   /** Display error from the latest invocation admitted to the current scope; initial scope rejection leaves state unchanged. */
   error: Error | undefined;
 }>;
@@ -31,7 +31,7 @@ export function createCommand<Input, Output>(
   scope: StoreScope,
   operation: (input: Input) => Promise<Output> | Output,
 ): StoreCommand<Input, Output> {
-  const idleState = Object.freeze({ pendingCount: 0, pendingVariables: Object.freeze([]), error: undefined });
+  const idleState = Object.freeze({ pendingCount: 0, pendingInputs: Object.freeze([]), error: undefined });
   let state: StoreCommandState<Input> = idleState;
   const listeners = new Set<(state: StoreCommandState<Input>) => void>();
   const pending = new Map<number, Input>();
@@ -45,8 +45,8 @@ export function createCommand<Input, Output>(
   };
   const publish = (error: Error | undefined): void => {
     state = Object.freeze({
-      pendingCount     : pending.size,
-      pendingVariables : Object.freeze([...pending.values()]),
+      pendingCount  : pending.size,
+      pendingInputs : Object.freeze([...pending.values()]),
       error,
     });
     const subscribers = [...listeners];

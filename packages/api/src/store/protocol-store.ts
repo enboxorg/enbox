@@ -1,8 +1,8 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 
+import type { ObservedCollection } from './observed-store.js';
 import type { RecordCodecMap } from '../record-codec.js';
 import type { RecordQuery } from '../record-query.js';
-import type { StoreCollectionResource } from './resource.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
 import type { ContextRoleGroups, ProtocolPaths, ProtocolRolePaths, SingletonProtocolPaths, TypedProtocol } from '../protocol-types.js';
@@ -16,8 +16,8 @@ import type {
 } from '../typed-enbox.js';
 
 import { assertValidRecordWithin } from '../record-query.js';
-import { createCollectionResource } from './resource.js';
 import { createCommand } from './command.js';
+import { createObservedCollection } from './observed-store.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { collectProtocolPaths, isProtocolRolePath } from '../protocol-paths.js';
 
@@ -35,7 +35,7 @@ type CollectionPath<P extends TypedProtocol> = Exclude<
  * Collection state reports replication freshness separately from write acceptance.
  * Patch and delete require a non-empty record ID, independently of read filters.
  */
-export interface StoreCollection<Value> extends StoreCollectionResource<TypedMaterializedRecord<Value>> {
+export interface StoreCollection<Value> extends ObservedCollection<TypedMaterializedRecord<Value>> {
   /** Create a record using the protocol codec and this collection's parent scope. */
   readonly create: StoreCommand<Value, TypedRecord<Value>>;
   /** Apply a native patch or pure producer after checking the record's direct parent. */
@@ -66,7 +66,7 @@ export interface ProtocolStore<P extends TypedProtocol> {
   /** The original protocol definition and codecs. */
   readonly protocol: P;
   /**
-   * Resolve the native SDK inside a command or resource opener; invocation requires a usable authorization scope.
+   * Resolve the native SDK inside a command or observation opener; invocation requires a usable authorization scope.
    * Capturing this method in a factory is inert. The returned handle follows native SDK lifetimes;
    * its operations do not acquire collection-command progress or wait for collection views to refresh.
    */
@@ -98,7 +98,6 @@ function createTypedProtocolStore<
   const collections = new Map<string, unknown>();
   const writeScopes = new Map<string, { commands: unknown; refreshers: Set<() => Promise<void>> }>();
   const typed = (): TypedEnbox<D, C, G> => {
-    scope.assertCurrent();
     return scope.getEnbox().using<D, C, G>(protocol);
   };
 
@@ -112,7 +111,7 @@ function createTypedProtocolStore<
     const mutationKey = JSON.stringify([path, within]);
     let writeScope = writeScopes.get(mutationKey);
     const refreshers = writeScope?.refreshers ?? new Set<() => Promise<void>>();
-    const resource = createCollectionResource<TypedMaterializedRecord<Value>>(scope, (signal) => typed().records.observe<Path, true>(path, {
+    const collection = createObservedCollection<TypedMaterializedRecord<Value>>(scope, (signal) => typed().records.observe<Path, true>(path, {
       dateSort    : options.dateSort,
       filter      : options.filter,
       materialize : true,
@@ -121,16 +120,16 @@ function createTypedProtocolStore<
       within,
     }), {
       loadAll             : options.loadAll,
-      onObservationChange : (active): void => {
-        if (active) { refreshers.add(resource.refreshIfActive); }
-        else { refreshers.delete(resource.refreshIfActive); }
+      onObservationChange : (active, refresh): void => {
+        if (active) { refreshers.add(refresh); }
+        else { refreshers.delete(refresh); }
       },
     });
 
     if (writeScope === undefined) {
       const refreshActive = async (): Promise<void> => {
         // A completed write remains successful even if its canonical reread fails.
-        // Each acquired resource publishes its own materialization failure.
+        // Each observed collection publishes its own materialization failure.
         await Promise.all([...refreshers].map(refresh => refresh().catch((): void => {})));
       };
       const readScopedRecord = async (id: string): Promise<TypedRecord<Value> | undefined> => {
@@ -174,7 +173,7 @@ function createTypedProtocolStore<
     }
     // Mutation identity depends on path and direct parent, independently of
     // any collection's read filter, window size or retained state.
-    return Object.assign(resource, writeScope.commands as Commands);
+    return Object.assign(collection, writeScope.commands as Commands);
   };
 
   return {
@@ -222,7 +221,7 @@ function createTypedProtocolStore<
           collections.set(key, makeCollection(path, options));
         }
       }
-      // The key contains the exact path and selection; its resource's value
+      // The key contains the exact path and selection; its collection's value
       // type is therefore the codec associated with this same generic Path.
       return collections.get(key) as Path extends `${string}/${string}`
         ? StoreCollectionFamily<DataForPath<C, Path>>

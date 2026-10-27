@@ -46,7 +46,7 @@ settle pass to repair missed notifications.
 - Define named owned collections and domain commands with `defineStore()`.
   Components and controllers resolve the same feature instance from the runtime;
   equivalent selections share native views and command progress.
-- Own native observations with the same feature `resource()` factory, including
+- Own native observations with the same feature `observe()` factory, including
   context-bound shared records. Use native views directly for custom ownership.
 - Use `records.subscribe()` for an incremental or append-only event stream.
 - Use a one-shot `query()` for searches and snapshots.
@@ -72,7 +72,7 @@ Configure `monitor: { autoRefresh: {} }` for delegated grant renewal.
 
 Session or facade replacement retires captured feature controls and releases
 their resources. React's `useFeature` follows that replacement; `useStore`
-retains each observed resource after commit and releases it on cleanup.
+retains each observed store after commit and releases it on cleanup.
 Headless consumers use explicit leases. Native views opened outside feature
 stores retain their caller-owned lifetime and must be rebound and closed by
 that caller when authority changes.

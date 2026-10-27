@@ -60,11 +60,11 @@ import { NotesProtocol } from './protocol.js';
 
 export const NotesStore = defineStore({
   protocols: { notes: NotesProtocol },
-  create({ protocols, command }) {
+  create({ protocols }) {
     const notes = protocols.notes.collection('note', { pagination: { limit: 50 } });
     return {
       notes,
-      addNote: command((title: string) => notes.create.run({ title: title.trim(), body: '' })),
+      addNote: (title: string) => notes.create.run({ title: title.trim(), body: '' }),
     };
   },
 });
@@ -77,21 +77,15 @@ for protocol installation, delegated permissions, sync, and grant refresh:
 import { createApplication } from '@enbox/browser';
 import { NotesStore } from '../features/notes/store.js';
 
-export function createNotesApplication() {
-  return createApplication({
-    stores: { notes: NotesStore },
-    wallet: { appName: 'Notes', appIcon: '/icon.svg' },
-    connection: { monitor: { autoRefresh: {} } },
-  });
-}
-```
+export const applicationOptions = {
+  stores: { notes: NotesStore },
+  wallet: { appName: 'Notes', appIcon: '/icon.svg' },
+  connection: { monitor: { autoRefresh: {} } },
+};
 
-```ts title="src/app/runtime.ts"
-import { createNotesApplication } from './application.js';
-
-let runtime: ReturnType<typeof createNotesApplication> | undefined;
+let application: ReturnType<typeof createApplication> | undefined;
 export function getApplication() {
-  return runtime ??= createNotesApplication();
+  return application ??= createApplication(applicationOptions);
 }
 ```
 
@@ -132,7 +126,7 @@ remain available through `getApplication().connection`.
 
 When authorization or the SDK facade changes, the runtime retires old feature
 instances and `useFeature` resolves their replacements. Components and
-controllers share each named resource; they do not recreate query effects.
+controllers share each named observed store; they do not recreate query effects.
 
 ## Install the DWeb service worker
 
@@ -212,7 +206,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './app/App.js';
-import { getApplication } from './app/runtime.js';
+import { getApplication } from './app/application.js';
 
 function startApplication(): void {
   createRoot(document.getElementById('root')!).render(
@@ -295,10 +289,10 @@ import { NotesStore } from '../store.js';
 export function Notes({ disabled = false }: { disabled?: boolean }) {
   const feature = useFeature(NotesStore);
   const notes = useStore(feature.notes);
-  const creation = useStore(feature.addNote);
+  const creation = useStore(feature.notes.create);
   const [title, setTitle] = useState('');
   return <section>
-    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote.run(title).catch(() => {}); }}>
+    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote(title).catch(() => {}); }}>
       <input aria-label="Note title" required value={title}
         disabled={disabled || creation.pendingCount > 0} onChange={(event) => setTitle(event.target.value)} />
       <button disabled={disabled || creation.pendingCount > 0}>Add note</button>
@@ -325,7 +319,7 @@ native record handles.
 The runtime owns the native views, while `useStore` retains them after commit
 and releases that interest on unmount. Headless controllers resolve the same
 feature with `getApplication().store(NotesStore)` and use explicit `retain()`
-leases. `ready()` alone temporarily holds the resource until it settles.
+leases. `ready()` alone temporarily holds the observation until it settles.
 Commands publish pending/error state and return their operation result;
 application UI still owns draft changes and navigation after an awaited call.
 

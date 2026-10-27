@@ -146,7 +146,7 @@ file content inline.
 
 ### 2. Define a feature store
 
-Keep resource paths and application defaults in an ordinary module. This store
+Keep protocol paths and application defaults in an ordinary module. This store
 shares notebook observations and command progress between UI components and
 headless controllers:
 
@@ -156,7 +156,7 @@ import { NotebookProtocol } from './protocol.js';
 
 export const NotebookStore = defineStore({
   protocols: { notebooks: NotebookProtocol },
-  create({ protocols, command, resource }) {
+  create({ protocols, observe }) {
     const notebooks = protocols.notebooks.collection('notebook', {
       pagination: { limit: 50 },
     });
@@ -165,18 +165,16 @@ export const NotebookStore = defineStore({
     return {
       notebooks,
       pages,
-      activePages: resource({
-        selection: null as string | null,
-        source: parentContextId => pages.within(parentContextId),
+      activePages: observe({
+        source: (parentContextId: string) => pages.within(parentContextId),
       }),
-      createNotebook: command((name: string) =>
-        notebooks.create.run({ name: name.trim() })),
+      createNotebook: (name: string) => notebooks.create.run({ name: name.trim() }),
     };
   },
 });
 ```
 
-Definitions and resource handles perform no I/O. A collection opens when a
+Definitions and observation handles perform no I/O. A collection opens when a
 consumer subscribes, retains it, or awaits a control such as `ready()`.
 `pages.within(notebook.contextId)` resolves a keyed child collection; multiple
 notebooks can be observed concurrently. Query filters and pagination influence
@@ -219,7 +217,7 @@ const release = feature.notebooks.retain();
 try {
   const initial = await feature.notebooks.ready();
   console.log(initial.records);
-  const notebook = await feature.createNotebook.run('Launch notes');
+  const notebook = await feature.createNotebook('Launch notes');
   const pages = feature.pages.within(notebook.contextId);
   const page = await pages.create.run({ summary: 'Release planning' });
   console.log(page.id);
@@ -240,26 +238,26 @@ This collection convenience covers owned records. Use the context-bound API
 below for shared records and membership operations; role records are managed
 through context membership rather than ordinary collection CRUD.
 
-### Use the same resource owner for every native view
+### Use the same observation owner for every native view
 
-The feature's `resource()` factory manages record views, accepted shares, member
+The feature's `observe()` factory manages record views, accepted shares, member
 views, and observations whose input changes. Protocol collections use that same
 owner internally. Native SDK views remain the lower-level primitives.
 
 ```ts
-// Inside a feature factory with { protocols, resource }:
+// Inside a feature factory with { protocols, observe }:
 const native = protocols.notebooks.native;
-const acceptedShares = resource(signal => native().contexts.observe({
+const acceptedShares = observe(signal => native().contexts.observe({
   access: 'member', signal,
 }));
 // For an accepted invitation's `shared` context, use the same factory:
-const sharedRecords = resource(signal => shared.records.observe('notebook/page', { signal }));
+const sharedRecords = observe(signal => shared.records.observe('notebook/page', { signal }));
 ```
 
 The native context chooses the remote owner and applies its permissions; the
-resource supplies the same ownership and state API as a local record view.
+observed store supplies the same ownership and state API as a local record view.
 There is no separate `ContextStore`. A `source` function, as used by
-`activePages` above, borrows an existing canonical resource instead of opening
+`activePages` above, borrows an existing canonical collection instead of opening
 and closing its native view.
 
 ```ts
@@ -273,8 +271,8 @@ await feature.activePages.select(null);
 `select` retains the choice until replacement, null, close, or owner abort.
 A superseded wait rejects with `StoreRetiredError`; other consumers keep their
 subscriptions. `selection` and its payload are published together. Pass
-`{ signal }` as the resource factory's second argument for a shorter lifetime.
-Fixed resources need a subscriber or `retain()` to remain open. Async controls
+`{ signal }` as the `observe` factory's second argument for a shorter lifetime.
+Fixed observations need a subscriber or `retain()` to remain open. Async controls
 hold temporary leases; without another owner their state returns to `idle`
 after settlement. `ready()` returns usable local state, `retry()` reopens and
 waits, and supported `refresh()`/`loadMore()` controls preserve native behavior.
@@ -305,7 +303,7 @@ identity. Native authorization still decides whether an operation is allowed.
 
 `runtime.connection` restores sessions, installs protocols locally, registers
 sync, and publishes native connection state. Its sync phase is `syncing`,
-`caught-up`, or `error`; resource `ready` means local data is usable.
+`caught-up`, or `error`; observation `ready` means local data is usable.
 `runtime.connection.getSnapshot().sync?.remotes` reports health only for the
 connected DID's advertised endpoints. Call `runtime.connection.retryRemote(endpoint)`
 to revalidate routing and retry quota-blocked messages for that endpoint.
@@ -879,7 +877,7 @@ hand-writing role records or key delivery.
 ## Cleanup
 
 Release explicit leases and subscriptions when their consumer is finished.
-React's `useStore` releases its resource interest on unmount. Sign-out uses the
+React's `useStore` releases its observation subscription on unmount. Sign-out uses the
 native connection; terminal application shutdown disposes the owner:
 
 ```ts

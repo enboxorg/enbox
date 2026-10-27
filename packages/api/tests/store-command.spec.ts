@@ -99,11 +99,11 @@ describe('store commands', () => {
 
     expect(command.run(1)).toBe(first);
     expect(command.run(2)).toBe(second);
-    expect(command.getSnapshot().pendingVariables).toEqual([1, 2]);
+    expect(command.getSnapshot().pendingInputs).toEqual([1, 2]);
     expect(command.getSnapshot().pendingCount).toBe(2);
     finishFirst('written');
     await first;
-    expect(command.getSnapshot().pendingVariables).toEqual([2]);
+    expect(command.getSnapshot().pendingInputs).toEqual([2]);
     const failure = new Error('Rejected by owner');
     failSecond(failure);
     await expect(second).rejects.toBe(failure);

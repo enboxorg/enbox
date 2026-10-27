@@ -56,7 +56,7 @@ For a custom host, supply `connectHandler` instead of `wallet`, or supply a
 configuration. The headless `@enbox/api` constructor requires that factory;
 the browser constructor supplies browser defaults around the same runtime.
 Native connection, record, and context primitives remain available for custom
-flows. `defineStore`'s `resource()` factory owns all native view types through
+flows. `defineStore`'s `observe()` factory owns all native view types through
 one subscription and cleanup mechanism.
 
 ## Browser runtime

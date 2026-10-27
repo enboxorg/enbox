@@ -3,6 +3,6 @@
 "@enbox/browser": patch
 ---
 
-Consolidate feature observations under one resource owner for fixed native views, changing inputs, and borrowed canonical collections. Resource state exposes selection and pagination progress while preserving native record and context payloads and controls. Commands may share a caller lifetime. Fold feature registration and manifest derivation into createApplication, with browser connection defaults supplied by the browser entrypoint; remove the separate application-definition and selected-collection APIs.
+Consolidate live data under observe(), returning an ObservedStore for fixed native observations, changing inputs, or borrowed collections. Selectable stores start idle until select(input), preserve native capabilities, and cancel superseded read waits without interrupting other consumers. Collection write-refresh controls stay private; commands share progress through pendingInputs and may use a shorter caller lifetime.
 
-Remove server-rendering snapshots from resource and command handles. Consumers read their current state through getSnapshot and subscribe.
+Fold feature registration and manifest derivation into createApplication, with browser connection defaults supplied by the browser entrypoint. Remove the separate application definition, selected-collection API, and server-rendering snapshots.

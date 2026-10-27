@@ -1,12 +1,12 @@
+import type { ObservationFactory } from './observed-store.js';
 import type { ProtocolStore } from './protocol-store.js';
-import type { ResourceFactory } from './resource.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
 import type { TypedProtocol } from '../protocol-types.js';
 
 import { createCommand } from './command.js';
+import { createObservationFactory } from './observed-store.js';
 import { createProtocolStore } from './protocol-store.js';
-import { createResourceFactory } from './resource.js';
 import { isTypedProtocol } from '../define-protocol.js';
 import { withStoreSignal } from './scope.js';
 
@@ -52,8 +52,8 @@ export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreD
   stores: { readonly [Name in keyof Stores]: StoreInstance<Stores[Name]> };
   /** Aborted when this feature closes, fails construction, or its session/facade is replaced. */
   signal: AbortSignal;
-  /** Declare a shared native observation or a keyed selection using the feature's resource owner. */
-  resource: ResourceFactory;
+  /** Declare an observable store over a native observation or a changing input; construction performs no I/O. */
+  observe: ObservationFactory;
   /** Wrap a domain operation with shared progress and error state, preserving its input signature. */
   command<Operation extends CommandOperation>(
     operation: Operation & SingleInputOperation<Operation>,
@@ -106,7 +106,7 @@ export function defineStore<
         protocols : bindings as unknown as StoreContext<Protocols, Stores>['protocols'],
         stores    : dependencies as StoreContext<Protocols, Stores>['stores'],
         signal    : scope.signal,
-        resource  : createResourceFactory(scope),
+        observe   : createObservationFactory(scope),
         command,
         onClose   : (close: () => void | Promise<void>): void => { scope.onClose(close); },
       });
