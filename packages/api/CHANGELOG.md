@@ -1,5 +1,11 @@
 # @enbox/api
 
+## 0.6.90
+
+### Patch Changes
+
+- [#1805](https://github.com/enboxorg/enbox/pull/1805) [`50a201e`](https://github.com/enboxorg/enbox/commit/50a201e0391de9250c1053662c51b76a7b22105a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add headless application stores with statically declared protocol dependencies, shared scoped collections, observable domain commands, and authorization-bound resource ownership. Add canonical local view refresh so acknowledged collection writes appear without application-managed record overlays.
+
 ## 0.6.89
 
 ### Patch Changes
