@@ -1,11 +1,14 @@
 import type { ProtocolStore } from './protocol-store.js';
+import type { ResourceFactory } from './resource.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
 import type { TypedProtocol } from '../protocol-types.js';
 
 import { createCommand } from './command.js';
 import { createProtocolStore } from './protocol-store.js';
+import { createResourceFactory } from './resource.js';
 import { isTypedProtocol } from '../define-protocol.js';
+import { withStoreSignal } from './scope.js';
 
 /** Named protocol dependencies retained by a feature definition. */
 export type StoreProtocols = Readonly<Record<string, TypedProtocol>>;
@@ -49,9 +52,12 @@ export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreD
   stores: { readonly [Name in keyof Stores]: StoreInstance<Stores[Name]> };
   /** Aborted when this feature closes, fails construction, or its session/facade is replaced. */
   signal: AbortSignal;
+  /** Declare a shared native observation or a keyed selection using the feature's resource owner. */
+  resource: ResourceFactory;
   /** Wrap a domain operation with shared progress and error state, preserving its input signature. */
   command<Operation extends CommandOperation>(
     operation: Operation & SingleInputOperation<Operation>,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ): InferredCommand<Operation>;
   /**
    * Register cleanup before starting owned work; return its complete asynchronous release.
@@ -63,7 +69,7 @@ export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreD
 
 /** Static dependencies and the factory that builds their feature interface. */
 export type DefineStoreOptions<Protocols extends StoreProtocols, Stores extends StoreDefinitions, Value> = {
-  protocols: Protocols;
+  protocols?: Protocols;
   stores?: Stores;
   /** Return inert handles synchronously; register effects and cleanup against the scope. */
   create(context: StoreContext<Protocols, Stores>): Value & ([Extract<Value, PromiseLike<unknown>>] extends [never] ? unknown : never);
@@ -74,11 +80,11 @@ export type DefineStoreOptions<Protocols extends StoreProtocols, Stores extends 
  * The application resolves dependencies and constructs the feature within its session scope.
  */
 export function defineStore<
-  const Protocols extends StoreProtocols,
+  const Protocols extends StoreProtocols = Record<never, never>,
   const Stores extends StoreDefinitions = Record<never, never>,
   Value = unknown,
 >(options: DefineStoreOptions<Protocols, Stores, Value>): StoreDefinition<Value> {
-  const protocols = Object.freeze({ ...options.protocols });
+  const protocols: StoreProtocols = Object.freeze({ ...options.protocols });
   const stores = Object.freeze({ ...options.stores });
   for (const [name, protocol] of Object.entries(protocols)) {
     if (!isTypedProtocol(protocol)) {
@@ -93,14 +99,16 @@ export function defineStore<
       const bindings = Object.fromEntries(Object.entries(protocols).map(([name, protocol]): [string, unknown] =>
         [name, createProtocolStore(protocol, scope)]));
       // Runtime dispatch is single-input; authoring retains its optionality and awaited result.
-      const command = ((operation: CommandOperation) => createCommand(scope, operation)) as StoreContext<Protocols, Stores>['command'];
+      const command = ((operation: CommandOperation, options?: Readonly<{ signal?: AbortSignal }>) =>
+        createCommand(withStoreSignal(scope, options?.signal), operation)) as StoreContext<Protocols, Stores>['command'];
       return create({
         // The declared keys pair each original protocol with its own typed binding.
         protocols : bindings as unknown as StoreContext<Protocols, Stores>['protocols'],
         stores    : dependencies as StoreContext<Protocols, Stores>['stores'],
         signal    : scope.signal,
+        resource  : createResourceFactory(scope),
         command,
-        onClose   : (close: () => void | Promise<void>): void => scope.onClose(close),
+        onClose   : (close: () => void | Promise<void>): void => { scope.onClose(close); },
       });
     },
   });

@@ -65,49 +65,40 @@ export const NotesStore = defineStore({
     return {
       notes,
       addNote: command((title: string) => notes.create.run({ title: title.trim(), body: '' })),
-      loadMore: command(() => notes.loadMore()),
-      retry: command(() => notes.retry()),
     };
   },
 });
 ```
 
-Compose features into a static application definition. Its `manifest` is the
-source for protocol installation, delegated permissions, sync registration,
-and grant refresh:
+Create one application owner for the browser lifetime. It derives the manifest
+for protocol installation, delegated permissions, sync, and grant refresh:
 
 ```ts title="src/app/application.ts"
-import { defineApplication } from '@enbox/browser';
+import { createApplication } from '@enbox/browser';
 import { NotesStore } from '../features/notes/store.js';
 
-export const applicationDefinition = defineApplication({
-  stores: { notes: NotesStore },
-});
-```
-
-Keep one runtime and native connection for the browser application lifetime:
-
-```ts title="src/app/runtime.ts"
-import { BrowserConnectHandler, createApplication, createConnectionStore } from '@enbox/browser';
-import { applicationDefinition } from './application.js';
-
-let runtime: ReturnType<typeof createApplication> | undefined;
-
-export function getApplication() {
-  return runtime ??= createApplication(applicationDefinition, {
-    connection: createConnectionStore({
-      application: applicationDefinition.manifest,
-      connectHandler: BrowserConnectHandler({ appName: 'Notes', appIcon: '/icon.svg' }),
-      monitor: { autoRefresh: {} },
-    }),
+export function createNotesApplication() {
+  return createApplication({
+    stores: { notes: NotesStore },
+    wallet: { appName: 'Notes', appIcon: '/icon.svg' },
+    connection: { monitor: { autoRefresh: {} } },
   });
 }
 ```
 
-`applicationDefinition` describes the application; `getApplication()` returns
-its live owner. `monitor.autoRefresh` renews delegated grants using the same
-manifest. `EnboxProvider` initializes the supplied runtime by default and
-leaves its terminal disposal to this browser owner.
+```ts title="src/app/runtime.ts"
+import { createNotesApplication } from './application.js';
+
+let runtime: ReturnType<typeof createNotesApplication> | undefined;
+export function getApplication() {
+  return runtime ??= createNotesApplication();
+}
+```
+
+`EnboxProvider application={getApplication()}` initializes the supplied runtime
+by default. Terminal disposal belongs to this browser owner. The connection
+and its derived manifest are available as `runtime.connection` and
+`runtime.manifest`; no separate application definition is needed.
 
 Connection UI uses the provider's guarded actions and published flow errors:
 
@@ -305,10 +296,9 @@ export function Notes({ disabled = false }: { disabled?: boolean }) {
   const feature = useFeature(NotesStore);
   const notes = useStore(feature.notes);
   const creation = useStore(feature.addNote);
-  const paging = useStore(feature.loadMore);
   const [title, setTitle] = useState('');
   return <section>
-    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote.run(title); }}>
+    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote.run(title).catch(() => {}); }}>
       <input aria-label="Note title" required value={title}
         disabled={disabled || creation.pendingCount > 0} onChange={(event) => setTitle(event.target.value)} />
       <button disabled={disabled || creation.pendingCount > 0}>Add note</button>
@@ -316,11 +306,11 @@ export function Notes({ disabled = false }: { disabled?: boolean }) {
     {creation.error && <p role="alert">Could not save the note.</p>}
     {notes.status === 'loading' && <p>Loading notes…</p>}
     {notes.status === 'error' && <p role="alert">Could not load notes.
-      <button disabled={disabled} onClick={() => { void feature.retry.run(); }}>Try again</button>
+      <button disabled={disabled} onClick={() => { void feature.notes.retry().catch(() => {}); }}>Try again</button>
     </p>}
     <ul>{notes.records.map(({ record, value }) => <li key={record.id}>{value.title}</li>)}</ul>
-    {notes.hasMore && <button disabled={disabled || paging.pendingCount > 0}
-      onClick={() => { void feature.loadMore.run(); }}>More notes</button>}
+    {notes.hasMore && <button disabled={disabled || notes.isLoadingMore}
+      onClick={() => { void feature.notes.loadMore().catch(() => {}); }}>More notes</button>}
   </section>;
 }
 ```

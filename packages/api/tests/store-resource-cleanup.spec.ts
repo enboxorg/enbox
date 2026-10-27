@@ -5,10 +5,10 @@ import type { ExpandableRecordView, RecordViewState } from '../src/record-view.j
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
+import { createApplication } from '../src/store/application.js';
 import { createCollectionResource } from '../src/store/resource.js';
 import { defineStore } from '../src/store/definition.js';
 import { StoreRetiredError } from '../src/store/scope.js';
-import { createApplication, defineApplication } from '../src/store/application.js';
 
 function deferred<Value>(): { promise: Promise<Value>; resolve(value: Value): void; reject(reason: unknown): void } {
   let resolve!: (value: Value) => void;
@@ -61,12 +61,17 @@ function applicationFixture(open: () => Promise<ExpandableRecordView<string>>): 
           if (signal.aborted) { throw new StoreRetiredError(); }
         },
         getEnbox : (): never => { throw new Error('Cleanup fixture supplies native views directly.'); },
-        onClose  : (close): void => { releaseResource = close; onClose(close); },
+        onClose  : (close): (() => void) => {
+          let registered = true;
+          releaseResource = close;
+          onClose(() => { if (registered) { return close(); } });
+          return (): void => { registered = false; };
+        },
       };
       return createCollectionResource(scope, open);
     },
   });
-  const application = createApplication(defineApplication({ stores: { feature } }), { connection });
+  const application = createApplication({ stores: { feature }, connection: () => connection });
   return {
     application,
     resource      : application.store(feature),

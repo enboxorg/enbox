@@ -32,6 +32,8 @@
 // The high-level Enbox API: DWN records and protocols.
 
 export * from '@enbox/api';
+export { createApplication, getApplicationWalletOptions } from './application.js';
+export type { BrowserApplicationOptions } from './application.js';
 
 // ─── Re-exports from @enbox/auth ────────────────────────────────
 //

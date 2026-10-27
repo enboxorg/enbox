@@ -23,19 +23,17 @@
  */
 
 export * from './application-manifest.js';
-export { createApplication, defineApplication } from './store/application.js';
+export { createApplication } from './store/application.js';
 export type {
-  ApplicationDefinition,
   ApplicationRuntime,
   CreateApplicationOptions,
-  DefineApplicationOptions,
 } from './store/application.js';
 export { defineStore } from './store/definition.js';
 export type { DefineStoreOptions, StoreContext, StoreDefinition, StoreDefinitions, StoreInstance, StoreProtocols } from './store/definition.js';
 export type { ProtocolStore, StoreCollection, StoreCollectionFamily, StoreCollectionOptions } from './store/protocol-store.js';
 export type { StoreCommand, StoreCommandState } from './store/command.js';
 export type { StoreCollectionResource, StoreCollectionState } from './store/resource.js';
-export type { StoreCollectionSelection, StoreCollectionSelectionState } from './store/collection-selection.js';
+export type { ResourceFactory, StoreResource, StoreResourceState } from './store/resource.js';
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';

@@ -3,9 +3,9 @@ import type { ConnectionSnapshot, ConnectionStore } from '../src/connection-stor
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
+import { createApplication } from '../src/store/application.js';
 import { defineStore } from '../src/store/definition.js';
 import { StoreRetiredError } from '../src/store/scope.js';
-import { createApplication, defineApplication } from '../src/store/application.js';
 
 function connectionFixture(): { connection: ConnectionStore; disposals(): number } {
   const snapshot: ConnectionSnapshot = Object.freeze({ phase: 'disconnected' });
@@ -43,7 +43,7 @@ describe('application store lifecycle boundaries', () => {
       },
     });
     const native = connectionFixture();
-    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    const app = createApplication({ stores: { feature }, connection: () => native.connection });
     expect(() => app.store(feature)).toThrow('create must return a synchronous feature value');
     expect(signal?.aborted).toBe(true);
     await app.dispose();
@@ -60,7 +60,7 @@ describe('application store lifecycle boundaries', () => {
       },
     });
     const native = connectionFixture();
-    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    const app = createApplication({ stores: { feature }, connection: () => native.connection });
     try {
       expect(() => app.store(feature)).toThrow('Factory failed');
       await microtasks();
@@ -84,7 +84,7 @@ describe('application store lifecycle boundaries', () => {
     const feature = defineStore({ protocols: {}, create({ onClose }): object { register = onClose; return {}; } });
     const native = connectionFixture();
     native.connection.dispose = async (): Promise<void> => { disposalStarted = true; await nativeClose; };
-    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    const app = createApplication({ stores: { feature }, connection: () => native.connection });
     app.store(feature);
     const disposing = app.dispose().then((): void => { disposed = true; });
     await microtasks();
@@ -110,7 +110,7 @@ describe('application store lifecycle boundaries', () => {
       },
     });
     const native = connectionFixture();
-    const app = createApplication(defineApplication({ stores: { failed } }), native);
+    const app = createApplication({ stores: { failed }, connection: () => native.connection });
     expect(() => app.store(failed)).toThrow('Feature factory failed');
     expect(leakedSignal?.aborted).toBe(true);
     expect(leakedSignal?.reason).toBeInstanceOf(StoreRetiredError);
@@ -129,7 +129,7 @@ describe('application store lifecycle boundaries', () => {
       },
     });
     const native = connectionFixture();
-    const app = createApplication(defineApplication({ stores: { feature } }), native);
+    const app = createApplication({ stores: { feature }, connection: () => native.connection });
     app.store(feature);
     const disposing = app.dispose();
     expect(reentered).toBe(disposing);
@@ -153,7 +153,7 @@ describe('application store lifecycle boundaries', () => {
       },
     });
     const native = connectionFixture();
-    const app = createApplication(defineApplication({ stores: { slow, failed } }), native);
+    const app = createApplication({ stores: { slow, failed }, connection: () => native.connection });
     try {
       app.store(slow);
       expect(() => app.store(failed)).toThrow('Factory failed');

@@ -2,16 +2,14 @@ import type { StoreCollectionResource } from '../src/store/resource.js';
 import type { StoreScope } from '../src/store/scope.js';
 import type { ExpandableRecordView, RecordViewState } from '../src/record-view.js';
 
-import { describe, expect, it } from 'bun:test';
-
-import { createCollectionResource } from '../src/store/resource.js';
-import { createCollectionSelection } from '../src/store/collection-selection.js';
 import { createEnboxTestContext } from '../src/testing.js';
 import { createProtocolStore } from '../src/store/protocol-store.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
+import { createCollectionResource, createResourceFactory } from '../src/store/resource.js';
+import { describe, expect, it } from 'bun:test';
 
 type ReadyState = Extract<RecordViewState<string>, { status: 'ready' }>;
 
@@ -104,7 +102,7 @@ function fixture(): {
   close(): Promise<void>;
   } {
   const controller = new AbortController();
-  const callbacks: Array<() => void | Promise<void>> = [];
+  const callbacks = new Set<() => void | Promise<void>>();
   const resources = new Map<string, StoreCollectionResource<string>>();
   let resolutions = 0;
   const scope: StoreScope = {
@@ -113,7 +111,7 @@ function fixture(): {
       if (controller.signal.aborted) { throw new StoreRetiredError(); }
     },
     getEnbox : (): never => { throw new Error('Selection fixture supplies native views directly.'); },
-    onClose  : (callback): void => { callbacks.push(callback); },
+    onClose  : (callback): (() => void) => { callbacks.add(callback); return (): void => { callbacks.delete(callback); }; },
   };
   return {
     scope,
@@ -140,28 +138,50 @@ function fixture(): {
     retire      : (): void => { controller.abort(); },
     close       : async (): Promise<void> => {
       controller.abort();
-      await Promise.all(callbacks.map(callback => callback()));
+      await Promise.all([...callbacks].map(callback => callback()));
     },
   };
 }
 
-describe('store collection selections', () => {
+describe('store resource selections', () => {
+  it.each(['select', 'subscribe'] as const)('preserves a newer choice made by a source resolver during %s', async (operation) => {
+    const owner = fixture();
+    const first = owner.resource('A');
+    const replacement = owner.resource('B');
+    let newer: Promise<void> | undefined;
+    const selection = createResourceFactory(owner.scope)({
+      selection : operation === 'subscribe' ? 'A' : null as string | null,
+      source    : (key: string) => {
+        if (key === 'A') { newer = selection.select('B'); }
+        return owner.within(key);
+      },
+    });
+    const stop = operation === 'subscribe' ? selection.subscribe((): void => {}) : (): void => {};
+    try {
+      if (operation === 'select') { await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError); }
+      await newer;
+      expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'B', records: ['B'] });
+      expect(first.opens()).toBe(0);
+      expect(replacement.opens()).toBe(1);
+    } finally { stop(); await owner.close(); }
+  });
+
   it('is inert until explicitly selected and preserves cached empty server state', async () => {
     const owner = fixture();
     const source = owner.resource('A');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const idle = selection.getSnapshot();
     const server = selection.getServerSnapshot();
     const unsubscribe = selection.subscribe((): void => {});
     expect(selection.getSnapshot()).toBe(idle);
     expect(selection.getServerSnapshot()).toBe(server);
-    expect(idle).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(idle).toMatchObject({ status: 'idle', selection: null });
     expect(owner.resolutions()).toBe(0);
     expect(source.opens()).toBe(0);
     await selection.select(null);
     expect(owner.resolutions()).toBe(0);
     await selection.select('A');
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['A'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'A', records: ['A'] });
     expect(selection.getSnapshot()).toBe(selection.getSnapshot());
     expect(selection.getSnapshot().records).toBe(source.resource.getSnapshot().records);
     expect(Object.isFrozen(selection.getSnapshot())).toBe(true);
@@ -177,9 +197,9 @@ describe('store collection selections', () => {
     const owner = fixture();
     const native = nativeView(readyState(['first'], true), ['first', 'second']);
     const source = owner.resource('A', { native, loadAll: true });
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     await Promise.all([selection.select('A'), selection.select('A')]);
-    expect(selection.getSnapshot()).toMatchObject({ parentContextId: 'A', records: ['first', 'second'], hasMore: false });
+    expect(selection.getSnapshot()).toMatchObject({ selection: 'A', records: ['first', 'second'], hasMore: false });
     expect(source.opens()).toBe(1);
     expect(native.pages()).toBe(1);
     expect(source.resource.getSnapshot().status).toBe('ready');
@@ -192,7 +212,7 @@ describe('store collection selections', () => {
     const owner = fixture();
     const first = owner.resource('A', { native: nativeView(readyState([])) });
     owner.resource('B', { native: nativeView(readyState([])) });
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     await selection.select('A');
     const selectedA = selection.getSnapshot();
     await expect(selection.select('')).rejects.toBeInstanceOf(TypeError);
@@ -200,9 +220,9 @@ describe('store collection selections', () => {
     expect(first.resource.getSnapshot().status).toBe('ready');
     await selection.select('B');
     expect(selection.getSnapshot()).not.toBe(selectedA);
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'B', records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'B', records: [] });
     await selection.select(null);
-    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
     await owner.close();
   });
 
@@ -211,16 +231,16 @@ describe('store collection selections', () => {
     const source = owner.resource('A');
     const releasePrefetch = source.resource.retain();
     await source.resource.ready();
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     let handoffs = 0;
     selection.subscribe((state): void => {
-      if (state.parentContextId === 'A' && state.status === 'ready') {
+      if (state.selection === 'A' && state.status === 'ready') {
         handoffs += 1;
         releasePrefetch();
       }
     });
     await selection.select('A');
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['A'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'A', records: ['A'] });
     expect(source.opens()).toBe(1);
     expect(source.native.closes()).toBe(0);
     expect(handoffs).toBe(1);
@@ -235,7 +255,7 @@ describe('store collection selections', () => {
     const second = owner.resource('B');
     const releaseBackground = first.resource.retain();
     await first.resource.ready();
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     await selection.select('A');
     await selection.select('B');
     expect(first.resource.getSnapshot().status).toBe('ready');
@@ -255,19 +275,19 @@ describe('store collection selections', () => {
     const opening = deferred<ExpandableRecordView<string>>();
     const first = owner.resource('A', { open: (): Promise<ExpandableRecordView<string>> => opening.promise });
     owner.resource('B');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const pending = selection.select('A');
     const obsolete = pending.catch((error: unknown): unknown => error);
     await first.openRequested;
     await selection.select('B');
     expect(await obsolete).toBeInstanceOf(StoreRetiredError);
     const states: Array<string | null> = [];
-    selection.subscribe((state): void => { states.push(state.parentContextId); });
+    selection.subscribe((state): void => { states.push(state.selection); });
     opening.resolve(first.native.view);
     await owner.close();
     expect(first.native.closes()).toBe(1);
     expect(states).not.toContain('A');
-    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
   });
 
   it('does not revive the first A waiter after A to B to A while a background lease preserves the handle', async () => {
@@ -276,7 +296,7 @@ describe('store collection selections', () => {
     const first = owner.resource('A', { native });
     owner.resource('B');
     const releaseBackground = first.resource.retain();
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const firstA = selection.select('A');
     const obsolete = firstA.catch((error: unknown): unknown => error);
     await native.readyRequested;
@@ -285,7 +305,7 @@ describe('store collection selections', () => {
     const secondA = selection.select('A');
     native.publish(readyState(['current A']));
     await secondA;
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['current A'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'A', records: ['current A'] });
     expect(first.opens()).toBe(1);
     expect(native.closes()).toBe(0);
     selection.close();
@@ -300,8 +320,8 @@ describe('store collection selections', () => {
     const native = nativeView(Object.freeze({ status: 'loading', records: Object.freeze([]), hasMore: false, current: false }));
     const first = owner.resource('A', { native });
     owner.resource('B');
-    const primary = createCollectionSelection(owner.scope, owner.within);
-    const auxiliary = createCollectionSelection(owner.scope, owner.within);
+    const primary = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
+    const auxiliary = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const pending = primary.select('A').catch((error: unknown): unknown => error);
     const auxiliaryReady = auxiliary.select('A');
     await native.readyRequested;
@@ -310,8 +330,8 @@ describe('store collection selections', () => {
     expect(first.resource.getSnapshot().status).toBe('loading');
     native.publish(readyState(['shared A']));
     await auxiliaryReady;
-    expect(auxiliary.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['shared A'] });
-    expect(primary.getSnapshot().parentContextId).toBe('B');
+    expect(auxiliary.getSnapshot()).toMatchObject({ status: 'ready', selection: 'A', records: ['shared A'] });
+    expect(primary.getSnapshot().selection).toBe('B');
     expect(first.opens()).toBe(1);
     primary.close();
     expect(first.resource.getSnapshot().status).toBe('ready');
@@ -324,16 +344,16 @@ describe('store collection selections', () => {
     const native = nativeView(Object.freeze({ status: 'loading', records: Object.freeze([]), hasMore: false, current: false }));
     const source = owner.resource('A', { native });
     const releaseBackground = source.resource.retain();
-    const selection = createCollectionSelection(owner.scope, owner.within, { signal: controller.signal });
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within }, { signal: controller.signal });
     const pending = selection.select('A');
     const retired = pending.catch((error: unknown): unknown => error);
     await native.readyRequested;
     if (lifetime === 'owner') { controller.abort(); } else { owner.retire(); }
-    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
     expect(await retired).toBeInstanceOf(StoreRetiredError);
     await expect(selection.select(null)).rejects.toBeInstanceOf(StoreRetiredError);
     native.publish(readyState(['obsolete']));
-    expect(selection.getSnapshot().records).toEqual([]);
+    expect(selection.getSnapshot().records).toBeUndefined();
     if (lifetime === 'owner') { expect(source.resource.getSnapshot().status).toBe('ready'); }
     releaseBackground();
     await owner.close();
@@ -344,10 +364,10 @@ describe('store collection selections', () => {
     const controller = new AbortController();
     const source = owner.resource('A');
     if (lifetime === 'owner') { controller.abort(); } else { owner.retire(); }
-    const selection = createCollectionSelection(owner.scope, owner.within, { signal: controller.signal });
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within }, { signal: controller.signal });
     selection.subscribe((): void => {});
     await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError);
-    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
     expect(owner.resolutions()).toBe(0);
     expect(source.opens()).toBe(0);
     selection.close();
@@ -359,7 +379,7 @@ describe('store collection selections', () => {
     const first = owner.resource('A');
     const second = owner.resource('B');
     owner.resource('C');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const subscribe = first.resource.subscribe;
     let nested: Promise<void> | undefined;
     first.resource.subscribe = (listener): (() => void) => {
@@ -369,7 +389,7 @@ describe('store collection selections', () => {
     await selection.select('A');
     await expect(selection.select(parentContextId)).rejects.toBeInstanceOf(StoreRetiredError);
     await nested;
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'C', records: ['C'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'C', records: ['C'] });
     expect(first.resource.getSnapshot().status).toBe('idle');
     expect(second.resource.getSnapshot().status).toBe('idle');
     await owner.close();
@@ -379,14 +399,14 @@ describe('store collection selections', () => {
     const owner = fixture();
     const first = owner.resource('A');
     owner.resource('B');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     let nested: Promise<void> | undefined;
     selection.subscribe((state): void => {
-      if (state.parentContextId === 'A' && state.status === 'loading') { nested = selection.select('B'); }
+      if (state.selection === 'A' && state.status === 'loading') { nested = selection.select('B'); }
     });
     await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError);
     await nested;
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'B', records: ['B'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'B', records: ['B'] });
     expect(first.resource.getSnapshot().status).toBe('idle');
     await owner.close();
   });
@@ -395,18 +415,18 @@ describe('store collection selections', () => {
     const owner = fixture();
     owner.resource('A');
     owner.resource('B');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     let nested: Promise<void> | undefined;
     const inconsistent: Array<string | null> = [];
     selection.subscribe((state): void => {
-      if (state.parentContextId === 'A' && state.status === 'ready') { nested = selection.select('B'); }
+      if (state.selection === 'A' && state.status === 'ready') { nested = selection.select('B'); }
     });
     selection.subscribe((state): void => {
-      if (state.parentContextId !== selection.getSnapshot().parentContextId) { inconsistent.push(state.parentContextId); }
+      if (state.selection !== selection.getSnapshot().selection) { inconsistent.push(state.selection); }
     });
     await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError);
     await nested;
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'B' });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'B' });
     expect(inconsistent).toEqual([]);
     await owner.close();
   });
@@ -423,7 +443,7 @@ describe('store collection selections', () => {
     }));
     const first = owner.resource('A', { native });
     owner.resource('B');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     const ready = first.native.view.ready;
     let nested: Promise<void> | undefined;
     first.native.view.ready = (options): ReturnType<typeof ready> => {
@@ -433,19 +453,19 @@ describe('store collection selections', () => {
     };
     await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError);
     await nested;
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'B' });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'B' });
     await owner.close();
   });
 
   it('makes close terminal before a setup publication can reenter selection', async () => {
     const owner = fixture();
     const first = owner.resource('A');
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     selection.subscribe((state): void => {
       if (state.status === 'loading') { selection.close(); }
     });
     await expect(selection.select('A')).rejects.toBeInstanceOf(StoreRetiredError);
-    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
     expect(first.resource.getSnapshot().status).toBe('idle');
     await expect(selection.select(null)).rejects.toBeInstanceOf(StoreRetiredError);
     selection.close();
@@ -462,12 +482,12 @@ describe('store collection selections', () => {
       native : failed,
       open   : async (): Promise<ExpandableRecordView<string>> => ++opens === 1 ? failed.view : recovered.view,
     });
-    const selection = createCollectionSelection(owner.scope, owner.within);
+    const selection = createResourceFactory(owner.scope)({ selection: null as string | null, source: owner.within });
     await expect(selection.select('A')).rejects.toBe(failure);
-    expect(selection.getSnapshot()).toMatchObject({ status: 'error', parentContextId: 'A', error: failure });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'error', selection: 'A', error: failure });
     await source.resource.retry();
     await selection.select('A');
-    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['recovered'] });
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', selection: 'A', records: ['recovered'] });
     expect(source.opens()).toBe(2);
     await owner.close();
     expect(failed.closes()).toBe(1);
@@ -488,14 +508,14 @@ describe('store collection selections', () => {
       note   : recordCodecs.json<{ text: string }>(),
     });
     const context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [protocol] }) });
-    const callbacks: Array<() => void | Promise<void>> = [];
+    const callbacks = new Set<() => void | Promise<void>>();
     const scope: StoreScope = {
       signal        : context.session.signal,
       assertCurrent : (): void => {
         if (context.session.signal.aborted) { throw new StoreRetiredError(); }
       },
       getEnbox : () => context.enbox,
-      onClose  : (callback): void => { callbacks.push(callback); },
+      onClose  : (callback): (() => void) => { callbacks.add(callback); return (): void => { callbacks.delete(callback); }; },
     };
     try {
       const store = createProtocolStore(protocol, scope);
@@ -507,8 +527,8 @@ describe('store collection selections', () => {
       const secondCollection = family.within(second.contextId);
       await firstCollection.create.run({ text: 'A note' });
       await secondCollection.create.run({ text: 'B note' });
-      const primary = family.createSelection();
-      const auxiliary = family.createSelection();
+      const primary = createResourceFactory(scope)({ selection: null as string | null, source: family.within });
+      const auxiliary = createResourceFactory(scope)({ selection: null as string | null, source: family.within });
       expect(primary).not.toBe(auxiliary);
       await Promise.all([primary.select(first.contextId), auxiliary.select(first.contextId)]);
       await primary.select(second.contextId);
@@ -519,10 +539,10 @@ describe('store collection selections', () => {
       expect(secondCollection.getSnapshot().status).toBe('idle');
       expect(firstCollection.getSnapshot().status).toBe('ready');
       await context.close();
-      expect(auxiliary.getSnapshot()).toMatchObject({ status: 'idle', parentContextId: null, records: [] });
+      expect(auxiliary.getSnapshot()).toMatchObject({ status: 'idle', selection: null });
       await expect(auxiliary.select(first.contextId)).rejects.toBeInstanceOf(StoreRetiredError);
     } finally {
-      await Promise.all(callbacks.map(callback => callback()));
+      await Promise.all([...callbacks].map(callback => callback()));
       await context.close();
     }
   });

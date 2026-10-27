@@ -2,352 +2,564 @@ import type { ObservableStore } from '../observable-store.js';
 import type { StoreScope } from './scope.js';
 import type { ExpandableRecordView, RecordViewState } from '../record-view.js';
 
-import { StoreNotConnectedError, StoreRetiredError, toStoreError } from './scope.js';
+import { StoreNotConnectedError, StoreRetiredError, toStoreError, withStoreSignal } from './scope.js';
 
-/** Native collection state plus an empty idle state when no observation or usable session is available. */
-export type StoreCollectionState<Item> = RecordViewState<Item> | Readonly<{
-  status: 'idle';
-  records: readonly Item[];
-  hasMore: false;
-  current: false;
-  error?: never;
-}>;
+/** State shared by native observable views; payload fields remain native to each view. */
+export type ResourceViewState = Readonly<
+  | { status: 'loading'; error?: never }
+  | { status: 'ready'; error?: never }
+  | { status: 'error'; error: Error }
+>;
 
-/**
- * A shared lazy observation of one native materialized selection.
- * Subscriptions and retain() keep it live; async controls hold temporary leases.
- * Constructing or reading the handle does not open a view.
- */
-export interface StoreCollectionResource<Item> extends ObservableStore<StoreCollectionState<Item>> {
-  /** Return cached empty idle state for server rendering and hydration. */
-  getServerSnapshot(): StoreCollectionState<Item>;
-  /** Keep the selection live until the returned idempotent release function runs or its session ends. */
+type Payload<State> = State extends unknown ? Omit<State, 'status' | 'error' | 'selection' | 'isLoadingMore'> : never;
+type SelectionState<Selection> = [Selection] extends [never] ? unknown : Readonly<{ selection: Selection | null }>;
+type ReadyResourceState<State, Selection> = Extract<State, { status: 'ready' }> &
+  Readonly<{ isLoadingMore: boolean }> & SelectionState<Selection>;
+
+/** Native state with shared ownership metadata; payloads are optional until a view supplies them. */
+export type StoreResourceState<State extends ResourceViewState, Selection = never> = (
+  | (Partial<Payload<State>> & Readonly<{ status: 'idle'; error?: never }>)
+  | (Partial<Payload<State>> & Readonly<{ status: 'loading'; error?: never }>)
+  | (Partial<Payload<State>> & Readonly<{ status: 'error'; error: Error }>)
+  | Extract<State, { status: 'ready' }>
+) & Readonly<{ isLoadingMore: boolean }> & SelectionState<Selection>;
+
+interface ResourceOwner<State extends ResourceViewState, Selection> extends ObservableStore<StoreResourceState<State, Selection>> {
+  /** Cached idle state for server rendering and hydration; never opens a view. */
+  getServerSnapshot(): StoreResourceState<State, Selection>;
+  /** Keep this resource live until the returned idempotent release runs or its owner ends. */
   retain(): () => void;
-  /**
-   * Wait for usable local rows, including all pages when loadAll is enabled.
-   * This waiter releases its lease on settlement; cancellation affects only this waiter.
-   * Use retain() when the observation must remain live afterwards.
-   */
-  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>>;
-  /**
-   * Reopen the view and wait for attachment, rather than usable rows.
-   * Concurrent retries share completion; existing subscriptions and leases remain in effect.
-   * Retain or subscribe when the replacement observation must remain live after this call.
-   */
+  /** Wait for usable local state with a temporary lease; cancellation affects this waiter alone. */
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyResourceState<State, Selection>>;
+  /** Reopen the current selection and await usable rows, including configured loadAll pages. */
   retry(): Promise<void>;
-  /**
-   * Expand the native prefix by one configured page; concurrent calls share work and failures remain observable.
-   * Retain or subscribe to preserve the expanded prefix after this temporary control lease ends.
-   */
-  loadMore(): Promise<void>;
-  /**
-   * Recompute usable local rows, including loadAll pages, without implying remote replication is current.
-   * The returned state does not retain the observation; retain or subscribe for later updates.
-   */
-  refresh(): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>>;
+  /** Invalidate this owner and await its native openers and cleanup, surfacing release failures. */
+  close(): Promise<void>;
 }
 
-/** @internal Mutation commands refresh retained selections without opening unused views. */
+/** A lazy native-view owner; keyed resources also own their explicit choice until cleared or closed. */
+export type StoreResource<State extends ResourceViewState = ResourceViewState, Selection = never> =
+  ResourceOwner<State, Selection> & ([Selection] extends [never] ? unknown : Readonly<{
+    /** Select and retain one key until replacement, null, close, or abort; await its usable local state. */
+    select(selection: Selection | null): Promise<void>;
+  }>);
+
+interface ResourceView<State extends ResourceViewState = ResourceViewState> extends ObservableStore<State> {
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<Extract<State, { status: 'ready' }>>;
+  close(): Promise<void>;
+}
+type Refresh<State extends ResourceViewState, Selection> = Readonly<{
+  /** Recompute native local state without implying remote replication is current. */
+  refresh(): Promise<ReadyResourceState<State, Selection>>;
+}>;
+type Pagination = Readonly<{
+  /** Share one page expansion and await its usable local rows. */
+  loadMore(): Promise<void>;
+}>;
+type ViewState<View extends ResourceView> = ReturnType<View['getSnapshot']>;
+type ResourceState<Resource extends StoreResource> = Extract<
+  ReturnType<Resource['getSnapshot']> extends infer State
+    ? State extends unknown ? Omit<State, 'selection' | 'isLoadingMore'> : never
+    : never,
+  ResourceViewState
+>;
+type Capabilities<View, State extends ResourceViewState, Selection> =
+  (View extends { refresh(): unknown } ? Refresh<State, Selection> : unknown) &
+  (View extends { loadMore(): unknown } ? Pagination : unknown);
+type ResourceForView<View extends ResourceView, Selection = never> =
+  StoreResource<ViewState<View>, Selection> & Capabilities<View, ViewState<View>, Selection>;
+type ResourceForSource<Resource extends StoreResource, Selection> =
+  StoreResource<ResourceState<Resource>, Selection> & Capabilities<Resource, ResourceState<Resource>, Selection>;
+type ResourceOptions = Readonly<{ signal?: AbortSignal; loadAll?: never }>;
+type ExpandableOptions = Readonly<{ signal?: AbortSignal; loadAll?: boolean }>;
+type NativeSelection<Selection, View extends ResourceView> = Readonly<{
+  selection: Selection | null;
+  open(selection: Selection, signal: AbortSignal): Promise<View>;
+  source?: never;
+}>;
+type BorrowedSelection<Selection, Resource extends StoreResource> = Readonly<{
+  selection: Selection | null;
+  source(selection: Selection): Resource;
+  open?: never;
+}>;
+
+/** One scoped factory for fixed views, keyed views, or borrowed canonical resource handles. */
+export interface ResourceFactory {
+  <View extends ResourceView & Pagination>(
+    open: (signal: AbortSignal) => Promise<View>, options: ExpandableOptions,
+  ): ResourceForView<View>;
+  <View extends ResourceView>(open: (signal: AbortSignal) => Promise<View>, options?: ResourceOptions): ResourceForView<View>;
+  <Selection, View extends ResourceView & Pagination>(
+    config: NativeSelection<Selection, View>, options: ExpandableOptions,
+  ): ResourceForView<View, Selection>;
+  <Selection, View extends ResourceView>(
+    config: NativeSelection<Selection, View>, options?: ResourceOptions,
+  ): ResourceForView<View, Selection>;
+  <Selection, Resource extends StoreResource & Pagination>(
+    config: BorrowedSelection<Selection, Resource>, options: ExpandableOptions,
+  ): ResourceForSource<Resource, Selection>;
+  <Selection, Resource extends StoreResource>(
+    config: BorrowedSelection<Selection, Resource>, options?: ResourceOptions,
+  ): ResourceForSource<Resource, Selection>;
+}
+
+/** Protocol collections preserve their always-present native record payload. */
+export type StoreCollectionState<Item> = (RecordViewState<Item> | Readonly<{
+  status: 'idle'; records: readonly Item[]; hasMore: false; current: false; error?: never;
+}>) & Readonly<{ isLoadingMore: boolean }>;
+
+/** Typed owned-collection convenience over the common resource owner. */
+export interface StoreCollectionResource<Item> extends StoreResource<RecordViewState<Item>>, Refresh<RecordViewState<Item>, never>, Pagination {
+  getSnapshot(): StoreCollectionState<Item>;
+  getServerSnapshot(): StoreCollectionState<Item>;
+}
+/** @internal Mutation barriers refresh existing observations without opening unused resources. */
 export interface StoreCollectionController<Item> extends StoreCollectionResource<Item> {
-  /** Refresh only an existing observation; an unused selection remains unopened. */
   refreshIfActive(): Promise<void>;
 }
 
-/** One pending or attached native view, with cancellation and serialized pagination controls. */
-type CollectionObservation<Item> = {
+type Backend = ResourceView | StoreResource;
+type SourceState = ResourceViewState | StoreResourceState<ResourceViewState>;
+type ResourceConfiguration =
+  | { kind: 'native'; keyed: boolean; selection: unknown; open(key: unknown, signal: AbortSignal): Promise<ResourceView> }
+  | { kind: 'source'; keyed: true; selection: unknown; source(key: unknown): StoreResource };
+type OwnerOptions = Readonly<{
+  signal?: AbortSignal;
+  loadAll?: boolean;
+  emptyPayload?: Readonly<object>;
+  onObservationChange?: (active: boolean) => void;
+}>;
+type Slot = { key: unknown; source?: StoreResource; observation?: Observation; retrying?: Promise<void> };
+type Observation = {
+  slot: Slot;
   abortController: AbortController;
-  openPromise: Promise<ExpandableRecordView<Item>>;
-  view?: ExpandableRecordView<Item>;
+  opening: Promise<Backend>;
+  backend?: Backend;
   unsubscribe?: () => void;
-  loadMorePromise?: Promise<void>;
-  loadAllPromise?: Promise<void>;
+  sourceState?: SourceState;
+  paging?: Promise<void>;
+  expanding?: Promise<void>;
+};
+type RuntimeResource = StoreResource<ResourceViewState, unknown> & Refresh<ResourceViewState, unknown> & Pagination & {
+  refreshIfActive(): Promise<void>;
 };
 
-/** @internal Keep native view ownership outside framework bindings. */
+/** @internal Bind the shared owner to a feature's exact authorization scope. */
+export function createResourceFactory(scope: StoreScope): ResourceFactory {
+  const factory = (
+    input: ((signal: AbortSignal) => Promise<ResourceView>) | Readonly<{
+      selection: unknown;
+      open?: (key: unknown, signal: AbortSignal) => Promise<ResourceView>;
+      source?: (key: unknown) => StoreResource;
+    }>,
+    options: OwnerOptions = {},
+  ): RuntimeResource => {
+    if (typeof input === 'function') {
+      return createOwner(scope, { kind: 'native', keyed: false, selection: undefined, open: (_key, signal) => input(signal) }, options);
+    }
+    if (!Object.hasOwn(input, 'selection') || (typeof input.open === 'function') === (typeof input.source === 'function')) {
+      throw new TypeError('Resource: a keyed resource requires selection and exactly one open or source function.');
+    }
+    return createOwner(scope, typeof input.open === 'function'
+      ? { kind: 'native', keyed: true, selection: input.selection, open: input.open }
+      : { kind: 'source', keyed: true, selection: input.selection, source: input.source! }, options);
+  };
+  // The overloads retain native state, supported controls, and key types erased by the owner.
+  return factory as unknown as ResourceFactory;
+}
+
+/** @internal An empty-record adapter, not another ownership implementation. */
 export function createCollectionResource<Item>(
   scope: StoreScope,
-  openView: (signal: AbortSignal) => Promise<ExpandableRecordView<Item>>,
-  options: Readonly<{
-    loadAll?: boolean;
-    /** Keep protocol write refreshers limited to observations with an active owner. */
-    onObservationChange?: (active: boolean) => void;
-  }> = {},
+  open: (signal: AbortSignal) => Promise<ExpandableRecordView<Item>>,
+  options: Readonly<{ loadAll?: boolean; onObservationChange?: (active: boolean) => void }> = {},
 ): StoreCollectionController<Item> {
-  const idleState = Object.freeze({ status: 'idle' as const, records: Object.freeze([]), hasMore: false as const, current: false as const });
-  let state: StoreCollectionState<Item> = idleState;
-  let activeObservation: CollectionObservation<Item> | undefined;
-  let leaseCount = 0;
-  let closed = false;
-  let closePromise: Promise<void> | undefined;
-  let retrying: Promise<void> | undefined;
-  const listeners = new Set<(state: StoreCollectionState<Item>) => void>();
+  return createOwner(scope, {
+    kind      : 'native',
+    keyed     : false,
+    selection : undefined,
+    open      : (_key, signal) => open(signal),
+  }, {
+    ...options,
+    emptyPayload: Object.freeze({ records: Object.freeze([]), hasMore: false, current: false }),
+  }) as unknown as StoreCollectionController<Item>;
+}
+
+function createOwner(parentScope: StoreScope, config: ResourceConfiguration, options: OwnerOptions): RuntimeResource {
+  if (options.loadAll !== undefined && typeof options.loadAll !== 'boolean') {
+    throw new TypeError('Resource: loadAll must be a boolean.');
+  }
+  const scope = withStoreSignal(parentScope, options.signal);
+  const signal = scope.signal;
+  const loadAll = options.loadAll === true;
+  const listeners = new Set<(state: StoreResourceState<ResourceViewState, unknown>) => void>();
+  const openings = new Set<Promise<Backend>>();
   const cleanups = new Set<Promise<void>>();
   const cleanupFailures: unknown[] = [];
-  const openings = new Set<Promise<ExpandableRecordView<Item>>>();
+  let slot: Slot = { key: config.selection };
+  let selected = false;
+  let leases = 0;
+  let closed = false;
+  let closePromise: Promise<void> | undefined;
+  let observing = false;
+  let publication = 0;
 
-  const publish = (nextState: StoreCollectionState<Item>): void => {
-    if (closed || state === nextState) { return; }
-    state = nextState;
+  const snapshot = (native: object, key: unknown, loadingMore = false): StoreResourceState<ResourceViewState, unknown> => Object.freeze({
+    ...native,
+    isLoadingMore: loadingMore,
+    ...(config.keyed ? { selection: key } : {}),
+  }) as StoreResourceState<ResourceViewState, unknown>;
+  const idle = (key: unknown): StoreResourceState<ResourceViewState, unknown> =>
+    snapshot({ ...options.emptyPayload, status: 'idle' }, key);
+  const serverState = idle(config.selection);
+  let state = serverState;
+
+  const assertOpen = (): void => {
+    if (closed || signal.aborted) { throw new StoreRetiredError(); }
+    scope.assertCurrent();
+  };
+  const assertSlot = (captured: Slot): void => {
+    assertOpen();
+    if (slot !== captured) { throw new StoreRetiredError(); }
+  };
+  const current = (observation: Observation): boolean =>
+    !closed && !signal.aborted && slot === observation.slot && slot.observation === observation;
+  const assertObservation = (observation: Observation): void => {
+    assertSlot(observation.slot);
+    if (observation.slot.observation !== observation) { throw new StoreRetiredError(); }
+  };
+  const publish = (next: StoreResourceState<ResourceViewState, unknown>): void => {
+    if (state === next) { return; }
+    state = next;
+    const revision = ++publication;
     const subscribers = [...listeners];
     for (const listener of subscribers) {
+      if (revision !== publication) { return; }
       if (listeners.has(listener)) {
-        try { listener(nextState); } catch { /* Consumer failures do not affect a native view. */ }
+        try { listener(next); } catch { /* Consumer failures cannot interrupt ownership changes. */ }
       }
     }
   };
-  const isActiveObservation = (observation: CollectionObservation<Item>): boolean =>
-    !closed && !scope.signal.aborted && activeObservation === observation;
-  const assertActiveObservation = (observation: CollectionObservation<Item>): void => {
-    scope.assertCurrent();
-    if (!isActiveObservation(observation)) { throw new StoreRetiredError(); }
+  const observationChanged = (): void => {
+    const next = slot.observation !== undefined;
+    if (observing !== next) { observing = next; options.onObservationChange?.(next); }
   };
-  const trackClose = (view: ExpandableRecordView<Item>): Promise<void> => {
-    // Register completion before native cleanup can synchronously reenter this owner.
-    const cleanup = Promise.resolve().then(() => view.close());
-    cleanups.add(cleanup);
-    void cleanup.then(
-      (): void => { cleanups.delete(cleanup); },
-      (error: unknown): void => {
-        cleanups.delete(cleanup);
-        cleanupFailures.push(error);
-        console.warn('[@enbox/api] Store resource cleanup failed.', error);
-      },
+  const cleanupFailed = (error: unknown): void => {
+    cleanupFailures.push(error);
+    console.warn('[@enbox/api] Store resource cleanup failed.', error);
+  };
+  const trackClose = (backend: Pick<Backend, 'close'>): Promise<void> => {
+    const closing = Promise.resolve().then(() => backend.close());
+    cleanups.add(closing);
+    void closing.then(
+      (): void => { cleanups.delete(closing); },
+      (error: unknown): void => { cleanups.delete(closing); cleanupFailed(error); },
     );
-    return cleanup;
+    return closing;
   };
-  const retireObservation = (): void => {
-    const previous = activeObservation;
-    // Detach first so cleanup callbacks cannot reclaim the retiring view.
-    activeObservation = undefined;
+  const retire = (previous: Observation | undefined): void => {
     if (previous === undefined) { return; }
-    // Acquire cleanup ownership before unsubscribe or abort callbacks can reenter close().
-    if (previous.view !== undefined) { void trackClose(previous.view); }
-    options.onObservationChange?.(false);
-    try { previous.unsubscribe?.(); } finally { previous.abortController.abort(); }
+    if (previous.slot.observation === previous) { previous.slot.observation = undefined; }
+    // Own native completion before unsubscribe/abort callbacks can reenter close().
+    if (config.kind === 'native' && previous.backend !== undefined) { void trackClose(previous.backend); }
+    const unsubscribe = previous.unsubscribe;
+    previous.unsubscribe = undefined;
+    observationChanged();
+    try { unsubscribe?.(); } catch (error: unknown) { cleanupFailed(error); }
+    finally { previous.abortController.abort(new StoreRetiredError()); }
   };
-  const fail = (observation: CollectionObservation<Item>, error: unknown): void => {
-    if (!isActiveObservation(observation)) { return; }
-    publish(Object.freeze({
-      status  : 'error',
-      records : state.records,
-      hasMore : state.hasMore,
-      current : false,
-      error   : toStoreError(error),
-    }));
+  const apply = (observation: Observation, next: SourceState, force = false): void => {
+    if (!current(observation)) { return; }
+    const loadingMore = observation.paging !== undefined || ('isLoadingMore' in next && next.isLoadingMore);
+    if (!force && observation.sourceState === next && state.isLoadingMore === loadingMore) { return; }
+    observation.sourceState = next;
+    publish(snapshot(next, observation.slot.key, loadingMore));
+    if (loadAll && next.status === 'ready' && 'hasMore' in next && next.hasMore) {
+      void expandAll(observation).catch((): void => {});
+    }
   };
-
-  const page = (observation: CollectionObservation<Item>): Promise<void> => {
-    if (observation.loadMorePromise !== undefined) { return observation.loadMorePromise; }
-    const pending = observation.openPromise.then(async (view): Promise<void> => {
-      assertActiveObservation(observation);
-      await view.loadMore();
-    });
-    observation.loadMorePromise = pending;
-    void pending.then(
-      (): void => { observation.loadMorePromise = undefined; },
-      (error: unknown): void => { observation.loadMorePromise = undefined; fail(observation, error); },
-    );
-    return pending;
+  const fail = (observation: Observation, error: unknown): void => {
+    if (!current(observation)) { return; }
+    const previous = observation.sourceState ?? options.emptyPayload ?? {};
+    publish(snapshot({
+      ...previous,
+      status : 'error',
+      error  : toStoreError(error),
+      ...('current' in previous ? { current: false } : {}),
+    }, observation.slot.key, observation.paging !== undefined));
   };
-
-  const drainAll = (observation: CollectionObservation<Item>): Promise<void> => {
-    if (observation.loadAllPromise !== undefined) { return observation.loadAllPromise; }
-    const pending = observation.openPromise.then((view): Promise<void> => {
-      const expand = (): Promise<void> => {
-        if (!isActiveObservation(observation) || !view.getSnapshot().hasMore) { return Promise.resolve(); }
-        return page(observation).then(expand);
-      };
-      return view.ready({ signal: observation.abortController.signal }).then(expand);
-    });
-    observation.loadAllPromise = pending;
-    void pending.then(
-      (): void => { observation.loadAllPromise = undefined; },
-      (error: unknown): void => { observation.loadAllPromise = undefined; fail(observation, error); },
-    );
-    return pending;
+  const attach = (observation: Observation, backend: Backend): void => {
+    observation.backend = backend;
+    const unsubscribe = backend.subscribe((next): void => { apply(observation, next); });
+    if (!current(observation)) { unsubscribe(); return; }
+    observation.unsubscribe = unsubscribe;
+    apply(observation, backend.getSnapshot());
   };
-
-  const refresh = async (observation: CollectionObservation<Item>): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
-    try {
-      const view = await observation.openPromise;
-      assertActiveObservation(observation);
-      await view.refresh();
-      if (options.loadAll) { await drainAll(observation); }
-      assertActiveObservation(observation);
-      const state = await view.ready();
-      assertActiveObservation(observation);
-      return state;
-    } catch (error: unknown) { fail(observation, error); throw error; }
-  };
-
-  const startObservation = (): CollectionObservation<Item> => {
-    scope.assertCurrent();
-    if (closed) { throw new StoreRetiredError(); }
-    if (activeObservation !== undefined) { return activeObservation; }
-    const abortController = new AbortController();
-    const observation: CollectionObservation<Item> = {
-      abortController,
-      // The owner registers this observation before its opener runs.
-      openPromise: Promise.resolve().then(async (): Promise<ExpandableRecordView<Item>> => {
-        assertActiveObservation(observation);
-        const view = await openView(AbortSignal.any([abortController.signal, scope.signal]));
-        if (!isActiveObservation(observation)) {
-          await trackClose(view);
+  const start = (captured: Slot, replace = false): Observation => {
+    assertSlot(captured);
+    if (config.keyed && captured.key === null) { throw new StoreRetiredError(); }
+    if (!replace && captured.observation !== undefined) { return captured.observation; }
+    if (config.kind === 'source' && captured.source === undefined) {
+      try { captured.source = config.source(captured.key); }
+      finally { assertSlot(captured); }
+    }
+    const previous = captured.observation;
+    const observation: Observation = {
+      slot            : captured,
+      abortController : new AbortController(),
+      opening         : Promise.resolve().then(async (): Promise<Backend> => {
+        assertObservation(observation);
+        if (config.kind === 'source') { return captured.source!; }
+        const backend = await config.open(captured.key, AbortSignal.any([signal, observation.abortController.signal]));
+        if (!current(observation)) {
+          await trackClose(backend);
           throw new StoreRetiredError();
         }
-        observation.view = view;
-        // Attach before reading state, then check again in case subscribe() reentered cleanup.
-        const unsubscribe = view.subscribe((state): void => {
-          if (isActiveObservation(observation)) {
-            publish(state);
-            if (options.loadAll && state.status === 'ready' && state.hasMore) {
-              void drainAll(observation).catch((): void => {});
-            }
-          }
-        });
-        if (!isActiveObservation(observation)) {
-          unsubscribe();
-          return view;
-        }
-        observation.unsubscribe = unsubscribe;
-        publish(view.getSnapshot());
-        return view;
+        attach(observation, backend);
+        return backend;
       }),
     };
-    activeObservation = observation;
-    openings.add(observation.openPromise);
-    void observation.openPromise.then(
-      (): void => { openings.delete(observation.openPromise); },
-      (): void => { openings.delete(observation.openPromise); },
+    captured.observation = observation;
+    openings.add(observation.opening);
+    void observation.opening.then(
+      (): void => { openings.delete(observation.opening); },
+      (error: unknown): void => { openings.delete(observation.opening); fail(observation, error); },
     );
-    options.onObservationChange?.(true);
-    publish(Object.freeze({ status: 'loading', records: Object.freeze([]), hasMore: false, current: false }));
-    void observation.openPromise.catch((error: unknown): void => { fail(observation, error); });
-    if (options.loadAll) { void drainAll(observation).catch((): void => {}); }
+    try {
+      observationChanged();
+      if (config.kind === 'source') {
+        // Borrow before publishing: a listener can release the last prefetch lease.
+        attach(observation, captured.source!);
+      } else if (current(observation)) {
+        publish(snapshot({ ...options.emptyPayload, status: 'loading' }, captured.key));
+      }
+    } finally { retire(previous); }
     return observation;
   };
-  const startAutomaticObservation = (): void => {
-    try { startObservation(); } catch (error: unknown) {
-      if (!(error instanceof StoreNotConnectedError) && !closed && !scope.signal.aborted) {
-        publish(Object.freeze({ status: 'error', records: Object.freeze([]), hasMore: false, current: false, error: toStoreError(error) }));
+  const automaticStart = (): void => {
+    const captured = slot;
+    if (config.keyed && captured.key === null) { return; }
+    try { start(captured); } catch (error: unknown) {
+      if (!(error instanceof StoreNotConnectedError) && !closed && !signal.aborted && slot === captured) {
+        publish(snapshot({ ...options.emptyPayload, status: 'error', error: toStoreError(error) }, captured.key));
       }
     }
   };
   const releaseUnused = (): void => {
-    if (leaseCount === 0 && listeners.size === 0 && !closed) {
-      retireObservation();
-      if (activeObservation === undefined) { publish(idleState); }
-    }
+    if (closed || selected || leases > 0 || listeners.size > 0) { return; }
+    retire(slot.observation);
+    if (slot.observation === undefined) { publish(idle(slot.key)); }
   };
-  const acquireLease = (): (() => void) => {
-    leaseCount += 1;
+  const lease = (): (() => void) => {
+    leases += 1;
     let released = false;
     return (): void => {
       if (released) { return; }
       released = true;
-      leaseCount -= 1;
+      leases -= 1;
       releaseUnused();
     };
+  };
+  const waitSignal = (observation: Observation, caller?: AbortSignal): AbortSignal =>
+    AbortSignal.any(caller === undefined
+      ? [signal, observation.abortController.signal]
+      : [signal, observation.abortController.signal, caller]);
+  const page = (observation: Observation): Promise<void> => {
+    if (observation.paging !== undefined) { return observation.paging; }
+    const pending = observation.opening.then(async (backend): Promise<void> => {
+      assertObservation(observation);
+      if (!('loadMore' in backend) || typeof backend.loadMore !== 'function') {
+        throw new TypeError('Resource: this native view does not support loadMore().');
+      }
+      try {
+        await backend.loadMore();
+        await whileNotAborted(backend.ready({ signal: waitSignal(observation) }), waitSignal(observation));
+      } finally { assertObservation(observation); }
+    });
+    observation.paging = pending;
+    if (observation.sourceState !== undefined) { apply(observation, observation.sourceState, true); }
+    void pending.then(
+      (): void => {
+        observation.paging = undefined;
+        if (observation.sourceState !== undefined) { apply(observation, observation.sourceState, true); }
+      },
+      (error: unknown): void => { observation.paging = undefined; fail(observation, error); },
+    );
+    return pending;
+  };
+  const expandAll = (observation: Observation): Promise<void> => {
+    if (observation.expanding !== undefined) { return observation.expanding; }
+    const pending = observation.opening.then(async (backend): Promise<void> => {
+      if (!('loadMore' in backend) || typeof backend.loadMore !== 'function') {
+        throw new TypeError('Resource: loadAll requires an expandable native view.');
+      }
+      await whileNotAborted(backend.ready({ signal: waitSignal(observation) }), waitSignal(observation));
+      const expand = (): Promise<void> => {
+        assertObservation(observation);
+        const next = backend.getSnapshot();
+        if (!('hasMore' in next) || !next.hasMore) { return Promise.resolve(); }
+        return page(observation).then(expand);
+      };
+      return expand();
+    });
+    observation.expanding = pending;
+    void pending.then(
+      (): void => { observation.expanding = undefined; },
+      (error: unknown): void => { observation.expanding = undefined; fail(observation, error); },
+    );
+    return pending;
+  };
+  const usable = async (
+    observation: Observation,
+    caller?: AbortSignal,
+  ): Promise<ReadyResourceState<ResourceViewState, unknown>> => {
+    const waiting = waitSignal(observation, caller);
+    try {
+      const backend = await whileNotAborted(observation.opening, waiting);
+      assertObservation(observation);
+      if (loadAll) { await whileNotAborted(expandAll(observation), waiting); }
+      const ready = await whileNotAborted(backend.ready({ signal: waiting }), waiting);
+      waiting.throwIfAborted();
+      return snapshot(ready, observation.slot.key, state.isLoadingMore) as ReadyResourceState<ResourceViewState, unknown>;
+    } finally { assertObservation(observation); }
+  };
+  const withLease = async <Value>(operation: (captured: Slot) => Promise<Value>): Promise<Value> => {
+    assertOpen();
+    const captured = slot;
+    const release = lease();
+    try { return await operation(captured); }
+    finally {
+      release();
+      // Final-lease cleanup can synchronously replace the key or retire this owner.
+      assertSlot(captured);
+    }
+  };
+  const refreshObservation = async (observation: Observation): Promise<ReadyResourceState<ResourceViewState, unknown>> => {
+    try {
+      const backend = await observation.opening;
+      assertObservation(observation);
+      if (!('refresh' in backend) || typeof backend.refresh !== 'function') {
+        throw new TypeError('Resource: this native view does not support refresh().');
+      }
+      await backend.refresh();
+      return await usable(observation);
+    } catch (error: unknown) { fail(observation, error); throw error; }
+    finally { assertObservation(observation); }
   };
   const waitForCleanup = async (): Promise<void> => {
     await Promise.allSettled(openings);
     await Promise.allSettled(cleanups);
-    // Late openers and reentrant cleanup can register another owned close while earlier work finishes.
     if (openings.size > 0 || cleanups.size > 0) { return waitForCleanup(); }
-    if (cleanupFailures.length > 0) {
-      throw new AggregateError(cleanupFailures, 'Store resource cleanup failed.');
-    }
+    if (cleanupFailures.length > 0) { throw new AggregateError(cleanupFailures, 'Store resource cleanup failed.'); }
   };
   const close = (): Promise<void> => {
     if (closePromise !== undefined) { return closePromise; }
-    // Install terminal completion before retiring subscriptions can synchronously reenter.
-    closePromise = Promise.resolve().then(waitForCleanup);
-    try {
-      retireObservation();
-    } catch (error) {
-      cleanupFailures.push(error);
-    } finally {
-      publish(idleState);
-      closed = true;
+    closePromise = Promise.resolve().then(waitForCleanup).then((): void => {
+      // Keep pending or failed cleanup owned by application disposal.
+      unregister();
+    });
+    const previous = slot;
+    slot = { key: config.keyed ? null : undefined };
+    selected = false;
+    closed = true;
+    publish(idle(slot.key));
+    try { retire(previous.observation); } finally {
       listeners.clear();
-      scope.signal.removeEventListener('abort', abort);
+      signal.removeEventListener('abort', abort);
     }
     return closePromise;
   };
   const abort = (): void => { void close().catch((): void => {}); };
-  scope.signal.addEventListener('abort', abort, { once: true });
-  scope.onClose(close);
+  signal.addEventListener('abort', abort, { once: true });
+  const unregister = scope.onClose(close);
+  if (signal.aborted) { abort(); }
 
   return {
-    getSnapshot       : (): StoreCollectionState<Item> => state,
-    getServerSnapshot : (): StoreCollectionState<Item> => idleState,
+    getSnapshot       : (): StoreResourceState<ResourceViewState, unknown> => state,
+    getServerSnapshot : (): StoreResourceState<ResourceViewState, unknown> => serverState,
+    close,
     subscribe         : (listener): (() => void) => {
       if (closed) { return (): void => {}; }
-      listeners.add(listener);
-      startAutomaticObservation();
-      return (): void => { listeners.delete(listener); releaseUnused(); };
+      const notify = (next: StoreResourceState<ResourceViewState, unknown>): void => { listener(next); };
+      listeners.add(notify);
+      automaticStart();
+      return (): void => { if (listeners.delete(notify)) { releaseUnused(); } };
     },
     retain: (): (() => void) => {
       if (closed) { return (): void => {}; }
-      const release = acquireLease();
-      startAutomaticObservation();
+      const release = lease();
+      automaticStart();
       return release;
     },
-    ready: async (readyOptions = {}): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
-      readyOptions.signal?.throwIfAborted();
-      const release = acquireLease();
-      try {
-        const observation = startObservation();
-        const view = await whileNotAborted(observation.openPromise, readyOptions.signal);
-        assertActiveObservation(observation);
-        if (options.loadAll) { await whileNotAborted(drainAll(observation), readyOptions.signal); }
-        const state = await view.ready(readyOptions);
-        assertActiveObservation(observation);
-        readyOptions.signal?.throwIfAborted();
-        return state;
-      } finally { release(); }
+    ready: (readyOptions = {}): Promise<ReadyResourceState<ResourceViewState, unknown>> => {
+      if (readyOptions.signal?.aborted) { return Promise.reject(readyOptions.signal.reason); }
+      return withLease(captured => usable(start(captured), readyOptions.signal));
     },
     retry: (): Promise<void> => {
-      try { scope.assertCurrent(); } catch (error: unknown) { return Promise.reject(error); }
-      if (retrying !== undefined) { return retrying; }
-      const release = acquireLease();
-      // Publish the shared completion before retiring subscriptions can request another retry.
+      try { assertOpen(); } catch (error: unknown) { return Promise.reject(error); }
+      const captured = slot;
+      if (captured.retrying !== undefined) { return captured.retrying; }
+      const release = lease();
       const pending = Promise.resolve().then(async (): Promise<void> => {
-        scope.assertCurrent();
-        retireObservation();
-        const observation = startObservation();
-        await observation.openPromise;
-        assertActiveObservation(observation);
+        assertSlot(captured);
+        const observation = start(captured, config.kind === 'native');
+        if (config.kind === 'source') {
+          await captured.source!.retry();
+          assertObservation(observation);
+        }
+        await usable(observation);
       }).finally((): void => {
-        if (retrying === pending) { retrying = undefined; }
+        if (captured.retrying === pending) { captured.retrying = undefined; }
         release();
+        assertSlot(captured);
       });
-      retrying = pending;
+      captured.retrying = pending;
+      void pending.catch((error: unknown): void => {
+        const observation = captured.observation;
+        if (observation !== undefined) { fail(observation, error); }
+      });
       return pending;
     },
-    loadMore: (): Promise<void> => {
-      let release: (() => void) | undefined;
-      try {
-        scope.assertCurrent();
-        release = acquireLease();
-        return page(startObservation()).finally(release);
-      } catch (error: unknown) { release?.(); return Promise.reject(error); }
+    select: async (key): Promise<void> => {
+      if (closed || signal.aborted) { throw new StoreRetiredError(); }
+      if (!config.keyed) { throw new TypeError('Resource: only keyed resources can select a key.'); }
+      if (key !== null) { scope.assertCurrent(); }
+      let captured = slot;
+      if (!Object.is(captured.key, key)) {
+        let source: StoreResource | undefined;
+        if (key !== null && config.kind === 'source') {
+          try { source = config.source(key); }
+          finally { assertSlot(captured); }
+        }
+        const previous = captured;
+        captured = { key, source };
+        slot = captured;
+        selected = key !== null;
+        try {
+          if (key === null) { publish(idle(null)); } else { start(captured); }
+        } finally { retire(previous.observation); }
+      } else if (key !== null) { selected = true; }
+      if (key === null) {
+        if (closed || signal.aborted || slot !== captured) { throw new StoreRetiredError(); }
+        return;
+      }
+      await usable(start(captured));
+      assertSlot(captured);
     },
-    refresh: async (): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> => {
-      scope.assertCurrent();
-      const release = acquireLease();
-      try { return await refresh(startObservation()); } finally { release(); }
-    },
-    refreshIfActive: async (): Promise<void> => {
-      const observation = activeObservation;
-      if (observation !== undefined && isActiveObservation(observation)) { await refresh(observation); }
+    loadMore: (): Promise<void> => withLease(async (captured): Promise<void> => {
+      const observation = start(captured);
+      await page(observation);
+      await usable(observation);
+    }),
+    refresh         : () => withLease(captured => refreshObservation(start(captured))),
+    refreshIfActive : async (): Promise<void> => {
+      const observation = slot.observation;
+      if (observation !== undefined && current(observation)) { await refreshObservation(observation); }
     },
   };
 }
 
-
-function whileNotAborted<Value>(promise: Promise<Value>, signal?: AbortSignal): Promise<Value> {
-  if (signal === undefined) { return promise; }
+function whileNotAborted<Value>(promise: Promise<Value>, signal: AbortSignal): Promise<Value> {
   signal.throwIfAborted();
   return new Promise<Value>((resolve, reject): void => {
     const abort = (): void => { reject(signal.reason); };

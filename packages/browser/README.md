@@ -23,38 +23,41 @@ bun add @enbox/browser
 wallet connect handler, and DWeb helpers:
 
 ```ts
-import {
-  BrowserConnectHandler,
-  createConnectionStore,
-  defineApplicationManifest,
-} from '@enbox/browser';
+import { createApplication } from '@enbox/browser';
+import { NotesStore } from './features/notes/store.js';
 
-const application = defineApplicationManifest({
-  protocols: [NotesProtocol],
-} as const);
-const store = createConnectionStore({
-  application,
-  connectHandler: BrowserConnectHandler({ appName: 'Notes' }),
-  monitor: { autoRefresh: {} },
+const application = createApplication({
+  stores: { notes: NotesStore },
+  wallet: { appName: 'Notes' },
+  connection: { monitor: { autoRefresh: {} } },
 });
 
-await store.initialize();
+await application.initialize();
 
-// Invoke directly from a click or other user action so the wallet popup opens.
+// Invoke directly from a user action so the wallet popup opens.
 async function connect(): Promise<void> {
-  const snapshot = await store.connect();
+  const snapshot = await application.connection.connect();
   if (snapshot.phase !== 'connected') {
     throw snapshot.error ?? new Error('Connection was not established.');
   }
-  const enbox = snapshot.enbox;
-  // ...use enbox...
+  const notes = application.store(NotesStore);
+  // Subscribe to notes' resources or run its domain commands.
 }
 ```
 
-Create one store for the application lifetime. It owns session restoration,
-protocol readiness, grant refresh, facade replacement, and teardown. Call
-`disconnect()` on sign-out and `dispose()` when the store is permanently
-released.
+Keep one application for the browser lifetime. It derives the manifest from
+feature protocols and owns the connection, session-scoped resources, commands,
+and cleanup. `application.connection.disconnect()` signs out;
+`application.dispose()` permanently tears down the owner. React binds the same
+runtime through `EnboxProvider application={application}`.
+
+For a custom host, supply `connectHandler` instead of `wallet`, or supply a
+`connection: manifest => nativeConnection` factory that owns all native
+configuration. The headless `@enbox/api` constructor requires that factory;
+the browser constructor supplies browser defaults around the same runtime.
+Native connection, record, and context primitives remain available for custom
+flows. `defineStore`'s `resource()` factory owns all native view types through
+one subscription and cleanup mechanism.
 
 ## Browser runtime
 

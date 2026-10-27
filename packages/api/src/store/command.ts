@@ -39,6 +39,7 @@ export function createCommand<Input, Output>(
   const pending = new Map<number, Input>();
   let latest = 0;
   let retired = false;
+  let unregisterCleanup = (): void => {};
 
   const current = (): boolean => {
     if (retired || scope.signal.aborted) { return false; }
@@ -70,9 +71,11 @@ export function createCommand<Input, Output>(
     }
     listeners.clear();
     scope.signal.removeEventListener('abort', retire);
+    unregisterCleanup();
   };
   scope.signal.addEventListener('abort', retire, { once: true });
-  scope.onClose(retire);
+  unregisterCleanup = scope.onClose(retire);
+  if (scope.signal.aborted) { retire(); }
 
   return {
     getSnapshot       : (): StoreCommandState<Input> => state,

@@ -46,8 +46,8 @@ settle pass to repair missed notifications.
 - Define named owned collections and domain commands with `defineStore()`.
   Components and controllers resolve the same feature instance from the runtime;
   equivalent selections share native views and command progress.
-- Use `records.observe()` directly for native views outside those conveniences,
-  including context-bound shared records.
+- Own native observations with the same feature `resource()` factory, including
+  context-bound shared records. Use native views directly for custom ownership.
 - Use `records.subscribe()` for an incremental or append-only event stream.
 - Use a one-shot `query()` for searches and snapshots.
 - Use `ConnectionStore.subscribe()` for auth, sync, connectivity, facade
@@ -59,8 +59,8 @@ live path with application polling.
 
 ## Session and storage lifetime
 
-Compose feature definitions with `defineApplication()`, then give its `manifest`
-to the native connection passed to `createApplication()`. Keep that runtime and
+Pass feature definitions to browser `createApplication({ stores, wallet, connection })`.
+It derives the manifest and constructs the native connection. Keep that runtime and
 connection for the page's application lifetime. The runtime owns feature
 instances and cleanup; `runtime.connection` owns native auth, sync state, and
 connection actions. It remains the sole connection state model.

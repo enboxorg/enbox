@@ -3,7 +3,6 @@ import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordCodecMap } from '../record-codec.js';
 import type { RecordQuery } from '../record-query.js';
 import type { StoreCollectionResource } from './resource.js';
-import type { StoreCollectionSelection } from './collection-selection.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
 import type { ContextRoleGroups, ProtocolPaths, ProtocolRolePaths, SingletonProtocolPaths, TypedProtocol } from '../protocol-types.js';
@@ -18,7 +17,6 @@ import type {
 
 import { assertValidRecordWithin } from '../record-query.js';
 import { createCollectionResource } from './resource.js';
-import { createCollectionSelection } from './collection-selection.js';
 import { createCommand } from './command.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { collectProtocolPaths, isProtocolRolePath } from '../protocol-paths.js';
@@ -50,12 +48,6 @@ export interface StoreCollection<Value> extends StoreCollectionResource<TypedMat
 export interface StoreCollectionFamily<Value> {
   /** Resolve a stable handle for an exact direct-parent context ID without opening a view. */
   within(parentContextId: string): StoreCollection<Value>;
-  /**
-   * Create an inert, independent selection owner over this family's canonical handles.
-   * The feature's lifetime always applies; an optional signal can end a shorter-lived owner.
-   * Calling select() explicitly keeps its chosen collection live until cleared or closed.
-   */
-  createSelection(options?: Readonly<{ signal?: AbortSignal }>): StoreCollectionSelection<TypedMaterializedRecord<Value>>;
 }
 
 /** Native typed filters and ordering, with an explicit optional window size. */
@@ -224,7 +216,6 @@ function createTypedProtocolStore<
               }
               return collection;
             },
-            createSelection: (selectionOptions) => createCollectionSelection(scope, family.within, selectionOptions),
           };
           collections.set(key, Object.freeze(family));
         } else {
