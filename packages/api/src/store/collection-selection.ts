@@ -132,18 +132,19 @@ export function createCollectionSelection<Item>(
         const previous = active;
         selection = { parentContextId, collection, readiness: new AbortController() };
         active = selection;
-        apply(selection, collection.getSnapshot());
-        release(previous);
-        assertActive(selection);
         const selected = selection;
-        // This forwarding subscription is itself the selection's collection lease.
-        const unsubscribe = collection.subscribe((next): void => { apply(selected, next); });
-        if (!isActive(selected)) {
-          unsubscribe();
-          throw new StoreRetiredError();
+        try {
+          // Acquire ownership before publishing: a listener may release its prefetch lease.
+          const unsubscribe = collection.subscribe((next): void => { apply(selected, next); });
+          if (!isActive(selected)) {
+            unsubscribe();
+            throw new StoreRetiredError();
+          }
+          selected.unsubscribe = unsubscribe;
+          apply(selected, collection.getSnapshot());
+        } finally {
+          release(previous);
         }
-        selected.unsubscribe = unsubscribe;
-        apply(selected, collection.getSnapshot());
       }
       assertActive(selection);
       try {

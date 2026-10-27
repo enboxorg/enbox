@@ -206,6 +206,29 @@ describe('store collection selections', () => {
     await owner.close();
   });
 
+  it('takes over a prefetch lease before publishing the selected ready state', async () => {
+    const owner = fixture();
+    const source = owner.resource('A');
+    const releasePrefetch = source.resource.retain();
+    await source.resource.ready();
+    const selection = createCollectionSelection(owner.scope, owner.within);
+    let handoffs = 0;
+    selection.subscribe((state): void => {
+      if (state.parentContextId === 'A' && state.status === 'ready') {
+        handoffs += 1;
+        releasePrefetch();
+      }
+    });
+    await selection.select('A');
+    expect(selection.getSnapshot()).toMatchObject({ status: 'ready', parentContextId: 'A', records: ['A'] });
+    expect(source.opens()).toBe(1);
+    expect(source.native.closes()).toBe(0);
+    expect(handoffs).toBe(1);
+    selection.close();
+    await owner.close();
+    expect(source.native.closes()).toBe(1);
+  });
+
   it('releases only its own lease when changing parent or closing', async () => {
     const owner = fixture();
     const first = owner.resource('A');
