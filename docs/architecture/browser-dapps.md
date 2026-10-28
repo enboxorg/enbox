@@ -5,6 +5,20 @@ deployment, and verification instructions in the public
 [`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx)
 guide so developers have one implementation recipe.
 
+## Package boundary
+
+The published Enbox SDKs are framework-independent. `@enbox/api` owns protocol
+operations, sessions, observations, and commands. `@enbox/browser` adds browser
+facilities such as wallet popups, service workers, and URL handling. Neither
+package contains React hooks, components, React types, or React dependencies.
+SDK behavior must not depend on React mounting, rendering, or effect timing.
+
+React providers, hooks, and component lifecycle integration belong in the
+separate [`@enbox/react` repository](https://github.com/enboxorg/enbox-react).
+Its bindings consume the same `getSnapshot()` and `subscribe()` contracts as
+plain JavaScript and other clients. Server-rendering contracts are outside the
+dapp runtime model.
+
 ## Runtime ownership
 
 An Enbox dapp has two browser execution contexts with different lifetimes:
@@ -14,7 +28,7 @@ page
   UI
   one application runtime
     native ConnectionStore and Enbox facade
-    session-owned feature stores and observable resources
+    session-owned feature stores and observations
   live WebSocket sync and subscriptions
            │
            │ ordinary fetch / <img src> for DRLs

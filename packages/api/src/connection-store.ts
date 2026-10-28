@@ -4,7 +4,7 @@
  * {@link createConnectionStore} composes an `AuthManager` and {@link Enbox}
  * into one observable connection state machine. It owns the generic
  * lifecycle glue every app otherwise hand-rolls around the auth layer —
- * mount-once bootstrap (`restoreSession()` → `Enbox.fromSession()`),
+ * application startup (`restoreSession()` → `Enbox.fromSession()`),
  * connect and vault-connect flows with in-flight and error state, delegated
  * connection monitoring, and disconnect/teardown — and publishes every
  * transition as an immutable {@link ConnectionSnapshot}.
@@ -16,21 +16,13 @@
  * `subscribe()` for change notification and `getSnapshot()` for synchronous
  * reads with reference-stable snapshots.
  *
- * @example React (`useSyncExternalStore`)
+ * @example Observe connection state without a UI framework
  * ```ts
- * const store = createConnectionStore({ application, connectHandler: BrowserConnectHandler() });
+ * const store = createConnectionStore({ application, connectHandler });
  *
- * function useConnection(): ConnectionSnapshot {
- *   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
- * }
- * // On app boot (e.g. a mount-once effect): void store.initialize();
- * ```
- *
- * @example Vue (`customRef`) / Lit (reactive controller) / vanilla
- * ```ts
- * const unsubscribe = store.subscribe((snapshot) => render(snapshot));
- * render(store.getSnapshot());
- * void store.initialize();
+ * const unsubscribe = store.subscribe((snapshot) => console.log(snapshot.phase));
+ * console.log(store.getSnapshot().phase);
+ * await store.initialize();
  * ```
  *
  * @module
@@ -132,9 +124,8 @@ export type SyncStatusSnapshot = SyncStatusContents & Readonly<
  * An immutable snapshot of the connection state.
  *
  * Snapshots are frozen and reference-stable: {@link ConnectionStore.getSnapshot}
- * returns the **same** object until the state actually changes, satisfying the
- * `useSyncExternalStore` contract (and equivalent bindings in Vue, Lit, Svelte,
- * and friends) without extra memoization.
+ * returns the **same** object until the state actually changes. Consumers can
+ * compare references without copying or memoizing the published state.
  */
 type ConnectionSnapshotContents = Readonly<{
   /** The active auth session. Populated while `phase` is `'connected'`. */

@@ -203,9 +203,8 @@ export type ProfileFieldSnapshot<T> = {
 /**
  * Immutable snapshot of a cached profile entry.
  *
- * A new snapshot object is produced on every change, so the reference is
- * stable between changes — safe to feed `useSyncExternalStore`-style
- * bindings directly.
+ * A new snapshot object is produced on every change. The reference remains
+ * stable between changes, so consumers can compare cached state directly.
  *
  * The profile field value is `Partial<ProfileData>`: it contains only the
  * allowlisted Profile protocol text fields that validated as strings —
@@ -374,7 +373,7 @@ export type ProfileReader = {
    * Read the current snapshot for `did` synchronously without triggering
    * a fetch. Returns `undefined` for DIDs never requested (or already
    * released). The returned reference only changes when the entry
-   * changes, matching `useSyncExternalStore` expectations.
+   * changes.
    */
   getSnapshot(did: string): ProfileSnapshot | undefined;
 

@@ -1,6 +1,7 @@
 ---
 "@enbox/api": patch
 "@enbox/browser": patch
+"@enbox/protocols": patch
 ---
 
 Consolidate live data under observe(), returning an ObservedStore for fixed native observations, changing inputs, or borrowed collections. Selectable stores start idle until select(input), preserve native capabilities, and cancel superseded read waits without interrupting other consumers. Collection write-refresh controls stay private; commands share progress through pendingInputs and may use a shorter caller lifetime.
