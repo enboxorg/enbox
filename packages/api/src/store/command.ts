@@ -8,15 +8,13 @@ export type StoreCommandState<Input> = Readonly<{
   /** Unresolved invocations belonging to the current authorization scope. */
   pendingCount: number;
   /** Unresolved inputs in start order, retained by reference; repeated inputs remain distinct. */
-  pendingVariables: readonly Input[];
+  pendingInputs: readonly Input[];
   /** Display error from the latest invocation admitted to the current scope; initial scope rejection leaves state unchanged. */
   error: Error | undefined;
 }>;
 
 /** An authorization-bound operation with shared progress and unchanged operation outcomes. */
 export interface StoreCommand<Input, Output> extends ObservableStore<StoreCommandState<Input>> {
-  /** Return cached idle progress for server rendering and hydration. */
-  getServerSnapshot(): StoreCommandState<Input>;
   /**
    * Dispatch once through the captured authorization scope and preserve the result or rejection.
    * Retirement prevents new dispatch; operations already issued can still finish.
@@ -33,12 +31,13 @@ export function createCommand<Input, Output>(
   scope: StoreScope,
   operation: (input: Input) => Promise<Output> | Output,
 ): StoreCommand<Input, Output> {
-  const idleState = Object.freeze({ pendingCount: 0, pendingVariables: Object.freeze([]), error: undefined });
+  const idleState = Object.freeze({ pendingCount: 0, pendingInputs: Object.freeze([]), error: undefined });
   let state: StoreCommandState<Input> = idleState;
   const listeners = new Set<(state: StoreCommandState<Input>) => void>();
   const pending = new Map<number, Input>();
   let latest = 0;
   let retired = false;
+  let unregisterCleanup = (): void => {};
 
   const current = (): boolean => {
     if (retired || scope.signal.aborted) { return false; }
@@ -46,8 +45,8 @@ export function createCommand<Input, Output>(
   };
   const publish = (error: Error | undefined): void => {
     state = Object.freeze({
-      pendingCount     : pending.size,
-      pendingVariables : Object.freeze([...pending.values()]),
+      pendingCount  : pending.size,
+      pendingInputs : Object.freeze([...pending.values()]),
       error,
     });
     const subscribers = [...listeners];
@@ -70,15 +69,16 @@ export function createCommand<Input, Output>(
     }
     listeners.clear();
     scope.signal.removeEventListener('abort', retire);
+    unregisterCleanup();
   };
   scope.signal.addEventListener('abort', retire, { once: true });
-  scope.onClose(retire);
+  unregisterCleanup = scope.onClose(retire);
+  if (scope.signal.aborted) { retire(); }
 
   return {
-    getSnapshot       : (): StoreCommandState<Input> => state,
-    getServerSnapshot : (): StoreCommandState<Input> => idleState,
-    isCurrent         : current,
-    subscribe         : (listener): (() => void) => {
+    getSnapshot : (): StoreCommandState<Input> => state,
+    isCurrent   : current,
+    subscribe   : (listener): (() => void) => {
       if (retired) { return (): void => {}; }
       listeners.add(listener);
       return (): void => { listeners.delete(listener); };

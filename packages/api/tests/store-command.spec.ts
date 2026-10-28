@@ -3,22 +3,64 @@ import type { StoreScope } from '../src/store/scope.js';
 import { describe, expect, it } from 'bun:test';
 
 import { createCommand } from '../src/store/command.js';
-import { StoreRetiredError } from '../src/store/scope.js';
+import { StoreRetiredError, withStoreSignal } from '../src/store/scope.js';
 
-function createScope(): { scope: StoreScope; retire(): void } {
+function createScope(): { scope: StoreScope; retire(): void; cleanupCount(): number } {
   const controller = new AbortController();
+  const cleanups = new Set<() => void | Promise<void>>();
   const scope: StoreScope = {
     signal        : controller.signal,
     assertCurrent : (): void => {
       if (controller.signal.aborted) { throw new StoreRetiredError(); }
     },
     getEnbox : (): never => { throw new Error('Command fixture does not read protocols.'); },
-    onClose  : (): void => {},
+    onClose  : (close): (() => void) => {
+      cleanups.add(close);
+      return (): void => { cleanups.delete(close); };
+    },
   };
-  return { scope, retire: (): void => { controller.abort(); } };
+  return { scope, retire: (): void => { controller.abort(); }, cleanupCount: (): number => cleanups.size };
 }
 
 describe('store commands', () => {
+  it('bounds command progress to a caller without cancelling an issued write or sibling command', async () => {
+    const { scope, retire, cleanupCount } = createScope();
+    const caller = new AbortController();
+    let finish!: (value: string) => void;
+    const write = new Promise<string>((resolve): void => { finish = resolve; });
+    const command = createCommand(withStoreSignal(scope, caller.signal), () => write);
+    const sibling = createCommand(scope, (): string => 'current');
+    expect(cleanupCount()).toBe(2);
+    const issued = command.run(undefined);
+    expect(command.getSnapshot().pendingCount).toBe(1);
+    caller.abort();
+    expect(cleanupCount()).toBe(1);
+    expect(command.getSnapshot().pendingCount).toBe(0);
+    expect(command.isCurrent()).toBe(false);
+    await expect(command.run(undefined)).rejects.toBeInstanceOf(StoreRetiredError);
+    expect(await sibling.run(undefined)).toBe('current');
+    finish('committed');
+    expect(await issued).toBe('committed');
+    retire();
+    expect(cleanupCount()).toBe(0);
+    await expect(sibling.run(undefined)).rejects.toBeInstanceOf(StoreRetiredError);
+  });
+
+  it('creates an inert command when its caller has already ended', async () => {
+    const { scope } = createScope();
+    const caller = new AbortController();
+    caller.abort();
+    let dispatches = 0;
+    const command = createCommand(withStoreSignal(scope, caller.signal), (): void => { dispatches++; });
+    let publications = 0;
+    const stop = command.subscribe((): void => { publications++; });
+    await expect(command.run(undefined)).rejects.toBeInstanceOf(StoreRetiredError);
+    expect(() => command.reset()).toThrow(StoreRetiredError);
+    expect(dispatches).toBe(0);
+    expect(publications).toBe(0);
+    stop();
+  });
+
   it('notifies a newly subscribed listener only on later publications', async () => {
     const { scope } = createScope();
     let finish!: () => void;
@@ -57,17 +99,16 @@ describe('store commands', () => {
 
     expect(command.run(1)).toBe(first);
     expect(command.run(2)).toBe(second);
-    expect(command.getSnapshot().pendingVariables).toEqual([1, 2]);
+    expect(command.getSnapshot().pendingInputs).toEqual([1, 2]);
     expect(command.getSnapshot().pendingCount).toBe(2);
     finishFirst('written');
     await first;
-    expect(command.getSnapshot().pendingVariables).toEqual([2]);
+    expect(command.getSnapshot().pendingInputs).toEqual([2]);
     const failure = new Error('Rejected by owner');
     failSecond(failure);
     await expect(second).rejects.toBe(failure);
     expect(command.getSnapshot().pendingCount).toBe(0);
     expect(command.getSnapshot().error).toBe(failure);
-    expect(command.getServerSnapshot().pendingCount).toBe(0);
   });
 
   it('keeps older failures from overwriting a newer outcome', async () => {

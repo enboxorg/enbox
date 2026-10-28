@@ -9,58 +9,54 @@ import { defineApplicationManifest } from '../application-manifest.js';
 import { instantiateStore } from './definition.js';
 import { StoreNotConnectedError, StoreRetiredError } from './scope.js';
 
-/** Static feature registration and the protocol manifest derived from its dependencies. */
-export type ApplicationDefinition<Stores extends StoreDefinitions = StoreDefinitions> = Readonly<{
-  stores: Stores;
-  manifest: ApplicationManifest;
-}>;
-
-/** Features to register, with application-level protocol and permission policy. */
-export type DefineApplicationOptions<Stores extends StoreDefinitions> = {
+/** Register features and construct the native connection from their derived manifest. */
+export type CreateApplicationOptions<Stores extends StoreDefinitions = StoreDefinitions> = {
   stores: Stores;
   /** Additional protocols and explicit permission overrides for store dependencies. */
   protocols?: readonly ApplicationManifestProtocolInput[];
+  /** Called once after validating dependencies; the application owns the returned connection. */
+  connection(manifest: ApplicationManifest): ConnectionStore;
 };
 
-/** Compose store dependencies into the SDK's single protocol and permission manifest. */
-export function defineApplication<const Stores extends StoreDefinitions>(
-  options: DefineApplicationOptions<Stores>,
-): ApplicationDefinition<Stores> {
-  const stores = Object.freeze({ ...options.stores });
-  const definitions = collectStores(stores);
+/** Compose dependencies before any native connection or feature instance is constructed. */
+function createManifest(
+  definitions: ReadonlySet<StoreDefinition>,
+  explicitProtocols: readonly ApplicationManifestProtocolInput[] = [],
+): ApplicationManifest {
   const protocols = new Map<string, TypedProtocol>();
   for (const definition of definitions) {
     for (const protocol of Object.values(definition.protocols)) {
       const uri = protocol.definition.protocol;
       const previous = protocols.get(uri);
       if (previous !== undefined && previous !== protocol) {
-        throw new TypeError(`defineApplication: conflicting typed protocols for '${uri}'. Share one protocol definition between stores.`);
+        throw new TypeError(`createApplication: conflicting typed protocols for '${uri}'. Share one protocol definition between stores.`);
       }
       protocols.set(uri, protocol);
     }
   }
   const overrides = new Map<string, ApplicationManifestProtocolInput>();
-  for (const input of options.protocols ?? []) {
+  for (const input of explicitProtocols) {
     const protocol = 'definition' in input ? input : input.protocol;
     const uri = protocol.definition.protocol;
     if (overrides.has(uri)) {
-      throw new TypeError(`defineApplication: duplicate explicit protocol '${uri}'.`);
+      throw new TypeError(`createApplication: duplicate explicit protocol '${uri}'.`);
     }
     const dependency = protocols.get(uri);
     if (dependency !== undefined && dependency !== protocol) {
-      throw new TypeError(`defineApplication: explicit protocol '${uri}' conflicts with a store dependency.`);
+      throw new TypeError(`createApplication: explicit protocol '${uri}' conflicts with a store dependency.`);
     }
     overrides.set(uri, input);
     protocols.set(uri, protocol);
   }
-  const manifest = defineApplicationManifest({
+  return defineApplicationManifest({
     protocols: [...protocols.entries()].map(([uri, protocol]): ApplicationManifestProtocolInput => overrides.get(uri) ?? protocol),
   });
-  return Object.freeze({ stores, manifest });
 }
 
 /** Own session-scoped features and the native connection's lifetime. */
 export interface ApplicationRuntime {
+  /** The protocol and permission manifest derived from the registered features. */
+  readonly manifest: ApplicationManifest;
   /** The authoritative connection state and actions, including connect and disconnect. */
   readonly connection: ConnectionStore;
   /** Invalidate feature lookups on native connection publications or scope retirement; compare the resolved instance identity. */
@@ -75,12 +71,6 @@ export interface ApplicationRuntime {
   /** Permanently retire stores, await their cleanup, and dispose the native connection once. */
   dispose(): Promise<void>;
 }
-
-/** Supply the native connection whose lifetime will belong to this application. */
-export type CreateApplicationOptions = {
-  /** The application takes ownership of this connection's terminal disposal. */
-  connection: ConnectionStore;
-};
 
 /**
  * Own feature instances and cleanup for one exact SDK session/facade pair.
@@ -99,14 +89,16 @@ type SessionScope = {
  * Create the owner for registered features and the supplied connection.
  * Construction subscribes to connection changes; initialize() starts session restoration.
  */
-export function createApplication(
-  definition: ApplicationDefinition,
-  options: CreateApplicationOptions,
+export function createApplication<const Stores extends StoreDefinitions>(
+  options: CreateApplicationOptions<Stores>,
 ): ApplicationRuntime {
-  return new HeadlessApplication(definition, options.connection);
+  const definitions = collectStores(options.stores);
+  const manifest = createManifest(definitions, options.protocols);
+  return new HeadlessApplication(definitions, manifest, options.connection(manifest));
 }
 
 class HeadlessApplication implements ApplicationRuntime {
+  public readonly manifest: ApplicationManifest;
   public readonly connection: ConnectionStore;
   private readonly _definitions: Set<StoreDefinition>;
   private readonly _listeners = new Set<() => void>();
@@ -116,9 +108,10 @@ class HeadlessApplication implements ApplicationRuntime {
   private _sessionScope: SessionScope | undefined;
   private _disposePromise: Promise<void> | undefined;
 
-  public constructor(definition: ApplicationDefinition, connection: ConnectionStore) {
+  public constructor(definitions: Set<StoreDefinition>, manifest: ApplicationManifest, connection: ConnectionStore) {
+    this.manifest = manifest;
     this.connection = connection;
-    this._definitions = collectStores(definition.stores);
+    this._definitions = definitions;
     this._unsubscribeConnection = connection.subscribe((): void => {
       if (this._disposePromise !== undefined) {
         return;
@@ -141,7 +134,7 @@ class HeadlessApplication implements ApplicationRuntime {
       throw new StoreRetiredError();
     }
     if (!this._definitions.has(definition)) {
-      throw new TypeError('Application.store: register the feature in defineApplication before resolving it.');
+      throw new TypeError('Application.store: register the feature in createApplication before resolving it.');
     }
     const sessionScope = this._resolveSessionScope();
     if (!sessionScope.storeInstances.has(definition)) {
@@ -172,11 +165,16 @@ class HeadlessApplication implements ApplicationRuntime {
           storeScope.assertCurrent();
           return sessionScope.enbox!;
         },
-        onClose: (release: () => void | Promise<void>): void => {
+        onClose: (release: () => void | Promise<void>): (() => void) => {
           if (signal.aborted) {
             this._trackCleanup([release]);
+            return (): void => {};
           } else {
             closeCallbacks.push(release);
+            return (): void => {
+              const index = closeCallbacks.indexOf(release);
+              if (index !== -1) { closeCallbacks.splice(index, 1); }
+            };
           }
         },
       };
@@ -352,7 +350,7 @@ function collectStores(stores: StoreDefinitions): Set<StoreDefinition> {
   const visiting = new Set<StoreDefinition>();
   const visit = (definition: StoreDefinition): void => {
     if (visiting.has(definition)) {
-      throw new TypeError('defineApplication: feature dependencies must not contain cycles.');
+      throw new TypeError('createApplication: feature dependencies must not contain cycles.');
     }
     if (definitions.has(definition)) {
       return;

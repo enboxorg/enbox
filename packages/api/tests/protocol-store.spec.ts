@@ -6,6 +6,7 @@ import type { StoreScope } from '../src/store/scope.js';
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
+import { createApplication } from '../src/store/application.js';
 import { createConnectionStore } from '../src/connection-store.js';
 import { createEnboxTestContext } from '../src/testing.js';
 import { createProtocolStore } from '../src/store/protocol-store.js';
@@ -13,7 +14,6 @@ import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { defineStore } from '../src/store/definition.js';
 import { recordCodecs } from '../src/record-codec.js';
-import { createApplication, defineApplication } from '../src/store/application.js';
 import { StoreNotConnectedError, StoreRetiredError } from '../src/store/scope.js';
 
 const Definition = {
@@ -51,8 +51,14 @@ function storeFixture(context: EnboxTestContext): {
     assertCurrent: (): void => {
       if (signal.aborted) { throw new StoreRetiredError(); }
     },
-    getEnbox : () => context.enbox,
-    onClose  : (close): void => { closes.push(close); },
+    getEnbox : () => { scope.assertCurrent(); return context.enbox; },
+    onClose  : (close): (() => void) => {
+      closes.push(close);
+      return (): void => {
+        const index = closes.indexOf(close);
+        if (index !== -1) { closes.splice(index, 1); }
+      };
+    },
   };
   return {
     store  : createProtocolStore(Protocol, scope),
@@ -80,8 +86,7 @@ describe('protocol stores with a real local DWN', () => {
         return { native, count: command(() => native().records.count('note')) };
       },
     });
-    const definition = defineApplication({ stores: { notes: Feature } });
-    const app = createApplication(definition, { connection: createConnectionStore({ application: definition.manifest }) });
+    const app = createApplication({ stores: { notes: Feature }, connection: manifest => createConnectionStore({ application: manifest }) });
     try {
       const feature = app.store(Feature);
       expect(typeof feature.native).toBe('function');
@@ -260,7 +265,6 @@ describe('protocol stores with a real local DWN', () => {
       await notes.delete.run(first.id);
       expect(notes.getSnapshot().records).toHaveLength(1);
       expect(notes.getSnapshot().records[0].record.id).toBe(second.id);
-      expect(notes.getServerSnapshot().status).toBe('idle');
       release();
       expect(notes.getSnapshot().status).toBe('idle');
     } finally {

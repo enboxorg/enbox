@@ -7,13 +7,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 
 import { MemoryStorage } from '@enbox/auth';
 
+import { createApplication } from '../src/store/application.js';
 import { createConnectionStore } from '../src/connection-store.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { defineStore } from '../src/store/definition.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { createApplication, defineApplication } from '../src/store/application.js';
 
 const NotesProtocol = defineProtocol({
   protocol  : 'https://example.com/protocols/application-store-connection',
@@ -26,14 +26,12 @@ const NotesStore = defineStore({
   protocols : { notes: NotesProtocol },
   create    : ({ protocols }) => ({ notes: protocols.notes.collection('note') }),
 });
-const applicationDefinition = defineApplication({ stores: { notes: NotesStore } });
 
 describe('application stores with the native connection lifecycle', () => {
   it('connects a real vault, persists records, restores its session and retires captured stores', async (): Promise<void> => {
     const dataPath = await mkdtemp(join(tmpdir(), 'enbox-application-connection-'));
     const storage = new MemoryStorage();
     const options = {
-      application      : applicationDefinition.manifest,
       dataPath,
       dwnEndpoints     : [testDwnUrl],
       localDwnStrategy : 'off' as const,
@@ -42,7 +40,9 @@ describe('application stores with the native connection lifecycle', () => {
       storage,
       sync             : 'off' as const,
     };
-    const application = createApplication(applicationDefinition, { connection: createConnectionStore(options) });
+    const application = createApplication({
+      stores: { notes: NotesStore }, connection: manifest => createConnectionStore({ ...options, application: manifest }),
+    });
     let restoredApplication: ApplicationRuntime | undefined;
     let releaseNotes: (() => void) | undefined;
     try {
@@ -70,7 +70,9 @@ describe('application stores with the native connection lifecycle', () => {
       expect(feature.notes.getSnapshot().records).toEqual([]);
       await expect(feature.notes.create.run({ title: 'Retired scope' })).rejects.toBeInstanceOf(StoreRetiredError);
 
-      restoredApplication = createApplication(applicationDefinition, { connection: createConnectionStore(options) });
+      restoredApplication = createApplication({
+        stores: { notes: NotesStore }, connection: manifest => createConnectionStore({ ...options, application: manifest }),
+      });
       const restored = await restoredApplication.initialize();
       if (restored.phase !== 'connected') {
         throw restored.error ?? new Error('Native initialization did not restore the persisted session.');

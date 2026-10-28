@@ -60,54 +60,39 @@ import { NotesProtocol } from './protocol.js';
 
 export const NotesStore = defineStore({
   protocols: { notes: NotesProtocol },
-  create({ protocols, command }) {
+  create({ protocols }) {
     const notes = protocols.notes.collection('note', { pagination: { limit: 50 } });
     return {
       notes,
-      addNote: command((title: string) => notes.create.run({ title: title.trim(), body: '' })),
-      loadMore: command(() => notes.loadMore()),
-      retry: command(() => notes.retry()),
+      addNote: (title: string) => notes.create.run({ title: title.trim(), body: '' }),
     };
   },
 });
 ```
 
-Compose features into a static application definition. Its `manifest` is the
-source for protocol installation, delegated permissions, sync registration,
-and grant refresh:
+Create one application owner for the browser lifetime. It derives the manifest
+for protocol installation, delegated permissions, sync, and grant refresh:
 
 ```ts title="src/app/application.ts"
-import { defineApplication } from '@enbox/browser';
+import { createApplication } from '@enbox/browser';
 import { NotesStore } from '../features/notes/store.js';
 
-export const applicationDefinition = defineApplication({
+export const applicationOptions = {
   stores: { notes: NotesStore },
-});
-```
+  wallet: { appName: 'Notes', appIcon: '/icon.svg' },
+  connection: { monitor: { autoRefresh: {} } },
+};
 
-Keep one runtime and native connection for the browser application lifetime:
-
-```ts title="src/app/runtime.ts"
-import { BrowserConnectHandler, createApplication, createConnectionStore } from '@enbox/browser';
-import { applicationDefinition } from './application.js';
-
-let runtime: ReturnType<typeof createApplication> | undefined;
-
+let application: ReturnType<typeof createApplication> | undefined;
 export function getApplication() {
-  return runtime ??= createApplication(applicationDefinition, {
-    connection: createConnectionStore({
-      application: applicationDefinition.manifest,
-      connectHandler: BrowserConnectHandler({ appName: 'Notes', appIcon: '/icon.svg' }),
-      monitor: { autoRefresh: {} },
-    }),
-  });
+  return application ??= createApplication(applicationOptions);
 }
 ```
 
-`applicationDefinition` describes the application; `getApplication()` returns
-its live owner. `monitor.autoRefresh` renews delegated grants using the same
-manifest. `EnboxProvider` initializes the supplied runtime by default and
-leaves its terminal disposal to this browser owner.
+`EnboxProvider application={getApplication()}` initializes the supplied runtime
+by default. Terminal disposal belongs to this browser owner. The connection
+and its derived manifest are available as `runtime.connection` and
+`runtime.manifest`; no separate application definition is needed.
 
 Connection UI uses the provider's guarded actions and published flow errors:
 
@@ -141,7 +126,7 @@ remain available through `getApplication().connection`.
 
 When authorization or the SDK facade changes, the runtime retires old feature
 instances and `useFeature` resolves their replacements. Components and
-controllers share each named resource; they do not recreate query effects.
+controllers share each named observed store; they do not recreate query effects.
 
 ## Install the DWeb service worker
 
@@ -221,7 +206,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './app/App.js';
-import { getApplication } from './app/runtime.js';
+import { getApplication } from './app/application.js';
 
 function startApplication(): void {
   createRoot(document.getElementById('root')!).render(
@@ -304,11 +289,10 @@ import { NotesStore } from '../store.js';
 export function Notes({ disabled = false }: { disabled?: boolean }) {
   const feature = useFeature(NotesStore);
   const notes = useStore(feature.notes);
-  const creation = useStore(feature.addNote);
-  const paging = useStore(feature.loadMore);
+  const creation = useStore(feature.notes.create);
   const [title, setTitle] = useState('');
   return <section>
-    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote.run(title); }}>
+    <form onSubmit={(event) => { event.preventDefault(); void feature.addNote(title).catch(() => {}); }}>
       <input aria-label="Note title" required value={title}
         disabled={disabled || creation.pendingCount > 0} onChange={(event) => setTitle(event.target.value)} />
       <button disabled={disabled || creation.pendingCount > 0}>Add note</button>
@@ -316,11 +300,11 @@ export function Notes({ disabled = false }: { disabled?: boolean }) {
     {creation.error && <p role="alert">Could not save the note.</p>}
     {notes.status === 'loading' && <p>Loading notes…</p>}
     {notes.status === 'error' && <p role="alert">Could not load notes.
-      <button disabled={disabled} onClick={() => { void feature.retry.run(); }}>Try again</button>
+      <button disabled={disabled} onClick={() => { void feature.notes.retry().catch(() => {}); }}>Try again</button>
     </p>}
     <ul>{notes.records.map(({ record, value }) => <li key={record.id}>{value.title}</li>)}</ul>
-    {notes.hasMore && <button disabled={disabled || paging.pendingCount > 0}
-      onClick={() => { void feature.loadMore.run(); }}>More notes</button>}
+    {notes.hasMore && <button disabled={disabled || notes.isLoadingMore}
+      onClick={() => { void feature.notes.loadMore().catch(() => {}); }}>More notes</button>}
   </section>;
 }
 ```
@@ -335,7 +319,7 @@ native record handles.
 The runtime owns the native views, while `useStore` retains them after commit
 and releases that interest on unmount. Headless controllers resolve the same
 feature with `getApplication().store(NotesStore)` and use explicit `retain()`
-leases. `ready()` alone temporarily holds the resource until it settles.
+leases. `ready()` alone temporarily holds the observation until it settles.
 Commands publish pending/error state and return their operation result;
 application UI still owns draft changes and navigation after an awaited call.
 

@@ -19,8 +19,7 @@ between UI components and headless controllers. These names have distinct roles:
 | Name | Role |
 |---|---|
 | `NotesStore` | An inert feature definition returned by `defineStore`. Its factory must return synchronously. |
-| `applicationDefinition` | Static feature registration returned by `defineApplication`. |
-| `applicationDefinition.manifest` | The existing `ApplicationManifest`: typed protocols and delegated permission policy used by the connection. |
+| `app.manifest` | The existing `ApplicationManifest`: typed protocols and delegated permission policy used by the connection. |
 | `app` | The running owner returned by `createApplication`; it owns feature instances and the supplied connection. |
 | `feature` | One resolved store instance. A feature is the application's domain module, such as notes or tasks. |
 
@@ -33,27 +32,25 @@ For this Node example, set `ENBOX_VAULT_PASSWORD` to your vault password.
 import {
   createApplication,
   createConnectionStore,
-  defineApplication,
   defineStore,
 } from '@enbox/api';
 import { NotesProtocol } from './protocol.js';
 
 export const NotesStore = defineStore({
   protocols: { notes: NotesProtocol },
-  create({ protocols, command }) {
+  create({ protocols }) {
     const notes = protocols.notes.collection('note');
-    const addNote = command((title: string) =>
-      notes.create.run({ title: title.trim() }));
+    const addNote = (title: string) => notes.create.run({ title: title.trim() });
     return { notes, addNote };
   },
 });
 
-const applicationDefinition = defineApplication({ stores: { notes: NotesStore } });
 const password = process.env.ENBOX_VAULT_PASSWORD;
 if (password === undefined) throw new Error('Set ENBOX_VAULT_PASSWORD.');
-const app = createApplication(applicationDefinition, {
-  connection: createConnectionStore({
-    application: applicationDefinition.manifest,
+const app = createApplication({
+  stores: { notes: NotesStore },
+  connection: manifest => createConnectionStore({
+    application: manifest,
     password,
   }),
 });
@@ -69,15 +66,13 @@ try {
 
   // Resolve after connection: a later session/facade replacement creates a new feature instance.
   const feature = app.store(NotesStore);
-  const release = feature.notes.retain();
   const stop = feature.notes.subscribe(state => console.log(state.records.map(row => row.value)));
   try {
     const initial = await feature.notes.ready();
     console.log(initial.records.map(row => row.value));
-    await feature.addNote.run('Hello');
+    await feature.addNote('Hello');
   } finally {
     stop();
-    release();
   }
 } finally {
   await app.dispose();
@@ -86,7 +81,7 @@ try {
 
 Definitions and collection handles perform no I/O. A feature factory declares
 handles and commands synchronously. Capture `protocols.notes.native` as a
-function if needed, and invoke it inside a command or an owned resource opener;
+function if needed, and invoke it inside a command or an observation opener;
 calling `native()` requires a usable session. It returns the existing full
 `TypedEnbox`, including `records` and `contexts`, rather than a second SDK.
 Resolve it for each operation; a captured native client follows the SDK's own
@@ -100,7 +95,7 @@ lifetime and does not acquire store progress tracking or canonical-view refresh.
 | Nested records | A nested path produces a family; `pages.within(parentContextId)` resolves an exact direct-parent collection. |
 | A `$recordLimit.max: 1` slot | `protocols.notes.native().records.set(...)`; singleton paths are excluded from `collection()`. |
 | Tags, publication, timestamps, recipients, full update, or prune | Existing native record operations through `protocols.notes.native().records`, called inside a domain command. |
-| Invitations, memberships, accepted shares, or member writes | Existing `protocols.notes.native().contexts` and context-bound `records`; managed shared-context store adapters are a later slice. |
+| Invitations, memberships, accepted shares, or member writes | Existing `protocols.notes.native().contexts` and context-bound `records`; observe them with the same `observe()` factory shown below. |
 
 Collection commands accept data-only inputs; read filters never become write
 fields. Deletion first reads the ID at the declared protocol path, then checks
@@ -108,8 +103,8 @@ the direct parent for nested paths. An absent path match is an idempotent no-op;
 read or authorization failures propagate. Collection deletion therefore requires
 read authorization as well as delete authorization.
 
-Subscriptions and explicit `retain()` leases keep a native view live. **All async
-controls hold temporary leases**: `ready`, `retry`, `refresh`, and `loadMore`
+Subscriptions and explicit `retain()` leases keep a native view live. **Collection
+view controls hold temporary leases**: `ready`, `retry`, `refresh`, and `loadMore`
 release their own interest when they settle. Without another lease or subscriber,
 `getSnapshot()` then returns idle with no rows. Use the value returned by
 `ready()`/`refresh()` for one-shot work, or keep a subscription/lease for live
@@ -124,6 +119,56 @@ replacement or disposal. This slice does not implement bounded handle eviction.
 Each distinct filter creates a distinct cached handle. Active write refreshers
 are registered only while a native observation exists, so a write visits active
 selections rather than the session's query history.
+
+### Declare shared observations
+
+The feature's `observe` factory owns native observations of records, accepted
+shares, or members. The returned handle always has the same subscription,
+readiness, retry, and cleanup rules. The native view determines its payload
+and whether `refresh()` or `loadMore()` is available.
+
+```ts
+// Inside defineStore({ create({ protocols, observe }) { ... } }):
+const native = protocols.notes.native;
+const acceptedShares = observe(signal => native().contexts.observe({ access: 'member', signal }));
+const pages = protocols.notes.collection('notebook/page');
+const activePages = observe({
+  source: (parentContextId: string) => pages.within(parentContextId),
+});
+return { acceptedShares, pages, activePages };
+```
+
+`observe(open)` declares a fixed native observation. It opens when subscribed,
+retained, or awaited. `observe({ open })` declares an observation whose input is
+chosen later with `select(input)`. `observe({ source })` selects an existing
+observable store instead. It releases only its own subscription when the input
+changes; an `open` callback transfers ownership of the native view it returns.
+Protocol collections use this same owner internally. Native `records.observe()`
+and context APIs remain available for custom code.
+
+```ts
+await feature.activePages.select(notebook.contextId);
+const state = feature.activePages.getSnapshot();
+if (state.status === 'ready') {
+  console.log(state.selection, state.records.map(row => row.value));
+}
+await feature.activePages.select(null);
+```
+
+A changing-input observation starts idle with `selection: null`. `select(input)`
+retains the chosen source until replacement, null, `close()`, or owner abort. It
+waits for usable data, including `loadAll` expansion. Repeating the input preserves
+its observation. Calling `ready()` or another read control before choosing an
+input rejects with a `TypeError`.
+
+A superseded wait rejects with `StoreRetiredError`; unrelated subscribers keep
+their observations. Native payload fields can be absent before attachment, so
+narrow on `status` before using them. `selection` is published with its data.
+
+Use `observe(config, { signal })` for a shorter controller lifetime. Mutations
+stay on fixed collection handles or explicit domain commands: changing a read
+selection never retargets an already captured write handle. `getSnapshot()`
+opens no observation. React reads the returned store with `useStore()`.
 
 ### State and completion
 
@@ -149,31 +194,36 @@ bindings independently. A failed reread remains query state and preserves the
 accepted write's result. Custom native commands retain their native completion
 semantics and do not automatically add that collection refresh barrier.
 
-`StoreCommandState` contains shared pending inputs and the latest invocation's
-display error. Initial scope rejection happens before dispatch and leaves that
+`isLoadingMore` reports shared page expansion; `retry()` reopens and awaits usable
+local data, while `refresh()` recomputes the existing native view.
+
+`StoreCommandState.pendingInputs` lists unresolved command inputs. The state
+also contains the shared pending count and the latest invocation's display error. Initial scope rejection happens before dispatch and leaves that
 state unchanged; callers receive the rejected promise. Command inputs are one
 value (use an object for several fields), optionally defaulted or omitted.
 `run()` preserves the operation's result or rejection; it adds no automatic
-retry or rollback. `isCurrent()` checks authorization, while UI selection,
+retry or rollback. An optional `command(operation, { signal })` bounds a command to a shorter
+caller lifetime without changing issued write outcomes. `isCurrent()` checks authorization, while UI selection,
 drafts, and component completion effects remain caller-owned.
 
 | Surface | Failure/lifetime policy |
 |---|---|
 | `app.store()`, `app.subscribe()`, `native()`, `command.reset()` | Synchronous methods throw for invalid ownership/authority; an unregistered definition is a `TypeError`. |
 | `initialize()`, command `run()`, and async view controls | Return promises; unavailable/retired scopes reject with `StoreNotConnectedError`/`StoreRetiredError`, and native operation failures retain their original cause. |
-| Command/resource subscription after retirement | Returns an inert unsubscribe; retaining a closed resource is also inert. Reading its cached state opens nothing. |
+| Command/observation subscription after retirement | Returns an inert unsubscribe; retaining a closed observed store is also inert. Reading its cached state opens nothing. |
 | `app.dispose()` | Revokes store scopes, waits for registered cleanup and native connection disposal, and rejects with `AggregateError` for recorded cleanup/teardown failures. |
 
 ### Permissions and lifetime
 
-`defineApplication` derives one manifest from transitive store dependencies.
+`createApplication` derives one manifest from transitive store dependencies.
 Protocols use the SDK's existing delegated default of `read`, `write`, and
 `delete`; the application can override a protocol's policy explicitly:
 
 ```ts
-const applicationDefinition = defineApplication({
+const app = createApplication({
   stores: { notes: NotesStore },
   protocols: [{ protocol: NotesProtocol, permissions: ['read'] }],
+  connection: manifest => createConnectionStore({ application: manifest }),
 });
 ```
 
@@ -202,20 +252,23 @@ settled cannot extend an already settled promise.
 `dispose()` is terminal resource/connection teardown, not a request to
 flush application buffers, discard documents, or sign out. Unsaved document
 handoff and guarded drains remain with the host's existing lifecycle in this
-initial metadata slice. Use `app.connection.disconnect()` for native sign-out.
+application layer. Use `app.connection.disconnect()` for native sign-out.
 
 `getSnapshot()` reads a store's current cached state, without creating a copy.
-`State` names describe published values; snapshot methods are the observable
-read contract, including deterministic resource state during SSR and hydration.
+`State` names describe published values; `getSnapshot()` and `subscribe()` are
+the observable read contract shared by UI and headless consumers.
 
 ## Connect
 
+`createConnectionStore` is the native connection primitive used by
+`createApplication`. Custom hosts can construct it directly from a manifest:
+
 ```ts
 import { createConnectionStore } from '@enbox/api';
-import { application } from './application.js';
+import { manifest } from './manifest.js';
 
 const store = createConnectionStore({
-  application,
+  application: manifest,
   password     : userPassword,
   dwnEndpoints : ['https://enbox-dwn.fly.dev'],
 });
@@ -296,9 +349,9 @@ through one framework-neutral external-store contract:
 
 ```ts
 import { createConnectionStore } from '@enbox/api';
-import { application } from './application.js';
+import { manifest } from './manifest.js';
 
-const store = createConnectionStore({ application, password: userPassword });
+const store = createConnectionStore({ application: manifest, password: userPassword });
 const unsubscribe = store.subscribe((snapshot) => {
   console.log(snapshot.phase, snapshot.sync?.state, snapshot.sync?.connectivity);
 });
@@ -366,8 +419,8 @@ const NotesProtocol = defineProtocol({
   note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
-const application = defineApplicationManifest({ protocols: [NotesProtocol] });
-const store = createConnectionStore({ application, password: userPassword });
+const manifest = defineApplicationManifest({ protocols: [NotesProtocol] });
+const store = createConnectionStore({ application: manifest, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
   snapshot = await store.connectVault({ createIdentity: true });
@@ -421,7 +474,7 @@ import {
   getApplicationProtocolRequests,
 } from '@enbox/api';
 
-const application = defineApplicationManifest({
+const manifest = defineApplicationManifest({
   protocols: [
     NotesProtocol, // default: read, write, delete
     { protocol: PhotosProtocol, permissions: ['read'] },
@@ -429,7 +482,7 @@ const application = defineApplicationManifest({
 } as const);
 
 const store = createConnectionStore({
-  application,
+  application: manifest,
   connectHandler,
   monitor: { autoRefresh: {} },
 });
@@ -449,7 +502,7 @@ Hosted publication is not required for a local owner connection. Set
 `requireHostedReadiness: true` only when the app must publish and verify every
 owner configuration at the hosted DWN before becoming connected. The default
 keeps local-only, offline, and endpoint-less owner identities usable; an app
-can also call `enbox.protocols.ensureReady({ application })` later when hosted
+can also call `enbox.protocols.ensureReady({ application: manifest })` later when hosted
 receiving becomes necessary.
 
 Transient readiness failures remain retryable while keeping the unusable
@@ -472,11 +525,11 @@ manifest explicitly, and separately close both the session facade and manager:
 import { AuthManager } from '@enbox/auth';
 
 const auth = await AuthManager.create({ connectHandler });
-const protocols = getApplicationProtocolRequests(application);
+const protocols = getApplicationProtocolRequests(manifest);
 const session = await auth.connect({ protocols });
 const enbox = Enbox.fromSession(session);
 
-await enbox.protocols.ensureReady({ application });
+await enbox.protocols.ensureReady({ application: manifest });
 
 enbox.close();
 await auth.disconnect();
@@ -511,7 +564,7 @@ protocols locally without requiring hosted services:
 ```ts
 import { createEnboxTestContext } from '@enbox/api/testing';
 
-const context = await createEnboxTestContext({ application });
+const context = await createEnboxTestContext({ application: manifest });
 try {
   const notes = context.enbox.using(NotesProtocol);
   await notes.records.create('note', {
@@ -532,7 +585,7 @@ hosted helper instead:
 import { createHostedDelegatedEnboxTestContext } from '@enbox/api/testing';
 
 const context = await createHostedDelegatedEnboxTestContext({
-  application,
+  application: manifest,
   dwnEndpoints: [process.env.TEST_DWN_URL!],
 });
 try {
@@ -810,16 +863,16 @@ covers its service worker, persistent storage, and build setup.
 | Export | Description |
 |---|---|
 | `defineStore()` | Declares synchronous feature factories, typed protocols, dependencies, and commands. |
-| `defineApplication()` | Derives a protocol/permission manifest from registered features. |
-| `createApplication()` | Owns session-scoped feature instances and an existing native connection. |
-| `ApplicationDefinition` / `ApplicationRuntime` | Static registration and its running lifecycle owner. |
+| `createApplication()` | Derives the manifest and owns session-scoped features and the constructed connection. |
+| `ApplicationRuntime` | Running owner of the derived manifest, connection, and feature instances. |
 | `StoreDefinition` / `StoreContext` / `StoreInstance` | Feature authoring and inferred instance types. |
-| `DefineStoreOptions` / `DefineApplicationOptions` / `CreateApplicationOptions` | Feature registration, manifest policy, and runtime ownership options. |
+| `DefineStoreOptions` / `CreateApplicationOptions` | Feature definitions and application registration, manifest policy, and connection construction. |
 | `StoreProtocols` / `StoreDefinitions` | Named protocol and feature dependencies. |
 | `ProtocolStore` | Inert collection authoring plus explicit `native()` access to the full typed SDK. |
 | `StoreCollection` / `StoreCollectionFamily` | Data-only owned CRUD and keyed direct-parent collections. |
 | `StoreCollectionOptions` | Protocol-derived read filters, pagination, and `loadAll` policy. |
-| `StoreCollectionResource` / `StoreCollectionState` | Lazy collection ownership, async controls, and idle/native read state. |
+| `StoreCollectionState` | Collection rows, pagination progress, and idle/native read state. |
+| `ObservationFactory` / `ObservedStore` / `ObservedStoreState` | Common ownership and state for fixed or changing-input observations and borrowed collections. |
 | `StoreCommand` / `StoreCommandState` | One-input domain operations and shared pending/error state. |
 | `StoreNotConnectedError` / `StoreRetiredError` | Unavailable or retired store scope failures. |
 | `createConnectionStore()` | Owns restore, connect, refresh, disconnect, and facade cleanup for applications. |

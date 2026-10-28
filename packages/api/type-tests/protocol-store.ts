@@ -29,7 +29,7 @@ void Feature;
 declare const store: StoreInstance<typeof Feature>;
 const notes = store.collection('note', { filter: { tags: { status: 'draft' } } });
 const rows: readonly { value: { title: string; completed: boolean } }[] = notes.getSnapshot().records;
-const pending: readonly { title: string; completed: boolean }[] = notes.create.getSnapshot().pendingVariables;
+const pending: readonly { title: string; completed: boolean }[] = notes.create.getSnapshot().pendingInputs;
 void rows;
 void pending;
 void notes.create.run({ title: 'Typed', completed: false });

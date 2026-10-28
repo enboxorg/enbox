@@ -5,6 +5,20 @@ deployment, and verification instructions in the public
 [`Build a browser dapp`](../../apps/docs/content/docs/guides/browser-dapp.mdx)
 guide so developers have one implementation recipe.
 
+## Package boundary
+
+The published Enbox SDKs are framework-independent. `@enbox/api` owns protocol
+operations, sessions, observations, and commands. `@enbox/browser` adds browser
+facilities such as wallet popups, service workers, and URL handling. Neither
+package contains React hooks, components, React types, or React dependencies.
+SDK behavior must not depend on React mounting, rendering, or effect timing.
+
+React providers, hooks, and component lifecycle integration belong in the
+separate [`@enbox/react` repository](https://github.com/enboxorg/enbox-react).
+Its bindings consume the same `getSnapshot()` and `subscribe()` contracts as
+plain JavaScript and other clients. Server-rendering contracts are outside the
+dapp runtime model.
+
 ## Runtime ownership
 
 An Enbox dapp has two browser execution contexts with different lifetimes:
@@ -14,7 +28,7 @@ page
   UI
   one application runtime
     native ConnectionStore and Enbox facade
-    session-owned feature stores and observable resources
+    session-owned feature stores and observations
   live WebSocket sync and subscriptions
            │
            │ ordinary fetch / <img src> for DRLs
@@ -46,8 +60,8 @@ settle pass to repair missed notifications.
 - Define named owned collections and domain commands with `defineStore()`.
   Components and controllers resolve the same feature instance from the runtime;
   equivalent selections share native views and command progress.
-- Use `records.observe()` directly for native views outside those conveniences,
-  including context-bound shared records.
+- Own native observations with the same feature `observe()` factory, including
+  context-bound shared records. Use native views directly for custom ownership.
 - Use `records.subscribe()` for an incremental or append-only event stream.
 - Use a one-shot `query()` for searches and snapshots.
 - Use `ConnectionStore.subscribe()` for auth, sync, connectivity, facade
@@ -59,8 +73,8 @@ live path with application polling.
 
 ## Session and storage lifetime
 
-Compose feature definitions with `defineApplication()`, then give its `manifest`
-to the native connection passed to `createApplication()`. Keep that runtime and
+Pass feature definitions to browser `createApplication({ stores, wallet, connection })`.
+It derives the manifest and constructs the native connection. Keep that runtime and
 connection for the page's application lifetime. The runtime owns feature
 instances and cleanup; `runtime.connection` owns native auth, sync state, and
 connection actions. It remains the sole connection state model.
@@ -72,7 +86,7 @@ Configure `monitor: { autoRefresh: {} }` for delegated grant renewal.
 
 Session or facade replacement retires captured feature controls and releases
 their resources. React's `useFeature` follows that replacement; `useStore`
-retains each observed resource after commit and releases it on cleanup.
+retains each observed store after commit and releases it on cleanup.
 Headless consumers use explicit leases. Native views opened outside feature
 stores retain their caller-owned lifetime and must be rebound and closed by
 that caller when authority changes.

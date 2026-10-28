@@ -5,10 +5,10 @@ import type { ExpandableRecordView, RecordViewState } from '../src/record-view.j
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
-import { createCollectionResource } from '../src/store/resource.js';
+import { createApplication } from '../src/store/application.js';
+import { createObservedCollection } from '../src/store/observed-store.js';
 import { defineStore } from '../src/store/definition.js';
 import { StoreRetiredError } from '../src/store/scope.js';
-import { createApplication, defineApplication } from '../src/store/application.js';
 
 function deferred<Value>(): { promise: Promise<Value>; resolve(value: Value): void; reject(reason: unknown): void } {
   let resolve!: (value: Value) => void;
@@ -31,11 +31,11 @@ function view(close: () => Promise<void>): ExpandableRecordView<string> {
 
 function applicationFixture(open: () => Promise<ExpandableRecordView<string>>): {
   application: ReturnType<typeof createApplication>;
-  resource: ReturnType<typeof createCollectionResource<string>>;
-  closeResource(): void | Promise<void>;
+  store: ReturnType<typeof createObservedCollection<string>>;
+  closeStore(): void | Promise<void>;
   disposals(): number;
 } {
-  let releaseResource!: () => void | Promise<void>;
+  let releaseStore!: () => void | Promise<void>;
   let disposals = 0;
   const snapshot: ConnectionSnapshot = Object.freeze({ phase: 'disconnected' });
   const current = async (): Promise<ConnectionSnapshot> => snapshot;
@@ -61,17 +61,22 @@ function applicationFixture(open: () => Promise<ExpandableRecordView<string>>): 
           if (signal.aborted) { throw new StoreRetiredError(); }
         },
         getEnbox : (): never => { throw new Error('Cleanup fixture supplies native views directly.'); },
-        onClose  : (close): void => { releaseResource = close; onClose(close); },
+        onClose  : (close): (() => void) => {
+          let registered = true;
+          releaseStore = close;
+          onClose(() => { if (registered) { return close(); } });
+          return (): void => { registered = false; };
+        },
       };
-      return createCollectionResource(scope, open);
+      return createObservedCollection(scope, open);
     },
   });
-  const application = createApplication(defineApplication({ stores: { feature } }), { connection });
+  const application = createApplication({ stores: { feature }, connection: () => connection });
   return {
     application,
-    resource      : application.store(feature),
-    closeResource : (): void | Promise<void> => releaseResource(),
-    disposals     : (): number => disposals,
+    store      : application.store(feature),
+    closeStore : (): void | Promise<void> => releaseStore(),
+    disposals  : (): number => disposals,
   };
 }
 
@@ -81,14 +86,14 @@ function failures(error: unknown): unknown[] {
   return error instanceof AggregateError ? error.errors.flatMap(failures) : [error];
 }
 
-describe('store resource cleanup completion', () => {
+describe('observed store cleanup completion', () => {
   it('propagates cleanup failures from a view returned after application retirement', async () => {
     const warning = sinon.stub(console, 'warn');
     const opening = deferred<ExpandableRecordView<string>>();
     const failure = new Error('Late native close failed');
     const native = view(async (): Promise<never> => { throw failure; });
     const test = applicationFixture(() => opening.promise);
-    const release = test.resource.retain();
+    const release = test.store.retain();
     try {
       await nextTurn();
       const outcome = test.application.dispose().catch((error: unknown): unknown => error);
@@ -112,19 +117,19 @@ describe('store resource cleanup completion', () => {
     const failure = new Error('First native close failed');
     let reentered: void | Promise<void> = undefined;
     const first = view(() => failedClose.promise);
-    const second = view((): Promise<void> => { reentered = test.closeResource(); return slowClose.promise; });
+    const second = view((): Promise<void> => { reentered = test.closeStore(); return slowClose.promise; });
     let opens = 0;
     const test = applicationFixture(async () => ++opens === 1 ? first : second);
-    const release = test.resource.retain();
+    const release = test.store.retain();
     let settled = false;
     let disposal: Promise<unknown> | undefined;
     try {
-      await test.resource.ready();
-      await test.resource.retry();
+      await test.store.ready();
+      await test.store.retry();
       disposal = test.application.dispose().then((): undefined => { settled = true; return undefined; }, (error: unknown): unknown => {
         settled = true; return error;
       });
-      const completion = test.closeResource();
+      const completion = test.closeStore();
       await nextTurn();
       failedClose.reject(failure);
       await nextTurn();
@@ -132,7 +137,7 @@ describe('store resource cleanup completion', () => {
       expect(settled).toBe(false);
       expect(test.disposals()).toBe(0);
       expect(reentered).toBe(completion);
-      expect(test.closeResource()).toBe(completion);
+      expect(test.closeStore()).toBe(completion);
 
       slowClose.resolve();
       const error = await disposal;
@@ -159,13 +164,13 @@ describe('store resource cleanup completion', () => {
     const late = view(() => lateClose.promise);
     let opens = 0;
     const test = applicationFixture(async () => ++opens === 1 ? first : lateOpening.promise);
-    const release = test.resource.retain();
+    const release = test.store.retain();
     let settled = false;
     let disposal: Promise<unknown> | undefined;
     let retry: Promise<unknown> | undefined;
     try {
-      await test.resource.ready();
-      retry = test.resource.retry().catch((error: unknown): unknown => error);
+      await test.store.ready();
+      retry = test.store.retry().catch((error: unknown): unknown => error);
       await nextTurn();
       expect(opens).toBe(2);
       disposal = test.application.dispose().then((): undefined => { settled = true; return undefined; }, (error: unknown): unknown => {

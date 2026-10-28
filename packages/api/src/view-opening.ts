@@ -39,17 +39,18 @@ export async function whileSignalsActive<T>(
   }
 
   let detachAbort = (): void => {};
-  const aborted = new Promise<never>((_resolve, reject): void => {
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
-    detachAbort = (): void => signal.removeEventListener('abort', onAbort);
-    if (signal.aborted) {
-      onAbort();
-    }
-  });
-
   try {
-    const result = await Promise.race([operation(), aborted]);
+    // A synchronous throw must happen before creating an abort promise that could go unobserved.
+    const pending = operation();
+    const aborted = new Promise<never>((_resolve, reject): void => {
+      const onAbort = (): void => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+      detachAbort = (): void => signal.removeEventListener('abort', onAbort);
+      if (signal.aborted) {
+        onAbort();
+      }
+    });
+    const result = await Promise.race([pending, aborted]);
     signal.throwIfAborted();
     return result;
   } catch (error: unknown) {

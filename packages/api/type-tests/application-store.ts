@@ -1,6 +1,6 @@
 import type { StoreInstance } from '@enbox/api';
 
-import { createApplication, createConnectionStore, defineApplication, defineProtocol, defineStore, recordCodecs } from '@enbox/api';
+import { createApplication, createConnectionStore, defineProtocol, defineStore, recordCodecs } from '@enbox/api';
 
 const Protocol = defineProtocol({
   protocol  : 'https://example.com/protocols/application-store-types',
@@ -33,9 +33,9 @@ const Dashboard = defineStore({
     return { add };
   },
 });
-const definition = defineApplication({ stores: { dashboard: Dashboard } });
-const application = createApplication(definition, {
-  connection: createConnectionStore({ application: definition.manifest }),
+const application = createApplication({
+  stores     : { dashboard: Dashboard },
+  connection : manifest => createConnectionStore({ application: manifest }),
 });
 const feature: StoreInstance<typeof Notes> = application.store(Notes);
 const connectionState = application.connection.getSnapshot();

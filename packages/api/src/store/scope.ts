@@ -8,8 +8,24 @@ export interface StoreScope {
   getEnbox(): Enbox;
   /** Require a connected, current scope; throws when inactive or retired. */
   assertCurrent(): void;
-  /** Register resource release; late registrations are scheduled immediately. */
-  onClose(close: () => void | Promise<void>): void;
+  /** Register release; unregister only after successful cleanup. Late registrations run immediately. */
+  onClose(close: () => void | Promise<void>): () => void;
+}
+
+/** @internal Add a caller's shorter lifetime without replacing the feature's authority. */
+export function withStoreSignal(scope: StoreScope, ownerSignal?: AbortSignal): StoreScope {
+  if (ownerSignal === undefined || ownerSignal === scope.signal) { return scope; }
+  const signal = AbortSignal.any([scope.signal, ownerSignal]);
+  const assertCurrent = (): void => {
+    if (signal.aborted) { throw new StoreRetiredError(); }
+    scope.assertCurrent();
+  };
+  return {
+    signal,
+    assertCurrent,
+    getEnbox : (): Enbox => { assertCurrent(); return scope.getEnbox(); },
+    onClose  : (close) => scope.onClose(close),
+  };
 }
 
 /** An inactive application cannot issue protocol operations. */
