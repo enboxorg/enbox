@@ -1,5 +1,11 @@
 # @enbox/browser
 
+## 0.3.85
+
+### Patch Changes
+
+- [#1810](https://github.com/enboxorg/enbox/pull/1810) [`04cb04d`](https://github.com/enboxorg/enbox/commit/04cb04d20fbe59a6a0bae69720586980e6d88854) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Leave waiting service-worker activation to the application instead of calling skipWaiting from activatePolyfills. Retain client claiming after activation and DRL fetch interception, so initial preparation still completes while update prompts can wait for application work to finish.
+
 ## 0.3.84
 
 ### Patch Changes
