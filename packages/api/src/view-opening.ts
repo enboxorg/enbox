@@ -39,18 +39,17 @@ export async function whileSignalsActive<T>(
   }
 
   let detachAbort = (): void => {};
-  const aborted = new Promise<never>((_resolve, reject): void => {
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
-    detachAbort = (): void => signal.removeEventListener('abort', onAbort);
-    if (signal.aborted) {
-      onAbort();
-    }
-  });
-
   try {
-    // Keep dispatch synchronous while turning throws into handled race participants.
-    const pending = new Promise<T>((resolve): void => { resolve(operation()); });
+    // A synchronous throw must happen before creating an abort promise that could go unobserved.
+    const pending = operation();
+    const aborted = new Promise<never>((_resolve, reject): void => {
+      const onAbort = (): void => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+      detachAbort = (): void => signal.removeEventListener('abort', onAbort);
+      if (signal.aborted) {
+        onAbort();
+      }
+    });
     const result = await Promise.race([pending, aborted]);
     signal.throwIfAborted();
     return result;
