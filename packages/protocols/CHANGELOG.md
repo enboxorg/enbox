@@ -1,5 +1,15 @@
 # @enbox/protocols
 
+## 0.2.118
+
+### Patch Changes
+
+- [#1808](https://github.com/enboxorg/enbox/pull/1808) [`4b22c7f`](https://github.com/enboxorg/enbox/commit/4b22c7fc6ec6262ba2cd096c8c4faec171b96514) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Consolidate live data under observe(), returning an ObservedStore for fixed native observations, changing inputs, or borrowed collections. Selectable stores start idle until select(input), preserve native capabilities, and cancel superseded read waits without interrupting other consumers. Collection write-refresh controls stay private; commands share progress through pendingInputs and may use a shorter caller lifetime.
+  
+  Fold feature registration and manifest derivation into createApplication, with browser connection defaults supplied by the browser entrypoint. Remove the separate application definition, selected-collection API, and server-rendering snapshots.
+- Updated dependencies [[`4b22c7f`](https://github.com/enboxorg/enbox/commit/4b22c7fc6ec6262ba2cd096c8c4faec171b96514)]:
+  - @enbox/api@0.6.91
+
 ## 0.2.117
 
 ### Patch Changes
