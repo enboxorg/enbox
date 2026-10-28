@@ -112,6 +112,8 @@ Use one application-owned worker for DRL interception and application-shell
 precaching, and make it control the page before rendering. Current
 browser-conditioned Enbox packages work in page and worker builds without
 Enbox-specific Node-global, `process`, dynamic-import, or IIFE workarounds.
+`activatePolyfills()` claims clients after activation; the application decides
+when to activate a waiting update and reload, after completing pending work.
 
 The canonical guide owns the exact Vite configuration, boot order, hosting
 headers, and end-to-end completion gate.

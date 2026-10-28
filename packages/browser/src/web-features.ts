@@ -228,9 +228,8 @@ async function installWorker(options: ActivatePolyfillsOptions = {}): Promise<vo
       self instanceof ServiceWorkerGlobalScope
     ) {
       const workerSelf = self as unknown as ServiceWorkerGlobalScope;
-      workerSelf.skipWaiting();
       workerSelf.addEventListener('activate', (event: ExtendableEvent) => {
-        // Claim clients to make the service worker take control immediately
+        // Once activated, control existing clients so initial browser preparation can complete.
         event.waitUntil(workerSelf.clients.claim());
       });
       workerSelf.addEventListener('fetch', (event: FetchEvent) => {
@@ -595,6 +594,8 @@ async function resetContextMenuTarget(e?: Event): Promise<void> {
 
 /**
  * Activates various polyfills to enable Enbox features in Web environments.
+ * In a service worker, installs DRL fetch handling and claims clients on activation.
+ * The application controls when a waiting worker activates; this function does not call skipWaiting().
  *
  * @param options - Configuration options to control the activation of polyfills.
  *

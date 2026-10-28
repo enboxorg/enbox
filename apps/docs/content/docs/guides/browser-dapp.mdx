@@ -264,9 +264,10 @@ obtained from another window.
 
 An existing active worker controlling this page is sufficient even when an
 update is waiting. Preparation does not call `skipWaiting()`, claim clients,
-or reload the page. The worker-side `activatePolyfills()` already calls
-`skipWaiting()` and `clients.claim()`; its immediate takeover still applies
-when the PWA registrar uses prompt mode. The preparation timeout starts when
+or reload the page. Worker-side `activatePolyfills()` claims clients when the
+worker activates, enabling initial bootstrap without forcing waiting updates
+to activate. The application owns update policy: finish pending work before
+requesting `skipWaiting()` and reloading. The preparation timeout starts when
 the helper is called, after the external registrar has returned a registration.
 In React, keep that registrar mounted outside the SDK subtree being gated, and
 mount or initialize the subtree only after preparation succeeds.
