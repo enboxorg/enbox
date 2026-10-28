@@ -310,12 +310,13 @@ describe('observed collections', () => {
 });
 
 describe('observed stores', () => {
-  it('consumes readiness rejected during synchronous owner retirement', async () => {
+  it.each(['reject', 'throw'] as const)('handles native readiness %s during synchronous owner retirement', async (failure) => {
     const owner = fixture();
     const caller = new AbortController();
     const native = nativeView();
     native.view.ready = (options = {}): Promise<never> => {
       caller.abort();
+      if (failure === 'throw') { throw options.signal?.reason; }
       return Promise.reject(options.signal?.reason);
     };
     const store = createObservationFactory(owner.scope)(async () => native.view, { signal: caller.signal });

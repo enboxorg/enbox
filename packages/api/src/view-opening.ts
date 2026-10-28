@@ -49,7 +49,9 @@ export async function whileSignalsActive<T>(
   });
 
   try {
-    const result = await Promise.race([operation(), aborted]);
+    // Keep dispatch synchronous while turning throws into handled race participants.
+    const pending = new Promise<T>((resolve): void => { resolve(operation()); });
+    const result = await Promise.race([pending, aborted]);
     signal.throwIfAborted();
     return result;
   } catch (error: unknown) {

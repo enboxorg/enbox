@@ -2,6 +2,7 @@ import type { ObservableStore } from '../observable-store.js';
 import type { StoreScope } from './scope.js';
 import type { ExpandableRecordView, RecordViewState } from '../record-view.js';
 
+import { whileSignalsActive } from '../view-opening.js';
 import { StoreNotConnectedError, StoreRetiredError, toStoreError, withStoreSignal } from './scope.js';
 
 /** State shared by native observable views; payload fields remain native to each view. */
@@ -351,14 +352,15 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
   const page = (observation: Observation): Promise<void> => {
     if (observation.paging !== undefined) { return observation.paging; }
     const waiting = waitSignal(observation);
-    const pending = whileNotAborted(observation.opening, waiting).then(async (backend): Promise<void> => {
+    const pending = whileSignalsActive(() => observation.opening, [waiting]).then(async (backend): Promise<void> => {
       assertObservation(observation);
       if (!('loadMore' in backend) || typeof backend.loadMore !== 'function') {
         throw new TypeError('ObservedStore: this native view does not support loadMore().');
       }
+      const loadMore = backend.loadMore.bind(backend);
       try {
-        await whileNotAborted(backend.loadMore(), waiting);
-        await whileNotAborted(backend.ready({ signal: waiting }), waiting);
+        await whileSignalsActive(loadMore, [waiting]);
+        await whileSignalsActive(() => backend.ready({ signal: waiting }), [waiting]);
       } finally { assertObservation(observation); }
     });
     observation.paging = pending;
@@ -375,11 +377,11 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
   const expandAll = (observation: Observation): Promise<void> => {
     if (observation.expanding !== undefined) { return observation.expanding; }
     const waiting = waitSignal(observation);
-    const pending = whileNotAborted(observation.opening, waiting).then(async (backend): Promise<void> => {
+    const pending = whileSignalsActive(() => observation.opening, [waiting]).then(async (backend): Promise<void> => {
       if (!('loadMore' in backend) || typeof backend.loadMore !== 'function') {
         throw new TypeError('ObservedStore: loadAll requires an expandable native view.');
       }
-      await whileNotAborted(backend.ready({ signal: waiting }), waiting);
+      await whileSignalsActive(() => backend.ready({ signal: waiting }), [waiting]);
       const expand = (): Promise<void> => {
         assertObservation(observation);
         const next = backend.getSnapshot();
@@ -401,10 +403,10 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
   ): Promise<ReadyObservationState<NativeObservationState, unknown>> => {
     const waiting = waitSignal(observation, caller);
     try {
-      const backend = await whileNotAborted(observation.opening, waiting);
+      const backend = await whileSignalsActive(() => observation.opening, [waiting]);
       assertObservation(observation);
-      if (loadAll) { await whileNotAborted(expandAll(observation), waiting); }
-      const ready = await whileNotAborted(backend.ready({ signal: waiting }), waiting);
+      if (loadAll) { await whileSignalsActive(() => expandAll(observation), [waiting]); }
+      const ready = await whileSignalsActive(() => backend.ready({ signal: waiting }), [waiting]);
       waiting.throwIfAborted();
       return snapshot(ready, observation.selection.input, state.isLoadingMore) as ReadyObservationState<NativeObservationState, unknown>;
     } finally { assertObservation(observation); }
@@ -423,12 +425,13 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
   const refreshObservation = async (observation: Observation): Promise<ReadyObservationState<NativeObservationState, unknown>> => {
     const waiting = waitSignal(observation);
     try {
-      const backend = await whileNotAborted(observation.opening, waiting);
+      const backend = await whileSignalsActive(() => observation.opening, [waiting]);
       assertObservation(observation);
       if (!('refresh' in backend) || typeof backend.refresh !== 'function') {
         throw new TypeError('ObservedStore: this native view does not support refresh().');
       }
-      await whileNotAborted(backend.refresh(), waiting);
+      const refresh = backend.refresh.bind(backend);
+      await whileSignalsActive(refresh, [waiting]);
       return await usable(observation);
     } catch (error: unknown) { fail(observation, error); throw error; }
     finally { assertObservation(observation); }
@@ -493,7 +496,7 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
         assertSelection(captured);
         const observation = start(captured, config.kind === 'native');
         if (config.kind === 'source') {
-          await whileNotAborted(captured.source!.retry(), waitSignal(observation));
+          await whileSignalsActive(() => captured.source!.retry(), [waitSignal(observation)]);
           assertObservation(observation);
         }
         await usable(observation);
@@ -541,17 +544,4 @@ function createOwner(parentScope: StoreScope, config: ObservationConfiguration, 
     }),
     refresh: () => withLease(captured => refreshObservation(start(captured))),
   };
-}
-
-function whileNotAborted<Value>(promise: Promise<Value>, signal: AbortSignal): Promise<Value> {
-  return new Promise<Value>((resolve, reject): void => {
-    const abort = (): void => { reject(signal.reason); };
-    // Always consume the supplied promise, including native work rejected by an already-aborted signal.
-    void promise.then(
-      (value): void => { signal.removeEventListener('abort', abort); resolve(value); },
-      (error: unknown): void => { signal.removeEventListener('abort', abort); reject(error); },
-    );
-    if (signal.aborted) { abort(); }
-    else { signal.addEventListener('abort', abort, { once: true }); }
-  });
 }
