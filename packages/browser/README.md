@@ -70,9 +70,10 @@ Before initializing the connection store, await `prepareBrowser(workerUrl,
 { registrationOptions: { type: 'module' } })` for a module worker, or pass an
 existing registration from this page's `navigator.serviceWorker` when a PWA
 tool owns registration. The helper waits for that worker to control the page
-and activates page polyfills, with a timeout and abort signal. It leaves update
-handling to the host; worker-side `activatePolyfills()` retains its existing
-immediate takeover behavior.
+and activates page polyfills, with a timeout and abort signal. The application
+owns update activation. Worker-side `activatePolyfills()` claims clients during
+activation, but leaves waiting workers in place. Complete pending application
+work before your update handler requests `skipWaiting()` and reloads the page.
 
 Current browser-conditioned packages work in page and worker builds without
 Enbox-specific Node-global, `process`, or IIFE shims. Follow the

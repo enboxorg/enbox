@@ -473,8 +473,64 @@ describe('web features', () => {
   });
 
   // -----------------------------------------------------------------------
-  // service worker installation (DOM context)
+  // service worker installation
   // -----------------------------------------------------------------------
+
+  describe('service worker installation (worker context)', () => {
+    class WorkerScope extends EventTarget {
+      public readonly skipWaiting = vi.fn(async (): Promise<void> => {});
+      public readonly clients = { claim: vi.fn(async (): Promise<void> => {}) };
+    }
+
+    let worker: WorkerScope;
+
+    beforeEach(() => {
+      worker = new WorkerScope();
+      vi.stubGlobal('ServiceWorkerGlobalScope', WorkerScope);
+      vi.stubGlobal('self', worker);
+    });
+
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('leaves activation to the host and claims clients only after activation', async () => {
+      activatePolyfills({ serviceWorker: true, injectStyles: false, links: false });
+      worker.dispatchEvent(new Event('install'));
+      expect(worker.skipWaiting).not.toHaveBeenCalled();
+      expect(worker.clients.claim).not.toHaveBeenCalled();
+
+      const waitUntil = vi.fn();
+      worker.dispatchEvent(Object.assign(new Event('activate'), { waitUntil }));
+      expect(worker.clients.claim).toHaveBeenCalledOnce();
+      expect(waitUntil).toHaveBeenCalledWith(worker.clients.claim.mock.results[0].value);
+      await worker.clients.claim.mock.results[0].value;
+      expect(worker.skipWaiting).not.toHaveBeenCalled();
+    });
+
+    it('retains DRL fetch handling and leaves ordinary requests to the host', async () => {
+      const cached = new Response('worker DRL', { headers: { 'dwn-cache-time': String(Date.now()) } });
+      const cache = { match: vi.fn().mockResolvedValue(cached) };
+      spyOn(caches, 'open').mockResolvedValue(cache as unknown as Cache);
+      activatePolyfills({
+        serviceWorker : true,
+        injectStyles  : false,
+        links         : false,
+        onCacheCheck  : () => ({ ttl: 60_000 }),
+      });
+      const respondWith = vi.fn();
+      worker.dispatchEvent(Object.assign(new Event('fetch'), {
+        request: new Request('https://dweb/did:example:worker/records/example'), respondWith,
+      }));
+      expect(respondWith).toHaveBeenCalledOnce();
+      expect(await respondWith.mock.calls[0][0]).toBe(cached);
+
+      const ordinaryResponse = vi.fn();
+      worker.dispatchEvent(Object.assign(new Event('fetch'), {
+        request: new Request('https://example.com/app.js'), respondWith: ordinaryResponse,
+      }));
+      expect(ordinaryResponse).not.toHaveBeenCalled();
+      expect(worker.skipWaiting).not.toHaveBeenCalled();
+    });
+  });
 
   describe('service worker installation (DOM context)', () => {
     it('should attempt to register a service worker when no registration exists', async () => {
