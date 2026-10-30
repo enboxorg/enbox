@@ -17,13 +17,13 @@ import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
 import { DwnApi } from '../src/dwn-api.js';
-import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, protocolContextKey } from '../src/shared-context-protocol.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
+import { Poller, Time } from '@enbox/dwn-sdk-js';
 import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
@@ -318,11 +318,27 @@ function isFollowIntentRequest(request: ProcessDwnRequest<DwnInterface>): boolea
     && request.messageParams.filter.protocolPath === CONTEXT_FOLLOW_PATH;
 }
 
+function newerIntentEntry(
+  previous: DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string },
+  recordId: string,
+  value: unknown,
+): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
+  const timestamp = Time.createTimestampAfter(previous.descriptor.messageTimestamp);
+  return {
+    ...previous,
+    recordId,
+    contextId   : recordId,
+    descriptor  : { ...previous.descriptor, dateCreated: timestamp, messageTimestamp: timestamp },
+    encodedData : Convert.object(value).toBase64Url(),
+  };
+}
+
 describe('TypedEnbox contexts', () => {
   let agent: AgentStub;
   let current: FollowedSyncSource | undefined;
   let deleteFollowedSource: sinon.SinonStub;
   let deliveryListeners: Set<() => void>;
+  let dwn: DwnApi;
   let follow: sinon.SinonStub;
   let get: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
@@ -332,6 +348,7 @@ describe('TypedEnbox contexts', () => {
   let markFollowedSourcePullPending: sinon.SinonStub;
   let pullFollowedSource: sinon.SinonStub;
   let retryRoleDelivery: sinon.SinonStub;
+  let sync: SyncEngine;
   let typed: TypedEnbox<
     typeof SharedDefinition,
     typeof SharedProtocol.codecs,
@@ -443,6 +460,7 @@ describe('TypedEnbox contexts', () => {
       current = source({
         protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
         protocolRole  : active,
+        roles         : [...input.roles],
       });
       return current;
     });
@@ -458,7 +476,21 @@ describe('TypedEnbox contexts', () => {
       }
     });
 
-    const dwn = new DwnApi({
+    sync = {
+      deleteFollowedSource,
+      followSource        : follow,
+      getFollowedSource   : get,
+      getIdentityOptions  : async (): Promise<undefined> => undefined,
+      getReplicationLinks : async () => [],
+      listFollowedSources : list,
+      markFollowedSourcePullPending,
+      on                  : (listener: SyncEventListener): (() => void) => {
+        listeners.add(listener);
+        return (): void => { listeners.delete(listener); };
+      },
+      pullFollowedSource,
+    } as unknown as SyncEngine;
+    dwn = new DwnApi({
       agent          : agent as unknown as EnboxAgent,
       connectedDid,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
@@ -472,20 +504,7 @@ describe('TypedEnbox contexts', () => {
           return (): void => { deliveryListeners.delete(listener); };
         },
       },
-      sync: {
-        deleteFollowedSource,
-        followSource        : follow,
-        getFollowedSource   : get,
-        getIdentityOptions  : async (): Promise<undefined> => undefined,
-        getReplicationLinks : async () => [],
-        listFollowedSources : list,
-        markFollowedSourcePullPending,
-        on                  : (listener: SyncEventListener): (() => void) => {
-          listeners.add(listener);
-          return (): void => { listeners.delete(listener); };
-        },
-        pullFollowedSource,
-      } as unknown as SyncEngine,
+      sync,
     });
   });
 
@@ -982,6 +1001,79 @@ describe('TypedEnbox contexts', () => {
     };
     await expect(untypedRecords.query('outside')).rejects.toThrow('do not expose path \'outside\'');
     expect(agent.processDwnRequest.callCount).toBe(localRequests);
+  });
+
+  it.each([
+    ['unavailable', true], ['constructor', true], ['__proto__', true], ['unavailable', false],
+  ] as const)('retains a newer unsupported-group choice (%s, following=%s) instead of restoring older intent', async (group, following) => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    intentRecords.push(newerIntentEntry(intentRecords[0], 'newerDecision', {
+      ownerDid: sourceDid, contextId, group, following,
+    }));
+    current = undefined;
+    follow.resetHistory();
+
+    const contexts = await typed.contexts.list();
+
+    expect(follow.notCalled).toBe(true);
+    expect(contexts.filter(context => context.access === 'member')).toEqual([]);
+  });
+
+  it('ignores malformed and foreign journal rows while retaining valid decisions', async () => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const previous = intentRecords[0];
+    const forgotten = { ownerDid: sourceDid, contextId, following: false };
+    intentRecords.push(
+      {
+        ...newerIntentEntry(previous, 'foreignAuthor', forgotten),
+        authorization: authorization('did:example:foreign'),
+      },
+      {
+        ...newerIntentEntry(previous, 'foreignPath', forgotten),
+        descriptor: { ...previous.descriptor, protocolPath: 'workspace' },
+      },
+      {
+        ...newerIntentEntry(previous, 'malformedJson', forgotten),
+        encodedData: Convert.string('{').toBase64Url(),
+      },
+      newerIntentEntry(previous, 'invalidOwner', { ...forgotten, ownerDid: 'https://owner.example' }),
+      newerIntentEntry(previous, 'invalidContext', { ...forgotten, contextId: `${contextId}/` }),
+      newerIntentEntry(previous, 'oversizedContext', { ...forgotten, contextId: 'a'.repeat(601) }),
+      newerIntentEntry(previous, 'invalidFlag', { ...forgotten, following: 'false' }),
+    );
+
+    expect((await typed['readContextFollows']()).map(record => record.id)).toEqual([previous.recordId]);
+  });
+
+  it('retains a canonical choice that the current group cannot execute', async () => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const value = { ownerDid: sourceDid, contextId: `${contextId}/child`, group: 'default', following: true };
+    intentRecords.splice(0, 1, newerIntentEntry(intentRecords[0], 'otherGroupScope', value));
+    current = undefined;
+    follow.resetHistory();
+    const fresh = new TypedEnbox(dwn, SharedProtocol, { sync });
+
+    expect((await fresh['readContextFollows']()).map(record => record.value)).toEqual([value]);
+    expect(await fresh.contexts.list()).toEqual([]);
+    expect(follow.notCalled).toBe(true);
+  });
+
+  it.each(['forget', 'different group'])('exposes typed retirement when a newer %s supersedes a follow during persistence', async (choice) => {
+    const append = typed['appendContextFollow'].bind(typed);
+    const writing = sinon.stub(typed as never, 'appendContextFollow').callsFake(async (...args: Parameters<typeof append>): ReturnType<typeof append> => {
+      const written = await append(...args);
+      intentRecords.push(newerIntentEntry(intentRecords.at(-1)!, 'laterChoice', choice === 'forget'
+        ? { ownerDid: sourceDid, contextId, following: false }
+        : { ownerDid: sourceDid, contextId, following: true, group: 'viewers' }));
+      return written;
+    });
+    try {
+      await expect(typed.contexts.follow({ ownerDid: sourceDid, id: contextId }))
+        .rejects.toBeInstanceOf(ContextRetiredError);
+      expect(current).toBeUndefined();
+    } finally {
+      writing.restore();
+    }
   });
 
   it('does not expose internal source record IDs when following fails', async () => {
@@ -2112,6 +2204,38 @@ describe('TypedEnbox contexts', () => {
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
+  it.each(['current', 'fresh'])('forgets a saved choice without an acceptance from a %s facade', async (facade) => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    current = undefined;
+    follow.resetHistory();
+    agent.sendDwnRequest.resetHistory();
+    const client = facade === 'current' ? typed : new TypedEnbox(dwn, SharedProtocol, { sync });
+
+    await client.contexts.forget({ ownerDid: sourceDid, id: contextId });
+
+    expect(Convert.base64Url(intentRecords.at(-1)!.encodedData).toObject()).toEqual({
+      ownerDid: sourceDid, contextId, following: false,
+    });
+    expect(await client.contexts.list()).toEqual([]);
+    expect(follow.notCalled).toBe(true);
+    expect(agent.sendDwnRequest.notCalled).toBe(true);
+  });
+
+  it('preserves accepted access when the saved-forget write is denied', async () => {
+    await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const accepted = current;
+    agent.processDwnRequest.withArgs(sinon.match({
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { protocol: SharedDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
+    })).resolves({ reply: { status: { code: 403, detail: 'Protocol write not granted' } } });
+
+    await expect(typed.contexts.forget({ ownerDid: sourceDid, id: contextId })).rejects.toThrow('Protocol write not granted');
+
+    expect(current).toBe(accepted);
+    expect(deleteFollowedSource.called).toBe(false);
+    expect(intentRecords).toHaveLength(1);
+  });
+
   it('persists forgetting without withdrawing the owner role', async () => {
     current = source();
     const [shared] = await typed.contexts.list();
@@ -2125,7 +2249,6 @@ describe('TypedEnbox contexts', () => {
     expect(JSON.parse(await (intentWrite.dataStream as Blob).text())).toEqual({
       contextId,
       following : false,
-      group     : 'default',
       ownerDid  : sourceDid,
     });
     await expect(shared.records.query('workspace/note')).rejects.toThrow();

@@ -6,7 +6,7 @@ export class ContextNotReadyError extends Error {
   }
 }
 
-/** A previously accepted member context that this handle can no longer access. */
+/** A context handle or in-flight follow superseded by current access or the saved follow choice. */
 export class ContextRetiredError extends Error {
   public constructor(contextId: string, cause?: unknown) {
     super(`Member context '${contextId}' is no longer active.`, { cause });

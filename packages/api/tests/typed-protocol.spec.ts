@@ -312,11 +312,14 @@ describe('TypedProtocol API', () => {
 
     it('validates following and forgotten intents without trusting invalid owner coordinates', () => {
       const intent = { ownerDid: 'did:example:owner', contextId: 'workspace-a', group: 'default', following: true };
+      const forgotten = { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false };
       expect(isContextFollowIntent(intent)).toBe(true);
-      expect(isContextFollowIntent({ ...intent, following: false })).toBe(true);
+      expect(isContextFollowIntent(forgotten)).toBe(true);
+      expect(isContextFollowIntent({ ...forgotten, group: 'unavailable' })).toBe(true);
       for (const invalid of [
         null, [], { ...intent, ownerDid: 'https://owner.example' },
-        { ...intent, contextId: '' }, { ...intent, group: '' }, { ...intent, following: 'true' },
+        { ...intent, contextId: '' }, { ...intent, group: '' }, { ...intent, group: undefined }, { ...intent, following: 'true' },
+        { ...forgotten, ownerDid: 'https://owner.example' }, { ...forgotten, contextId: '' },
       ]) {
         expect(isContextFollowIntent(invalid)).toBe(false);
         expect(() => contextFollowCodec.encode(invalid as typeof intent)).toThrow();
@@ -331,7 +334,7 @@ describe('TypedProtocol API', () => {
 
       expect(record.encryption).toBeDefined();
       expect(await record.value()).toEqual(intent);
-      await expect(record.update({ data: { ...intent, following: false } }))
+      await expect(record.update({ data: { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false } }))
         .rejects.toThrow(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
 
       const stranger = await testHarness.agent.did.create({ method: 'jwk', store: true });

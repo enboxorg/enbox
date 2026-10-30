@@ -1,14 +1,14 @@
 import type { ContextFollowIntent } from '../src/shared-context-protocol.js';
 import type { ContextFollowingOptions, ContextFollowRecord } from '../src/context-following.js';
 import type { ExpandableRecordView, RecordViewState } from '../src/record-view.js';
-import type { FollowedSyncSource, FollowedSyncSourceInput } from '@enbox/agent';
+import type { FollowedSyncSource, FollowedSyncSourceInput, SyncEvent } from '@enbox/agent';
 
 import { ContextFollowing } from '../src/context-following.js';
 import { ContextRetiredError } from '../src/context-errors.js';
-import { followedSyncSourceActiveEqual } from '@enbox/agent';
 import sinon from 'sinon';
 import { Time } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent';
 
 const actorDid = 'did:example:member';
 const ownerDid = 'did:example:owner';
@@ -16,10 +16,13 @@ const protocol = 'https://example.com/notes';
 const roles: readonly [string, ...string[]] = ['page/editor', 'page/viewer'];
 
 function decision(index: number, value: Partial<ContextFollowIntent> = {}): ContextFollowRecord {
+  const target = { contextId: value.contextId ?? 'page-1', ownerDid: value.ownerDid ?? ownerDid };
   return {
     id        : `intent-${index}`,
     timestamp : `2026-01-01T00:00:00.${String(index).padStart(6, '0')}Z`,
-    value     : { contextId: 'page-1', following: true, group: 'default', ownerDid, ...value },
+    value     : value.following === false
+      ? { ...target, following: false }
+      : { ...target, following: true, group: 'group' in value ? value.group ?? 'default' : 'default' },
   };
 }
 
@@ -110,7 +113,7 @@ function fixture(initial: ContextFollowRecord[] = []): {
   const follow = sinon.stub<[FollowedSyncSourceInput], Promise<FollowedSyncSource>>()
     .callsFake(async (input): Promise<FollowedSyncSource> => acceptSource(input));
   const append = sinon.spy(async (value: ContextFollowIntent, after?: string): Promise<ContextFollowRecord> => {
-    const row = { ...decision(entries.length + 1, value), ...(after === undefined ? {} : { timestamp: Time.createTimestampAfter(after) }) };
+    const row = { ...decision(entries.length + 1), value, ...(after === undefined ? {} : { timestamp: Time.createTimestampAfter(after) }) };
     entries.push(row);
     return row;
   });
@@ -185,6 +188,41 @@ describe('ContextFollowing', () => {
     expect(test.entries).toHaveLength(0);
   });
 
+  it('reverifies the current saved policy after an unsaved replacement is rolled back', async () => {
+    const test = fixture([decision(1)]);
+    const previous = {
+      ...test.acceptSource({ actorDid, contextId: request.id, protocol, roles: [...roles], sourceDid: ownerDid }),
+      id           : 'viewer-role',
+      protocolRole : 'page/viewer',
+    };
+    test.sources.clear();
+    test.sources.set(previous.id, previous);
+    const error = sinon.spy();
+    const lease = await test.coordinator.observe(error);
+    try {
+      await test.coordinator.restore();
+      expect(test.follow.called).toBe(false);
+      test.follow.onFirstCall().callsFake(async (input): Promise<FollowedSyncSource> => {
+        test.sources.clear();
+        return test.acceptSource(input);
+      });
+      const failure = new Error('journal unavailable after verification');
+      test.options.read = async (): Promise<readonly ContextFollowRecord[]> => {
+        if (test.follow.calledOnce) { throw failure; }
+        return [...test.entries];
+      };
+      await expect(test.coordinator.follow(request)).rejects.toBe(failure);
+      await settled((): boolean => test.follow.callCount === 2 && test.sources.size === 1);
+      const restored = [...test.sources.values()][0]!;
+      expect(restored.roles).toEqual(roles);
+      expect(restored.acceptanceId).not.toBe(previous.acceptanceId);
+      expect(test.append.called).toBe(false);
+      expect(error.called).toBe(false);
+    } finally {
+      await lease.close();
+    }
+  });
+
   it.each(['before', 'after'] as const)('handles a registry read failure %s successful intent persistence', async (phase) => {
     const test = fixture();
     const failure = new Error('journal unavailable');
@@ -220,6 +258,22 @@ describe('ContextFollowing', () => {
     expect(test.append.callCount).toBe(0);
   });
 
+  it('keeps a newer unsupported role group from replaying an older follow', async () => {
+    const test = fixture([decision(1), decision(2, { group: 'removed' })]);
+    await test.coordinator.restore();
+    expect(test.follow.called).toBe(false);
+    expect(test.sources.size).toBe(0);
+    expect(test.append.called).toBe(false);
+  });
+
+  it.each(['unseen', 'saved', 'unknown group'] as const)('forgets an unavailable context by coordinates (%s)', async (state) => {
+    const test = fixture(state === 'unseen' ? [] : [decision(1, { group: state === 'saved' ? 'default' : 'removed' })]);
+    await test.coordinator.forgetContext({ ownerDid, id: request.id });
+    expect(test.entries.at(-1)?.value).toEqual({ contextId: request.id, following: false, ownerDid });
+    expect(test.follow.called).toBe(false);
+    expect(test.sources.size).toBe(0);
+  });
+
   it('applies the newest explicit forget and fences stale member handles', async () => {
     const test = fixture();
     const first = await test.coordinator.follow(request);
@@ -245,6 +299,32 @@ describe('ContextFollowing', () => {
     expect(test.entries).toHaveLength(1);
     await test.coordinator.forget(source, async (): Promise<void> => { test.sources.delete(source.id); });
     expect(test.entries.at(-1)?.value.following).toBe(false);
+  });
+
+  it('can complete the saved forget after role withdrawal succeeded but journal persistence failed', async () => {
+    const test = fixture();
+    const source = await test.coordinator.follow(request);
+    const append = test.options.append;
+    const failure = new Error('journal write denied');
+    test.options.append = async (): Promise<ContextFollowRecord> => { throw failure; };
+    await expect(test.coordinator.forget(source, async (): Promise<void> => { test.sources.clear(); })).rejects.toBe(failure);
+    expect(test.sources.size).toBe(0);
+    expect(test.entries.at(-1)?.value.following).toBe(true);
+    test.options.append = append;
+    await test.coordinator.forgetContext({ ownerDid, id: request.id });
+    expect(test.entries.at(-1)?.value).toEqual({ contextId: request.id, following: false, ownerDid });
+  });
+
+  it.each(['removed', 'replaced'] as const)('rejects leave through a retired acceptance (%s)', async (state) => {
+    const test = fixture();
+    const source = await test.coordinator.follow(request);
+    test.sources.clear();
+    if (state === 'replaced') { await test.coordinator.follow(request); }
+    const withdraw = sinon.spy(async (): Promise<void> => {});
+    await expect(test.coordinator.forget(source, withdraw)).rejects.toBeInstanceOf(ContextRetiredError);
+    expect(withdraw.called).toBe(false);
+    expect(test.sources.size).toBe(state === 'replaced' ? 1 : 0);
+    expect(test.entries.at(-1)?.value.following).toBe(true);
   });
 
   it('rechecks the exact acceptance before writing forget after an asynchronous read', async () => {
@@ -311,9 +391,14 @@ describe('ContextFollowing', () => {
     expect(test.sources.get(replacement.id)).toBe(intent === 'followed again' ? replacement : undefined);
   });
 
-  it.each(['forgotten', 'same group', 'different group'] as const)('checks a late restoration when newer intent is %s', async (change) => {
+  it.each([
+    ['forgotten', false, 'default', 0],
+    ['same group', true, 'default', 1],
+    ['equivalent group', true, 'aliases', 1],
+    ['different group', true, 'viewers', 0],
+  ] as const)('checks a late restoration when newer intent is %s', async (_change, following, group, expectedSize) => {
     const test = fixture([decision(1)]);
-    test.options.roleGroups = { default: roles, viewers: ['page/viewer'] };
+    test.options.roleGroups = { aliases: roles, default: roles, viewers: ['page/viewer'] };
     const wait = deferred<void>();
     test.follow.callsFake(async (input): Promise<FollowedSyncSource> => {
       await wait.promise;
@@ -321,13 +406,10 @@ describe('ContextFollowing', () => {
     });
     const restoring = test.coordinator.restore();
     await settled((): boolean => test.follow.calledOnce);
-    test.entries.push(decision(2, {
-      following : change !== 'forgotten',
-      group     : change === 'different group' ? 'viewers' : 'default',
-    }));
+    test.entries.push(decision(2, { following, group }));
     wait.resolve();
     await restoring;
-    expect(test.sources.size).toBe(change === 'same group' ? 1 : 0);
+    expect(test.sources.size).toBe(expectedSize);
     expect(test.append.callCount).toBe(0);
   });
 
@@ -345,6 +427,25 @@ describe('ContextFollowing', () => {
     await expect(opening).rejects.toBeInstanceOf(ContextRetiredError);
     expect(test.sources.size).toBe(0);
     expect(test.append.callCount).toBe(0);
+  });
+
+  it.each(['viewers', 'aliases'] as const)('checks a newer %s role policy received during persistence', async (group) => {
+    const test = fixture();
+    test.options.roleGroups = { aliases: roles, default: roles, viewers: ['page/viewer'] };
+    const append = test.options.append;
+    test.options.append = async (value, after): Promise<ContextFollowRecord> => {
+      const written = await append(value, after);
+      test.entries.push({ ...decision(99, { group }), timestamp: Time.createTimestampAfter(written.timestamp) });
+      return written;
+    };
+    const following = test.coordinator.follow(request);
+    if (group === 'viewers') {
+      await expect(following).rejects.toBeInstanceOf(ContextRetiredError);
+    } else {
+      expect((await following).roles).toEqual(roles);
+    }
+    expect(test.entries.at(-1)?.value).toMatchObject({ following: true, group });
+    expect(test.sources.size).toBe(group === 'viewers' ? 0 : 1);
   });
 
   it('shares the journal observer, drains all pages, and releases it with the last lease', async () => {
@@ -474,6 +575,116 @@ describe('ContextFollowing', () => {
     } finally {
       wait.resolve();
       await lease.close();
+    }
+  });
+
+  it.each([
+    ['recipient connectivity', {
+      type           : 'link:connectivity-change', tenantDid      : actorDid, remoteEndpoint : 'https://member.example', protocol,
+      from           : 'offline', to             : 'online',
+    }, ['folder', 'folder/page-1', 'folder/page-2', 'folder/page-4', 'folder2/page-3']],
+    ['recipient currentness', {
+      type           : 'pull:currentness-change', tenantDid      : actorDid, remoteEndpoint : 'https://member.example', protocol,
+      from           : false, to             : true,
+    }, ['folder', 'folder/page-1', 'folder/page-2', 'folder/page-4', 'folder2/page-3']],
+    ['recipient reconciliation', {
+      type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol,
+    }, ['folder', 'folder/page-1', 'folder/page-2', 'folder/page-4', 'folder2/page-3']],
+    ['owner connectivity', {
+      type           : 'link:connectivity-change', tenantDid      : ownerDid, remoteEndpoint : 'https://owner.example', protocol, contextId      : 'folder',
+      from           : 'offline', to             : 'online',
+    }, ['folder', 'folder/page-1', 'folder/page-2']],
+    ['owner reconciliation', {
+      type: 'reconcile:completed', tenantDid: ownerDid, remoteEndpoint: 'https://owner.example', protocol, contextId: 'folder',
+    }, ['folder', 'folder/page-1', 'folder/page-2']],
+  ] as const)('retries only the saved choices covered by %s', async (_label, event, expectedContexts) => {
+    const test = fixture([
+      decision(1, { contextId: 'folder/page-1' }),
+      decision(2, { contextId: 'folder/page-2' }),
+      decision(3, { contextId: 'folder2/page-3' }),
+      decision(4, { contextId: 'folder/page-4', ownerDid: 'did:example:other-owner' }),
+      decision(5, { contextId: 'folder', group: 'folders' }),
+    ]);
+    test.options.roleGroups = { default: ['folder/page/editor', 'folder/page/viewer'], folders: ['folder/editor'] };
+    test.follow.rejects(new FollowedSourceNotReadyError('membership is not ready'));
+    const lease = await test.coordinator.observe((): void => {});
+    try {
+      await settled((): boolean => test.follow.callCount === 5);
+      test.follow.resetHistory();
+      test.coordinator.retryAfterSync(event);
+      await settled((): boolean => test.follow.callCount === expectedContexts.length);
+      expect(test.follow.getCalls().map(call => call.args[0].contextId).sort()).toEqual(expectedContexts);
+      expect(test.append.called).toBe(false);
+    } finally {
+      await lease.close();
+    }
+  });
+
+  it('ignores owner currentness ticks, unrelated scopes, and unsuccessful sync transitions', async () => {
+    const test = fixture([decision(1)]);
+    test.follow.rejects(new FollowedSourceNotReadyError('membership is not ready'));
+    const lease = await test.coordinator.observe((): void => {});
+    try {
+      await settled((): boolean => test.follow.calledOnce);
+      test.follow.resetHistory();
+      const ignored: SyncEvent[] = [
+        { type: 'pull:currentness-change', tenantDid: ownerDid, remoteEndpoint: 'https://owner.example', protocol, contextId: 'page-1', from: false, to: true },
+        { type: 'pull:currentness-change', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol, from: true, to: false },
+        { type: 'link:connectivity-change', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol, from: 'online', to: 'offline' },
+        { type: 'link:connectivity-change', tenantDid: 'did:example:other-owner', remoteEndpoint: 'https://other.example', protocol, from: 'offline', to: 'online' },
+        { type: 'reconcile:completed', tenantDid: ownerDid, remoteEndpoint: 'https://owner.example', protocol, contextId: 'page-2' },
+        { type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol: 'https://example.com/other' },
+        { type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol, protocols: ['https://example.com/other'] },
+      ];
+      for (const event of ignored) { test.coordinator.retryAfterSync(event); }
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(test.follow.called).toBe(false);
+      test.coordinator.retryAfterSync({
+        type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol,
+      });
+      await settled((): boolean => test.follow.calledOnce);
+    } finally {
+      await lease.close();
+    }
+  });
+
+  it('logs unexpected restoration failures without closing the journal or dropping accepted contexts', async () => {
+    const test = fixture([decision(1)]);
+    const accepted = test.acceptSource({ actorDid, contextId: 'another-page', protocol, roles: [...roles], sourceDid: ownerDid });
+    const failure = new TypeError('remote protocol is malformed');
+    test.follow.rejects(failure);
+    const warn = sinon.stub(console, 'warn');
+    const error = sinon.spy();
+    const lease = await test.coordinator.observe(error);
+    try {
+      await settled((): boolean => warn.called);
+      expect(warn.calledOnce).toBe(true);
+      expect(warn.firstCall.args).toContain(failure);
+      expect([...test.sources.values()]).toEqual([accepted]);
+      expect(test.entries).toEqual([decision(1)]);
+      expect(error.called).toBe(false);
+      expect((await test.openView.firstCall.returnValue as IntentView).closed).toBe(false);
+    } finally {
+      warn.restore();
+      await lease.close();
+    }
+  });
+
+  it('delivers a journal failure to later observers when an earlier error listener throws', async () => {
+    const test = fixture();
+    const view = new IntentView();
+    test.openView.resolves(view);
+    const first = await test.coordinator.observe((): void => { throw new Error('observer failed'); });
+    const error = sinon.spy();
+    const second = await test.coordinator.observe(error);
+    const failure = new Error('journal unavailable');
+    try {
+      view.fail(failure);
+      await settled((): boolean => error.called);
+      expect(error.firstCall.args[0]).toBe(failure);
+    } finally {
+      await first.close();
+      await second.close();
     }
   });
 

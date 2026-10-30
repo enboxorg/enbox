@@ -25,11 +25,15 @@ type ContextInvitationEnvelope = Readonly<{
 /** One immutable recipient-owned decision to follow or forget a context. */
 export type ContextFollowIntent = Readonly<{
   contextId: string;
-  following: boolean;
-  /** Name of a protocol.roleGroups entry; the actual role is verified again when restoring access. */
-  group: string;
   ownerDid: string;
-}>;
+} & (
+  | {
+    following: true;
+    /** Name of a protocol.roleGroups entry; actual access is verified when restoring. */
+    group: string;
+  }
+  | { following: false }
+)>;
 
 export const contextInvitationCodec = Object.freeze(recordCodecs.json<ContextInvitationEnvelope>());
 export const contextFollowCodec = Object.freeze(recordCodecs.json<ContextFollowIntent>({ validator: isContextFollowIntent }));
@@ -94,9 +98,8 @@ export function isContextFollowIntent(value: unknown): value is ContextFollowInt
     && Did.parse(value.ownerDid)?.uri === value.ownerDid
     && typeof value.contextId === 'string'
     && value.contextId.length > 0
-    && typeof value.group === 'string'
-    && value.group.length > 0
-    && typeof value.following === 'boolean';
+    && (value.following === false || (value.following === true
+      && typeof value.group === 'string' && value.group.length > 0));
 }
 
 /** Return the collision-safe identity for one owner-scoped protocol context. */

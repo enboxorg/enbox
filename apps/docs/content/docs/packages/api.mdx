@@ -756,8 +756,10 @@ recipient-owned `enboxContextFollow` records in the application's protocol.
 application code does not declare a bookmark type or run a reconciliation loop.
 Existing own-protocol sync carries these records between devices.
 
-The saved decision contains only the owner DID, context ID, role-group selection,
-and whether the recipient still wants to follow. Explicit forgets are retained
+Every saved decision contains the owner DID, context ID, and whether the recipient
+still wants to follow. A follow decision also selects a role group; a forget does
+not depend on one. A newer choice with a group this app cannot use remains the
+latest choice instead of exposing an older follow. Explicit forgets are retained
 as decisions too, so an older follow cannot return merely because another device
 was offline. The newest signed timestamp, then record ID, determines the current
 decision; explicit actions advance beyond the latest timestamp already observed.
@@ -767,15 +769,41 @@ verified separately on each device.
 `contexts.observe()` restores known saved follows in the background while keeping
 owned roots and existing accepted contexts available. An unreachable owner or a
 missing role leaves the saved choice intact. Successful recipient-protocol sync
-and reconnection retry while a view is active. Reopening the observation,
-`contexts.list()`, or an explicit `follow()` also retries; no additional timer polls
-unavailable owners. Revocation ends access immediately when verified, but only an
+and matching owner-context recovery events retry while a view is active.
+Reopening the observation, `contexts.list()`, or an explicit `follow()` also
+retries; no additional timer polls unavailable owners. Revocation ends access immediately when verified, but only an
 explicit `forget()` or `leave()` changes the saved following choice.
+
+A saved choice can outlive its member handle. Forget it by coordinates when access
+is revoked or the owner is unreachable:
+
+```ts
+await notebooks.contexts.forget({ ownerDid, id: contextId });
+```
+
+This saves the forget without verifying remote authority or withdrawing membership.
+The handle's `forget()` stays fenced to its exact acceptance; a stale handle does
+not override a newer one. `leave()` requires a current handle and withdraws the
+owner role before saving the forget. Those writes are not atomic: if withdrawal
+succeeds but saving fails, the call rejects. Coordinate-based `contexts.forget()`
+can complete the saved choice without restoring access. A retired `leave()`
+rejects with `ContextRetiredError`.
+
+`contexts.list()` waits for a restoration attempt and may wait for owner network
+timeouts. Use `contexts.observe()` for nonblocking live UI data. Unexpected owner
+restoration failures are logged while the saved choices and available contexts
+remain intact.
 
 Following, accepting, forgetting, and leaving require writing the recipient's
 own protocol records. Default application permissions include that access;
-explicit read-only grant policies remain read-only. Restoration only reads the
-saved decisions and independently verifies remote authority.
+explicit read-only grant policies remain read-only. Applications granted protocol
+write access are trusted to change the identity's shared follow choices.
+Restoration independently verifies current remote membership and keys; the saved
+choice does not confer access.
+
+The journal is immutable and append-only. This version reads its local history in
+pages and does not compact it automatically. Any retention policy must preserve
+effective forget decisions so an older offline follow cannot reappear.
 
 ### One owned-and-shared catalog
 

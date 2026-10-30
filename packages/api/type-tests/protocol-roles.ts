@@ -127,6 +127,15 @@ void viewerContext.then(context => {
   void role;
 });
 
+const forgetting: Promise<void> = typed.contexts.forget({ id: 'workspaceContext', ownerDid: 'did:example:owner' });
+void forgetting;
+
+// @ts-expect-error forgetting identifies a context without selecting a role group.
+void typed.contexts.forget({ id: 'workspaceContext', ownerDid: 'did:example:owner', group: 'viewers' });
+
+// @ts-expect-error a forget requires the owner's DID even when no live handle exists.
+void typed.contexts.forget({ id: 'workspaceContext' });
+
 // @ts-expect-error undeclared role groups cannot be followed.
 void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', group: 'missing' });
 

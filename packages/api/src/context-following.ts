@@ -1,10 +1,11 @@
 import type { ContextFollowIntent } from './shared-context-protocol.js';
 import type { ExpandableRecordView } from './record-view.js';
-import type { FollowedSyncSource, SyncEngine } from '@enbox/agent';
+import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
-import { followedSyncSourceActiveEqual } from '@enbox/agent';
+import { FilterUtility } from '@enbox/dwn-sdk-js';
 import { protocolContextKey } from './shared-context-protocol.js';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual, syncEventCoversProtocol } from '@enbox/agent';
 
 /** One decoded immutable decision in the recipient's private following journal. */
 export type ContextFollowRecord = Readonly<{
@@ -13,12 +14,12 @@ export type ContextFollowRecord = Readonly<{
   value: ContextFollowIntent;
 }>;
 
+type ContextTarget = Readonly<{ id: string; ownerDid: string }>;
+
 /** Coordinates and the role-group selection already defaulted by contexts.follow(). */
-type FollowRequest = Readonly<{
+type FollowRequest = ContextTarget & Readonly<{
   /** Key in the protocol's roleGroups map, such as 'default'; its value lists candidate role paths in preference order. */
   group: string;
-  id: string;
-  ownerDid: string;
 }>;
 type FollowSync = Pick<SyncEngine, 'followSource' | 'getFollowedSource' | 'listFollowedSources' | 'deleteFollowedSource'>;
 
@@ -71,40 +72,44 @@ export class ContextFollowing {
       const outcome = await this.saveFollowUnlessNewerForget(request, initialDecision)
         .catch((error: unknown): Promise<never> => this.rollbackFailedFollow(source, acceptedBeforeFollow, error));
 
-      if (outcome !== 'already-following') {
-        if (outcome === 'saved') {
-          // Include decisions received during the write; read failures here must not undo saved access.
-          await this.readLatestIntents();
-        }
-        await this.rejectFollowIfForgotten(key, request.id);
+      if (outcome === 'saved') {
+        // Include decisions received during the write; read failures here must not undo saved access.
+        await this.readLatestIntents();
       }
+      await this.rejectSupersededFollow(request, source);
       return source;
     });
   }
 
+  /** Save the user's forget choice even when no local acceptance or reachable owner exists. */
+  public forgetContext(target: ContextTarget): Promise<void> {
+    const key = protocolContextKey(target.ownerDid, target.id);
+    return this.serializeContextOperation(key, async (): Promise<void> => {
+      const previous = (await this.readLatestIntents()).get(key);
+      await this.saveForgetDecision(target, previous?.timestamp);
+    });
+  }
+
   /**
-   * Persist an explicit forget only for the current exact acceptance. An optional
-   * owner-role withdrawal must succeed first; its own sync event may retire the source.
+   * Forget through an exact live handle. Leave must first withdraw that handle's
+   * owner role; a stale handle cannot alter a newer acceptance or saved choice.
    */
-  public forget(source: FollowedSyncSource, beforeForget?: () => Promise<void>): Promise<void> {
-    const key = protocolContextKey(source.sourceDid, source.contextId);
+  public forget(source: FollowedSyncSource, withdrawRole?: () => Promise<void>): Promise<void> {
+    const target = { id: source.contextId, ownerDid: source.sourceDid };
+    const key = protocolContextKey(target.ownerDid, target.id);
     return this.serializeContextOperation(key, async (): Promise<void> => {
       const current = await this._options.sync.getFollowedSource(source.id);
       this.assertActive();
       if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
+        if (withdrawRole !== undefined) { throw new ContextRetiredError(source.contextId); }
         return;
       }
-      const before = (await this.readLatestIntents()).get(key);
-      const group = before?.value.group ?? Object.entries(this._options.roleGroups)
-        .find(([, roles]): boolean => sameRoles(roles, source.roles))?.[0];
-      if (group === undefined) {
-        throw new TypeError('ContextFollowing: the accepted source has no declared role group.');
-      }
-      if (beforeForget !== undefined) {
-        await beforeForget();
-        // Leave withdraws the owner's role; respect decisions received during that operation.
+      const previous = (await this.readLatestIntents()).get(key);
+      if (withdrawRole !== undefined) {
+        await withdrawRole();
+        // Withdrawal and saving are separate writes. A newer choice received meanwhile wins.
         const received = (await this.readLatestIntents()).get(key);
-        if (!sameRecord(before, received)) {
+        if (!sameRecord(previous, received)) {
           if (received?.value.following === false) {
             await this.removeForgottenAcceptances(received);
           }
@@ -115,16 +120,7 @@ export class ContextFollowing {
         this.assertActive();
         if (active === undefined || !followedSyncSourceActiveEqual(active, source)) { return; }
       }
-      this.rememberLatestIntents([await this._options.append({
-        contextId : source.contextId,
-        following : false,
-        group,
-        ownerDid  : source.sourceDid,
-      }, before?.timestamp)]);
-      const latest = (await this.readLatestIntents()).get(key);
-      if (latest?.value.following === false) {
-        await this.removeForgottenAcceptances(latest);
-      }
+      await this.saveForgetDecision(target, previous?.timestamp);
     });
   }
 
@@ -135,13 +131,47 @@ export class ContextFollowing {
       this.serializeContextOperation(key, (): Promise<void> => this.restoreContext(key))));
   }
 
-  /** Retry retained intent when the owning protocol's existing sync lifecycle recovers. */
-  public retry(): void {
+  /** Retry only choices covered by a relevant session or owner recovery event. */
+  public retryAfterSync(event: SyncEvent): void {
+    switch (event.type) {
+      case 'pull:currentness-change':
+        // Owner role links can toggle currentness during ordinary settle probes.
+        if (event.tenantDid !== this._options.actorDid || !event.to) { return; }
+        break;
+      case 'link:connectivity-change':
+        if (event.to !== 'online') { return; }
+        break;
+      case 'reconcile:completed':
+        break;
+      default:
+        return;
+    }
+    if (!syncEventCoversProtocol(event, this._options.protocol)) { return; }
+    if (event.tenantDid === this._options.actorDid) {
+      this.retry();
+    } else {
+      this.retry(event.tenantDid, event.contextId);
+    }
+  }
+
+  /** Retry retained choices, optionally within one owner's context subtree. */
+  public retry(ownerDid?: string, contextId?: string): void {
     const observation = this._observation;
-    if (observation !== undefined && this.isObserving(observation)) {
+    if (observation === undefined || !this.isObserving(observation)) { return; }
+    if (ownerDid === undefined) {
       observation.attemptedRecordIds.clear();
       this.requestReconciliation(observation);
+      return;
     }
+    let matched = false;
+    for (const [key, record] of this._latestIntentRecords) {
+      if (record.value.ownerDid === ownerDid
+        && (contextId === undefined || FilterUtility.matchesSubtree(contextId, record.value.contextId))) {
+        observation.attemptedRecordIds.delete(key);
+        matched = true;
+      }
+    }
+    if (matched) { this.requestReconciliation(observation); }
   }
 
   /** Retain one shared native journal view without waiting for remote owners to respond. */
@@ -172,6 +202,19 @@ export class ContextFollowing {
     } catch (error: unknown) {
       await close();
       throw error;
+    }
+  }
+
+  /** Persist a group-independent tombstone, then retire access only while that choice still wins. */
+  private async saveForgetDecision(target: ContextTarget, after?: string): Promise<void> {
+    this.rememberLatestIntents([await this._options.append({
+      contextId : target.id,
+      following : false,
+      ownerDid  : target.ownerDid,
+    }, after)]);
+    const latest = (await this.readLatestIntents()).get(protocolContextKey(target.ownerDid, target.id));
+    if (latest?.value.following === false) {
+      await this.removeForgottenAcceptances(latest);
     }
   }
 
@@ -222,6 +265,8 @@ export class ContextFollowing {
       && !acceptedBeforeFollow.some((previous): boolean => followedSyncSourceActiveEqual(previous, source))) {
       try {
         await this._options.sync.deleteFollowedSource(source);
+        // Reverify the current saved policy after rollback; never reinstall captured authority.
+        this._observation?.attemptedRecordIds.delete(protocolContextKey(source.sourceDid, source.contextId));
       } catch (retireError: unknown) {
         throw new AggregateError([error, retireError], 'ContextFollowing: unable to complete or retire the new acceptance.');
       }
@@ -229,12 +274,16 @@ export class ContextFollowing {
     throw error;
   }
 
-  /** Honor the winning forget before returning a handle for an in-flight follow. */
-  private async rejectFollowIfForgotten(key: string, contextId: string): Promise<void> {
-    const latest = this._latestIntentRecords.get(key);
+  /** Reject a follow whose acceptance conflicts with the winning saved choice. */
+  private async rejectSupersededFollow(request: FollowRequest, source: FollowedSyncSource): Promise<void> {
+    const latest = this._latestIntentRecords.get(protocolContextKey(request.ownerDid, request.id));
     if (latest?.value.following === false) {
       await this.removeForgottenAcceptances(latest);
-      throw new ContextRetiredError(contextId);
+      throw new ContextRetiredError(request.id);
+    }
+    if (latest?.value.following === true && !this.matchesRoleGroup(source, latest.value.group)) {
+      await this._options.sync.deleteFollowedSource(source);
+      throw new ContextRetiredError(request.id);
     }
   }
 
@@ -329,8 +378,10 @@ export class ContextFollowing {
       await this.removeForgottenAcceptances(current);
       return;
     }
-    const roles = this._options.roleGroups[intent.group];
-    if (roles === undefined) { return; }
+    if (!Object.hasOwn(this._options.roleGroups, intent.group)) { return; }
+    const roles = this.getDeclaredRolePaths(intent.group);
+    // Another binding can use the same group name for a different context root.
+    if (roles[0].split('/').length - 1 !== intent.contextId.split('/').length) { return; }
     const sources = await this.listAcceptedContextSources(intent);
     if (sources.some((source): boolean => sameRoles(source.roles, roles))) {
       return;
@@ -342,15 +393,18 @@ export class ContextFollowing {
         id       : intent.contextId,
         ownerDid : intent.ownerDid,
       });
-    } catch {
+    } catch (error: unknown) {
       this.assertActive();
+      if (!(error instanceof FollowedSourceNotReadyError)) {
+        console.warn('[@enbox/api] Unable to restore a saved context; the follow choice is retained.', error);
+      }
       return;
     }
     const latest = (await this.readLatestIntents()).get(key);
     // Another device can write the same choice; a newer record alone does not invalidate access.
     if (latest?.value.following === false) {
       await this.removeForgottenAcceptances(latest);
-    } else if (latest?.value.group !== intent.group) {
+    } else if (latest?.value.following === true && !this.matchesRoleGroup(accepted, latest.value.group)) {
       await this._options.sync.deleteFollowedSource(accepted);
     }
   }
@@ -396,10 +450,16 @@ export class ContextFollowing {
     return this._latestIntentRecords;
   }
 
+  /** Different group names can select the same candidate roles without invalidating verified access. */
+  private matchesRoleGroup(source: FollowedSyncSource, group: string): boolean {
+    const roles = this._options.roleGroups[group];
+    return Object.hasOwn(this._options.roleGroups, group) && roles !== undefined && sameRoles(source.roles, roles);
+  }
+
   /** Select the declared role paths; current owner-hosted records determine the actual role. */
   private getDeclaredRolePaths(group: string): readonly [string, ...string[]] {
     const roles = this._options.roleGroups[group];
-    if (roles === undefined) {
+    if (!Object.hasOwn(this._options.roleGroups, group) || roles === undefined) {
       throw new TypeError(`ContextFollowing: unknown role group '${group}'.`);
     }
     return roles;
@@ -438,7 +498,13 @@ export class ContextFollowing {
   private report(observation: Observation, error: unknown): void {
     if (this.isObserving(observation)) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      for (const listener of observation.listeners) { listener(failure); }
+      for (const listener of [...observation.listeners]) {
+        try {
+          listener(failure);
+        } catch {
+          // One consumer must not prevent other leases from receiving the failure.
+        }
+      }
     }
   }
 }

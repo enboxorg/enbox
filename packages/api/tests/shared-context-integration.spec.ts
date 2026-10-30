@@ -826,7 +826,7 @@ describe('shared context public API integration', () => {
       const renewedPages = await renewed.records.query('notebook/page', { pagination: { limit: 10 } });
       expect(await renewedPages.records[0].value()).toEqual(body);
 
-      await renewed.forget();
+      await typedSecond.contexts.forget({ ownerDid, id: page.contextId });
       await second.harness.agent.sync.sync('push', { did: memberDid });
       await first.harness.agent.sync.sync('pull', { did: memberDid });
       await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {

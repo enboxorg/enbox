@@ -814,9 +814,30 @@ known references once. Each device verifies the owner's current membership and
 keys before exposing a member context. Temporary unavailability keeps the saved
 choice for a later attempt.
 
-`forget()` saves an explicit cross-device decision without deleting the owner's
-role record. `leave()` also withdraws that role. These actions require write access
-to the recipient's own protocol; read-only grants are not silently widened.
+Use `contexts.forget({ ownerDid, id })` to clear a saved choice even when the owner
+is unreachable or access has been revoked. It does not withdraw the owner's role.
+A member handle's `forget()` is fenced to its exact acceptance, so a stale handle
+cannot change a newer choice. Forget decisions contain only the coordinates and
+`following: false`; a role group is needed only for a follow decision.
+
+`leave()` withdraws the role before saving the forget. These two writes are not
+atomic: if saving fails after withdrawal, the call rejects and coordinate-based
+`contexts.forget()` can finish the saved choice. A retired `leave()` rejects with
+`ContextRetiredError`. These actions require writing the recipient's own protocol;
+read-only grants are not widened.
+
+`contexts.list()` can wait for owner lookups and network timeouts during its one
+restoration attempt. Use `contexts.observe()` for a live UI that keeps known
+contexts available while restoration runs in the background. Relevant recipient
+sync and owner-context recovery events retry saved choices without another timer.
+Unexpected restoration failures are logged without closing the whole catalog.
+
+Applications with protocol-write grants act for the same identity and can change
+its shared follow choices. Remote membership and keys are still verified
+independently. The immutable journal currently retains its history and reads it in
+pages; automatic compaction is not included. A future retention policy must keep
+effective forget decisions so older offline follows cannot return.
+
 Saved references are user intent, never portable membership proof. Applications
 do not need a separate bookmark protocol or reconciliation controller.
 

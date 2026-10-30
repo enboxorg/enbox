@@ -74,7 +74,7 @@ import {
   collectProtocolPaths,
   isProtocolRolePath,
 } from './protocol-paths.js';
-import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
+import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, isValidRecordContextId } from './record-query.js';
 import {
   authoredProtocolDefinitionsEqual,
   DateSort,
@@ -96,7 +96,7 @@ import {
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
-import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual, syncEventCoversProtocol } from '@enbox/agent';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent';
 
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
@@ -590,9 +590,12 @@ type MemberContextForRoot<
     access: 'member';
     /** Role path authorizing access to the context. */
     role: Role extends string ? ParentProtocolPath<Role> extends Root ? Role : never : never;
-    /** Withdraw this exact role record, persist a cross-device forget, and fence retained handles. */
+    /**
+     * Withdraw this exact role record, then save a cross-device forget. Rejects for a retired handle.
+     * If saving fails after withdrawal, contexts.forget({ ownerDid, id }) can finish the saved choice.
+     */
     leave(): Promise<void>;
-    /** Persist a forget across devices and retire this exact acceptance without withdrawing the owner's role. */
+    /** Forget through this exact acceptance; stale handles are inert. Use contexts.forget() without a live handle. */
     forget(): Promise<void>;
     /**
      * Ensure the local replica is current, pulling once when needed and
@@ -711,7 +714,9 @@ export type ContextsApi<
   ): Promise<OwnedContext<D, C, Root, G>>;
   /** Verify current remote authority and save encrypted recipient-owned following intent. Requires own-protocol write access. */
   follow: ContextFollow<D, C, G>;
-  /** Restore locally known following intent once, then list owned and accepted member contexts. */
+  /** Forget a saved choice by coordinates, including unavailable contexts. Does not verify remote authority or withdraw membership. */
+  forget(request: Readonly<{ id: string; ownerDid: string }>): Promise<void>;
+  /** Restore known choices once, then list contexts. May wait for owner lookups; use observe() for nonblocking UI data. */
   list(): Promise<ProtocolContext<D, C, G>[]>;
   /** Observe contexts and restore synchronized follow decisions in the background without blocking known roots. */
   observe: ContextObserve<D, C, G>;
@@ -1482,6 +1487,7 @@ export class TypedEnbox<
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
       .sort(compareCodeUnits) as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
     const contextRoles = new Set(Object.values(this._roleGroups).flat());
+    const canUseFollowing = this._options.sync !== undefined && contextRoots.length > 0;
     type CatalogContext = { access: 'member' | 'owner'; id: string; key: string; ownerDid: string };
     type CatalogMemberContext = CatalogContext & {
       access: 'member';
@@ -1543,6 +1549,7 @@ export class TypedEnbox<
         });
       } catch (error) {
         if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
+        if (error instanceof ContextRetiredError) { throw error; }
         throw new Error('TypedEnbox.contexts.follow could not establish the requested context.', { cause: error });
       }
       return bindMemberContext(source);
@@ -1640,7 +1647,7 @@ export class TypedEnbox<
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
         return existing.context;
       }
-      const context = this.bindMemberContext(source, (expected, beforeForget) => getFollowing().forget(expected, beforeForget));
+      const context = this.bindMemberContext(source, (expected, withdrawRole) => getFollowing().forget(expected, withdrawRole));
       boundMembers.set(key, { context, source });
       return context;
     };
@@ -1704,7 +1711,7 @@ export class TypedEnbox<
     };
 
     const listContexts = async (): Promise<ProtocolContext<D, C, G>[]> => {
-      if (this._options.sync !== undefined && contextRoots.length > 0) {
+      if (canUseFollowing) {
         await getFollowing().restore();
       }
       return await listCatalogContexts() as unknown as ProtocolContext<D, C, G>[];
@@ -1724,17 +1731,11 @@ export class TypedEnbox<
         ) {
           wake();
         }
-        if (((event.type === 'pull:currentness-change' && event.to)
-          || (event.type === 'link:connectivity-change' && event.to === 'online')
-          || event.type === 'reconcile:completed')
-          && event.tenantDid === this._dwn.connectedDid
-          && syncEventCoversProtocol(event, this._definition.protocol)) {
-          following?.retry();
-        }
+        following?.retryAfterSync(event);
       }) ?? ((): void => {});
       let follows: { close(): Promise<void> } | undefined;
       try {
-        if (this._options.sync !== undefined && contextRoots.length > 0) {
+        if (canUseFollowing) {
           follows = await getFollowing().observe(fail, signal);
         }
         const records = !includeOwnedRoots || contextRoots.length === 0
@@ -1784,6 +1785,14 @@ export class TypedEnbox<
     this._contexts = {
       open   : openContext,
       follow : followContext as ContextsApi<D, C, G>['follow'],
+      forget : async (request: Readonly<{ id: string; ownerDid: string }>): Promise<void> => {
+        this._options.signal?.throwIfAborted();
+        const ownerDid = normalizeMemberDid(request.ownerDid, 'TypedEnbox.contexts.forget');
+        if (!isValidRecordContextId(request.id)) {
+          throw new TypeError('TypedEnbox.contexts.forget: id must identify a canonical protocol context.');
+        }
+        await getFollowing().forgetContext({ id: request.id, ownerDid });
+      },
       ...(Object.keys(this._roleGroups).length > 0 ? {
         invitations: {
           list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
@@ -2614,13 +2623,10 @@ export class TypedEnbox<
       }
       throw error;
     }
-    if (!Object.hasOwn(this._roleGroups, value.group)) {
+    if (!isValidRecordContextId(value.contextId)) {
       return undefined;
     }
-    const { contextPath } = this.resolveContextRoleGroup(value.group);
-    if (!isValidContextId(contextPath, value.contextId)) {
-      return undefined;
-    }
+    // App-specific group declarations must not erase a newer saved choice.
     return { id: record.id, timestamp: record.timestamp, value };
   }
 
@@ -3008,7 +3014,7 @@ export class TypedEnbox<
   /** Bind the existing typed records surface to one exact durable source. */
   private bindMemberContext(
     source: FollowedSyncSource,
-    forget: (expected: FollowedSyncSource, beforeForget?: () => Promise<void>) => Promise<void>,
+    forget: (expected: FollowedSyncSource, withdrawRole?: () => Promise<void>) => Promise<void>,
   ): MemberContext<D, C> {
     const scope = this.resolveMemberContextScope(source.protocolRole);
     const replicatedPaths = new Set(source.protocolPaths);
@@ -3051,19 +3057,20 @@ export class TypedEnbox<
       remoteEndpoint : source.remoteEndpoint,
       tenantDid      : source.sourceDid,
     });
-    const retire = async (leave: boolean): Promise<void> => {
-      this._options.signal?.throwIfAborted();
-      await forget(source, !leave ? undefined : async (): Promise<void> => {
-        const result = await membershipDwn.records.delete({
-          contextId    : source.contextId,
-          protocol     : source.protocol,
-          protocolPath : source.protocolRole,
-          recordId     : source.id,
-        });
-        if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
-          requireDwnSuccess('MemberContext.leave', result);
-        }
+    const withdrawRole = async (): Promise<void> => {
+      const result = await membershipDwn.records.delete({
+        contextId    : source.contextId,
+        protocol     : source.protocol,
+        protocolPath : source.protocolRole,
+        recordId     : source.id,
       });
+      if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
+        requireDwnSuccess('MemberContext.leave', result);
+      }
+    };
+    const retire = async (withdraw?: () => Promise<void>): Promise<void> => {
+      this._options.signal?.throwIfAborted();
+      await forget(source, withdraw);
       const current = await sync.getFollowedSource(source.id);
       if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
         controller.abort(new ContextRetiredError(source.contextId));
@@ -3090,10 +3097,10 @@ export class TypedEnbox<
 
     return Object.freeze({
       access   : 'member',
-      forget   : (): Promise<void> => retire(false),
+      forget   : (): Promise<void> => retire(),
       id       : source.contextId,
       key      : protocolContextKey(source.sourceDid, source.contextId),
-      leave    : (): Promise<void> => retire(true),
+      leave    : (): Promise<void> => retire(withdrawRole),
       ownerDid : source.sourceDid,
       path     : scope.protocolPath,
       records  : this.bindContextRecords(dwn, {
