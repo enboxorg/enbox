@@ -42,7 +42,6 @@ type Observation = {
   listeners: Set<(error: Error) => void>;
   opening: Promise<void>;
   requested: boolean;
-  unsubscribe?: () => void;
   view?: ExpandableRecordView<ContextFollowRecord>;
 };
 
@@ -258,7 +257,7 @@ export class ContextFollowing {
         return;
       }
       observation.view = view;
-      observation.unsubscribe = view.subscribe((): void => { this.requestReconciliation(observation); });
+      view.subscribe((): void => { this.requestReconciliation(observation); });
       this.requestReconciliation(observation);
     });
     return observation;
@@ -269,12 +268,11 @@ export class ContextFollowing {
       this._observation = undefined;
     }
     observation.controller.abort();
-    observation.unsubscribe?.();
     await observation.opening.catch((): void => {});
     await observation.view?.close();
   }
 
-  /** Drain native pagination before scheduling independent per-context restoration. */
+  /** Run one reconciliation pass at a time and retain requests that arrive during it. */
   private requestReconciliation(observation: Observation): void {
     // Opening requests the initial pass after assigning the view, even if sync wakes arrived earlier.
     if (!this.isObserving(observation) || observation.view === undefined) {
@@ -297,32 +295,30 @@ export class ContextFollowing {
 
   private async reconcileObservation(observation: Observation): Promise<void> {
     const view = observation.view!;
-    while (observation.requested && this.isObserving(observation)) {
-      observation.requested = false;
-      await view.ready({ signal: observation.controller.signal });
-      while (this.isObserving(observation) && view.getSnapshot().hasMore) {
-        await view.loadMore(); // NOSONAR: S9382 - each expansion determines whether another page is needed.
+    observation.requested = false;
+    await view.ready({ signal: observation.controller.signal });
+    while (this.isObserving(observation) && view.getSnapshot().hasMore) {
+      await view.loadMore(); // NOSONAR: S9382 - each expansion determines whether another page is needed.
+    }
+    if (!this.isObserving(observation)) {
+      return;
+    }
+    const state = view.getSnapshot();
+    if (state.status === 'error') {
+      throw state.error;
+    }
+    this.rememberLatestIntents(state.records);
+    for (const [key, record] of this._latestIntentRecords) {
+      // Queue completion resumes a retry once; sync wakes must not pile up owner lookups.
+      if (sameRecord(observation.attempts.get(key), record) || this._pendingOperations.has(key)) {
+        continue;
       }
-      if (!this.isObserving(observation)) {
-        return;
-      }
-      const state = view.getSnapshot();
-      if (state.status === 'error') {
-        throw state.error;
-      }
-      this.rememberLatestIntents(state.records);
-      for (const [key, record] of this._latestIntentRecords) {
-        // Queue completion resumes a retry once; sync wakes must not pile up owner lookups.
-        if (sameRecord(observation.attempts.get(key), record) || this._pendingOperations.has(key)) {
-          continue;
+      observation.attempts.set(key, record);
+      void this.serializeContextOperation(key, async (): Promise<void> => {
+        if (this.isObserving(observation)) {
+          await this.restoreContext(key);
         }
-        observation.attempts.set(key, record);
-        void this.serializeContextOperation(key, async (): Promise<void> => {
-          if (this.isObserving(observation)) {
-            await this.restoreContext(key);
-          }
-        }).catch((error: unknown): void => { this.report(observation, error); });
-      }
+      }).catch((error: unknown): void => { this.report(observation, error); });
     }
   }
 

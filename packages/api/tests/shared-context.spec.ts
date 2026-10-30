@@ -349,12 +349,6 @@ describe('TypedEnbox contexts', () => {
     agent = {
       decryptRecordData : sinon.stub().callsFake(async ({ dataStream }) => dataStream),
       processDwnRequest : sinon.stub().callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-        if (request.messageType === DwnInterface.ProtocolsQuery) {
-          return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-        }
-        if (request.messageType === DwnInterface.ProtocolsConfigure) {
-          return { reply: { status: { code: 202, detail: 'Accepted' } } };
-        }
         if (request.messageType === DwnInterface.RecordsQuery) {
           return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
         }
@@ -382,6 +376,12 @@ describe('TypedEnbox contexts', () => {
         };
       }),
     };
+    agent.processDwnRequest.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery }))
+      .callsFake(async () => ({
+        reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } },
+      }));
+    agent.processDwnRequest.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsConfigure }))
+      .callsFake(async () => ({ reply: { status: { code: 202, detail: 'Accepted' } } }));
     const intents: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }> = [];
     intentRecords = intents;
     const intentSubscribers = new Set<NonNullable<ProcessDwnRequest<DwnInterface.RecordsSubscribe>['subscriptionHandler']>>();
@@ -578,12 +578,6 @@ describe('TypedEnbox contexts', () => {
       ? preferredDelivery
       : { state: 'delivered' });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         const role = request.messageParams.filter.protocolPath;
         order.push(`subscribe:${role}`);
@@ -789,12 +783,6 @@ describe('TypedEnbox contexts', () => {
       return true;
     });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return {
           reply: {
@@ -1040,12 +1028,6 @@ describe('TypedEnbox contexts', () => {
   it('sends a bounded invitation only after membership is established', async () => {
     const recipient = 'did:example:recipient';
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         const entries = request.messageParams.filter.protocolPath === protocolRole
           && request.messageParams.filter.recipient === recipient
@@ -1084,12 +1066,6 @@ describe('TypedEnbox contexts', () => {
   it('lists owned and member contexts together and prefers owner access for the same context', async () => {
     current = source();
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
       }
@@ -1112,12 +1088,6 @@ describe('TypedEnbox contexts', () => {
 
   it('lists owned contexts without requiring a sync engine', async () => {
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [contextEntry()], status: { code: 200, detail: 'OK' } } };
       }
@@ -1150,12 +1120,6 @@ describe('TypedEnbox contexts', () => {
     let maximumSubscriptions = 0;
     const transports: Array<{ close: sinon.SinonStub }> = [];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         activeSubscriptions += 1;
         maximumSubscriptions = Math.max(maximumSubscriptions, activeSubscriptions);
@@ -1263,12 +1227,6 @@ describe('TypedEnbox contexts', () => {
     const retiredClose = new Promise<void>(resolve => { releaseRetiredClose = resolve; });
     const transports: Array<{ close: sinon.SinonStub }> = [];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         deliver = request.subscriptionHandler!;
         const transport = {
@@ -1383,12 +1341,6 @@ describe('TypedEnbox contexts', () => {
     const gate = new Promise<void>(resolve => { releaseSubscriptions = resolve; });
     const transports: Array<{ close: sinon.SinonStub }> = [];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         await gate;
         const transport = { close: sinon.stub().resolves() };
@@ -1483,12 +1435,6 @@ describe('TypedEnbox contexts', () => {
     let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
     const transport = { close: sinon.stub().resolves() };
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         deliver = request.subscriptionHandler!;
         return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
@@ -1598,12 +1544,6 @@ describe('TypedEnbox contexts', () => {
     let markSubscribeStarted!: () => void;
     const subscribeStarted = new Promise<void>((resolve) => { markSubscribeStarted = resolve; });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         markSubscribeStarted();
         return await new Promise((resolve) => { finishSubscribe = resolve; });
@@ -1655,12 +1595,6 @@ describe('TypedEnbox contexts', () => {
       }),
     ];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries, status: { code: 200, detail: 'OK' } } };
       }
@@ -1709,12 +1643,6 @@ describe('TypedEnbox contexts', () => {
     });
     let deleteAttempts = 0;
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [entry], status: { code: 200, detail: 'OK' } } };
       }
@@ -1924,12 +1852,6 @@ describe('TypedEnbox contexts', () => {
     const order: string[] = [];
     const transport = { close: sinon.stub().resolves() };
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         order.push('subscribe');
         return {
@@ -1994,12 +1916,6 @@ describe('TypedEnbox contexts', () => {
     const transport = { close: sinon.stub().resolves() };
     let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.MessagesSubscribe) {
         deliver = request.subscriptionHandler!;
         return {
@@ -2044,12 +1960,6 @@ describe('TypedEnbox contexts', () => {
   it('detaches member-stream lifecycle state when opening fails', async () => {
     current = source();
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
       }
@@ -2068,12 +1978,6 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const transport = { close: sinon.stub().resolves() };
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
-        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
-      }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
-        return { reply: { status: { code: 202, detail: 'Accepted' } } };
-      }
       if (request.messageType === DwnInterface.RecordsSubscribe) {
         return { reply: { status: { code: 200, detail: 'OK' }, subscription: transport } };
       }

@@ -1583,9 +1583,7 @@ export class TypedEnbox<
         }
         return this.bindContextMembers(dwn, id, selected.roles);
       }) as ContextMembersSelector<D, C, G, Root>;
-      const canInvite = Object.keys(this._roleGroups).some(group =>
-        this.resolveContextRoleGroup(group).contextPath === normalizedPath
-      );
+      const canInvite = contextRoots.includes(normalizedPath);
       const context = Object.freeze({
         access: 'owner',
         id,
@@ -1648,10 +1646,6 @@ export class TypedEnbox<
     };
 
     const bindCatalogMembers = (sources: readonly FollowedSyncSource[]): CatalogMemberContext[] => {
-      const activeKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
-      for (const key of boundMembers.keys()) {
-        if (!activeKeys.has(key)) { boundMembers.delete(key); }
-      }
       const members = new Map<string, CatalogMemberContext>();
       for (const source of sources) {
         const key = protocolContextKey(source.sourceDid, source.contextId);
@@ -1659,7 +1653,10 @@ export class TypedEnbox<
           members.set(key, bindMemberContext(source) as unknown as CatalogMemberContext);
         }
       }
-      return [...members.values()].sort(compareProtocolContexts);
+      for (const key of boundMembers.keys()) {
+        if (!members.has(key)) { boundMembers.delete(key); }
+      }
+      return [...members.values()];
     };
 
     const listOwnedRootContextIds = async (path: string): Promise<string[]> => {
@@ -1689,29 +1686,18 @@ export class TypedEnbox<
 
     const listCatalogContexts = async (): Promise<CatalogContext[]> => {
       const [ownedByRoot, sources] = await Promise.all([
-        Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
-          const contexts: CatalogContext[] = [];
-          for (const contextId of await listOwnedRootContextIds(path)) {
-            contexts.push(bindOwnedContext(path, contextId));
-          }
-          return contexts;
-        })),
+        Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> =>
+          (await listOwnedRootContextIds(path)).map(contextId => bindOwnedContext(path, contextId))
+        )),
         listSources(),
       ]);
-      const owned = ownedByRoot.flat();
-      const activeOwnerKeys = new Set(owned.map(context => protocolContextKey(context.ownerDid, context.id)));
+      const contexts = new Map<string, CatalogContext>(ownedByRoot.flat().map(context => [context.key, context]));
       for (const key of boundOwners.keys()) {
-        if (!activeOwnerKeys.has(key)) { boundOwners.delete(key); }
-      }
-
-      const contexts = new Map<string, CatalogContext>();
-      for (const context of owned) {
-        contexts.set(protocolContextKey(context.ownerDid, context.id), context);
+        if (!contexts.has(key)) { boundOwners.delete(key); }
       }
       for (const member of bindCatalogMembers(sources)) {
-        const key = protocolContextKey(member.ownerDid, member.id);
-        if (!contexts.has(key)) {
-          contexts.set(key, member);
+        if (!contexts.has(member.key)) {
+          contexts.set(member.key, member);
         }
       }
       return [...contexts.values()].sort(compareProtocolContexts);
@@ -1785,7 +1771,7 @@ export class TypedEnbox<
       ContextMaterializedRecord<unknown>
     >>> => createMaterializedMemberContextView<CatalogMemberContext, ContextMaterializedRecord<unknown>>({
       callerSignal : options.signal,
-      listContexts : async () => bindCatalogMembers(await listSources()),
+      listContexts : async () => bindCatalogMembers(await listSources()).sort(compareProtocolContexts),
       openRootView : (context, signal) => context.records.observe(context.path, {
         materialize : true,
         pagination  : { limit: 1 },

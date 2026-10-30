@@ -206,19 +206,10 @@ describe('ContextFollowing', () => {
 
   it('preserves offline intent and never treats omitted records as a forget', async () => {
     const test = fixture([decision(1)]);
-    test.follow.rejects(new Error('owner offline'));
+    test.follow.onFirstCall().rejects(new Error('owner offline'));
     await test.coordinator.restore();
     expect(test.entries).toHaveLength(1);
     expect(test.sources.size).toBe(0);
-    test.follow.resetBehavior();
-    test.follow.callsFake(async (input): Promise<FollowedSyncSource> => {
-      const source: FollowedSyncSource = {
-        ...input, acceptanceId   : 'restored', id             : 'role-page-1', protocolPaths  : ['page'],
-        protocolRole   : roles[0], remoteEndpoint : 'https://owner.example',
-      };
-      test.sources.set(source.id, source);
-      return source;
-    });
     await test.coordinator.restore();
     test.entries.length = 0;
     await test.coordinator.restore();
@@ -396,6 +387,33 @@ describe('ContextFollowing', () => {
     await settled((): boolean => test.sources.size === 1);
     expect(error.called).toBe(false);
     await lease.close();
+  });
+
+  it('retains a retry requested while journal readiness is pending even when that read fails', async () => {
+    const test = fixture([decision(1)]);
+    const view = new IntentView(test.entries);
+    const read = view.ready.bind(view);
+    const ready = sinon.stub(view, 'ready').callsFake(read);
+    const pending = deferred<void>();
+    const failure = new Error('journal read interrupted');
+    ready.onFirstCall().callsFake(async (): ReturnType<IntentView['ready']> => {
+      await pending.promise;
+      throw failure;
+    });
+    test.openView.resolves(view);
+    const error = sinon.spy();
+    const lease = await test.coordinator.observe(error);
+    try {
+      await settled((): boolean => ready.calledOnce);
+      test.coordinator.retry();
+      pending.resolve();
+      await settled((): boolean => test.sources.size === 1);
+      expect(test.follow.calledOnce).toBe(true);
+      expect(error.calledOnceWithExactly(failure)).toBe(true);
+    } finally {
+      pending.resolve();
+      await lease.close();
+    }
   });
 
   it('does not wait for an unavailable owner when opening an observation and retries on reacquisition', async () => {
