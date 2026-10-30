@@ -64,53 +64,19 @@ export class ContextFollowing {
   /** Verify an explicit follow, then persist the user's decision before returning success. */
   public follow(request: FollowRequest): Promise<FollowedSyncSource> {
     const key = contextKey(request.ownerDid, request.id);
-    return this.enqueue(key, async (): Promise<FollowedSyncSource> => {
-      const before = (await this.readLatestIntents()).get(key);
-      const priorSources = await this._options.sync.listFollowedSources();
-      this.assertActive();
-      const source = await this._options.sync.followSource({
-        actorDid  : this._options.actorDid,
-        contextId : request.id,
-        protocol  : this._options.protocol,
-        roles     : [...this.getRolePaths(request.group)],
-        sourceDid : request.ownerDid,
-      });
-      let persisted = false;
-      try {
-        const latest = (await this.readLatestIntents()).get(key);
-        if (latest?.value.following === true && latest.value.group === request.group) {
-          return source;
-        }
-        // A forget received during verification wins over this in-flight follow.
-        if (sameRecord(before, latest) || latest?.value.following !== false) {
-          const written = await this._options.append({
-            contextId : request.id,
-            following : true,
-            group     : request.group,
-            ownerDid  : request.ownerDid,
-          }, latest?.timestamp);
-          persisted = true;
-          this.rememberLatestIntents([written]);
-          // A decision received while the write was pending can still supersede it.
-          await this.readLatestIntents();
-        }
-      } catch (error: unknown) {
-        // A replacement facade may already reuse an acceptance issued before this one ended.
-        if (!persisted && !this._options.signal?.aborted
-          && !priorSources.some((prior): boolean => followedSyncSourceActiveEqual(prior, source))) {
-          try {
-            await this._options.sync.deleteFollowedSource(source);
-          } catch (retireError: unknown) {
-            throw new AggregateError([error, retireError], 'ContextFollowing: unable to complete or retire the new acceptance.');
-          }
-        }
-        throw error;
+    return this.serializeContextOperation(key, async (): Promise<FollowedSyncSource> => {
+      const initialDecision = (await this.readLatestIntents()).get(key);
+      const acceptedBeforeFollow = await this._options.sync.listFollowedSources();
+      const source = await this.verifyAndAcceptContext(request);
+      const outcome = await this.saveFollowUnlessNewerForget(request, initialDecision)
+        .catch((error: unknown): Promise<never> => this.rollbackFailedFollow(source, acceptedBeforeFollow, error));
+
+      if (outcome === 'already-following') { return source; }
+      if (outcome === 'saved') {
+        // Include decisions received during the write; read failures here must not undo saved access.
+        await this.readLatestIntents();
       }
-      const committed = this._latestIntentRecords.get(key);
-      if (committed?.value.following === false) {
-        await this.applyForget(committed);
-        throw new ContextRetiredError(request.id);
-      }
+      await this.rejectFollowIfForgotten(key, request.id);
       return source;
     });
   }
@@ -121,7 +87,7 @@ export class ContextFollowing {
    */
   public forget(source: FollowedSyncSource, beforeForget?: () => Promise<void>): Promise<void> {
     const key = contextKey(source.sourceDid, source.contextId);
-    return this.enqueue(key, async (): Promise<void> => {
+    return this.serializeContextOperation(key, async (): Promise<void> => {
       const current = await this._options.sync.getFollowedSource(source.id);
       this.assertActive();
       if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
@@ -139,7 +105,7 @@ export class ContextFollowing {
         const received = (await this.readLatestIntents()).get(key);
         if (!sameRecord(before, received)) {
           if (received?.value.following === false) {
-            await this.applyForget(received);
+            await this.removeForgottenAcceptances(received);
           }
           return;
         }
@@ -156,7 +122,7 @@ export class ContextFollowing {
       }, before?.timestamp)]);
       const latest = (await this.readLatestIntents()).get(key);
       if (latest?.value.following === false) {
-        await this.applyForget(latest);
+        await this.removeForgottenAcceptances(latest);
       }
     });
   }
@@ -165,7 +131,7 @@ export class ContextFollowing {
   public async restore(): Promise<void> {
     await this.readLatestIntents();
     await Promise.all([...this._latestIntentRecords.keys()].map((key): Promise<void> =>
-      this.enqueue(key, (): Promise<void> => this.restoreContext(key))));
+      this.serializeContextOperation(key, (): Promise<void> => this.restoreContext(key))));
   }
 
   /** Retry retained intent when the owning protocol's existing sync lifecycle recovers. */
@@ -205,6 +171,69 @@ export class ContextFollowing {
     } catch (error: unknown) {
       await close();
       throw error;
+    }
+  }
+
+  /** Verify current owner-hosted membership and establish or reuse this device's acceptance. */
+  private async verifyAndAcceptContext(request: FollowRequest): Promise<FollowedSyncSource> {
+    this.assertActive();
+    return this._options.sync.followSource({
+      actorDid  : this._options.actorDid,
+      contextId : request.id,
+      protocol  : this._options.protocol,
+      roles     : [...this.getDeclaredRolePaths(request.group)],
+      sourceDid : request.ownerDid,
+    });
+  }
+
+  /** Reuse an equivalent choice, honor a forget received during verification, or save the new follow. */
+  private async saveFollowUnlessNewerForget(
+    request: FollowRequest,
+    initialDecision: ContextFollowRecord | undefined,
+  ): Promise<'already-following' | 'saved' | 'forgotten'> {
+    const key = contextKey(request.ownerDid, request.id);
+    const latest = (await this.readLatestIntents()).get(key);
+    if (latest?.value.following === true && latest.value.group === request.group) {
+      return 'already-following';
+    }
+    // An older forget can be reversed by this follow; a forget received since it began wins.
+    if (!sameRecord(initialDecision, latest) && latest?.value.following === false) {
+      return 'forgotten';
+    }
+    const written = await this._options.append({
+      contextId : request.id,
+      following : true,
+      group     : request.group,
+      ownerDid  : request.ownerDid,
+    }, latest?.timestamp);
+    this.rememberLatestIntents([written]);
+    return 'saved';
+  }
+
+  /** Undo only a new, unsaved acceptance, then rethrow the failure that prevented saving. */
+  private async rollbackFailedFollow(
+    source: FollowedSyncSource,
+    acceptedBeforeFollow: readonly FollowedSyncSource[],
+    error: unknown,
+  ): Promise<never> {
+    // After this facade ends, its replacement may already be using the same acceptance.
+    if (!this._options.signal?.aborted
+      && !acceptedBeforeFollow.some((previous): boolean => followedSyncSourceActiveEqual(previous, source))) {
+      try {
+        await this._options.sync.deleteFollowedSource(source);
+      } catch (retireError: unknown) {
+        throw new AggregateError([error, retireError], 'ContextFollowing: unable to complete or retire the new acceptance.');
+      }
+    }
+    throw error;
+  }
+
+  /** Honor the winning forget before returning a handle for an in-flight follow. */
+  private async rejectFollowIfForgotten(key: string, contextId: string): Promise<void> {
+    const latest = this._latestIntentRecords.get(key);
+    if (latest?.value.following === false) {
+      await this.removeForgottenAcceptances(latest);
+      throw new ContextRetiredError(contextId);
     }
   }
 
@@ -286,7 +315,7 @@ export class ContextFollowing {
           continue;
         }
         observation.attempts.set(key, record);
-        void this.enqueue(key, async (): Promise<void> => {
+        void this.serializeContextOperation(key, async (): Promise<void> => {
           if (this.isObserving(observation)) {
             await this.restoreContext(key);
           }
@@ -299,23 +328,21 @@ export class ContextFollowing {
     const current = this._latestIntentRecords.get(key)!;
     const intent = current.value;
     if (!intent.following) {
-      await this.applyForget(current);
+      await this.removeForgottenAcceptances(current);
       return;
     }
     const roles = this._options.roleGroups[intent.group];
     if (roles === undefined) { return; }
-    const sources = await this.listSources(intent);
+    const sources = await this.listAcceptedContextSources(intent);
     if (sources.some((source): boolean => sameRoles(source.roles, roles))) {
       return;
     }
     let accepted: FollowedSyncSource;
     try {
-      accepted = await this._options.sync.followSource({
-        actorDid  : this._options.actorDid,
-        contextId : intent.contextId,
-        protocol  : this._options.protocol,
-        roles     : [...roles],
-        sourceDid : intent.ownerDid,
+      accepted = await this.verifyAndAcceptContext({
+        group    : intent.group,
+        id       : intent.contextId,
+        ownerDid : intent.ownerDid,
       });
     } catch {
       this.assertActive();
@@ -324,25 +351,25 @@ export class ContextFollowing {
     const latest = (await this.readLatestIntents()).get(key);
     // Another device can write the same choice; a newer record alone does not invalidate access.
     if (latest?.value.following === false) {
-      await this.applyForget(latest);
+      await this.removeForgottenAcceptances(latest);
     } else if (latest?.value.group !== intent.group) {
       await this._options.sync.deleteFollowedSource(accepted);
     }
   }
 
   /** Exact deletion can lose a race to role recovery; finish the current forget without cancelling newer intent. */
-  private async applyForget(record: ContextFollowRecord): Promise<void> {
+  private async removeForgottenAcceptances(record: ContextFollowRecord): Promise<void> {
     const key = contextKey(record.value.ownerDid, record.value.contextId);
-    let sources = await this.listSources(record.value);
+    let sources = await this.listAcceptedContextSources(record.value);
     while (sources.length > 0 && this._latestIntentRecords.get(key)?.value.following === false) {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
       await this.readLatestIntents();
       if (this._latestIntentRecords.get(key)?.value.following !== false) { return; }
-      sources = await this.listSources(record.value);
+      sources = await this.listAcceptedContextSources(record.value);
     }
   }
 
-  private async listSources(intent: ContextFollowIntent): Promise<FollowedSyncSource[]> {
+  private async listAcceptedContextSources(intent: ContextFollowIntent): Promise<FollowedSyncSource[]> {
     const sources = await this._options.sync.listFollowedSources();
     this.assertActive();
     return sources.filter((source): boolean =>
@@ -372,7 +399,7 @@ export class ContextFollowing {
   }
 
   /** Select the declared role paths; current owner-hosted records determine the actual role. */
-  private getRolePaths(group: string): readonly [string, ...string[]] {
+  private getDeclaredRolePaths(group: string): readonly [string, ...string[]] {
     const roles = this._options.roleGroups[group];
     if (roles === undefined) {
       throw new TypeError(`ContextFollowing: unknown role group '${group}'.`);
@@ -381,7 +408,7 @@ export class ContextFollowing {
   }
 
   /** Serialize one context's operations while allowing unrelated contexts to proceed independently. */
-  private enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  private serializeContextOperation<T>(key: string, operation: () => Promise<T>): Promise<T> {
     // A failed operation must not prevent the next follow, forget, or restoration attempt.
     const task = (this._pendingOperations.get(key) ?? Promise.resolve()).catch((): void => {}).then((): Promise<T> => {
       this.assertActive();

@@ -150,16 +150,36 @@ describe('ContextFollowing', () => {
     expect(first.openView.callCount + fresh.openView.callCount).toBe(0);
   });
 
-  it('rolls back a new acceptance when persistence fails, while retaining an existing accepted source', async () => {
+  it.each(['new', 'existing', 'retired facade'] as const)('limits rollback after failed persistence (%s)', async (state) => {
     const test = fixture();
+    const lifetime = new AbortController();
+    test.options.signal = lifetime.signal;
+    if (state === 'existing') {
+      await test.follow({ actorDid, contextId: request.id, protocol, roles: [...roles], sourceDid: ownerDid });
+    }
     const failure = new Error('write denied');
-    test.options.append = async (): Promise<ContextFollowRecord> => { throw failure; };
+    test.options.append = async (): Promise<ContextFollowRecord> => {
+      if (state === 'retired facade') { lifetime.abort(); }
+      throw failure;
+    };
     await expect(test.coordinator.follow(request)).rejects.toBe(failure);
-    expect(test.sources.size).toBe(0);
-    test.entries.push(decision(1));
-    const source = await test.coordinator.follow(request);
-    expect(test.sources.get(source.id)).toBe(source);
-    expect(await test.coordinator.follow(request)).toBe(source);
+    const accepted = await test.follow.firstCall.returnValue;
+    expect([...test.sources.values()]).toEqual(state === 'new' ? [] : [accepted]);
+    expect(test.entries).toHaveLength(0);
+  });
+
+  it('preserves both errors when saving and retiring a new acceptance fail', async () => {
+    const test = fixture();
+    const writeFailure = new Error('write denied');
+    const retirementFailure = new Error('source store unavailable');
+    test.options.append = async (): Promise<ContextFollowRecord> => { throw writeFailure; };
+    test.options.sync.deleteFollowedSource = async (): Promise<void> => { throw retirementFailure; };
+    await expect(test.coordinator.follow(request)).rejects.toMatchObject({
+      name   : 'AggregateError',
+      errors : [writeFailure, retirementFailure],
+    });
+    expect(test.sources.size).toBe(1);
+    expect(test.entries).toHaveLength(0);
   });
 
   it.each(['before', 'after'] as const)('handles a registry read failure %s successful intent persistence', async (phase) => {
