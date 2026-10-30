@@ -18,15 +18,10 @@ import type {
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 import {
-  addContextFollowProtocol,
-  assertContextFollowNameAvailable,
-  hasContextFollowProtocol,
-} from './context-follows.js';
-import {
-  addContextInvitationProtocol,
-  assertContextInvitationNameAvailable,
-  hasContextInvitationProtocol,
-} from './context-invitations.js';
+  addSharedContextProtocol,
+  assertSharedContextNamesAvailable,
+  hasSharedContextProtocol,
+} from './shared-context-protocol.js';
 import {
   assertTypedProtocolStructureSupported,
   collectProtocolPaths,
@@ -83,8 +78,7 @@ export function defineProtocol<
   codecs : ExactProtocolCodecs<D, C>,
   options?: O,
 ): TypedProtocol<D, C, RoleGroupsFromOptions<O>> {
-  assertContextFollowNameAvailable(definition);
-  assertContextInvitationNameAvailable(definition);
+  assertSharedContextNamesAvailable(definition);
   assertTypedProtocolComponents(definition, codecs);
   const roleGroups = prepareRoleGroups(
     definition,
@@ -95,8 +89,7 @@ export function defineProtocol<
     return { definition, codecs, roleGroups } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
   }
 
-  const invitations = addContextInvitationProtocol(definition, codecs);
-  const augmented = addContextFollowProtocol(invitations.definition, invitations.codecs);
+  const augmented = addSharedContextProtocol(definition, codecs);
   return {
     definition : augmented.definition as D,
     codecs     : augmented.codecs as C,
@@ -113,18 +106,13 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
   try {
     assertTypedProtocolComponents(value.definition, value.codecs);
     prepareRoleGroups(value.definition as ProtocolDefinition, value.roleGroups);
-    const carriesInvitations = hasContextInvitationProtocol(
-      value.definition as ProtocolDefinition,
-      value.codecs as RecordCodecMap,
-    );
     if (hasEncryptedRoleAudience(value.definition as ProtocolDefinition)) {
-      return carriesInvitations && hasContextFollowProtocol(
+      return hasSharedContextProtocol(
         value.definition as ProtocolDefinition,
         value.codecs as RecordCodecMap,
       );
     }
-    assertContextFollowNameAvailable(value.definition as ProtocolDefinition);
-    assertContextInvitationNameAvailable(value.definition as ProtocolDefinition);
+    assertSharedContextNamesAvailable(value.definition as ProtocolDefinition);
     return true;
   } catch {
     return false;

@@ -22,8 +22,13 @@ import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { CONTEXT_FOLLOW_PATH, contextFollowCodec, isContextFollowIntent } from '../src/context-follows.js';
-import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
+import {
+  CONTEXT_FOLLOW_PATH,
+  CONTEXT_INVITATION_PATH,
+  contextFollowCodec,
+  contextInvitationCodec,
+  isContextFollowIntent,
+} from '../src/shared-context-protocol.js';
 import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';

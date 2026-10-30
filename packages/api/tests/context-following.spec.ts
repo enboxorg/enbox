@@ -1,4 +1,4 @@
-import type { ContextFollowIntent } from '../src/context-follows.js';
+import type { ContextFollowIntent } from '../src/shared-context-protocol.js';
 import type { ContextFollowingOptions, ContextFollowRecord } from '../src/context-following.js';
 import type { ExpandableRecordView, RecordViewState } from '../src/record-view.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '@enbox/agent';

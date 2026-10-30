@@ -12,8 +12,6 @@ import type {
   SyncEventListener,
 } from '@enbox/agent';
 
-import { CONTEXT_FOLLOW_PATH } from '../src/context-follows.js';
-import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
 import { ContextFollowing } from '../src/context-following.js';
 import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
@@ -23,9 +21,10 @@ import { Poller } from '@enbox/dwn-sdk-js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, protocolContextKey } from '../src/shared-context-protocol.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
-import { protocolContextKey, type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
+import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';

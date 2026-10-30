@@ -1,6 +1,7 @@
-import type { ContextFollowIntent } from '../src/context-follows.js';
+import type { ContextFollowIntent } from '../src/shared-context-protocol.js';
 import type { PlatformAgentTestHarness } from '@enbox/agent/test';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 import type { Record as EnboxRecord, RecordView, RecordViewState } from '../src/index.js';
 
 import sinon from 'sinon';
@@ -11,7 +12,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { DwnConstant, EncryptionProtocol, Jws, Poller } from '@enbox/dwn-sdk-js';
 import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
-import { CONTEXT_FOLLOW_PATH } from '../src/context-follows.js';
+import { CONTEXT_FOLLOW_PATH } from '../src/shared-context-protocol.js';
 import { publishProtocol } from './utils/test-dwn-operations.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
@@ -158,6 +159,28 @@ describe('shared context public API integration', () => {
   let peerDid: string;
   let peerHarness: PlatformAgentTestHarness | undefined;
 
+  function walletConnectHandler(providerDid: string, appName: string): ConnectHandler {
+    return {
+      requestAccess: async ({ permissionRequests }): Promise<ConnectResult> => {
+        const approval = await executeConnectApproval({
+          agent     : ownerHarness.agent,
+          providerDid,
+          request   : { appName, permissionRequests },
+          transport : 'relay',
+        });
+        if (approval.delegatePortableDid === undefined) {
+          throw new Error('Expected the wallet to mint a delegate DID.');
+        }
+        return {
+          connectedDid        : providerDid,
+          delegateGrants      : approval.delegateGrants,
+          delegatePortableDid : approval.delegatePortableDid,
+          sessionRevocations  : approval.sessionRevocations,
+        };
+      },
+    };
+  }
+
   beforeAll(async () => {
     ownerHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
@@ -188,25 +211,7 @@ describe('shared context public API integration', () => {
       agent          : memberHarness.agent as EnboxUserAgent,
       password       : memberPassword,
       storage        : new MemoryStorage(),
-      connectHandler : {
-        requestAccess: async ({ permissionRequests }) => {
-          const approval = await executeConnectApproval({
-            agent       : ownerHarness.agent,
-            providerDid : memberDid,
-            request     : { appName: 'Shared context integration', permissionRequests },
-            transport   : 'relay',
-          });
-          if (approval.delegatePortableDid === undefined) {
-            throw new Error('Expected the wallet to mint a delegate DID.');
-          }
-          return {
-            connectedDid        : memberDid,
-            delegateGrants      : approval.delegateGrants,
-            delegatePortableDid : approval.delegatePortableDid,
-            sessionRevocations  : approval.sessionRevocations,
-          };
-        },
-      },
+      connectHandler : walletConnectHandler(memberDid, 'Shared context integration'),
     });
     const memberSession = await memberAuth.connect({ protocols: [SharedNotebookProtocol] });
     memberDelegateDid = memberSession.delegateDid!;
@@ -351,25 +356,7 @@ describe('shared context public API integration', () => {
       agent          : peerHarness.agent as EnboxUserAgent,
       password       : peerPassword,
       storage        : new MemoryStorage(),
-      connectHandler : {
-        requestAccess: async ({ permissionRequests }) => {
-          const approval = await executeConnectApproval({
-            agent       : ownerHarness.agent,
-            providerDid : peerDid,
-            request     : { appName: 'Shared context peer', permissionRequests },
-            transport   : 'relay',
-          });
-          if (approval.delegatePortableDid === undefined) {
-            throw new Error('Expected the wallet to mint a peer delegate DID.');
-          }
-          return {
-            connectedDid        : peerDid,
-            delegateGrants      : approval.delegateGrants,
-            delegatePortableDid : approval.delegatePortableDid,
-            sessionRevocations  : approval.sessionRevocations,
-          };
-        },
-      },
+      connectHandler : walletConnectHandler(peerDid, 'Shared context peer'),
     });
     const peerSession = await peerAuth.connect({ protocols: [SharedNotebookProtocol] });
     const peerTyped = Enbox.fromSession(peerSession).using(SharedNotebookProtocol);
@@ -741,25 +728,7 @@ describe('shared context public API integration', () => {
         agent          : harness.agent as EnboxUserAgent,
         password       : `shared-context-following-${name}`,
         storage        : new MemoryStorage(),
-        connectHandler : {
-          requestAccess: async ({ permissionRequests }) => {
-            const approval = await executeConnectApproval({
-              agent       : ownerHarness.agent,
-              providerDid : memberDid,
-              request     : { appName: 'Shared context following', permissionRequests },
-              transport   : 'relay',
-            });
-            if (approval.delegatePortableDid === undefined) {
-              throw new Error('Expected the wallet to mint a fresh delegate DID.');
-            }
-            return {
-              connectedDid        : memberDid,
-              delegateGrants      : approval.delegateGrants,
-              delegatePortableDid : approval.delegatePortableDid,
-              sessionRevocations  : approval.sessionRevocations,
-            };
-          },
-        },
+        connectHandler : walletConnectHandler(memberDid, 'Shared context following'),
       });
       const session = await device.auth.connect({ protocols: [SharedNotebookProtocol], sync: 'off' });
       return { delegateDid: session.delegateDid!, enbox: Enbox.fromSession(session), harness };
@@ -780,15 +749,11 @@ describe('shared context public API integration', () => {
       const inbox = await typedFirst.contexts.invitations.observe();
       views.push(inbox);
       await first.harness.agent.sync.sync('pull', { did: memberDid });
-      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-        expect(inbox.getSnapshot().records.some(invitation => invitation.contextId === page.contextId)).toBe(true);
-      }, Poller.pollRetrySleep, 30_000);
+      await waitForView(inbox, (state): boolean => state.records.some(invitation => invitation.contextId === page.contextId));
       const invitation = inbox.getSnapshot().records.find(candidate => candidate.contextId === page.contextId)!;
       const accepted = await invitation.accept();
       await accepted.refresh();
-      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-        expect(inbox.getSnapshot().records.every(candidate => candidate.contextId !== page.contextId)).toBe(true);
-      }, Poller.pollRetrySleep, 30_000);
+      await waitForView(inbox, (state): boolean => state.records.every(candidate => candidate.contextId !== page.contextId));
 
       const journal = await first.enbox.dwn.records.query({
         filter: { protocol: protocolDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },

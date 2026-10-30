@@ -1,9 +1,10 @@
-import type { ContextFollowIntent } from './context-follows.js';
+import type { ContextFollowIntent } from './shared-context-protocol.js';
 import type { ExpandableRecordView } from './record-view.js';
 import type { FollowedSyncSource, SyncEngine } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
 import { followedSyncSourceActiveEqual } from '@enbox/agent';
+import { protocolContextKey } from './shared-context-protocol.js';
 
 /** One decoded immutable decision in the recipient's private following journal. */
 export type ContextFollowRecord = Readonly<{
@@ -63,7 +64,7 @@ export class ContextFollowing {
 
   /** Verify an explicit follow, then persist the user's decision before returning success. */
   public follow(request: FollowRequest): Promise<FollowedSyncSource> {
-    const key = contextKey(request.ownerDid, request.id);
+    const key = protocolContextKey(request.ownerDid, request.id);
     return this.serializeContextOperation(key, async (): Promise<FollowedSyncSource> => {
       const initialDecision = (await this.readLatestIntents()).get(key);
       const acceptedBeforeFollow = await this._options.sync.listFollowedSources();
@@ -87,7 +88,7 @@ export class ContextFollowing {
    * owner-role withdrawal must succeed first; its own sync event may retire the source.
    */
   public forget(source: FollowedSyncSource, beforeForget?: () => Promise<void>): Promise<void> {
-    const key = contextKey(source.sourceDid, source.contextId);
+    const key = protocolContextKey(source.sourceDid, source.contextId);
     return this.serializeContextOperation(key, async (): Promise<void> => {
       const current = await this._options.sync.getFollowedSource(source.id);
       this.assertActive();
@@ -192,7 +193,7 @@ export class ContextFollowing {
     request: FollowRequest,
     initialDecision: ContextFollowRecord | undefined,
   ): Promise<'already-following' | 'saved' | 'forgotten'> {
-    const key = contextKey(request.ownerDid, request.id);
+    const key = protocolContextKey(request.ownerDid, request.id);
     const latest = (await this.readLatestIntents()).get(key);
     if (latest?.value.following === true && latest.value.group === request.group) {
       return 'already-following';
@@ -360,7 +361,7 @@ export class ContextFollowing {
 
   /** Exact deletion can lose a race to role recovery; finish the current forget without cancelling newer intent. */
   private async removeForgottenAcceptances(record: ContextFollowRecord): Promise<void> {
-    const key = contextKey(record.value.ownerDid, record.value.contextId);
+    const key = protocolContextKey(record.value.ownerDid, record.value.contextId);
     let sources = await this.listAcceptedContextSources(record.value);
     while (sources.length > 0 && this._latestIntentRecords.get(key)?.value.following === false) {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
@@ -381,7 +382,7 @@ export class ContextFollowing {
   /** Missing records are not a forget; only newer immutable decisions replace known intent. */
   private rememberLatestIntents(records: readonly ContextFollowRecord[]): void {
     for (const record of records) {
-      const key = contextKey(record.value.ownerDid, record.value.contextId);
+      const key = protocolContextKey(record.value.ownerDid, record.value.contextId);
       const previous = this._latestIntentRecords.get(key);
       if (previous === undefined || record.timestamp > previous.timestamp
         || (record.timestamp === previous.timestamp && record.id > previous.id)) {
@@ -444,10 +445,6 @@ export class ContextFollowing {
       for (const listener of observation.listeners) { listener(failure); }
     }
   }
-}
-
-function contextKey(ownerDid: string, contextId: string): string {
-  return JSON.stringify([ownerDid, contextId]);
 }
 
 function sameRecord(left: ContextFollowRecord | undefined, right: ContextFollowRecord | undefined): boolean {

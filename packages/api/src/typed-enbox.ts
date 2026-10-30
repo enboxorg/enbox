@@ -28,9 +28,7 @@
  * ```
  */
 
-import type { ContextFollowIntent } from './context-follows.js';
 import type { ContextFollowRecord } from './context-following.js';
-import type { ContextInvitationPreview } from './context-invitations.js';
 import type { ContextView } from './context-view.js';
 import type { MaterializedMemberContext as MaterializedMemberContextRow } from './materialized-member-context-view.js';
 import type { Protocol } from './protocol.js';
@@ -42,6 +40,7 @@ import type {
   FollowedSyncSource,
   SyncEngine,
 } from '@enbox/agent';
+import type { ContextFollowIntent, ContextInvitationPreview } from './shared-context-protocol.js';
 import type {
   ContextRoleGroups,
   ContextRolePath,
@@ -86,12 +85,14 @@ import {
 } from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue, RecordValidationError } from './record-codec.js';
 import { combineAbortSignals, whileSignalsActive } from './view-opening.js';
-import { CONTEXT_FOLLOW_PATH, contextFollowCodec } from './context-follows.js';
 import {
+  CONTEXT_FOLLOW_PATH,
   CONTEXT_INVITATION_PATH,
+  contextFollowCodec,
   contextInvitationCodec,
   isContextInvitationEnvelope,
-} from './context-invitations.js';
+  protocolContextKey,
+} from './shared-context-protocol.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
@@ -4012,11 +4013,6 @@ function paginationCursorSeen(lineage: PaginationCursorLineage | undefined, key:
     }
   }
   return false;
-}
-
-/** Return the collision-safe identity for one owner-scoped protocol context. */
-export function protocolContextKey(ownerDid: string, contextId: string): string {
-  return JSON.stringify([ownerDid, contextId]);
 }
 
 function contextRootRecordId(contextId: string): string {
