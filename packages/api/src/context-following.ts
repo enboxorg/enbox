@@ -288,7 +288,7 @@ export class ContextFollowing {
       this.report(observation, error);
     }).finally((): void => {
       observation.draining = false;
-      if (observation.requested && this.isObserving(observation)) {
+      if (observation.requested) {
         this.requestReconciliation(observation);
       }
     });
@@ -435,7 +435,7 @@ export class ContextFollowing {
   }
 
   private isObserving(observation: Observation): boolean {
-    return this._observation === observation && !observation.controller.signal.aborted && !this._options.signal?.aborted;
+    return this._observation === observation && !this._options.signal?.aborted;
   }
 
   private report(observation: Observation, error: unknown): void {
@@ -451,7 +451,7 @@ function contextKey(ownerDid: string, contextId: string): string {
 }
 
 function sameRecord(left: ContextFollowRecord | undefined, right: ContextFollowRecord | undefined): boolean {
-  return left?.id === right?.id && left?.timestamp === right?.timestamp;
+  return left?.id === right?.id;
 }
 
 function sameRoles(left: readonly string[], right: readonly string[]): boolean {
