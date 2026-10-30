@@ -678,7 +678,11 @@ type ContextObserve<D extends ProtocolDefinition, C extends RecordCodecMap, G ex
   (options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C, G>>>;
 };
 
-/** Public request for following one foreign context through one declared role group. */
+/**
+ * Public request for following one foreign context through one declared role group.
+ * `group` selects an entry in protocol.roleGroups, whose role paths are checked in
+ * preference order against the owner's current assignments. Omitting it selects 'default'.
+ */
 export type FollowContextOptions<Group extends string = 'default'> = Readonly<{
   id: string;
   ownerDid: string;

@@ -12,6 +12,7 @@ export const CONTEXT_FOLLOW_PATH = 'enboxContextFollow';
 export type ContextFollowIntent = Readonly<{
   contextId: string;
   following: boolean;
+  /** Name of a protocol.roleGroups entry; the actual role is verified again when restoring access. */
   group: string;
   ownerDid: string;
 }>;

@@ -12,7 +12,13 @@ export type ContextFollowRecord = Readonly<{
   value: ContextFollowIntent;
 }>;
 
-type FollowRequest = Readonly<{ group: string; id: string; ownerDid: string }>;
+/** Coordinates and the role-group selection already defaulted by contexts.follow(). */
+type FollowRequest = Readonly<{
+  /** Key in the protocol's roleGroups map, such as 'default'; its value lists candidate role paths in preference order. */
+  group: string;
+  id: string;
+  ownerDid: string;
+}>;
 type FollowSync = Pick<SyncEngine, 'followSource' | 'getFollowedSource' | 'listFollowedSources' | 'deleteFollowedSource'>;
 
 /** @internal Native records supply persistence; the sync engine verifies remote authority. */
@@ -28,6 +34,7 @@ export type ContextFollowingOptions = {
 };
 
 type Observation = {
+  /** Last attempted intent per context, including failures; retry() clears these. */
   attempts: Map<string, ContextFollowRecord>;
   controller: AbortController;
   draining: boolean;
@@ -38,11 +45,16 @@ type Observation = {
   view?: ExpandableRecordView<ContextFollowRecord>;
 };
 
-/** @internal Reconcile durable following intent into locally verified accepted sources. */
+/**
+ * @internal Apply saved follow choices to this device's accepted contexts.
+ * Saved intent records the user's choice; the sync engine independently verifies access.
+ */
 export class ContextFollowing {
   private readonly _options: ContextFollowingOptions;
-  private readonly _tails = new Map<string, Promise<unknown>>();
-  private readonly _winners = new Map<string, ContextFollowRecord>();
+  /** Completion of the last operation queued for each owner/context pair. */
+  private readonly _pendingOperations = new Map<string, Promise<unknown>>();
+  /** Newest known decision per context, ordered by signed timestamp and then record ID. */
+  private readonly _latestIntentRecords = new Map<string, ContextFollowRecord>();
   private _observation?: Observation;
 
   public constructor(options: ContextFollowingOptions) {
@@ -53,21 +65,21 @@ export class ContextFollowing {
   public follow(request: FollowRequest): Promise<FollowedSyncSource> {
     const key = contextKey(request.ownerDid, request.id);
     return this.enqueue(key, async (): Promise<FollowedSyncSource> => {
-      await this.read();
-      const before = this._winners.get(key);
+      await this.refreshIntentRecords();
+      const before = this._latestIntentRecords.get(key);
       const priorSources = await this._options.sync.listFollowedSources();
       this.assertActive();
       const source = await this._options.sync.followSource({
         actorDid  : this._options.actorDid,
         contextId : request.id,
         protocol  : this._options.protocol,
-        roles     : [...this.roles(request.group)],
+        roles     : [...this.getRolePaths(request.group)],
         sourceDid : request.ownerDid,
       });
       let persisted = false;
       try {
-        await this.read();
-        const latest = this._winners.get(key);
+        await this.refreshIntentRecords();
+        const latest = this._latestIntentRecords.get(key);
         // A forget received during verification wins over this in-flight follow.
         if (sameRecord(before, latest) || latest?.value.following !== false) {
           if (latest?.value.following === true && latest.value.group === request.group) {
@@ -80,8 +92,8 @@ export class ContextFollowing {
             ownerDid  : request.ownerDid,
           }, latest?.timestamp);
           persisted = true;
-          this.fold([written]);
-          await this.read();
+          this.rememberLatestIntents([written]);
+          await this.refreshIntentRecords();
         }
       } catch (error: unknown) {
         // A replacement facade may already reuse an acceptance issued before this one ended.
@@ -95,7 +107,7 @@ export class ContextFollowing {
         }
         throw error;
       }
-      const committed = this._winners.get(key);
+      const committed = this._latestIntentRecords.get(key);
       if (committed?.value.following === false) {
         await this.applyForget(committed);
         throw new ContextRetiredError(request.id);
@@ -116,16 +128,16 @@ export class ContextFollowing {
       if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
         return;
       }
-      await this.read();
-      const before = this._winners.get(key);
+      await this.refreshIntentRecords();
+      const before = this._latestIntentRecords.get(key);
       const group = before?.value.group ?? Object.entries(this._options.roleGroups)
         .find(([, roles]): boolean => sameRoles(roles, source.roles))?.[0];
       if (group === undefined) {
         throw new TypeError('ContextFollowing: the accepted source has no declared role group.');
       }
       await beforeForget?.();
-      await this.read();
-      if (!sameRecord(before, this._winners.get(key))) {
+      await this.refreshIntentRecords();
+      if (!sameRecord(before, this._latestIntentRecords.get(key))) {
         return;
       }
       if (beforeForget === undefined) {
@@ -133,14 +145,14 @@ export class ContextFollowing {
         this.assertActive();
         if (active === undefined || !followedSyncSourceActiveEqual(active, source)) { return; }
       }
-      this.fold([await this._options.append({
+      this.rememberLatestIntents([await this._options.append({
         contextId : source.contextId,
         following : false,
         group,
         ownerDid  : source.sourceDid,
       }, before?.timestamp)]);
-      await this.read();
-      const latest = this._winners.get(key);
+      await this.refreshIntentRecords();
+      const latest = this._latestIntentRecords.get(key);
       if (latest?.value.following === false) {
         await this.applyForget(latest);
       }
@@ -149,8 +161,8 @@ export class ContextFollowing {
 
   /** Restore currently known intent once; owner unavailability never removes that intent. */
   public async restore(): Promise<void> {
-    await this.read();
-    await Promise.all([...this._winners].map(([key, record]): Promise<void> =>
+    await this.refreshIntentRecords();
+    await Promise.all([...this._latestIntentRecords].map(([key, record]): Promise<void> =>
       this.enqueue(key, (): Promise<void> => this.restoreRecord(record))));
   }
 
@@ -177,6 +189,7 @@ export class ContextFollowing {
       }
       signal?.removeEventListener('abort', abort);
       observation.listeners.delete(listener);
+      // Each caller owns one lease; only the final release closes the shared native view.
       closed = observation.listeners.size === 0 ? this.closeObservation(observation) : Promise.resolve();
       return closed;
     };
@@ -263,8 +276,8 @@ export class ContextFollowing {
       if (state.status === 'error') {
         throw state.error;
       }
-      this.fold(state.records);
-      for (const [key, record] of this._winners) {
+      this.rememberLatestIntents(state.records);
+      for (const [key, record] of this._latestIntentRecords) {
         if (sameRecord(observation.attempts.get(key), record)) {
           continue;
         }
@@ -280,7 +293,7 @@ export class ContextFollowing {
 
   private async restoreRecord(record: ContextFollowRecord): Promise<void> {
     const key = contextKey(record.value.ownerDid, record.value.contextId);
-    const current = this._winners.get(key)!;
+    const current = this._latestIntentRecords.get(key)!;
     const intent = current.value;
     if (!intent.following) {
       await this.applyForget(current);
@@ -304,8 +317,8 @@ export class ContextFollowing {
       this.assertActive();
       return;
     }
-    await this.read();
-    const latest = this._winners.get(key);
+    await this.refreshIntentRecords();
+    const latest = this._latestIntentRecords.get(key);
     if (!sameRecord(current, latest)) {
       if (latest?.value.following === false) {
         await this.applyForget(latest);
@@ -319,10 +332,10 @@ export class ContextFollowing {
   private async applyForget(record: ContextFollowRecord): Promise<void> {
     const key = contextKey(record.value.ownerDid, record.value.contextId);
     let sources = await this.listSources(record.value);
-    while (sources.length > 0 && sameRecord(record, this._winners.get(key))) {
+    while (sources.length > 0 && sameRecord(record, this._latestIntentRecords.get(key))) {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
-      await this.read();
-      if (!sameRecord(record, this._winners.get(key))) { return; }
+      await this.refreshIntentRecords();
+      if (!sameRecord(record, this._latestIntentRecords.get(key))) { return; }
       sources = await this.listSources(record.value);
     }
   }
@@ -336,25 +349,26 @@ export class ContextFollowing {
   }
 
   /** Missing records are not a forget; only newer immutable decisions replace known intent. */
-  private fold(records: readonly ContextFollowRecord[]): void {
+  private rememberLatestIntents(records: readonly ContextFollowRecord[]): void {
     for (const record of records) {
       const key = contextKey(record.value.ownerDid, record.value.contextId);
-      const previous = this._winners.get(key);
+      const previous = this._latestIntentRecords.get(key);
       if (previous === undefined || record.timestamp > previous.timestamp
         || (record.timestamp === previous.timestamp && record.id > previous.id)) {
-        this._winners.set(key, record);
+        this._latestIntentRecords.set(key, record);
       }
     }
   }
 
-  private async read(): Promise<void> {
+  private async refreshIntentRecords(): Promise<void> {
     this.assertActive();
     const records = await this._options.read();
     this.assertActive();
-    this.fold(records);
+    this.rememberLatestIntents(records);
   }
 
-  private roles(group: string): readonly [string, ...string[]] {
+  /** Select the declared role paths; current owner-hosted records determine the actual role. */
+  private getRolePaths(group: string): readonly [string, ...string[]] {
     const roles = this._options.roleGroups[group];
     if (roles === undefined) {
       throw new TypeError(`ContextFollowing: unknown role group '${group}'.`);
@@ -362,13 +376,19 @@ export class ContextFollowing {
     return roles;
   }
 
+  /** Serialize one context's operations while allowing unrelated contexts to proceed independently. */
   private enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    const task = (this._tails.get(key) ?? Promise.resolve()).catch((): void => {}).then(async (): Promise<T> => {
+    // A failed operation must not prevent the next follow, forget, or restoration attempt.
+    const task = (this._pendingOperations.get(key) ?? Promise.resolve()).catch((): void => {}).then(async (): Promise<T> => {
       this.assertActive();
       return operation();
     });
-    this._tails.set(key, task);
-    const release = (): void => { if (this._tails.get(key) === task) { this._tails.delete(key); } };
+    this._pendingOperations.set(key, task);
+    const release = (): void => {
+      if (this._pendingOperations.get(key) === task) {
+        this._pendingOperations.delete(key);
+      }
+    };
     void task.then(release, release);
     return task;
   }
