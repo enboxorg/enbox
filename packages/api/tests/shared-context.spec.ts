@@ -150,12 +150,10 @@ type AgentStub = {
 };
 
 function authorization(did: string): DwnMessage[DwnInterface.RecordsWrite]['authorization'] {
-  const protectedHeader = btoa(JSON.stringify({ kid: `${did}#key-1` }))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
   return {
     signature: {
       payload    : 'payload',
-      signatures : [{ protected: protectedHeader, signature: 'signature' }],
+      signatures : [{ protected: Convert.object({ kid: `${did}#key-1` }).toBase64Url(), signature: 'signature' }],
     },
   };
 }
@@ -376,11 +374,17 @@ describe('TypedEnbox contexts', () => {
         };
       }),
     };
-    agent.processDwnRequest.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery }))
+    agent.processDwnRequest.withArgs(sinon.match({
+      messageType   : DwnInterface.ProtocolsQuery,
+      messageParams : { filter: { protocol: SharedDefinition.protocol } },
+    }))
       .callsFake(async () => ({
         reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } },
       }));
-    agent.processDwnRequest.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsConfigure }))
+    agent.processDwnRequest.withArgs(sinon.match({
+      messageType   : DwnInterface.ProtocolsConfigure,
+      messageParams : { definition: { protocol: SharedDefinition.protocol } },
+    }))
       .callsFake(async () => ({ reply: { status: { code: 202, detail: 'Accepted' } } }));
     const intents: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }> = [];
     intentRecords = intents;
@@ -1428,6 +1432,10 @@ describe('TypedEnbox contexts', () => {
       { protocol: NestedDefinition.protocol, protocolPath: 'notebook' },
       { contextId: notebookId, protocol: NestedDefinition.protocol, protocolPath: 'notebook/page' },
     ]);
+    const protocolRead = agent.processDwnRequest.getCalls()
+      .find((call): boolean => call.args[0].messageType === DwnInterface.ProtocolsQuery
+        && call.args[0].messageParams.filter.protocol === NestedDefinition.protocol);
+    await expect(protocolRead?.returnValue).resolves.toMatchObject({ reply: { entries: [] } });
   });
 
   it('observes owned context additions and removals through the shared catalog view', async () => {

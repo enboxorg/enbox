@@ -81,6 +81,7 @@ class IntentView implements ExpandableRecordView<ContextFollowRecord> {
 }
 
 function fixture(initial: ContextFollowRecord[] = []): {
+  acceptSource(input: FollowedSyncSourceInput): FollowedSyncSource;
   append: sinon.SinonSpy<[ContextFollowIntent, string?], Promise<ContextFollowRecord>>;
   coordinator: ContextFollowing;
   entries: ContextFollowRecord[];
@@ -92,7 +93,7 @@ function fixture(initial: ContextFollowRecord[] = []): {
   const entries = [...initial];
   const sources = new Map<string, FollowedSyncSource>();
   let acceptance = 0;
-  const follow = sinon.stub<[FollowedSyncSourceInput], Promise<FollowedSyncSource>>().callsFake(async (input): Promise<FollowedSyncSource> => {
+  const acceptSource = (input: FollowedSyncSourceInput): FollowedSyncSource => {
     const existing = [...sources.values()].find((source): boolean => source.contextId === input.contextId);
     if (existing !== undefined) { return existing; }
     const source: FollowedSyncSource = {
@@ -105,7 +106,9 @@ function fixture(initial: ContextFollowRecord[] = []): {
     };
     sources.set(source.id, source);
     return source;
-  });
+  };
+  const follow = sinon.stub<[FollowedSyncSourceInput], Promise<FollowedSyncSource>>()
+    .callsFake(async (input): Promise<FollowedSyncSource> => acceptSource(input));
   const append = sinon.spy(async (value: ContextFollowIntent, after?: string): Promise<ContextFollowRecord> => {
     const row = { ...decision(entries.length + 1, value), ...(after === undefined ? {} : { timestamp: Time.createTimestampAfter(after) }) };
     entries.push(row);
@@ -130,7 +133,7 @@ function fixture(initial: ContextFollowRecord[] = []): {
       listFollowedSources : async (): Promise<FollowedSyncSource[]> => [...sources.values()],
     },
   };
-  return { append, coordinator: new ContextFollowing(options), entries, follow, openView, options, sources };
+  return { acceptSource, append, coordinator: new ContextFollowing(options), entries, follow, openView, options, sources };
 }
 
 describe('ContextFollowing', () => {
@@ -314,12 +317,7 @@ describe('ContextFollowing', () => {
     const wait = deferred<void>();
     test.follow.callsFake(async (input): Promise<FollowedSyncSource> => {
       await wait.promise;
-      const source: FollowedSyncSource = {
-        ...input, acceptanceId   : 'late', id             : 'role-page-1', protocolPaths  : ['page'],
-        protocolRole   : roles[0], remoteEndpoint : 'https://owner.example',
-      };
-      test.sources.set(source.id, source);
-      return source;
+      return test.acceptSource(input);
     });
     const restoring = test.coordinator.restore();
     await settled((): boolean => test.follow.calledOnce);
@@ -335,19 +333,15 @@ describe('ContextFollowing', () => {
 
   it('does not overwrite a newer forget while an explicit follow is verifying', async () => {
     const test = fixture();
-    const wait = deferred<FollowedSyncSource>();
-    test.follow.callsFake(async (): Promise<FollowedSyncSource> => {
-      const source = await wait.promise;
-      test.sources.set(source.id, source);
-      return source;
+    const wait = deferred<void>();
+    test.follow.callsFake(async (input): Promise<FollowedSyncSource> => {
+      await wait.promise;
+      return test.acceptSource(input);
     });
     const opening = test.coordinator.follow(request);
     await settled((): boolean => test.follow.calledOnce);
     test.entries.push(decision(1, { following: false }));
-    wait.resolve({
-      acceptanceId   : 'late', actorDid, contextId      : 'page-1', id             : 'role-page-1', protocol,
-      protocolPaths  : ['page'], protocolRole   : roles[0], remoteEndpoint : 'https://owner.example', roles          : [...roles], sourceDid      : ownerDid,
-    });
+    wait.resolve();
     await expect(opening).rejects.toBeInstanceOf(ContextRetiredError);
     expect(test.sources.size).toBe(0);
     expect(test.append.callCount).toBe(0);

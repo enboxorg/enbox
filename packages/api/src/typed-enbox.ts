@@ -3054,7 +3054,6 @@ export class TypedEnbox<
     const retire = async (leave: boolean): Promise<void> => {
       this._options.signal?.throwIfAborted();
       await forget(source, !leave ? undefined : async (): Promise<void> => {
-        await assertActive();
         const result = await membershipDwn.records.delete({
           contextId    : source.contextId,
           protocol     : source.protocol,

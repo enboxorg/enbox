@@ -35,8 +35,8 @@ export type ContextFollowingOptions = {
 };
 
 type Observation = {
-  /** Last attempted intent per context, including failures; retry() clears these. */
-  attempts: Map<string, ContextFollowRecord>;
+  /** Last attempted record ID per context, including failures; retry() clears these. */
+  attemptedRecordIds: Map<string, string>;
   controller: AbortController;
   draining: boolean;
   listeners: Set<(error: Error) => void>;
@@ -139,7 +139,7 @@ export class ContextFollowing {
   public retry(): void {
     const observation = this._observation;
     if (observation !== undefined && this.isObserving(observation)) {
-      observation.attempts.clear();
+      observation.attemptedRecordIds.clear();
       this.requestReconciliation(observation);
     }
   }
@@ -240,12 +240,12 @@ export class ContextFollowing {
 
   private openObservation(): Observation {
     const observation: Observation = {
-      attempts   : new Map(),
-      controller : new AbortController(),
-      draining   : false,
-      listeners  : new Set(),
-      opening    : Promise.resolve(),
-      requested  : false,
+      attemptedRecordIds : new Map(),
+      controller         : new AbortController(),
+      draining           : false,
+      listeners          : new Set(),
+      opening            : Promise.resolve(),
+      requested          : false,
     };
     this._observation = observation;
     const signal = this._options.signal === undefined ? observation.controller.signal
@@ -310,10 +310,10 @@ export class ContextFollowing {
     this.rememberLatestIntents(state.records);
     for (const [key, record] of this._latestIntentRecords) {
       // Queue completion resumes a retry once; sync wakes must not pile up owner lookups.
-      if (sameRecord(observation.attempts.get(key), record) || this._pendingOperations.has(key)) {
+      if (observation.attemptedRecordIds.get(key) === record.id || this._pendingOperations.has(key)) {
         continue;
       }
-      observation.attempts.set(key, record);
+      observation.attemptedRecordIds.set(key, record.id);
       void this.serializeContextOperation(key, async (): Promise<void> => {
         if (this.isObserving(observation)) {
           await this.restoreContext(key);
@@ -418,7 +418,7 @@ export class ContextFollowing {
         this._pendingOperations.delete(key);
         const observation = this._observation;
         if (observation !== undefined
-          && !sameRecord(observation.attempts.get(key), this._latestIntentRecords.get(key))) {
+          && observation.attemptedRecordIds.get(key) !== this._latestIntentRecords.get(key)?.id) {
           this.requestReconciliation(observation);
         }
       }
