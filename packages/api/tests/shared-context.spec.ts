@@ -1524,6 +1524,22 @@ describe('TypedEnbox contexts', () => {
     expect(transport.close.calledOnce).toBe(true);
   });
 
+  it('preserves an owned subscription opening failure when the following lease also fails to close', async () => {
+    const openFailure = new Error('owned stream failed to open');
+    const closeFailure = new Error('following lease failed to close');
+    const followsClose = sinon.stub().rejects(closeFailure);
+    const observe = sinon.stub(ContextFollowing.prototype, 'observe').resolves({ close: followsClose });
+    const subscribe = sinon.stub(typed.records, 'subscribe').rejects(openFailure);
+    try {
+      await expect(typed.contexts.observe()).rejects.toBe(openFailure);
+      expect(followsClose.calledOnce).toBe(true);
+      expect(listeners.size).toBe(0);
+    } finally {
+      observe.restore();
+      subscribe.restore();
+    }
+  });
+
   it('waits for the owned stream to close when the following lease fails to close', async () => {
     let releaseOwned!: () => void;
     const pendingOwnedClose = new Promise<void>(resolve => { releaseOwned = resolve; });

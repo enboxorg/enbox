@@ -71,12 +71,13 @@ export class ContextFollowing {
       const outcome = await this.saveFollowUnlessNewerForget(request, initialDecision)
         .catch((error: unknown): Promise<never> => this.rollbackFailedFollow(source, acceptedBeforeFollow, error));
 
-      if (outcome === 'already-following') { return source; }
-      if (outcome === 'saved') {
-        // Include decisions received during the write; read failures here must not undo saved access.
-        await this.readLatestIntents();
+      if (outcome !== 'already-following') {
+        if (outcome === 'saved') {
+          // Include decisions received during the write; read failures here must not undo saved access.
+          await this.readLatestIntents();
+        }
+        await this.rejectFollowIfForgotten(key, request.id);
       }
-      await this.rejectFollowIfForgotten(key, request.id);
       return source;
     });
   }
@@ -175,7 +176,7 @@ export class ContextFollowing {
   }
 
   /** Verify current owner-hosted membership and establish or reuse this device's acceptance. */
-  private async verifyAndAcceptContext(request: FollowRequest): Promise<FollowedSyncSource> {
+  private verifyAndAcceptContext(request: FollowRequest): Promise<FollowedSyncSource> {
     this.assertActive();
     return this._options.sync.followSource({
       actorDid  : this._options.actorDid,
@@ -299,7 +300,7 @@ export class ContextFollowing {
       observation.requested = false;
       await view.ready({ signal: observation.controller.signal });
       while (this.isObserving(observation) && view.getSnapshot().hasMore) {
-        await view.loadMore();
+        await view.loadMore(); // NOSONAR: S9382 - each expansion determines whether another page is needed.
       }
       if (!this.isObserving(observation)) {
         return;
@@ -365,7 +366,7 @@ export class ContextFollowing {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
       await this.readLatestIntents();
       if (this._latestIntentRecords.get(key)?.value.following !== false) { return; }
-      sources = await this.listAcceptedContextSources(record.value);
+      sources = await this.listAcceptedContextSources(record.value); // NOSONAR: S9382 - reread after deletion and the latest decision.
     }
   }
 

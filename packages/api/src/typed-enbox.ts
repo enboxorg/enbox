@@ -1771,7 +1771,8 @@ export class TypedEnbox<
         };
       } catch (error: unknown) {
         detachSync();
-        await follows?.close();
+        // Preserve the subscription-opening failure if releasing the follow observer also fails.
+        await follows?.close().catch((): void => {});
         throw error;
       }
     };
