@@ -137,7 +137,11 @@ export class ContextFollowing {
       }
       await beforeForget?.();
       await this.refreshIntentRecords();
-      if (!sameRecord(before, this._latestIntentRecords.get(key))) {
+      const received = this._latestIntentRecords.get(key);
+      if (!sameRecord(before, received)) {
+        if (received?.value.following === false) {
+          await this.applyForget(received);
+        }
         return;
       }
       if (beforeForget === undefined) {
@@ -243,7 +247,8 @@ export class ContextFollowing {
 
   /** Drain native pagination before scheduling independent per-context restoration. */
   private requestReconciliation(observation: Observation): void {
-    if (!this.isObserving(observation)) {
+    // Opening requests the initial pass after assigning the view, even if sync wakes arrived earlier.
+    if (!this.isObserving(observation) || observation.view === undefined) {
       return;
     }
     observation.requested = true;
@@ -278,7 +283,8 @@ export class ContextFollowing {
       }
       this.rememberLatestIntents(state.records);
       for (const [key, record] of this._latestIntentRecords) {
-        if (sameRecord(observation.attempts.get(key), record)) {
+        // Queue completion resumes a retry once; sync wakes must not pile up owner lookups.
+        if (sameRecord(observation.attempts.get(key), record) || this._pendingOperations.has(key)) {
           continue;
         }
         observation.attempts.set(key, record);
@@ -319,10 +325,11 @@ export class ContextFollowing {
     }
     await this.refreshIntentRecords();
     const latest = this._latestIntentRecords.get(key);
+    // Another device can write the same choice; a newer record alone does not invalidate access.
     if (!sameRecord(current, latest)) {
       if (latest?.value.following === false) {
         await this.applyForget(latest);
-      } else {
+      } else if (latest?.value.group !== intent.group) {
         await this._options.sync.deleteFollowedSource(accepted);
       }
     }
@@ -332,10 +339,10 @@ export class ContextFollowing {
   private async applyForget(record: ContextFollowRecord): Promise<void> {
     const key = contextKey(record.value.ownerDid, record.value.contextId);
     let sources = await this.listSources(record.value);
-    while (sources.length > 0 && sameRecord(record, this._latestIntentRecords.get(key))) {
+    while (sources.length > 0 && this._latestIntentRecords.get(key)?.value.following === false) {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
       await this.refreshIntentRecords();
-      if (!sameRecord(record, this._latestIntentRecords.get(key))) { return; }
+      if (this._latestIntentRecords.get(key)?.value.following !== false) { return; }
       sources = await this.listSources(record.value);
     }
   }
@@ -387,6 +394,11 @@ export class ContextFollowing {
     const release = (): void => {
       if (this._pendingOperations.get(key) === task) {
         this._pendingOperations.delete(key);
+        const observation = this._observation;
+        if (observation !== undefined
+          && !sameRecord(observation.attempts.get(key), this._latestIntentRecords.get(key))) {
+          this.requestReconciliation(observation);
+        }
       }
     };
     void task.then(release, release);

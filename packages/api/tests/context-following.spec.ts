@@ -245,6 +245,22 @@ describe('ContextFollowing', () => {
     expect(test.sources.get(source.id)?.acceptanceId).toBe('new-acceptance');
   });
 
+  it('applies a newer forget received before dispatch without appending a duplicate decision', async () => {
+    const test = fixture();
+    const source = await test.coordinator.follow(request);
+    let reads = 0;
+    test.options.read = async (): Promise<readonly ContextFollowRecord[]> => {
+      if (++reads === 2) {
+        test.entries.push({ ...decision(99, { following: false }), timestamp: Time.createTimestampAfter(test.entries.at(-1)!.timestamp) });
+      }
+      return [...test.entries];
+    };
+    await test.coordinator.forget(source);
+    expect(test.append.callCount).toBe(1);
+    expect(test.sources.size).toBe(0);
+    expect(test.entries.at(-1)?.value.following).toBe(false);
+  });
+
   it('retires a role replacement that arrives while explicit forget is persisted', async () => {
     const test = fixture();
     const source = await test.coordinator.follow(request);
@@ -259,7 +275,7 @@ describe('ContextFollowing', () => {
     expect(test.sources.size).toBe(0);
   });
 
-  it.each(['forgotten', 'followed again'] as const)('rechecks a source rotated during exact deletion when intent is %s', async (intent) => {
+  it.each(['forgotten', 'forgotten again', 'followed again'] as const)('rechecks a source rotated during exact deletion when intent is %s', async (intent) => {
     const test = fixture();
     const source = await test.coordinator.follow(request);
     const replacement = { ...source, id: 'new-role', protocolRole: 'page/viewer' };
@@ -269,19 +285,23 @@ describe('ContextFollowing', () => {
       if (deletions++ === 0) {
         test.sources.delete(source.id);
         test.sources.set(replacement.id, replacement);
-        if (intent === 'followed again') {
-          test.entries.push({ ...decision(99), timestamp: Time.createTimestampAfter(test.entries.at(-1)!.timestamp) });
+        if (intent !== 'forgotten') {
+          test.entries.push({
+            ...decision(99, { following: intent === 'followed again' }),
+            timestamp: Time.createTimestampAfter(test.entries.at(-1)!.timestamp),
+          });
         }
       }
       await remove(expected);
     };
     await test.coordinator.forget(source);
-    expect(deletions).toBe(intent === 'forgotten' ? 2 : 1);
-    expect(test.sources.get(replacement.id)).toBe(intent === 'forgotten' ? undefined : replacement);
+    expect(deletions).toBe(intent === 'followed again' ? 1 : 2);
+    expect(test.sources.get(replacement.id)).toBe(intent === 'followed again' ? replacement : undefined);
   });
 
-  it('retires a late restored acceptance when a newer forget arrives during verification', async () => {
+  it.each(['forgotten', 'same group', 'different group'] as const)('checks a late restoration when newer intent is %s', async (change) => {
     const test = fixture([decision(1)]);
+    test.options.roleGroups = { default: roles, viewers: ['page/viewer'] };
     const wait = deferred<void>();
     test.follow.callsFake(async (input): Promise<FollowedSyncSource> => {
       await wait.promise;
@@ -294,10 +314,13 @@ describe('ContextFollowing', () => {
     });
     const restoring = test.coordinator.restore();
     await settled((): boolean => test.follow.calledOnce);
-    test.entries.push(decision(2, { following: false }));
+    test.entries.push(decision(2, {
+      following : change !== 'forgotten',
+      group     : change === 'different group' ? 'viewers' : 'default',
+    }));
     wait.resolve();
     await restoring;
-    expect(test.sources.size).toBe(0);
+    expect(test.sources.size).toBe(change === 'same group' ? 1 : 0);
     expect(test.append.callCount).toBe(0);
   });
 
@@ -340,6 +363,23 @@ describe('ContextFollowing', () => {
     expect(error.called).toBe(false);
   });
 
+  it('defers retry wakes during journal opening until the initial view is available', async () => {
+    const test = fixture([decision(1)]);
+    const pending = deferred<ExpandableRecordView<ContextFollowRecord>>();
+    test.openView.returns(pending.promise);
+    const error = sinon.spy();
+    const opening = test.coordinator.observe(error);
+    test.coordinator.retry();
+    await settled((): boolean => test.openView.calledOnce);
+    expect(error.called).toBe(false);
+    expect(test.follow.called).toBe(false);
+    pending.resolve(new IntentView(test.entries));
+    const lease = await opening;
+    await settled((): boolean => test.sources.size === 1);
+    expect(error.called).toBe(false);
+    await lease.close();
+  });
+
   it('does not wait for an unavailable owner when opening an observation and retries on reacquisition', async () => {
     const test = fixture([decision(1)]);
     const wait = deferred<void>();
@@ -372,6 +412,39 @@ describe('ContextFollowing', () => {
     await lease.close();
     test.coordinator.retry();
     expect(test.openView.callCount).toBe(1);
+  });
+
+  it('coalesces retry wakes behind an active lookup so a queued forget is not delayed by duplicate lookups', async () => {
+    const test = fixture([decision(1)]);
+    test.options.roleGroups = { default: roles, viewers: ['page/viewer'] };
+    const source = await test.coordinator.follow(request);
+    test.follow.resetHistory();
+    test.entries.push(decision(2, { group: 'viewers' }));
+    const wait = deferred<void>();
+    test.follow.callsFake(async (): Promise<FollowedSyncSource> => {
+      await wait.promise;
+      throw new Error('owner unavailable');
+    });
+    const error = sinon.spy();
+    const lease = await test.coordinator.observe(error);
+    try {
+      await settled((): boolean => test.follow.calledOnce);
+      for (let wake = 0; wake < 3; wake++) {
+        test.coordinator.retry();
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      const forgetting = test.coordinator.forget(source);
+      wait.resolve();
+      await forgetting;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(test.follow.callCount).toBe(1);
+      expect(test.sources.size).toBe(0);
+      expect(test.entries.at(-1)?.value.following).toBe(false);
+      expect(error.called).toBe(false);
+    } finally {
+      wait.resolve();
+      await lease.close();
+    }
   });
 
   it('closes a late native view after caller abort and reports registry errors separately', async () => {
