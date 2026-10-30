@@ -12,7 +12,9 @@ import type {
   SyncEventListener,
 } from '@enbox/agent';
 
+import { CONTEXT_FOLLOW_PATH } from '../src/context-follows.js';
 import { CONTEXT_INVITATION_PATH } from '../src/context-invitations.js';
+import { ContextFollowing } from '../src/context-following.js';
 import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
 import { defineProtocol } from '../src/define-protocol.js';
@@ -307,6 +309,18 @@ function contextEntry(
   } as DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string };
 }
 
+/** The private journal is separate from every foreign-context fixture below. */
+function isFollowIntentRequest(request: ProcessDwnRequest<DwnInterface>): boolean {
+  if (request.target !== connectedDid) {
+    return false;
+  }
+  if (request.messageType === DwnInterface.RecordsWrite) {
+    return request.messageParams.protocolPath === CONTEXT_FOLLOW_PATH;
+  }
+  return (request.messageType === DwnInterface.RecordsQuery || request.messageType === DwnInterface.RecordsSubscribe)
+    && request.messageParams.filter.protocolPath === CONTEXT_FOLLOW_PATH;
+}
+
 describe('TypedEnbox contexts', () => {
   let agent: AgentStub;
   let current: FollowedSyncSource | undefined;
@@ -315,6 +329,7 @@ describe('TypedEnbox contexts', () => {
   let follow: sinon.SinonStub;
   let get: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
+  let intentRecords: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }>;
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
   let markFollowedSourcePullPending: sinon.SinonStub;
@@ -368,6 +383,58 @@ describe('TypedEnbox contexts', () => {
         };
       }),
     };
+    const intents: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }> = [];
+    intentRecords = intents;
+    const intentSubscribers = new Set<NonNullable<ProcessDwnRequest<DwnInterface.RecordsSubscribe>['subscriptionHandler']>>();
+    agent.processDwnRequest.withArgs(sinon.match(isFollowIntentRequest)).callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.RecordsWrite) {
+        if (request.dataStream === undefined) {
+          throw new Error('A following intent must include record data.');
+        }
+        const bytes = new Uint8Array(await new Response(request.dataStream).arrayBuffer());
+        const sequence = intents.length + 1;
+        const recordId = `follow-intent-${sequence}`;
+        const timestamp = request.messageParams.messageTimestamp ?? `2026-01-01T00:00:00.${String(sequence).padStart(6, '0')}Z`;
+        const message = writeFrom(request);
+        message.recordId = recordId;
+        message.contextId = recordId;
+        message.descriptor = {
+          ...message.descriptor,
+          dataCid          : `${recordId}-data`,
+          dataSize         : bytes.byteLength,
+          dateCreated      : request.messageParams.dateCreated ?? timestamp,
+          messageTimestamp : timestamp,
+        };
+        intents.push({ ...message, encodedData: Convert.uint8Array(bytes).toBase64Url() });
+        for (const listener of intentSubscribers) {
+          await listener({
+            type   : 'event',
+            cursor : { epoch: 'epoch', position: String(sequence), streamId: 'follow-intents' },
+            event  : { message },
+          });
+        }
+        return { data: new Blob([bytes]), message, reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
+      if (request.messageType === DwnInterface.RecordsQuery) {
+        return {
+          reply: {
+            entries : intents.filter(entry => entry.descriptor.protocol === request.messageParams.filter.protocol),
+            status  : { code: 200, detail: 'OK' },
+          },
+        };
+      }
+      if (request.messageType === DwnInterface.RecordsSubscribe) {
+        const listener = request.subscriptionHandler!;
+        intentSubscribers.add(listener);
+        return {
+          reply: {
+            status       : { code: 200, detail: 'OK' },
+            subscription : { close: async (): Promise<void> => { intentSubscribers.delete(listener); } },
+          },
+        };
+      }
+      throw new Error(`Unexpected following request: ${request.messageType}`);
+    });
     follow = sinon.stub().callsFake(async (input: FollowedSyncSourceInput): Promise<FollowedSyncSource> => {
       const active = input.roles[0];
       current = source({
@@ -658,7 +725,9 @@ describe('TypedEnbox contexts', () => {
     await shared.records.create('workspace/note', { data: { title: 'A shared note' } });
     await shared.records.create('workspace/writeOnly', { data: {} });
 
-    const localRequest = agent.processDwnRequest.firstCall.args[0];
+    const localRequest = agent.processDwnRequest.getCalls().find(call =>
+      call.args[0].messageType === DwnInterface.RecordsQuery
+      && call.args[0].messageParams.filter.protocolPath === 'workspace/note')!.args[0];
     expect(localRequest).toMatchObject({
       messageParams: {
         filter: {
@@ -670,7 +739,8 @@ describe('TypedEnbox contexts', () => {
       },
       target: sourceDid,
     });
-    expect(agent.processDwnRequest.secondCall.args[0]).toMatchObject({
+    expect(agent.processDwnRequest.getCalls().find(call =>
+      call.args[0].messageType === DwnInterface.RecordsCount)!.args[0]).toMatchObject({
       messageParams: {
         filter: {
           contextId,
@@ -702,6 +772,15 @@ describe('TypedEnbox contexts', () => {
     });
     expect(markFollowedSourcePullPending.calledTwice).toBe(true);
     expect(markFollowedSourcePullPending.alwaysCalledWithExactly(current!)).toBe(true);
+    const intentWrite = agent.processDwnRequest.getCalls().find(call =>
+      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))!.args[0];
+    expect(intentWrite).toMatchObject({ author: connectedDid, target: connectedDid });
+    expect(JSON.parse(await (intentWrite.dataStream as Blob).text())).toEqual({
+      contextId,
+      following : true,
+      group     : 'default',
+      ownerDid  : sourceDid,
+    });
   });
 
   it('makes a member mutation stale until the exact context is pulled locally', async () => {
@@ -711,6 +790,12 @@ describe('TypedEnbox contexts', () => {
       return true;
     });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
+      if (request.messageType === DwnInterface.ProtocolsQuery) {
+        return { reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } } };
+      }
+      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+        return { reply: { status: { code: 202, detail: 'Accepted' } } };
+      }
       if (request.messageType === DwnInterface.RecordsQuery) {
         return {
           reply: {
@@ -805,6 +890,7 @@ describe('TypedEnbox contexts', () => {
 
   it('rejects selectors that escape the bound context before dispatch', async () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const localRequests = agent.processDwnRequest.callCount;
 
     for (const within of ['siblingWorkspace', `${contextId}Sibling`]) {
       await expect(shared.records.query('workspace/note', { within }))
@@ -815,7 +901,7 @@ describe('TypedEnbox contexts', () => {
       parentContextId : `${contextId}Sibling/sectionRecord`,
     })).rejects.toThrow('Context-bound selectors cannot escape their context.');
 
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.notCalled).toBe(true);
   });
 
@@ -841,10 +927,11 @@ describe('TypedEnbox contexts', () => {
       throw new Error(`Unexpected remote request: ${request.messageType}`);
     });
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const localRequests = agent.processDwnRequest.callCount;
 
     await shared.records.set('workspace/title', { data: 'First title' });
 
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
       messageParams: {
         filter: {
@@ -870,7 +957,7 @@ describe('TypedEnbox contexts', () => {
 
     await shared.records.set('workspace/title', { data: 'Updated title' });
 
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.callCount).toBe(4);
     expect(agent.sendDwnRequest.thirdCall.args[0]).toMatchObject({
       messageParams: {
@@ -898,11 +985,12 @@ describe('TypedEnbox contexts', () => {
 
   it('rejects paths outside the selected role scope before dispatch', async () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const localRequests = agent.processDwnRequest.callCount;
     const untypedRecords = shared.records as unknown as {
       query(path: string): Promise<unknown>;
     };
     await expect(untypedRecords.query('outside')).rejects.toThrow('do not expose path \'outside\'');
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
   });
 
   it('does not expose internal source record IDs when following fails', async () => {
@@ -1016,6 +1104,7 @@ describe('TypedEnbox contexts', () => {
     expect(catalog.find(context => context.access === 'owner')).toBe(opened);
     expect(catalog.find(context => context.access === 'member')).toBe(followed);
 
+    await followed.forget();
     current = source({ sourceDid: connectedDid });
     expect(await typed.contexts.list()).toMatchObject([
       { access: 'owner', id: contextId, ownerDid: connectedDid },
@@ -1109,7 +1198,8 @@ describe('TypedEnbox contexts', () => {
       expect(view.getSnapshot().contexts.every(row => row.root.status !== 'loading')).toBe(true);
     });
     expect(agent.processDwnRequest.getCalls()
-      .filter(call => call.args[0].messageType === DwnInterface.RecordsSubscribe)
+      .filter(call => call.args[0].messageType === DwnInterface.RecordsSubscribe
+        && call.args[0].messageParams.filter.protocolPath === 'workspace')
       .map(call => call.args[0].messageParams.filter.contextId)
       .sort()).toEqual(sources.map(candidate => candidate.contextId).sort());
     expect(view.getSnapshot().contexts[0]).toMatchObject({
@@ -1135,7 +1225,8 @@ describe('TypedEnbox contexts', () => {
     current = source();
     const transport = { close: sinon.stub().resolves() };
     const subscriptions = agent.processDwnRequest.withArgs(sinon.match({
-      messageType: DwnInterface.RecordsSubscribe,
+      messageType   : DwnInterface.RecordsSubscribe,
+      messageParams : { filter: { protocolPath: 'workspace' } },
     }));
     subscriptions.onFirstCall().resolves({ reply: { status: { code: 500, detail: 'Unavailable' } } });
     subscriptions.onSecondCall().resolves({
@@ -1206,7 +1297,8 @@ describe('TypedEnbox contexts', () => {
       expect(view.getSnapshot().contexts[0].root.records[0]?.value).toEqual({ title: 'First' });
     });
     expect(agent.processDwnRequest.getCalls().find(
-      call => call.args[0].messageType === DwnInterface.RecordsSubscribe,
+      call => call.args[0].messageType === DwnInterface.RecordsSubscribe
+        && call.args[0].messageParams.filter.protocolPath === 'workspace',
     )?.args[0]).toMatchObject({
       messageParams: {
         filter: {
@@ -1311,7 +1403,8 @@ describe('TypedEnbox contexts', () => {
     await view.ready();
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(agent.processDwnRequest.getCalls().filter(
-        call => call.args[0].messageType === DwnInterface.RecordsSubscribe,
+        call => call.args[0].messageType === DwnInterface.RecordsSubscribe
+          && call.args[0].messageParams.filter.protocolPath === 'workspace',
       )).toHaveLength(4);
     });
     await view.close();
@@ -1321,7 +1414,8 @@ describe('TypedEnbox contexts', () => {
       expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
     });
     expect(agent.processDwnRequest.getCalls().some(
-      call => call.args[0].messageType === DwnInterface.RecordsQuery,
+      call => call.args[0].messageType === DwnInterface.RecordsQuery
+        && call.args[0].messageParams.filter.protocolPath === 'workspace',
     )).toBe(false);
     expect(listeners.size).toBe(0);
   });
@@ -1428,6 +1522,36 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getSnapshot().status).toBe('ready');
     expect(transport.close.calledOnce).toBe(true);
+  });
+
+  it('waits for the owned stream to close when the following lease fails to close', async () => {
+    let releaseOwned!: () => void;
+    const pendingOwnedClose = new Promise<void>(resolve => { releaseOwned = resolve; });
+    const ownedClose = sinon.stub().returns(pendingOwnedClose);
+    const failure = new Error('following lease close failed');
+    const followsClose = sinon.stub().rejects(failure);
+    const observe = sinon.stub(ContextFollowing.prototype, 'observe').resolves({ close: followsClose });
+    agent.processDwnRequest.withArgs(sinon.match({ messageType: DwnInterface.MessagesSubscribe })).resolves({
+      reply: { status: { code: 200, detail: 'OK' }, subscription: { close: ownedClose } },
+    });
+    try {
+      const view = await typed.contexts.observe();
+      await view.ready();
+      let settled = false;
+      const closing = view.close();
+      void closing.then((): void => { settled = true; }, (): void => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(ownedClose.calledOnce).toBe(true);
+      expect(followsClose.calledOnce).toBe(true);
+      expect(settled).toBe(false);
+
+      releaseOwned();
+      await expect(closing).rejects.toBe(failure);
+      expect(listeners.size).toBe(0);
+    } finally {
+      releaseOwned();
+      observe.restore();
+    }
   });
 
   it('preserves owning-session termination when a context caller shares its signal', async () => {
@@ -1624,11 +1748,12 @@ describe('TypedEnbox contexts', () => {
     });
 
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const localRequests = agent.processDwnRequest.callCount;
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'sibling-note',
     })).rejects.toMatchObject({ status: { code: 404, detail: 'Not Found' } });
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
   });
 
@@ -1652,12 +1777,13 @@ describe('TypedEnbox contexts', () => {
       },
     });
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const localRequests = agent.processDwnRequest.callCount;
 
     await expect(shared.records.delete('workspace/note', {
       recordId: 'deleted-note',
     })).resolves.toBeUndefined();
 
-    expect(agent.processDwnRequest.notCalled).toBe(true);
+    expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.sendDwnRequest.firstCall.args[0].messageType).toBe(DwnInterface.RecordsRead);
     expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
@@ -2059,7 +2185,7 @@ describe('TypedEnbox contexts', () => {
     expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
   });
 
-  it('can stop following locally without withdrawing the role', async () => {
+  it('persists forgetting without withdrawing the owner role', async () => {
     current = source();
     const [shared] = await typed.contexts.list();
 
@@ -2067,7 +2193,73 @@ describe('TypedEnbox contexts', () => {
 
     expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
     expect(agent.sendDwnRequest.notCalled).toBe(true);
+    const intentWrite = agent.processDwnRequest.getCalls().find(call =>
+      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))!.args[0];
+    expect(JSON.parse(await (intentWrite.dataStream as Blob).text())).toEqual({
+      contextId,
+      following : false,
+      group     : 'default',
+      ownerDid  : sourceDid,
+    });
     await expect(shared.records.query('workspace/note')).rejects.toThrow();
+  });
+
+  it('writes forgetting after a known intent from a device with a faster clock', async () => {
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const previous = intentRecords[0];
+    const futureTimestamp = new Date(Date.now() + 60_000).toISOString().replace('Z', '000Z');
+    const recordId = 'follow-from-another-device';
+    intentRecords.push({
+      ...previous,
+      recordId,
+      contextId  : recordId,
+      descriptor : { ...previous.descriptor, dateCreated: futureTimestamp, messageTimestamp: futureTimestamp },
+    });
+
+    await shared.forget();
+
+    const writes = agent.processDwnRequest.getCalls().filter(call =>
+      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]));
+    const request = writes.at(-1)!.args[0];
+    expect(request.messageParams.messageTimestamp > futureTimestamp).toBe(true);
+    expect(request.messageParams.dateCreated).toBe(request.messageParams.messageTimestamp);
+    expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
+    expect(current).toBeUndefined();
+  });
+
+  it('keeps the accepted handle usable when a newer follow supersedes an in-flight forget', async () => {
+    const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
+    const accepted = current;
+    const read = typed['readContextFollows'].bind(typed);
+    let reads = 0;
+    const journalRead = sinon.stub(typed as never, 'readContextFollows').callsFake(async (): ReturnType<typeof read> => {
+      if (++reads === 2) {
+        const previous = intentRecords[0];
+        const timestamp = new Date(Date.now() + 60_000).toISOString().replace('Z', '000Z');
+        const recordId = 'newer-follow';
+        intentRecords.push({
+          ...previous,
+          recordId,
+          contextId  : recordId,
+          descriptor : { ...previous.descriptor, dateCreated: timestamp, messageTimestamp: timestamp },
+        });
+      }
+      return read();
+    });
+    try {
+      await shared.forget();
+    } finally {
+      journalRead.restore();
+    }
+
+    expect(current).toBe(accepted);
+    expect(deleteFollowedSource.notCalled).toBe(true);
+    await expect(shared.records.query('workspace/note')).resolves.toMatchObject({ records: [] });
+    expect((await typed.contexts.list()).find(context => context.access === 'member')).toBe(shared);
+    expect(await typed.contexts.follow({ ownerDid: sourceDid, id: contextId })).toBe(shared);
+    await expect(shared.records.query('workspace/note')).resolves.toMatchObject({ records: [] });
+    expect(agent.processDwnRequest.getCalls().filter(call =>
+      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))).toHaveLength(1);
   });
 
   it('removes the followed source only after the exact role record is deleted', async () => {

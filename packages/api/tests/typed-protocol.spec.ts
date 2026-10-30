@@ -22,6 +22,7 @@ import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { CONTEXT_FOLLOW_PATH, contextFollowCodec, isContextFollowIntent } from '../src/context-follows.js';
 import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
 import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
@@ -212,7 +213,7 @@ describe('TypedProtocol API', () => {
       }
     });
 
-    it('copies role precedence and adds one isolated invitation inbox without mutating authored inputs', () => {
+    it('copies role precedence and adds isolated shared-context paths without mutating authored inputs', () => {
       const roles = ['workspace/member', 'workspace/viewer'];
       const input = { default: roles };
       const protocol = defineRoleGroups(input);
@@ -232,6 +233,19 @@ describe('TypedProtocol API', () => {
         $size      : { max: 8_192 },
       });
       expect(protocol.codecs[CONTEXT_INVITATION_PATH]).toBe(contextInvitationCodec);
+      expect(RoleGroupDefinition.types).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(RoleGroupDefinition.structure).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(RoleGroupCodecs).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(protocol.definition.types[CONTEXT_FOLLOW_PATH]).toEqual({
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        schema             : 'https://enbox.id/schemas/context-follow',
+      });
+      expect(protocol.definition.structure[CONTEXT_FOLLOW_PATH]).toEqual({
+        $immutable : true,
+        $size      : { max: 8_192 },
+      });
+      expect(protocol.codecs[CONTEXT_FOLLOW_PATH]).toBe(contextFollowCodec);
       expect(protocol.roleGroups).not.toBe(input);
       expect(protocol.roleGroups.default).not.toBe(roles);
       expect(protocol.roleGroups.default).toEqual(['workspace/member', 'workspace/viewer']);
@@ -244,9 +258,13 @@ describe('TypedProtocol API', () => {
         .not.toBe(protocol.definition.types[CONTEXT_INVITATION_PATH]);
       expect(other.definition.structure[CONTEXT_INVITATION_PATH])
         .not.toBe(protocol.definition.structure[CONTEXT_INVITATION_PATH]);
+      expect(other.definition.types[CONTEXT_FOLLOW_PATH])
+        .not.toBe(protocol.definition.types[CONTEXT_FOLLOW_PATH]);
+      expect(other.definition.structure[CONTEXT_FOLLOW_PATH])
+        .not.toBe(protocol.definition.structure[CONTEXT_FOLLOW_PATH]);
     });
 
-    it('derives the managed invitation inbox from the protocol definition instead of role groups', () => {
+    it('derives managed shared-context paths from the protocol definition instead of role groups', () => {
       const withoutRoleGroups = defineProtocol(RoleGroupDefinition, RoleGroupCodecs);
       const withRoleGroups = defineRoleGroups({ default: ['workspace/member'] });
 
@@ -261,6 +279,65 @@ describe('TypedProtocol API', () => {
         codecs     : RoleGroupCodecs,
         roleGroups : {},
       })).toBe(false);
+    });
+
+    it('rejects altered or incomplete private following definitions', () => {
+      const protocol = defineRoleGroups({ default: ['workspace/member'] });
+      const definition = protocol.definition;
+      const type = definition.types[CONTEXT_FOLLOW_PATH];
+      const rule = definition.structure[CONTEXT_FOLLOW_PATH];
+      const altered = [
+        { ...definition, types: { ...definition.types, [CONTEXT_FOLLOW_PATH]: { ...type, encryptionRequired: false } } },
+        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: {
+          ...rule, $actions: [{ who: 'anyone' as const, can: ['read' as const] }],
+        } } },
+        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: { ...rule, $immutable: false } } },
+      ];
+      for (const candidate of altered) {
+        expect(isTypedProtocol({ ...protocol, definition: candidate })).toBe(false);
+      }
+      expect(isTypedProtocol({
+        ...protocol,
+        codecs: { ...protocol.codecs, [CONTEXT_FOLLOW_PATH]: recordCodecs.json<unknown>() },
+      })).toBe(false);
+      const missing = { ...protocol.codecs };
+      delete missing[CONTEXT_FOLLOW_PATH];
+      expect(isTypedProtocol({ ...protocol, codecs: missing })).toBe(false);
+    });
+
+    it('validates following and forgotten intents without trusting invalid owner coordinates', () => {
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspace-a', group: 'default', following: true };
+      expect(isContextFollowIntent(intent)).toBe(true);
+      expect(isContextFollowIntent({ ...intent, following: false })).toBe(true);
+      for (const invalid of [
+        null, [], { ...intent, ownerDid: 'https://owner.example' },
+        { ...intent, contextId: '' }, { ...intent, group: '' }, { ...intent, following: 'true' },
+      ]) {
+        expect(isContextFollowIntent(invalid)).toBe(false);
+        expect(() => contextFollowCodec.encode(invalid as typeof intent)).toThrow();
+      }
+    });
+
+    it('encrypts following intents and keeps them private and immutable in the recipient tenant', async () => {
+      const protocol = defineRoleGroups({ default: ['workspace/member'] });
+      const typed = new TypedEnbox(dwnAlice, protocol);
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspace-a', group: 'default', following: true };
+      const record = await typed.records.create(CONTEXT_FOLLOW_PATH, { data: intent });
+
+      expect(record.encryption).toBeDefined();
+      expect(await record.value()).toEqual(intent);
+      await expect(record.update({ data: { ...intent, following: false } }))
+        .rejects.toThrow(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+
+      const stranger = await testHarness.agent.did.create({ method: 'jwk', store: true });
+      const { reply } = await testHarness.agent.processDwnRequest({
+        author        : stranger.uri,
+        target        : aliceDid.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: protocol.definition.protocol, protocolPath: CONTEXT_FOLLOW_PATH } },
+      });
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toEqual([]);
     });
 
     it('rejects managed invitation fragments with altered semantics', () => {
@@ -295,6 +372,21 @@ describe('TypedProtocol API', () => {
         } as unknown as typeof TodoProtocolDefinition;
         expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
           `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
+        );
+      }
+    });
+
+    it('reserves the following type name at the protocol boundary', () => {
+      for (const property of ['types', 'structure'] as const) {
+        const definition = {
+          ...TodoProtocolDefinition,
+          [property]: {
+            ...TodoProtocolDefinition[property],
+            [CONTEXT_FOLLOW_PATH]: {},
+          },
+        } as unknown as typeof TodoProtocolDefinition;
+        expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
+          `'${CONTEXT_FOLLOW_PATH}' is reserved for shared-context following`,
         );
       }
     });

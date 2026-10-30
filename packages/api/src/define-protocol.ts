@@ -18,6 +18,11 @@ import type {
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 import {
+  addContextFollowProtocol,
+  assertContextFollowNameAvailable,
+  hasContextFollowProtocol,
+} from './context-follows.js';
+import {
   addContextInvitationProtocol,
   assertContextInvitationNameAvailable,
   hasContextInvitationProtocol,
@@ -78,6 +83,7 @@ export function defineProtocol<
   codecs : ExactProtocolCodecs<D, C>,
   options?: O,
 ): TypedProtocol<D, C, RoleGroupsFromOptions<O>> {
+  assertContextFollowNameAvailable(definition);
   assertContextInvitationNameAvailable(definition);
   assertTypedProtocolComponents(definition, codecs);
   const roleGroups = prepareRoleGroups(
@@ -89,7 +95,8 @@ export function defineProtocol<
     return { definition, codecs, roleGroups } as TypedProtocol<D, C, RoleGroupsFromOptions<O>>;
   }
 
-  const augmented = addContextInvitationProtocol(definition, codecs);
+  const invitations = addContextInvitationProtocol(definition, codecs);
+  const augmented = addContextFollowProtocol(invitations.definition, invitations.codecs);
   return {
     definition : augmented.definition as D,
     codecs     : augmented.codecs as C,
@@ -111,8 +118,12 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
       value.codecs as RecordCodecMap,
     );
     if (hasEncryptedRoleAudience(value.definition as ProtocolDefinition)) {
-      return carriesInvitations;
+      return carriesInvitations && hasContextFollowProtocol(
+        value.definition as ProtocolDefinition,
+        value.codecs as RecordCodecMap,
+      );
     }
+    assertContextFollowNameAvailable(value.definition as ProtocolDefinition);
     assertContextInvitationNameAvailable(value.definition as ProtocolDefinition);
     return true;
   } catch {
@@ -120,7 +131,7 @@ export function isTypedProtocol(value: unknown): value is TypedProtocol {
   }
 }
 
-/** Whether protocol semantics require the deterministic managed invitation path. */
+/** Whether protocol semantics require the deterministic managed shared-context paths. */
 function hasEncryptedRoleAudience(definition: ProtocolDefinition): boolean {
   return [...collectProtocolPaths(definition.structure)]
     .some(protocolPath => isEncryptedRoleAudiencePath(definition, protocolPath));

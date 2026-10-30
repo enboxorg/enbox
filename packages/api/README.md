@@ -807,6 +807,19 @@ replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
 operations. Tenant routing, role records, grants, delivery keys, and feed
 cursors remain internal.
 
+Following or accepting an invitation saves an encrypted, recipient-owned reference
+inside the application's protocol. `contexts.observe()` restores synchronized
+references in the background; `contexts.list()` attempts restoration of locally
+known references once. Each device verifies the owner's current membership and
+keys before exposing a member context. Temporary unavailability keeps the saved
+choice for a later attempt.
+
+`forget()` saves an explicit cross-device decision without deleting the owner's
+role record. `leave()` also withdraws that role. These actions require write access
+to the recipient's own protocol; read-only grants are not silently widened.
+Saved references are user intent, never portable membership proof. Applications
+do not need a separate bookmark protocol or reconciliation controller.
+
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
 to `protocolContextKey(context.ownerDid, context.id)`.
 
