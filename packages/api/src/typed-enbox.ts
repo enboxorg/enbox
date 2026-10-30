@@ -2630,8 +2630,7 @@ export class TypedEnbox<
       return undefined;
     }
     const { contextPath } = this.resolveContextRoleGroup(value.group);
-    if (value.contextId.split('/').length !== contextPath.split('/').length
-      || !isValidContextId(contextPath, value.contextId)) {
+    if (!isValidContextId(contextPath, value.contextId)) {
       return undefined;
     }
     return { id: record.id, timestamp: record.timestamp, value };
@@ -2816,8 +2815,7 @@ export class TypedEnbox<
       return undefined;
     }
     const contextPath = parentProtocolPath(roles[0]);
-    if (envelope.contextId.split('/').length !== contextPath.split('/').length
-      || !isValidContextId(contextPath, envelope.contextId)) {
+    if (!isValidContextId(contextPath, envelope.contextId)) {
       return undefined;
     }
     return {
@@ -3891,6 +3889,7 @@ function normalizeContextInvitationPreview(
 }
 
 function isValidContextId(path: string, contextId: string): boolean {
+  if (contextId.split('/').length !== path.split('/').length) { return false; }
   try {
     assertValidRecordWithin(path, contextId, true);
     return true;

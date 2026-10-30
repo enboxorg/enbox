@@ -2230,26 +2230,24 @@ describe('TypedEnbox contexts', () => {
   it('keeps the accepted handle usable when a newer follow supersedes an in-flight forget', async () => {
     const shared = await typed.contexts.follow({ ownerDid: sourceDid, id: contextId });
     const accepted = current;
-    const read = typed['readContextFollows'].bind(typed);
-    let reads = 0;
-    const journalRead = sinon.stub(typed as never, 'readContextFollows').callsFake(async (): ReturnType<typeof read> => {
-      if (++reads === 2) {
-        const previous = intentRecords[0];
-        const timestamp = new Date(Date.now() + 60_000).toISOString().replace('Z', '000Z');
-        const recordId = 'newer-follow';
-        intentRecords.push({
-          ...previous,
-          recordId,
-          contextId  : recordId,
-          descriptor : { ...previous.descriptor, dateCreated: timestamp, messageTimestamp: timestamp },
-        });
-      }
-      return read();
+    const append = typed['appendContextFollow'].bind(typed);
+    const pendingWrite = sinon.stub(typed as never, 'appendContextFollow').callsFake(async (...args: Parameters<typeof append>): ReturnType<typeof append> => {
+      const written = await append(...args);
+      const previous = intentRecords[0];
+      const timestamp = new Date(Date.now() + 60_000).toISOString().replace('Z', '000Z');
+      const recordId = 'newer-follow';
+      intentRecords.push({
+        ...previous,
+        recordId,
+        contextId  : recordId,
+        descriptor : { ...previous.descriptor, dateCreated: timestamp, messageTimestamp: timestamp },
+      });
+      return written;
     });
     try {
       await shared.forget();
     } finally {
-      journalRead.restore();
+      pendingWrite.restore();
     }
 
     expect(current).toBe(accepted);
@@ -2259,7 +2257,7 @@ describe('TypedEnbox contexts', () => {
     expect(await typed.contexts.follow({ ownerDid: sourceDid, id: contextId })).toBe(shared);
     await expect(shared.records.query('workspace/note')).resolves.toMatchObject({ records: [] });
     expect(agent.processDwnRequest.getCalls().filter(call =>
-      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))).toHaveLength(1);
+      call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))).toHaveLength(2);
   });
 
   it('removes the followed source only after the exact role record is deleted', async () => {

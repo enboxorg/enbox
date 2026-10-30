@@ -245,20 +245,18 @@ describe('ContextFollowing', () => {
     expect(test.sources.get(source.id)?.acceptanceId).toBe('new-acceptance');
   });
 
-  it('applies a newer forget received before dispatch without appending a duplicate decision', async () => {
+  it.each(['follow', 'forget'] as const)('honors a newer %s received during leave without appending another decision', async (choice) => {
     const test = fixture();
     const source = await test.coordinator.follow(request);
-    let reads = 0;
-    test.options.read = async (): Promise<readonly ContextFollowRecord[]> => {
-      if (++reads === 2) {
-        test.entries.push({ ...decision(99, { following: false }), timestamp: Time.createTimestampAfter(test.entries.at(-1)!.timestamp) });
-      }
-      return [...test.entries];
-    };
-    await test.coordinator.forget(source);
+    await test.coordinator.forget(source, async (): Promise<void> => {
+      test.entries.push({
+        ...decision(99, { following: choice === 'follow' }),
+        timestamp: Time.createTimestampAfter(test.entries.at(-1)!.timestamp),
+      });
+    });
     expect(test.append.callCount).toBe(1);
-    expect(test.sources.size).toBe(0);
-    expect(test.entries.at(-1)?.value.following).toBe(false);
+    expect(test.sources.size).toBe(choice === 'follow' ? 1 : 0);
+    expect(test.entries.at(-1)?.value.following).toBe(choice === 'follow');
   });
 
   it('retires a role replacement that arrives while explicit forget is persisted', async () => {
