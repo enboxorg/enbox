@@ -37,10 +37,9 @@ export type { ObservationFactory, ObservedStore, ObservedStoreState } from './st
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
-export type {
-  ContextInvitationPreview,
-} from './context-invitations.js';
-export type { ContextView, ContextViewState } from './context-view.js';
+export { protocolContextKey } from './shared-context-protocol.js';
+export type { ContextInvitationPreview } from './shared-context-protocol.js';
+export type { ContextView, ContextViewState, SavedContextFollow } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';
 export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
@@ -57,9 +56,9 @@ export type { ObservableStore } from './observable-store.js';
 export { ProtocolReadinessError } from './protocol-readiness.js';
 export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
 export type {
-  ContextRoleGroup,
-  ContextRoleGroups,
   ContextRolePath,
+  ContextRolesAtPath,
+  ContextRootPath,
   DataFormatAtPath,
   ProtocolPaths,
   ProtocolPathTypeNames,

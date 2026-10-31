@@ -5,7 +5,6 @@ import type { RecordCodecMap } from '../record-codec.js';
 import type { RecordQuery } from '../record-query.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
-import type { ContextRoleGroups, ProtocolPaths, ProtocolRolePaths, SingletonProtocolPaths, TypedProtocol } from '../protocol-types.js';
 import type {
   DataForPath,
   RecordPatchInput,
@@ -14,6 +13,7 @@ import type {
   TypedMaterializedRecord,
   TypedRecord,
 } from '../typed-enbox.js';
+import type { ProtocolPaths, ProtocolRolePaths, SingletonProtocolPaths, TypedProtocol } from '../protocol-types.js';
 
 import { assertValidRecordWithin } from '../record-query.js';
 import { createCommand } from './command.js';
@@ -23,7 +23,6 @@ import { collectProtocolPaths, isProtocolRolePath } from '../protocol-paths.js';
 
 type DefinitionOf<P extends TypedProtocol> = P['definition'];
 type CodecsOf<P extends TypedProtocol> = P['codecs'];
-type GroupsOf<P extends TypedProtocol> = P['roleGroups'];
 type CollectionPath<P extends TypedProtocol> = Exclude<
   ProtocolPaths<DefinitionOf<P>>,
   ProtocolRolePaths<DefinitionOf<P>> | SingletonProtocolPaths<DefinitionOf<P>>
@@ -70,7 +69,7 @@ export interface ProtocolStore<P extends TypedProtocol> {
    * Capturing this method in a factory is inert. The returned handle follows native SDK lifetimes;
    * its operations do not acquire collection-command progress or wait for collection views to refresh.
    */
-  native(): TypedEnbox<DefinitionOf<P>, CodecsOf<P>, GroupsOf<P>>;
+  native(): TypedEnbox<DefinitionOf<P>, CodecsOf<P>>;
   /**
    * Resolve a shared selection, or a keyed family for a nested path, without opening a view.
    * Filters and pagination affect reads; commands retain their protocol path and parent scope.
@@ -92,13 +91,12 @@ export function createProtocolStore<P extends TypedProtocol>(protocol: P, scope:
 function createTypedProtocolStore<
   D extends ProtocolDefinition,
   C extends RecordCodecMap,
-  G extends ContextRoleGroups,
->(protocol: TypedProtocol<D, C, G>, scope: StoreScope): ProtocolStore<TypedProtocol<D, C, G>> {
-  type P = TypedProtocol<D, C, G>;
+>(protocol: TypedProtocol<D, C>, scope: StoreScope): ProtocolStore<TypedProtocol<D, C>> {
+  type P = TypedProtocol<D, C>;
   const collections = new Map<string, unknown>();
   const writeScopes = new Map<string, { commands: unknown; refreshers: Set<() => Promise<void>> }>();
-  const typed = (): TypedEnbox<D, C, G> => {
-    return scope.getEnbox().using<D, C, G>(protocol);
+  const typed = (): TypedEnbox<D, C> => {
+    return scope.getEnbox().using<D, C>(protocol);
   };
 
   const makeCollection = <Path extends CollectionPath<P>>(

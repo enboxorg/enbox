@@ -1,4 +1,4 @@
-import type { ContextView } from './context-view.js';
+import type { ContextView, SavedContextFollow } from './context-view.js';
 import type { RecordView, RecordViewState } from './record-view.js';
 
 import { createContextView } from './context-view.js';
@@ -13,6 +13,7 @@ export type MaterializedMemberContext<Context, Root> = Readonly<{
 
 type MaterializedMemberContextViewOptions<Context extends { key: string }, Root> = {
   callerSignal?: AbortSignal;
+  getSavedFollows?(): readonly SavedContextFollow[];
   listContexts(): Promise<readonly Context[]>;
   openRootView(context: Context, signal: AbortSignal): Promise<RecordView<Root>>;
   openWakeSubscription(
@@ -26,7 +27,6 @@ type Binding<Context, Root> = {
   context: Context;
   controller: AbortController;
   row: MaterializedMemberContext<Context, Root>;
-  unsubscribe?: () => void;
   view?: RecordView<Root>;
 };
 
@@ -41,12 +41,10 @@ export function createMaterializedMemberContextView<Context extends { key: strin
     current : false,
   }) as RecordViewState<Root>;
   let bindings = new Map<string, Binding<Context, Root>>();
-  let ordered: Binding<Context, Root>[] = [];
   let catalogVersion = 0;
   let listedVersion = -1;
   let closed = false;
   let wakeView = (): void => {};
-  let activeOpenings = 0;
   const openingQueue: Binding<Context, Root>[] = [];
   const openingTasks = new Set<Promise<void>>();
   const cleanupTasks = new Set<Promise<void>>();
@@ -57,8 +55,6 @@ export function createMaterializedMemberContextView<Context extends { key: strin
   const dispose = (binding: Binding<Context, Root>): Promise<void> | undefined => {
     if (binding.controller.signal.aborted) { return; }
     binding.controller.abort();
-    binding.unsubscribe?.();
-    binding.unsubscribe = undefined;
     const view = binding.view;
     binding.view = undefined;
     return view?.close();
@@ -90,7 +86,7 @@ export function createMaterializedMemberContextView<Context extends { key: strin
         return;
       }
       binding.view = view;
-      binding.unsubscribe = view.subscribe((state): void => { publishRoot(binding, state); });
+      view.subscribe((state): void => { publishRoot(binding, state); });
       publishRoot(binding, view.getSnapshot());
     } catch (error: unknown) {
       if (closed || binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) {
@@ -107,15 +103,13 @@ export function createMaterializedMemberContextView<Context extends { key: strin
   };
 
   const drainOpenings = (): void => {
-    while (!closed && activeOpenings < MEMBER_ROOT_OPEN_CONCURRENCY && openingQueue.length > 0) {
+    while (!closed && openingTasks.size < MEMBER_ROOT_OPEN_CONCURRENCY && openingQueue.length > 0) {
       const binding = openingQueue.shift()!;
       if (binding.controller.signal.aborted || bindings.get(binding.context.key) !== binding) { continue; }
-      activeOpenings += 1;
       const task = openBinding(binding);
       openingTasks.add(task);
       void task.finally((): void => {
         openingTasks.delete(task);
-        activeOpenings -= 1;
         drainOpenings();
       });
     }
@@ -123,14 +117,12 @@ export function createMaterializedMemberContextView<Context extends { key: strin
 
   const reconcile = (contexts: readonly Context[]): void => {
     const next = new Map<string, Binding<Context, Root>>();
-    const nextOrdered: Binding<Context, Root>[] = [];
     for (const context of contexts) {
       let binding = bindings.get(context.key);
       if (
         binding === undefined || binding.context !== context ||
         (binding.view === undefined && binding.row.root.status === 'error')
       ) {
-        if (binding !== undefined) { disposeQuietly(binding); }
         binding = {
           context,
           controller : new AbortController(),
@@ -139,19 +131,18 @@ export function createMaterializedMemberContextView<Context extends { key: strin
         openingQueue.push(binding);
       }
       next.set(context.key, binding);
-      nextOrdered.push(binding);
     }
     for (const binding of bindings.values()) {
       if (next.get(binding.context.key) !== binding) { disposeQuietly(binding); }
     }
     bindings = next;
-    ordered = nextOrdered;
     drainOpenings();
   };
 
   return createContextView({
-    callerSignal : options.callerSignal,
-    list         : async (): Promise<readonly MaterializedMemberContext<Context, Root>[]> => {
+    callerSignal    : options.callerSignal,
+    getSavedFollows : options.getSavedFollows,
+    list            : async (): Promise<readonly MaterializedMemberContext<Context, Root>[]> => {
       const version = catalogVersion;
       if (listedVersion !== version) {
         const contexts = await options.listContexts();
@@ -159,7 +150,7 @@ export function createMaterializedMemberContextView<Context extends { key: strin
         reconcile(contexts);
         listedVersion = version;
       }
-      return ordered.map(binding => binding.row);
+      return Array.from(bindings.values(), binding => binding.row);
     },
     openWakeSubscription: async (wake, fail) => {
       wakeView = wake;
@@ -176,7 +167,6 @@ export function createMaterializedMemberContextView<Context extends { key: strin
             .map(dispose)
             .filter((task): task is Promise<void> => task !== undefined);
           bindings.clear();
-          ordered = [];
           const results = await Promise.allSettled([
             catalog.close(),
             ...openingTasks,

@@ -52,8 +52,8 @@ Level-backed store implementations are exported from `@enbox/dwn-sdk-js/stores/l
 direct-child role paths granting `read`, in `$actions` array order. That order
 declares client following preference for this exact root; object property order
 does not affect it. It does not change DWN authorization, imply role inheritance,
-or modify role assignments. The high-level API still uses its existing
-`roleGroups` configuration.
+or modify role assignments. The high-level shared-context API derives its role
+candidates from this same definition.
 
 See [context role preference](../../apps/docs/content/docs/packages/dwn-sdk-js.mdx#context-role-preference)
 for the definition convention and a notebook example with editor and viewer roles.

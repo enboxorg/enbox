@@ -101,5 +101,6 @@ grants, revokes, or deletes role assignments; clients still verify current
 assignments before using a candidate role.
 
 The high-level [`@enbox/api` shared-context API](/docs/packages/api#shared-contexts)
-still uses `roleGroups` supplied to `defineProtocol()`. The helper exposes the
-definition convention independently; it does not replace that API configuration.
+uses this convention for following, invitations, and membership management.
+Applications select the exact context path; its definition supplies the role
+candidates without a separate app-level list.

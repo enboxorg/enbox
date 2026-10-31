@@ -22,7 +22,13 @@ import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { CONTEXT_INVITATION_PATH, contextInvitationCodec } from '../src/context-invitations.js';
+import {
+  CONTEXT_FOLLOW_PATH,
+  CONTEXT_INVITATION_PATH,
+  contextFollowCodec,
+  contextInvitationCodec,
+  isContextFollowIntent,
+} from '../src/shared-context-protocol.js';
 import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { defineProtocol, isTypedProtocol } from '../src/define-protocol.js';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
@@ -116,8 +122,8 @@ describe('TypedProtocol API', () => {
   });
 
   describe('defineProtocol()', () => {
-    const RoleGroupDefinition = {
-      protocol  : 'https://example.com/protocols/role-groups',
+    const SharedDefinition = {
+      protocol  : 'https://example.com/protocols/shared-contexts',
       published : true,
       types     : {
         blind     : { dataFormats: ['application/json'] },
@@ -145,7 +151,7 @@ describe('TypedProtocol API', () => {
         },
       },
     } as const satisfies ProtocolDefinition;
-    const RoleGroupCodecs = {
+    const SharedCodecs = {
       blind     : recordCodecs.json<unknown>(),
       member    : recordCodecs.json<unknown>(),
       note      : recordCodecs.json<unknown>(),
@@ -154,19 +160,10 @@ describe('TypedProtocol API', () => {
       viewer    : recordCodecs.json<unknown>(),
       workspace : recordCodecs.json<unknown>(),
     };
-    const defineRoleGroups = (roleGroups: unknown): {
+    const defineSharedProtocol = (): {
       codecs: globalThis.Record<string, RecordCodec<unknown>>;
       definition: ProtocolDefinition;
-      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
-    } => (defineProtocol as unknown as (
-      definition: ProtocolDefinition,
-      codecs: typeof RoleGroupCodecs,
-      options: { roleGroups: unknown },
-    ) => {
-      codecs: globalThis.Record<string, RecordCodec<unknown>>;
-      definition: ProtocolDefinition;
-      roleGroups: Readonly<globalThis.Record<string, readonly string[]>>;
-    })(RoleGroupDefinition, RoleGroupCodecs, { roleGroups });
+    } => defineProtocol(SharedDefinition, SharedCodecs);
 
     it('should return a TypedProtocol with the original definition', () => {
       expect(TodoProtocol.definition).toBe(TodoProtocolDefinition);
@@ -197,31 +194,13 @@ describe('TypedProtocol API', () => {
       )).toThrow('invalid: task');
     });
 
-    it('validates context role groups once at the protocol boundary', () => {
-      const invalid: Array<[unknown, string]> = [
-        [{ viewers: ['workspace/viewer'] }, 'must declare a \'default\' group'],
-        [{ default: [] }, 'must contain at least one role path'],
-        [{ default: ['workspace/member', 'workspace/member'] }, 'must not contain duplicate roles'],
-        [{ default: ['workspace/note'] }, 'role \'workspace/note\' is not an encrypted audience'],
-        [{ default: ['workspace/blind'] }, 'must authorize reading its parent context \'workspace\''],
-        [{ default: ['workspace/member', 'project/outsider'] }, 'roles must share one context root'],
-      ];
+    it('adds isolated shared-context paths without mutating authored inputs', () => {
+      const protocol = defineSharedProtocol();
 
-      for (const [roleGroups, message] of invalid) {
-        expect(() => defineRoleGroups(roleGroups)).toThrow(message);
-      }
-    });
-
-    it('copies role precedence and adds one isolated invitation inbox without mutating authored inputs', () => {
-      const roles = ['workspace/member', 'workspace/viewer'];
-      const input = { default: roles };
-      const protocol = defineRoleGroups(input);
-
-      roles.reverse();
-      expect(protocol.definition).not.toBe(RoleGroupDefinition);
-      expect(RoleGroupDefinition.types).not.toHaveProperty(CONTEXT_INVITATION_PATH);
-      expect(RoleGroupDefinition.structure).not.toHaveProperty(CONTEXT_INVITATION_PATH);
-      expect(RoleGroupCodecs).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(protocol.definition).not.toBe(SharedDefinition);
+      expect(SharedDefinition.types).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(SharedDefinition.structure).not.toHaveProperty(CONTEXT_INVITATION_PATH);
+      expect(SharedCodecs).not.toHaveProperty(CONTEXT_INVITATION_PATH);
       expect(protocol.definition.types[CONTEXT_INVITATION_PATH]).toMatchObject({
         dataFormats : ['application/json'],
         schema      : 'https://enbox.id/schemas/context-invitation',
@@ -232,39 +211,104 @@ describe('TypedProtocol API', () => {
         $size      : { max: 8_192 },
       });
       expect(protocol.codecs[CONTEXT_INVITATION_PATH]).toBe(contextInvitationCodec);
-      expect(protocol.roleGroups).not.toBe(input);
-      expect(protocol.roleGroups.default).not.toBe(roles);
-      expect(protocol.roleGroups.default).toEqual(['workspace/member', 'workspace/viewer']);
-      expect(Object.isFrozen(protocol.roleGroups)).toBe(true);
-      expect(Object.isFrozen(protocol.roleGroups.default)).toBe(true);
+      expect(SharedDefinition.types).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(SharedDefinition.structure).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(SharedCodecs).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
+      expect(protocol.definition.types[CONTEXT_FOLLOW_PATH]).toEqual({
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        schema             : 'https://enbox.id/schemas/context-follow',
+      });
+      expect(protocol.definition.structure[CONTEXT_FOLLOW_PATH]).toEqual({
+        $immutable : true,
+        $size      : { max: 8_192 },
+      });
+      expect(protocol.codecs[CONTEXT_FOLLOW_PATH]).toBe(contextFollowCodec);
       expect(isTypedProtocol(protocol)).toBe(true);
 
-      const other = defineRoleGroups({ default: ['workspace/member'] });
+      const other = defineSharedProtocol();
       expect(other.definition.types[CONTEXT_INVITATION_PATH])
         .not.toBe(protocol.definition.types[CONTEXT_INVITATION_PATH]);
       expect(other.definition.structure[CONTEXT_INVITATION_PATH])
         .not.toBe(protocol.definition.structure[CONTEXT_INVITATION_PATH]);
+      expect(other.definition.types[CONTEXT_FOLLOW_PATH])
+        .not.toBe(protocol.definition.types[CONTEXT_FOLLOW_PATH]);
+      expect(other.definition.structure[CONTEXT_FOLLOW_PATH])
+        .not.toBe(protocol.definition.structure[CONTEXT_FOLLOW_PATH]);
     });
 
-    it('derives the managed invitation inbox from the protocol definition instead of role groups', () => {
-      const withoutRoleGroups = defineProtocol(RoleGroupDefinition, RoleGroupCodecs);
-      const withRoleGroups = defineRoleGroups({ default: ['workspace/member'] });
+    it('derives shared-context support from the authored definition', () => {
+      const protocol = defineProtocol(SharedDefinition, SharedCodecs);
 
-      expect(withoutRoleGroups.definition).toEqual(withRoleGroups.definition);
-      expect(withoutRoleGroups.codecs).toEqual(withRoleGroups.codecs);
-      expect(withoutRoleGroups.roleGroups).toEqual({});
-      expect(isTypedProtocol(withoutRoleGroups)).toBe(true);
-      expect(new TypedEnbox(dwnAlice, withoutRoleGroups).contexts).not.toHaveProperty('invitations');
-      expect(new TypedEnbox(dwnAlice, withRoleGroups).contexts).toHaveProperty('invitations');
+      expect(isTypedProtocol(protocol)).toBe(true);
+      expect(new TypedEnbox(dwnAlice, protocol).contexts).toHaveProperty('invitations');
+      expect(isTypedProtocol({ definition: SharedDefinition, codecs: SharedCodecs })).toBe(false);
+    });
+
+    it('rejects altered or incomplete private following definitions', () => {
+      const protocol = defineSharedProtocol();
+      const definition = protocol.definition;
+      const type = definition.types[CONTEXT_FOLLOW_PATH];
+      const rule = definition.structure[CONTEXT_FOLLOW_PATH];
+      const altered = [
+        { ...definition, types: { ...definition.types, [CONTEXT_FOLLOW_PATH]: { ...type, encryptionRequired: false } } },
+        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: {
+          ...rule, $actions: [{ who: 'anyone' as const, can: ['read' as const] }],
+        } } },
+        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: { ...rule, $immutable: false } } },
+      ];
+      for (const candidate of altered) {
+        expect(isTypedProtocol({ ...protocol, definition: candidate })).toBe(false);
+      }
       expect(isTypedProtocol({
-        definition : RoleGroupDefinition,
-        codecs     : RoleGroupCodecs,
-        roleGroups : {},
+        ...protocol,
+        codecs: { ...protocol.codecs, [CONTEXT_FOLLOW_PATH]: recordCodecs.json<unknown>() },
       })).toBe(false);
+      const missing = { ...protocol.codecs };
+      delete missing[CONTEXT_FOLLOW_PATH];
+      expect(isTypedProtocol({ ...protocol, codecs: missing })).toBe(false);
+    });
+
+    it('validates following and forgotten intents without trusting invalid owner coordinates', () => {
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', path: 'workspace', following: true };
+      const forgotten = { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false };
+      expect(isContextFollowIntent(intent)).toBe(true);
+      expect(isContextFollowIntent(forgotten)).toBe(true);
+      expect(isContextFollowIntent({ ...forgotten, path: 'unavailable' })).toBe(true);
+      for (const invalid of [
+        null, [], { ...intent, ownerDid: 'https://owner.example' },
+        { ...intent, contextId: '' }, { ...intent, path: '' }, { ...intent, path: undefined }, { ...intent, following: 'true' },
+        { ...forgotten, ownerDid: 'https://owner.example' }, { ...forgotten, contextId: '' },
+      ]) {
+        expect(isContextFollowIntent(invalid)).toBe(false);
+        expect(() => contextFollowCodec.encode(invalid as typeof intent)).toThrow();
+      }
+    });
+
+    it('encrypts following intents and keeps them private and immutable in the recipient tenant', async () => {
+      const protocol = defineSharedProtocol();
+      const typed = new TypedEnbox(dwnAlice, protocol);
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', path: 'workspace', following: true };
+      const record = await typed.records.create(CONTEXT_FOLLOW_PATH, { data: intent });
+
+      expect(record.encryption).toBeDefined();
+      expect(await record.value()).toEqual(intent);
+      await expect(record.update({ data: { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false } }))
+        .rejects.toThrow(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+
+      const stranger = await testHarness.agent.did.create({ method: 'jwk', store: true });
+      const { reply } = await testHarness.agent.processDwnRequest({
+        author        : stranger.uri,
+        target        : aliceDid.uri,
+        messageType   : DwnInterface.RecordsQuery,
+        messageParams : { filter: { protocol: protocol.definition.protocol, protocolPath: CONTEXT_FOLLOW_PATH } },
+      });
+      expect(reply.status.code).toBe(200);
+      expect(reply.entries).toEqual([]);
     });
 
     it('rejects managed invitation fragments with altered semantics', () => {
-      const protocol = defineRoleGroups({ default: ['workspace/member'] });
+      const protocol = defineSharedProtocol();
       const type = protocol.definition.types[CONTEXT_INVITATION_PATH];
       const rule = protocol.definition.structure[CONTEXT_INVITATION_PATH];
 
@@ -295,6 +339,21 @@ describe('TypedProtocol API', () => {
         } as unknown as typeof TodoProtocolDefinition;
         expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
           `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
+        );
+      }
+    });
+
+    it('reserves the following type name at the protocol boundary', () => {
+      for (const property of ['types', 'structure'] as const) {
+        const definition = {
+          ...TodoProtocolDefinition,
+          [property]: {
+            ...TodoProtocolDefinition[property],
+            [CONTEXT_FOLLOW_PATH]: {},
+          },
+        } as unknown as typeof TodoProtocolDefinition;
+        expect(() => defineProtocol(definition, TodoProtocol.codecs)).toThrow(
+          `'${CONTEXT_FOLLOW_PATH}' is reserved for shared-context following`,
         );
       }
     });
@@ -780,10 +839,6 @@ describe('TypedProtocol API', () => {
         ...RoleProtocol.codecs,
         blind  : recordCodecs.json<{ note: string }>(),
         viewer : recordCodecs.json<{ readonly: boolean }>(),
-      }, {
-        roleGroups: {
-          default: ['workspace/member', 'workspace/viewer'],
-        },
       });
       type DeliveryRole = 'workspace/member' | 'workspace/viewer';
       type DeliveryMembers = ContextMembersApi<
@@ -807,7 +862,7 @@ describe('TypedProtocol API', () => {
           recipientDid : recipient,
           reason       : 'recipient protocol not installed',
         });
-        return (await roles.contexts.open('workspace', workspace.contextId)).members();
+        return (await roles.contexts.open('workspace', workspace.contextId)).members;
       };
       const failRoleDeletion = (cause: Error, deleteFirst: boolean = false): void => {
         const deleteRecord = Record.prototype.delete;
@@ -902,7 +957,7 @@ describe('TypedProtocol API', () => {
 
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
         const owned = await roles.contexts.open('workspace', workspace.contextId);
-        const members = owned.members();
+        const members = owned.members;
         sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
           delivered    : false,
           failure      : 'awaiting-recipient-install',

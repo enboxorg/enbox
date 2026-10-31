@@ -129,18 +129,40 @@ type EncryptedTypeNames<D extends ProtocolDefinition> = {
   [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
 }[keyof D['types']];
 
-/** Any encrypted contextual role in a protocol. */
-export type ContextRolePath<D extends ProtocolDefinition> = EncryptedTypeNames<D> extends never
-  ? never
-  : Extract<ProtocolRolePaths<D> & string, `${string}/${string}`>;
+type ReadActionRole<Action> = Action extends {
+  readonly role: infer Role extends string;
+  readonly can: readonly string[];
+} ? Extract<Action['can'][number], 'read'> extends never ? never : Role : never;
 
-/** One non-empty, precedence-ordered group of contextual roles. */
-export type ContextRoleGroup<Role extends string = string> = readonly [Role, ...Role[]];
+type DirectRolePaths<RuleSet, Root extends string> = {
+  [Child in Extract<keyof RuleSet, string>]: Child extends `$${string}`
+    ? never
+    : RuleSet[Child] extends { readonly $role: true } ? `${Root}/${Child}` : never;
+}[Extract<keyof RuleSet, string>];
 
-/** Application-declared context role groups, keyed by protocol-global group name. */
-export type ContextRoleGroups<Role extends string = string> = Readonly<
-  globalThis.Record<string, ContextRoleGroup<Role>>
->;
+/** Encrypted audience roles directly below a root whose actions grant them read access. */
+export type ContextRolesAtPath<
+  D extends ProtocolDefinition,
+  Root extends ProtocolPaths<D> & string,
+> = Root extends unknown
+  ? EncryptedTypeNames<D> extends never ? never
+    : RuleSetAtPath<D['structure'], Root> extends infer RuleSet
+      ? RuleSet extends { readonly $role: true } ? never
+        : RuleSet extends { readonly $actions: readonly (infer Action)[] }
+          ? Extract<ReadActionRole<Action>, DirectRolePaths<RuleSet, Root>>
+          : never
+      : never
+  : never;
+
+/** Context roots with at least one direct encrypted audience role granted read access. */
+export type ContextRootPath<D extends ProtocolDefinition> = {
+  [Path in ProtocolPaths<D> & string]: [ContextRolesAtPath<D, Path>] extends [never] ? never : Path;
+}[ProtocolPaths<D> & string];
+
+/** Every role eligible for following through its directly containing context. */
+export type ContextRolePath<D extends ProtocolDefinition> = {
+  [Path in ProtocolPaths<D> & string]: ContextRolesAtPath<D, Path>;
+}[ProtocolPaths<D> & string];
 
 // ---------------------------------------------------------------------------
 // Singleton extraction
@@ -220,19 +242,15 @@ export type ProtocolRecordCodecs<D extends ProtocolDefinition> = {
 
 /**
  * The return type of `defineProtocol()`. Bundles the raw protocol definition
- * with runtime codecs and application-only context policy.
+ * with runtime codecs.
  */
 export type TypedProtocol<
   D extends ProtocolDefinition = ProtocolDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  G extends ContextRoleGroups = {},
 > = {
   /** The effective DWN protocol definition, including Enbox-managed protocol paths. */
   readonly definition: D;
 
   /** Application codecs keyed by protocol type name. */
   readonly codecs: C;
-
-  /** Application-only context membership policy; never included in DWN protocol messages. */
-  readonly roleGroups: G;
 };
