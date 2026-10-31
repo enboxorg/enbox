@@ -1,5 +1,13 @@
 # @enbox/dwn-sdk-js
 
+## 0.4.30
+
+### Patch Changes
+
+- [#1813](https://github.com/enboxorg/enbox/pull/1813) [`b5cfb04`](https://github.com/enboxorg/enbox/commit/b5cfb04f43ef948721e34777d4f6553e9d1b6ee6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Expose context role preference from the protocol root's ordered read rules through
+  `resolveProtocolContextRoles()`. Document how clients share this preference while
+  preserving existing DWN authorization and role-assignment behavior.
+
 ## 0.4.29
 
 ### Patch Changes

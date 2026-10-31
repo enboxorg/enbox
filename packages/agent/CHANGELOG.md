@@ -1,5 +1,16 @@
 # @enbox/agent
 
+## 0.8.51
+
+### Patch Changes
+
+- [#1812](https://github.com/enboxorg/enbox/pull/1812) [`16cada7`](https://github.com/enboxorg/enbox/commit/16cada7d104fe214feb47a94d681e6f3af301a1e) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Describe followed-source roles as candidates in declared preference order,
+  without implying permission inheritance or mutually exclusive assignments.
+- Updated dependencies [[`b5cfb04`](https://github.com/enboxorg/enbox/commit/b5cfb04f43ef948721e34777d4f6553e9d1b6ee6)]:
+  - @enbox/dwn-sdk-js@0.4.30
+  - @enbox/connect@0.1.26
+  - @enbox/dwn-clients@0.4.38
+
 ## 0.8.50
 
 ### Patch Changes
