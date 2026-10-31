@@ -1,5 +1,7 @@
+import type { ContextFollowIntent } from '../src/shared-context-protocol.js';
 import type { PlatformAgentTestHarness } from '@enbox/agent/test';
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 import type { Record as EnboxRecord, RecordView, RecordViewState } from '../src/index.js';
 
 import sinon from 'sinon';
@@ -10,6 +12,7 @@ import { AuthManager, MemoryStorage } from '@enbox/auth';
 import { DwnConstant, EncryptionProtocol, Jws, Poller } from '@enbox/dwn-sdk-js';
 import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
+import { CONTEXT_FOLLOW_PATH } from '../src/shared-context-protocol.js';
 import { publishProtocol } from './utils/test-dwn-operations.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
@@ -156,6 +159,28 @@ describe('shared context public API integration', () => {
   let peerDid: string;
   let peerHarness: PlatformAgentTestHarness | undefined;
 
+  function walletConnectHandler(providerDid: string, appName: string): ConnectHandler {
+    return {
+      requestAccess: async ({ permissionRequests }): Promise<ConnectResult> => {
+        const approval = await executeConnectApproval({
+          agent     : ownerHarness.agent,
+          providerDid,
+          request   : { appName, permissionRequests },
+          transport : 'relay',
+        });
+        if (approval.delegatePortableDid === undefined) {
+          throw new Error('Expected the wallet to mint a delegate DID.');
+        }
+        return {
+          connectedDid        : providerDid,
+          delegateGrants      : approval.delegateGrants,
+          delegatePortableDid : approval.delegatePortableDid,
+          sessionRevocations  : approval.sessionRevocations,
+        };
+      },
+    };
+  }
+
   beforeAll(async () => {
     ownerHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
@@ -186,25 +211,7 @@ describe('shared context public API integration', () => {
       agent          : memberHarness.agent as EnboxUserAgent,
       password       : memberPassword,
       storage        : new MemoryStorage(),
-      connectHandler : {
-        requestAccess: async ({ permissionRequests }) => {
-          const approval = await executeConnectApproval({
-            agent       : ownerHarness.agent,
-            providerDid : memberDid,
-            request     : { appName: 'Shared context integration', permissionRequests },
-            transport   : 'relay',
-          });
-          if (approval.delegatePortableDid === undefined) {
-            throw new Error('Expected the wallet to mint a delegate DID.');
-          }
-          return {
-            connectedDid        : memberDid,
-            delegateGrants      : approval.delegateGrants,
-            delegatePortableDid : approval.delegatePortableDid,
-            sessionRevocations  : approval.sessionRevocations,
-          };
-        },
-      },
+      connectHandler : walletConnectHandler(memberDid, 'Shared context integration'),
     });
     const memberSession = await memberAuth.connect({ protocols: [SharedNotebookProtocol] });
     memberDelegateDid = memberSession.delegateDid!;
@@ -349,25 +356,7 @@ describe('shared context public API integration', () => {
       agent          : peerHarness.agent as EnboxUserAgent,
       password       : peerPassword,
       storage        : new MemoryStorage(),
-      connectHandler : {
-        requestAccess: async ({ permissionRequests }) => {
-          const approval = await executeConnectApproval({
-            agent       : ownerHarness.agent,
-            providerDid : peerDid,
-            request     : { appName: 'Shared context peer', permissionRequests },
-            transport   : 'relay',
-          });
-          if (approval.delegatePortableDid === undefined) {
-            throw new Error('Expected the wallet to mint a peer delegate DID.');
-          }
-          return {
-            connectedDid        : peerDid,
-            delegateGrants      : approval.delegateGrants,
-            delegatePortableDid : approval.delegatePortableDid,
-            sessionRevocations  : approval.sessionRevocations,
-          };
-        },
-      },
+      connectHandler : walletConnectHandler(peerDid, 'Shared context peer'),
     });
     const peerSession = await peerAuth.connect({ protocols: [SharedNotebookProtocol] });
     const peerTyped = Enbox.fromSession(peerSession).using(SharedNotebookProtocol);
@@ -717,5 +706,142 @@ describe('shared context public API integration', () => {
     expect(await siblingPages.records[0].value()).toEqual({ body: 'sibling page' });
     await sibling.leave();
     expect(await reopened.contexts.list()).toEqual([]);
+  }, 180_000);
+
+  it('restores accepted contexts on a fresh delegate and after regrant, then propagates forget', async () => {
+    const devices: Array<{ auth?: AuthManager; harness: PlatformAgentTestHarness }> = [];
+    const views: Array<{ close(): Promise<void> }> = [];
+    const connectDevice = async (name: string): Promise<{
+      delegateDid: string;
+      enbox: Enbox;
+      harness: PlatformAgentTestHarness;
+    }> => {
+      const harness = await AgentHarness.setup({
+        agentClass       : EnboxUserAgent,
+        agentStores      : 'dwn',
+        testDataLocation : `__TESTDATA__/api-shared-context-following-${name}`,
+      });
+      const device: { auth?: AuthManager; harness: PlatformAgentTestHarness } = { harness };
+      devices.push(device);
+      await harness.clearStorage();
+      device.auth = await AuthManager.create({
+        agent          : harness.agent as EnboxUserAgent,
+        password       : `shared-context-following-${name}`,
+        storage        : new MemoryStorage(),
+        connectHandler : walletConnectHandler(memberDid, 'Shared context following'),
+      });
+      const session = await device.auth.connect({ protocols: [SharedNotebookProtocol], sync: 'off' });
+      return { delegateDid: session.delegateDid!, enbox: Enbox.fromSession(session), harness };
+    };
+
+    try {
+      const first = await connectDevice('first');
+      const typedFirst = first.enbox.using(SharedNotebookProtocol);
+      const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+      const notebook = await owner.records.create('notebook', { data: { title: 'Durable follows' } });
+      const body = { body: 'restored without another invitation' };
+      const page = await owner.records.create('notebook/page', { data: body, parentContextId: notebook.contextId });
+      const owned = await owner.contexts.open('notebook/page', page.contextId);
+      await owned.members().set(memberDid, { data: { name: 'member' }, role: 'notebook/page/member' });
+      await owned.invite(memberDid, { preview: { title: 'Durable follow' } });
+      await ownerHarness.agent.sync.sync('push', { did: ownerDid });
+
+      const inbox = await typedFirst.contexts.invitations.observe();
+      views.push(inbox);
+      await first.harness.agent.sync.sync('pull', { did: memberDid });
+      await waitForView(inbox, (state): boolean => state.records.some(invitation => invitation.contextId === page.contextId));
+      const invitation = inbox.getSnapshot().records.find(candidate => candidate.contextId === page.contextId)!;
+      const accepted = await invitation.accept();
+      await accepted.refresh();
+      await waitForView(inbox, (state): boolean => state.records.every(candidate => candidate.contextId !== page.contextId));
+
+      const journal = await first.enbox.dwn.records.query({
+        filter: { protocol: protocolDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
+      });
+      expect(journal.status.code).toBe(200);
+      const decisions = await Promise.all((journal.records ?? []).map(async (record) => ({
+        record,
+        value: await record.data.json() as ContextFollowIntent,
+      })));
+      const saved = decisions.find(({ value }) => value.contextId === page.contextId && value.following)!;
+      expect(saved.value).toEqual({ contextId: page.contextId, following: true, group: 'default', ownerDid });
+      expect(saved.record.encryption).toBeDefined();
+      expect(saved.record.creator).toBe(memberDid);
+      expect(signerDid(saved.record)).toBe(first.delegateDid);
+      await first.harness.agent.sync.sync('push', { did: memberDid });
+
+      const firstCatalog = await typedFirst.contexts.observe();
+      views.push(firstCatalog);
+      await firstCatalog.ready();
+      const second = await connectDevice('second');
+      expect(second.enbox.connectedDid).toBe(first.enbox.connectedDid);
+      expect(second.delegateDid).not.toBe(first.delegateDid);
+      expect(await second.harness.agent.sync.listFollowedSources()).toEqual([]);
+      const typedSecond = second.enbox.using(SharedNotebookProtocol);
+      const secondCatalog = await typedSecond.contexts.observe();
+      views.push(secondCatalog);
+      expect((await secondCatalog.ready()).contexts).toEqual([]);
+      await second.harness.agent.sync.sync('pull', { did: memberDid });
+      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+        expect(secondCatalog.getSnapshot().contexts.some(context => context.id === page.contextId)).toBe(true);
+      }, Poller.pollRetrySleep, 30_000);
+      const restored = secondCatalog.getSnapshot().contexts.find(context => context.id === page.contextId)!;
+      if (restored.access !== 'member') { throw new Error('expected a member context'); }
+      expect((await typedSecond.contexts.invitations.list()).every(candidate => candidate.contextId !== page.contextId)).toBe(true);
+      await restored.refresh();
+      const restoredPages = await restored.records.query('notebook/page', { pagination: { limit: 10 } });
+      expect(await restoredPages.records[0].value()).toEqual(body);
+
+      await Promise.all(devices.map(({ harness }) => harness.agent.sync.startSync({ interval: '1s' })));
+      await owned.members().remove(memberDid);
+      await ownerHarness.agent.sync.sync('push', { did: ownerDid });
+      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+        for (const catalog of [firstCatalog, secondCatalog]) {
+          expect(catalog.getSnapshot().status).toBe('ready');
+          expect(catalog.getSnapshot().contexts.every(context => context.id !== page.contextId)).toBe(true);
+        }
+      }, Poller.pollRetrySleep, 30_000);
+      await expect(accepted.records.query('notebook/page')).rejects.toThrow('is no longer active');
+      await expect(restored.records.query('notebook/page')).rejects.toThrow('is no longer active');
+      const retained = await first.enbox.dwn.records.query({
+        filter: { protocol: protocolDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
+      });
+      const retainedIntents = await Promise.all((retained.records ?? []).map(async record => await record.data.json() as ContextFollowIntent));
+      expect(retainedIntents.filter(intent => intent.contextId === page.contextId)).toEqual([saved.value]);
+
+      await owned.members().set(memberDid, { data: { name: 'member' }, role: 'notebook/page/member' });
+      await owned.invite(memberDid, { preview: { title: 'Restored access' } });
+      await ownerHarness.agent.sync.sync('push', { did: ownerDid });
+      await Promise.all(devices.map(({ harness }) => harness.agent.sync.sync('pull', { did: memberDid })));
+      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+        for (const catalog of [firstCatalog, secondCatalog]) {
+          expect(catalog.getSnapshot().status).toBe('ready');
+          expect(catalog.getSnapshot().contexts.some(context => context.id === page.contextId)).toBe(true);
+        }
+      }, Poller.pollRetrySleep, 30_000);
+      const renewedFirst = firstCatalog.getSnapshot().contexts.find(context => context.id === page.contextId)!;
+      const renewed = secondCatalog.getSnapshot().contexts.find(context => context.id === page.contextId)!;
+      if (renewedFirst.access !== 'member' || renewed.access !== 'member') { throw new Error('expected member contexts'); }
+      await renewed.refresh();
+      const renewedPages = await renewed.records.query('notebook/page', { pagination: { limit: 10 } });
+      expect(await renewedPages.records[0].value()).toEqual(body);
+
+      await typedSecond.contexts.forget({ ownerDid, id: page.contextId });
+      await second.harness.agent.sync.sync('push', { did: memberDid });
+      await first.harness.agent.sync.sync('pull', { did: memberDid });
+      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+        expect(firstCatalog.getSnapshot().contexts.every(context => context.id !== page.contextId)).toBe(true);
+      }, Poller.pollRetrySleep, 30_000);
+      await expect(renewedFirst.records.query('notebook/page')).rejects.toThrow('is no longer active');
+      await ownerHarness.agent.sync.sync('pull', { did: ownerDid });
+      expect(await owned.members().list()).toMatchObject([{ did: memberDid, role: 'notebook/page/member' }]);
+    } finally {
+      await Promise.allSettled(views.map(view => view.close()));
+      for (const device of devices) {
+        await device.auth?.shutdown().catch((): undefined => undefined);
+        await device.harness.clearStorage().catch((): undefined => undefined);
+        await device.harness.closeStorage().catch((): undefined => undefined);
+      }
+    }
   }, 180_000);
 });

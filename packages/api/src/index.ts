@@ -37,9 +37,8 @@ export type { ObservationFactory, ObservedStore, ObservedStoreState } from './st
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
-export type {
-  ContextInvitationPreview,
-} from './context-invitations.js';
+export { protocolContextKey } from './shared-context-protocol.js';
+export type { ContextInvitationPreview } from './shared-context-protocol.js';
 export type { ContextView, ContextViewState } from './context-view.js';
 export { defineProtocol } from './define-protocol.js';
 export * from './did-api.js';

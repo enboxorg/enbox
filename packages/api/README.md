@@ -801,11 +801,32 @@ Change delivery is at least once, so consumers should tolerate duplicates.
 
 ## Contexts
 
-Typed contexts provide the same confined records API to owners and members,
-plus declarative membership, invitations, live catalogs, exact-context
-replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
-operations. Tenant routing, role records, grants, delivery keys, and feed
-cursors remain internal.
+Typed contexts expose confined records, membership, invitations, and member lifecycle
+operations such as `refresh()`, `forget()`, and `leave()`. The SDK manages tenant
+routing, grants, delivery keys, replication, and feed cursors.
+
+Following or accepting an invitation saves an encrypted choice in the application's
+protocol. Each device independently verifies current membership and keys; saved
+choices are not membership proof. Owner unavailability preserves the choice, and
+apps need no separate bookmark protocol or reconciliation controller.
+
+`contexts.observe()` restores choices in the background. `contexts.list()` waits
+for one restoration attempt and may incur owner network timeouts. Recipient sync
+and owner recovery retry without another timer; unexpected restoration failures
+are logged while known contexts remain available.
+
+`contexts.forget({ ownerDid, id })` works without a live acceptance and leaves the
+owner's role intact. A member handle's `forget()` first checks that its acceptance
+is still current, so an already-retired handle cannot override a later follow.
+
+`leave()` withdraws the role and then saves the forget. If saving fails, the call
+rejects and coordinate-based `contexts.forget()` can finish it. These writes are
+not atomic; a retired `leave()` rejects with `ContextRetiredError`.
+
+Changing a saved choice requires own-protocol write access; read-only grants are
+not widened. All apps with that access can change the identity's shared choices.
+The immutable journal retains and reads its history in pages without automatic
+compaction. Future compaction must retain effective forgets so older offline follows cannot return.
 
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
 to `protocolContextKey(context.ownerDid, context.id)`.

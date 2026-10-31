@@ -237,15 +237,18 @@ export function assertValidRecordWithin(
     return;
   }
 
-  if (typeof within !== 'string'
-    || within.length > CONTEXT_ID_MAX_LENGTH
-    || !CONTEXT_ID_PATTERN.test(within)) {
+  if (!isValidRecordContextId(within)) {
     throw new TypeError('Record scope: within must be at most 600 characters of alphanumeric path segments.');
   }
 
   if (within.split('/').length > protocolPath.split('/').length) {
     throw new TypeError(`Record scope: within cannot be deeper than protocol path '${protocolPath}'.`);
   }
+}
+
+/** Whether a context ID has the canonical bounded, non-empty path-segment syntax. */
+export function isValidRecordContextId(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= CONTEXT_ID_MAX_LENGTH && CONTEXT_ID_PATTERN.test(value);
 }
 
 function assertValidQueryControls(

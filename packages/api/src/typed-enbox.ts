@@ -28,7 +28,7 @@
  * ```
  */
 
-import type { ContextInvitationPreview } from './context-invitations.js';
+import type { ContextFollowRecord } from './context-following.js';
 import type { ContextView } from './context-view.js';
 import type { MaterializedMemberContext as MaterializedMemberContextRow } from './materialized-member-context-view.js';
 import type { Protocol } from './protocol.js';
@@ -40,6 +40,7 @@ import type {
   FollowedSyncSource,
   SyncEngine,
 } from '@enbox/agent';
+import type { ContextFollowIntent, ContextInvitationPreview } from './shared-context-protocol.js';
 import type {
   ContextRoleGroups,
   ContextRolePath,
@@ -59,6 +60,7 @@ import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-cod
 import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
 
+import { ContextFollowing } from './context-following.js';
 import { createContextView } from './context-view.js';
 import { createMaterializedMemberContextView } from './materialized-member-context-view.js';
 import { Did } from '@enbox/dids';
@@ -72,21 +74,25 @@ import {
   collectProtocolPaths,
   isProtocolRolePath,
 } from './protocol-paths.js';
-import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
+import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, isValidRecordContextId } from './record-query.js';
 import {
   authoredProtocolDefinitionsEqual,
   DateSort,
   getRuleSetAtPath,
   getTypeName,
   resolveProtocolRoleContextScope,
+  Time,
 } from '@enbox/dwn-sdk-js';
-import { bindRecordCodec, encodeRecordValue } from './record-codec.js';
+import { bindRecordCodec, encodeRecordValue, RecordValidationError } from './record-codec.js';
 import { combineAbortSignals, whileSignalsActive } from './view-opening.js';
 import {
+  CONTEXT_FOLLOW_PATH,
   CONTEXT_INVITATION_PATH,
+  contextFollowCodec,
   contextInvitationCodec,
   isContextInvitationEnvelope,
-} from './context-invitations.js';
+  protocolContextKey,
+} from './shared-context-protocol.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
@@ -584,9 +590,12 @@ type MemberContextForRoot<
     access: 'member';
     /** Role path authorizing access to the context. */
     role: Role extends string ? ParentProtocolPath<Role> extends Root ? Role : never : never;
-    /** Withdraw this exact role record, stop following it, and fence retained handles. */
+    /**
+     * Withdraw this exact role record, then save a cross-device forget. Rejects for a retired handle.
+     * If saving fails after withdrawal, contexts.forget({ ownerDid, id }) can finish the saved choice.
+     */
     leave(): Promise<void>;
-    /** Forget this exact accepted source locally without changing the owner-hosted role record. */
+    /** Forget through this exact acceptance; stale handles are inert. Use contexts.forget() without a live handle. */
     forget(): Promise<void>;
     /**
      * Ensure the local replica is current, pulling once when needed and
@@ -673,7 +682,11 @@ type ContextObserve<D extends ProtocolDefinition, C extends RecordCodecMap, G ex
   (options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C, G>>>;
 };
 
-/** Public request for following one foreign context through one declared role group. */
+/**
+ * Public request for following one foreign context through one declared role group.
+ * `group` selects an entry in protocol.roleGroups, whose role paths are checked in
+ * preference order against the owner's current assignments. Omitting it selects 'default'.
+ */
 export type FollowContextOptions<Group extends string = 'default'> = Readonly<{
   id: string;
   ownerDid: string;
@@ -699,10 +712,13 @@ export type ContextsApi<
     path: Root,
     id: string,
   ): Promise<OwnedContext<D, C, Root, G>>;
+  /** Verify current remote authority and save encrypted recipient-owned following intent. Requires own-protocol write access. */
   follow: ContextFollow<D, C, G>;
-  /** List owned and accepted member contexts in the local catalog. */
+  /** Forget a saved choice by coordinates, including unavailable contexts. Does not verify remote authority or withdraw membership. */
+  forget(request: Readonly<{ id: string; ownerDid: string }>): Promise<void>;
+  /** Restore known choices once, then list contexts. May wait for owner lookups; use observe() for nonblocking UI data. */
   list(): Promise<ProtocolContext<D, C, G>[]>;
-  /** Observe the full catalog, or accepted member contexts with their decoded roots. */
+  /** Observe contexts and restore synchronized follow decisions in the background without blocking known roots. */
   observe: ContextObserve<D, C, G>;
 } & (G extends { readonly default: readonly [string, ...string[]] } ? {
   invitations: ContextInvitationsApi<
@@ -1471,6 +1487,7 @@ export class TypedEnbox<
       .map(group => this.resolveContextRoleGroup(group).contextPath))]
       .sort(compareCodeUnits) as Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>[];
     const contextRoles = new Set(Object.values(this._roleGroups).flat());
+    const canUseFollowing = this._options.sync !== undefined && contextRoots.length > 0;
     type CatalogContext = { access: 'member' | 'owner'; id: string; key: string; ownerDid: string };
     type CatalogMemberContext = CatalogContext & {
       access: 'member';
@@ -1488,6 +1505,17 @@ export class TypedEnbox<
     };
     const boundMembers = new Map<string, { context: MemberContext<D, C>; source: FollowedSyncSource }>();
     const boundOwners = new Map<string, CatalogContext>();
+    let following: ContextFollowing | undefined;
+    const getFollowing = (): ContextFollowing => following ??= new ContextFollowing({
+      actorDid   : this._dwn.connectedDid,
+      append     : (intent, after) => this.appendContextFollow(intent, after),
+      openView   : signal => this.observeContextFollows(signal),
+      protocol   : this._definition.protocol,
+      read       : () => this.readContextFollows(),
+      roleGroups : this._roleGroups,
+      signal     : this._options.signal,
+      sync       : requireSync(),
+    });
 
     const listSources = async (): Promise<FollowedSyncSource[]> => {
       this._options.signal?.throwIfAborted();
@@ -1512,18 +1540,16 @@ export class TypedEnbox<
         throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${contextPath}' context.`);
       }
       assertValidRecordWithin(contextPath, request.id, true);
-      const sync = requireSync();
       let source: FollowedSyncSource;
       try {
-        source = await sync.followSource({
-          actorDid  : this._dwn.connectedDid,
-          contextId : request.id,
-          protocol  : this._definition.protocol,
-          roles     : [...selected.roles] as [string, ...string[]],
-          sourceDid : request.ownerDid,
+        source = await getFollowing().follow({
+          group    : request.group ?? 'default',
+          id       : request.id,
+          ownerDid : request.ownerDid,
         });
       } catch (error) {
         if (error instanceof FollowedSourceNotReadyError) { throw new ContextNotReadyError(error); }
+        if (error instanceof ContextRetiredError) { throw error; }
         throw new Error('TypedEnbox.contexts.follow could not establish the requested context.', { cause: error });
       }
       return bindMemberContext(source);
@@ -1564,9 +1590,7 @@ export class TypedEnbox<
         }
         return this.bindContextMembers(dwn, id, selected.roles);
       }) as ContextMembersSelector<D, C, G, Root>;
-      const canInvite = Object.keys(this._roleGroups).some(group =>
-        this.resolveContextRoleGroup(group).contextPath === normalizedPath
-      );
+      const canInvite = contextRoots.includes(normalizedPath);
       const context = Object.freeze({
         access: 'owner',
         id,
@@ -1623,16 +1647,12 @@ export class TypedEnbox<
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
         return existing.context;
       }
-      const context = this.bindMemberContext(source);
+      const context = this.bindMemberContext(source, (expected, withdrawRole) => getFollowing().forget(expected, withdrawRole));
       boundMembers.set(key, { context, source });
       return context;
     };
 
     const bindCatalogMembers = (sources: readonly FollowedSyncSource[]): CatalogMemberContext[] => {
-      const activeKeys = new Set(sources.map(source => protocolContextKey(source.sourceDid, source.contextId)));
-      for (const key of boundMembers.keys()) {
-        if (!activeKeys.has(key)) { boundMembers.delete(key); }
-      }
       const members = new Map<string, CatalogMemberContext>();
       for (const source of sources) {
         const key = protocolContextKey(source.sourceDid, source.contextId);
@@ -1640,7 +1660,10 @@ export class TypedEnbox<
           members.set(key, bindMemberContext(source) as unknown as CatalogMemberContext);
         }
       }
-      return [...members.values()].sort(compareProtocolContexts);
+      for (const key of boundMembers.keys()) {
+        if (!members.has(key)) { boundMembers.delete(key); }
+      }
+      return [...members.values()];
     };
 
     const listOwnedRootContextIds = async (path: string): Promise<string[]> => {
@@ -1670,36 +1693,29 @@ export class TypedEnbox<
 
     const listCatalogContexts = async (): Promise<CatalogContext[]> => {
       const [ownedByRoot, sources] = await Promise.all([
-        Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> => {
-          const contexts: CatalogContext[] = [];
-          for (const contextId of await listOwnedRootContextIds(path)) {
-            contexts.push(bindOwnedContext(path, contextId));
-          }
-          return contexts;
-        })),
+        Promise.all(contextRoots.map(async (path): Promise<CatalogContext[]> =>
+          (await listOwnedRootContextIds(path)).map(contextId => bindOwnedContext(path, contextId))
+        )),
         listSources(),
       ]);
-      const owned = ownedByRoot.flat();
-      const activeOwnerKeys = new Set(owned.map(context => protocolContextKey(context.ownerDid, context.id)));
+      const contexts = new Map<string, CatalogContext>(ownedByRoot.flat().map(context => [context.key, context]));
       for (const key of boundOwners.keys()) {
-        if (!activeOwnerKeys.has(key)) { boundOwners.delete(key); }
-      }
-
-      const contexts = new Map<string, CatalogContext>();
-      for (const context of owned) {
-        contexts.set(protocolContextKey(context.ownerDid, context.id), context);
+        if (!contexts.has(key)) { boundOwners.delete(key); }
       }
       for (const member of bindCatalogMembers(sources)) {
-        const key = protocolContextKey(member.ownerDid, member.id);
-        if (!contexts.has(key)) {
-          contexts.set(key, member);
+        if (!contexts.has(member.key)) {
+          contexts.set(member.key, member);
         }
       }
       return [...contexts.values()].sort(compareProtocolContexts);
     };
 
-    const listContexts = async (): Promise<ProtocolContext<D, C, G>[]> =>
-      await listCatalogContexts() as unknown as ProtocolContext<D, C, G>[];
+    const listContexts = async (): Promise<ProtocolContext<D, C, G>[]> => {
+      if (canUseFollowing) {
+        await getFollowing().restore();
+      }
+      return await listCatalogContexts() as unknown as ProtocolContext<D, C, G>[];
+    };
 
     const openCatalogWakeSubscription = async (
       wake: () => void,
@@ -1715,8 +1731,13 @@ export class TypedEnbox<
         ) {
           wake();
         }
+        following?.retryAfterSync(event);
       }) ?? ((): void => {});
+      let follows: { close(): Promise<void> } | undefined;
       try {
+        if (canUseFollowing) {
+          follows = await getFollowing().observe(fail, signal);
+        }
         const records = !includeOwnedRoots || contextRoots.length === 0
           ? undefined
           : await this.records.subscribe(contextRoots, { signal }, (event): void => {
@@ -1729,11 +1750,17 @@ export class TypedEnbox<
         return {
           close: async (): Promise<void> => {
             detachSync();
-            await records?.close();
+            const closed = await Promise.allSettled([records?.close(), follows?.close()]);
+            const failed = closed.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+            if (failed !== undefined) {
+              throw failed.reason;
+            }
           },
         };
       } catch (error: unknown) {
         detachSync();
+        // Preserve the subscription-opening failure if releasing the follow observer also fails.
+        await follows?.close().catch((): void => {});
         throw error;
       }
     };
@@ -1745,7 +1772,7 @@ export class TypedEnbox<
       ContextMaterializedRecord<unknown>
     >>> => createMaterializedMemberContextView<CatalogMemberContext, ContextMaterializedRecord<unknown>>({
       callerSignal : options.signal,
-      listContexts : async () => bindCatalogMembers(await listSources()),
+      listContexts : async () => bindCatalogMembers(await listSources()).sort(compareProtocolContexts),
       openRootView : (context, signal) => context.records.observe(context.path, {
         materialize : true,
         pagination  : { limit: 1 },
@@ -1758,6 +1785,14 @@ export class TypedEnbox<
     this._contexts = {
       open   : openContext,
       follow : followContext as ContextsApi<D, C, G>['follow'],
+      forget : async (request: Readonly<{ id: string; ownerDid: string }>): Promise<void> => {
+        this._options.signal?.throwIfAborted();
+        const ownerDid = normalizeMemberDid(request.ownerDid, 'TypedEnbox.contexts.forget');
+        if (!isValidRecordContextId(request.id)) {
+          throw new TypeError('TypedEnbox.contexts.forget: id must identify a canonical protocol context.');
+        }
+        await getFollowing().forgetContext({ id: request.id, ownerDid });
+      },
       ...(Object.keys(this._roleGroups).length > 0 ? {
         invitations: {
           list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C, G>[]> =>
@@ -1783,7 +1818,7 @@ export class TypedEnbox<
         }
         return createContextView({
           callerSignal         : options?.signal,
-          list                 : listContexts,
+          list                 : listCatalogContexts,
           openWakeSubscription : (wake, fail) => openCatalogWakeSubscription(wake, fail, options?.signal),
           signal               : this._options.signal,
         });
@@ -2524,6 +2559,74 @@ export class TypedEnbox<
     };
   }
 
+  /** Read all locally known intent records; absence alone never means a context was forgotten. */
+  private async readContextFollows(): Promise<ContextFollowRecord[]> {
+    const page = await this.records.query(CONTEXT_FOLLOW_PATH as ProtocolPaths<D> & string, {
+      dateSort   : DateSort.CreatedDescending,
+      pagination : { limit: 100 },
+    } as RecordQuery<D, ProtocolPaths<D> & string>);
+    const rows: ContextFollowRecord[] = [];
+    for await (const record of page) {
+      const row = await this.readContextFollow(record);
+      if (row !== undefined) {
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+
+  /** Append an encrypted recipient decision using the existing delegated record-write path. */
+  private async appendContextFollow(intent: ContextFollowIntent, after?: string): Promise<ContextFollowRecord> {
+    const timestamp = after === undefined ? Time.getCurrentTimestamp() : Time.createTimestampAfter(after);
+    const { record } = await this.createRecord(CONTEXT_FOLLOW_PATH as ProtocolPaths<D> & string, {
+      data             : intent,
+      dateCreated      : timestamp,
+      messageTimestamp : timestamp,
+    } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>);
+    return { id: record.id, timestamp: record.timestamp, value: intent };
+  }
+
+  /** The context observer owns this ordinary paginated record view, including its close. */
+  private async observeContextFollows(signal: AbortSignal): Promise<ExpandableRecordView<ContextFollowRecord>> {
+    await whileSignalsActive(() => this._ensureReady(CONTEXT_FOLLOW_PATH), [signal, this._options.signal]);
+    return createExpandableRecordView<ContextFollowRecord>({
+      callerSignal       : signal,
+      definition         : this._definition,
+      dwn                : this._dwn,
+      materializeRecords : async (records): Promise<ContextFollowRecord[]> => {
+        const rows = await Promise.all(records.map(record => this.readContextFollow(record)));
+        return rows.filter((row): row is ContextFollowRecord => row !== undefined);
+      },
+      query: compileRecordQuery(this._definition, CONTEXT_FOLLOW_PATH, {
+        dateSort   : DateSort.CreatedDescending,
+        pagination : { limit: 100 },
+      }),
+      signal : this._options.signal,
+      sync   : this._options.sync,
+    });
+  }
+
+  /** Skip malformed or foreign rows without treating them as instructions to change authority. */
+  private async readContextFollow(record: Record): Promise<ContextFollowRecord | undefined> {
+    if (record.creator !== this._dwn.connectedDid
+      || record.protocol !== this._definition.protocol
+      || record.protocolPath !== CONTEXT_FOLLOW_PATH) {
+      return undefined;
+    }
+    let value: ContextFollowIntent;
+    try {
+      value = await bindRecordCodec(record, contextFollowCodec,
+        this._definition.types[CONTEXT_FOLLOW_PATH].dataFormats, this._options.signal).value();
+    } catch (error: unknown) {
+      if (error instanceof SyntaxError || error instanceof RecordValidationError) {
+        return undefined;
+      }
+      throw error;
+    }
+    // App-specific group declarations must not erase a newer saved choice.
+    return { id: record.id, timestamp: record.timestamp, value };
+  }
+
   /** Write one bounded discovery offer to the recipient's own protocol inbox. */
   private async sendContextInvitation(
     recipient : string,
@@ -2703,8 +2806,7 @@ export class TypedEnbox<
       return undefined;
     }
     const contextPath = parentProtocolPath(roles[0]);
-    if (envelope.contextId.split('/').length !== contextPath.split('/').length
-      || !isValidInvitationContextId(contextPath, envelope.contextId)) {
+    if (!isValidContextId(contextPath, envelope.contextId)) {
       return undefined;
     }
     return {
@@ -2907,7 +3009,10 @@ export class TypedEnbox<
   }
 
   /** Bind the existing typed records surface to one exact durable source. */
-  private bindMemberContext(source: FollowedSyncSource): MemberContext<D, C> {
+  private bindMemberContext(
+    source: FollowedSyncSource,
+    forget: (expected: FollowedSyncSource, withdrawRole?: () => Promise<void>) => Promise<void>,
+  ): MemberContext<D, C> {
     const scope = this.resolveMemberContextScope(source.protocolRole);
     const replicatedPaths = new Set(source.protocolPaths);
     const readablePaths = new Set(scope.readablePaths);
@@ -2949,23 +3054,24 @@ export class TypedEnbox<
       remoteEndpoint : source.remoteEndpoint,
       tenantDid      : source.sourceDid,
     });
-    const retire = async (leave: boolean): Promise<void> => {
-      if (leave) {
-        await assertActive();
-        const result = await membershipDwn.records.delete({
-          contextId    : source.contextId,
-          protocol     : source.protocol,
-          protocolPath : source.protocolRole,
-          recordId     : source.id,
-        });
-        if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
-          requireDwnSuccess('MemberContext.leave', result);
-        }
-      } else {
-        this._options.signal?.throwIfAborted();
+    const withdrawRole = async (): Promise<void> => {
+      const result = await membershipDwn.records.delete({
+        contextId    : source.contextId,
+        protocol     : source.protocol,
+        protocolPath : source.protocolRole,
+        recordId     : source.id,
+      });
+      if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
+        requireDwnSuccess('MemberContext.leave', result);
       }
-      await sync.deleteFollowedSource(source);
-      controller.abort(new ContextRetiredError(source.contextId));
+    };
+    const retire = async (withdraw?: () => Promise<void>): Promise<void> => {
+      this._options.signal?.throwIfAborted();
+      await forget(source, withdraw);
+      const current = await sync.getFollowedSource(source.id);
+      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
+        controller.abort(new ContextRetiredError(source.contextId));
+      }
     };
     const refresh = async (): Promise<void> => {
       await assertActive();
@@ -2988,10 +3094,10 @@ export class TypedEnbox<
 
     return Object.freeze({
       access   : 'member',
-      forget   : (): Promise<void> => retire(false),
+      forget   : (): Promise<void> => retire(),
       id       : source.contextId,
       key      : protocolContextKey(source.sourceDid, source.contextId),
-      leave    : (): Promise<void> => retire(true),
+      leave    : (): Promise<void> => retire(withdrawRole),
       ownerDid : source.sourceDid,
       path     : scope.protocolPath,
       records  : this.bindContextRecords(dwn, {
@@ -3773,7 +3879,8 @@ function normalizeContextInvitationPreview(
   return Object.freeze({ ...preview });
 }
 
-function isValidInvitationContextId(path: string, contextId: string): boolean {
+function isValidContextId(path: string, contextId: string): boolean {
+  if (contextId.split('/').length !== path.split('/').length) { return false; }
   try {
     assertValidRecordWithin(path, contextId, true);
     return true;
@@ -3895,11 +4002,6 @@ function paginationCursorSeen(lineage: PaginationCursorLineage | undefined, key:
     }
   }
   return false;
-}
-
-/** Return the collision-safe identity for one owner-scoped protocol context. */
-export function protocolContextKey(ownerDid: string, contextId: string): string {
-  return JSON.stringify([ownerDid, contextId]);
 }
 
 function contextRootRecordId(contextId: string): string {
