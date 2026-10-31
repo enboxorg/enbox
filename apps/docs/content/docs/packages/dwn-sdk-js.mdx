@@ -54,16 +54,24 @@ import { resolveProtocolContextRoles, type ProtocolDefinition } from '@enbox/dwn
 const definition = {
   protocol: 'https://example.com/protocols/notebook',
   published: true,
-  types: { notebook: {}, page: {}, board: {}, editor: {}, viewer: {} },
+  types: { notebook: {}, page: {}, board: {}, delta: {}, editor: {}, viewer: {} },
   structure: {
     notebook: {
       page: {
+        // The owner manages page metadata; both member roles can read it.
         $actions: [
           { role: 'notebook/page/editor', can: ['read'] },
           { role: 'notebook/page/viewer', can: ['read'] },
         ],
         editor: { $role: true },
         viewer: { $role: true },
+        delta: {
+          $immutable: true,
+          $actions: [
+            { role: 'notebook/page/editor', can: ['create', 'read'] },
+            { role: 'notebook/page/viewer', can: ['read'] },
+          ],
+        },
       },
       board: {
         $actions: [
@@ -82,6 +90,11 @@ resolveProtocolContextRoles(definition, 'notebook/page');
 resolveProtocolContextRoles(definition, 'notebook/board');
 // ['notebook/board/viewer', 'notebook/board/editor']
 ```
+
+The page root's `read` rules describe access to its metadata. Editors can also
+create content updates because `notebook/page/delta` grants that action separately.
+Each path defines its own permissions; the root's ordering supplies following
+preference without replacing those descendant rules.
 
 The helper reads a validated definition and returns the ordered local roles for
 the exact root path. It ignores non-read rules, actor rules (`who`), and roles
