@@ -67,6 +67,7 @@
   },
   "packageManager": "bun@1.4.4",
   "overrides": {
+    "minimatch": "11.0.1",
     "undici": "7.30.1"
   },
   "engines": {
