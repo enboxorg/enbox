@@ -212,6 +212,40 @@ export function walkProtocolRuleSets(
   walk(structure, '');
 }
 
+/**
+ * Resolve local context roles in the order of the root's read action rules.
+ * Only roles directly beneath the requested context qualify; ancestor and
+ * cross-protocol roles are not resolved. An empty result means no roles qualify.
+ *
+ * This selection order does not change authorization or establish exclusivity
+ * between assignments. The definition must already be validated.
+ *
+ * @param definition - The validated protocol definition.
+ * @param contextPath - The canonical protocol path of a non-role record.
+ * @returns A new array in authored `$actions` order.
+ * @throws {TypeError} If the path is not canonical, does not exist, or names a role.
+ */
+export function resolveProtocolContextRoles(definition: ProtocolDefinition, contextPath: string): readonly string[] {
+  if (contextPath.split('/').some(segment => segment === '' || segment.startsWith('$'))) {
+    throw new TypeError(`Context path '${contextPath}' must be a canonical protocol path.`);
+  }
+  const context = getRuleSetAtPath(contextPath, definition.structure);
+  if (context === undefined || context.$role === true) {
+    throw new TypeError(`Context path '${contextPath}' must identify a non-role record.`);
+  }
+
+  const roles: string[] = [];
+  for (const action of context.$actions ?? []) {
+    const role = action.role;
+    if (role !== undefined && !isCrossProtocolRef(role) && action.can.includes(ProtocolAction.Read)
+      && role.split('/').slice(0, -1).join('/') === contextPath
+      && getRuleSetAtPath(role, definition.structure)?.$role === true) {
+      roles.push(role);
+    }
+  }
+  return roles;
+}
+
 /** Resolve the non-role content scope governed by one nested protocol role. */
 export function resolveProtocolRoleContextScope(
   definition: ProtocolDefinition,

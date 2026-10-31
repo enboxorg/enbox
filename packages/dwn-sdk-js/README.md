@@ -46,6 +46,18 @@ await dwn.close();
 
 Level-backed store implementations are exported from `@enbox/dwn-sdk-js/stores/level` so applications that only need message and protocol APIs do not load the Level store module graph by default. Shared blockstore helpers used by alternative store implementations are available from `@enbox/dwn-sdk-js/stores/blockstore`.
 
+### Context role preference
+
+`resolveProtocolContextRoles(definition, contextPath)` returns the root's
+direct-child role paths granting `read`, in `$actions` array order. That order
+declares client following preference for this exact root; object property order
+does not affect it. It does not change DWN authorization, imply role inheritance,
+or modify role assignments. The high-level API still uses its existing
+`roleGroups` configuration.
+
+See [context role preference](../../apps/docs/content/docs/packages/dwn-sdk-js.mdx#context-role-preference)
+for the definition convention and a notebook example with editor and viewer roles.
+
 ### Custom Tenant Gating
 
 By default all DIDs are allowed as tenants. Provide a custom `TenantGate` to restrict access:

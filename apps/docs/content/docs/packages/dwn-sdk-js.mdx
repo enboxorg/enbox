@@ -40,3 +40,66 @@ Most applications do not import from `@enbox/dwn-sdk-js` directly. Use it when y
 | `MessageStore`, `DataStore` | Storage backend interfaces |
 | `EventLog` | Event log interface for change tracking |
 | `Dwn` | The DWN engine class itself |
+
+## Context role preference
+
+Declare context-following preference in the context root's `$actions` array:
+place its direct-child role rules that grant `read` in the order clients should
+try them. Each context root has its own preference.
+
+This notebook example stores editable content directly in each page record.
+The owner assigns page roles. Editors can read and edit the owner's page through
+`co-update`; viewers can only read it:
+
+```ts
+import { resolveProtocolContextRoles, type ProtocolDefinition } from '@enbox/dwn-sdk-js';
+
+const definition = {
+  protocol: 'https://example.com/protocols/notebook',
+  published: true,
+  types: {
+    notebook: { dataFormats: ['application/json'] },
+    page: { dataFormats: ['application/json'] },
+    editor: { dataFormats: ['application/json'] },
+    viewer: { dataFormats: ['application/json'] },
+  },
+  structure: {
+    notebook: {
+      page: {
+        $actions: [
+          { role: 'notebook/page/editor', can: ['read', 'co-update'] },
+          { role: 'notebook/page/viewer', can: ['read'] },
+        ],
+        editor: { $role: true },
+        viewer: { $role: true },
+      },
+    },
+  },
+} satisfies ProtocolDefinition;
+
+resolveProtocolContextRoles(definition, 'notebook/page');
+// ['notebook/page/editor', 'notebook/page/viewer']
+```
+
+If both assignments exist, the preference puts editor first. If only viewer is
+assigned, the user remains a viewer: order never grants the editor role or its
+write permission. Reversing the two rules changes preference, while each role
+keeps the permissions in its own `can` array. A protocol with child records can
+grant additional operations through those paths' own `$actions`.
+
+The helper reads a validated definition and returns the ordered local roles for
+the exact root path. It ignores non-read rules, actor rules (`who`), and roles
+outside that root's direct children. A content path without qualifying rules
+returns an empty list; an invalid, missing, or role-record path throws
+`TypeError`.
+
+Preserve `$actions` array order when publishing or comparing definitions. Object
+property order, including the order of `editor` and `viewer` declarations, has
+no meaning. Preference does not establish a global role hierarchy or inherited
+permissions. It neither changes DWN authorization to first-match evaluation nor
+grants, revokes, or deletes role assignments; clients still verify current
+assignments before using a candidate role.
+
+The high-level [`@enbox/api` shared-context API](/docs/packages/api#shared-contexts)
+still uses `roleGroups` supplied to `defineProtocol()`. The helper exposes the
+definition convention independently; it does not replace that API configuration.
