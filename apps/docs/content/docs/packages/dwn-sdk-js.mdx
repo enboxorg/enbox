@@ -45,8 +45,11 @@ Most applications do not import from `@enbox/dwn-sdk-js` directly. Use it when y
 
 Declare context-following preference in the context root's `$actions` array:
 place its direct-child role rules that grant `read` in the order clients should
-try them. This keeps the preference in the shared protocol definition. Each root
-has its own order, including roots at the same depth:
+try them. Each context root has its own preference.
+
+This notebook example stores editable content directly in each page record.
+The owner assigns page roles. Editors can read and edit the owner's page through
+`co-update`; viewers can only read it:
 
 ```ts
 import { resolveProtocolContextRoles, type ProtocolDefinition } from '@enbox/dwn-sdk-js';
@@ -54,29 +57,18 @@ import { resolveProtocolContextRoles, type ProtocolDefinition } from '@enbox/dwn
 const definition = {
   protocol: 'https://example.com/protocols/notebook',
   published: true,
-  types: { notebook: {}, page: {}, board: {}, delta: {}, editor: {}, viewer: {} },
+  types: {
+    notebook: { dataFormats: ['application/json'] },
+    page: { dataFormats: ['application/json'] },
+    editor: { dataFormats: ['application/json'] },
+    viewer: { dataFormats: ['application/json'] },
+  },
   structure: {
     notebook: {
       page: {
-        // The owner manages page metadata; both member roles can read it.
         $actions: [
-          { role: 'notebook/page/editor', can: ['read'] },
+          { role: 'notebook/page/editor', can: ['read', 'co-update'] },
           { role: 'notebook/page/viewer', can: ['read'] },
-        ],
-        editor: { $role: true },
-        viewer: { $role: true },
-        delta: {
-          $immutable: true,
-          $actions: [
-            { role: 'notebook/page/editor', can: ['create', 'read'] },
-            { role: 'notebook/page/viewer', can: ['read'] },
-          ],
-        },
-      },
-      board: {
-        $actions: [
-          { role: 'notebook/board/viewer', can: ['read'] },
-          { role: 'notebook/board/editor', can: ['read'] },
         ],
         editor: { $role: true },
         viewer: { $role: true },
@@ -87,14 +79,13 @@ const definition = {
 
 resolveProtocolContextRoles(definition, 'notebook/page');
 // ['notebook/page/editor', 'notebook/page/viewer']
-resolveProtocolContextRoles(definition, 'notebook/board');
-// ['notebook/board/viewer', 'notebook/board/editor']
 ```
 
-The page root's `read` rules describe access to its metadata. Editors can also
-create content updates because `notebook/page/delta` grants that action separately.
-Each path defines its own permissions; the root's ordering supplies following
-preference without replacing those descendant rules.
+If both assignments exist, the preference puts editor first. If only viewer is
+assigned, the user remains a viewer: order never grants the editor role or its
+write permission. Reversing the two rules changes preference, while each role
+keeps the permissions in its own `can` array. A protocol with child records can
+grant additional operations through those paths' own `$actions`.
 
 The helper reads a validated definition and returns the ordered local roles for
 the exact root path. It ignores non-read rules, actor rules (`who`), and roles

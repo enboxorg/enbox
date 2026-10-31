@@ -56,7 +56,7 @@ or modify role assignments. The high-level API still uses its existing
 `roleGroups` configuration.
 
 See [context role preference](../../apps/docs/content/docs/packages/dwn-sdk-js.mdx#context-role-preference)
-for the definition convention and an example with independent nested roots.
+for the definition convention and a notebook example with editor and viewer roles.
 
 ### Custom Tenant Gating
 
