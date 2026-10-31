@@ -1,5 +1,12 @@
 # @enbox/protocol-codegen
 
+## 0.1.11
+
+### Patch Changes
+
+- [#1813](https://github.com/enboxorg/enbox/pull/1813) [`b5cfb04`](https://github.com/enboxorg/enbox/commit/b5cfb04f43ef948721e34777d4f6553e9d1b6ee6) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Update the schema compiler to remove the vulnerable transitive glob dependency
+  from codegen installations.
+
 ## 0.1.10
 
 ### Patch Changes
