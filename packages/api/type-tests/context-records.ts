@@ -38,7 +38,7 @@ const ContextDefinition = {
         { role: 'workspace/member', can: ['read'] },
         { role: 'workspace/viewer', can: ['read'] },
       ],
-      member : { $recordLimit: { max: 1 }, $role: true },
+      member : { $role: true },
       viewer : { $role: true },
       live   : {
         $actions : [{ role: 'workspace/member', can: ['create', 'read'] }],
@@ -69,12 +69,6 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   title     : recordCodecs.json<{ text: string }>(),
   viewer    : recordCodecs.json<{ expires: boolean }>(),
   workspace : recordCodecs.json<{ name: string }>(),
-}, {
-  roleGroups: {
-    default : ['workspace/member', 'workspace/viewer'],
-    project : ['project/outsider'],
-    viewers : ['workspace/viewer'],
-  },
 });
 void ContextProtocol;
 
@@ -82,8 +76,7 @@ declare const context:
   | OwnedContext<
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
-    'workspace',
-    typeof ContextProtocol.roleGroups
+    'workspace'
   >
   | MemberContext<
     typeof ContextDefinition,
@@ -97,8 +90,7 @@ declare const catalogContext: MemberContext<
 >;
 declare const typed: TypedEnbox<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs,
-  typeof ContextProtocol.roleGroups
+  typeof ContextProtocol.codecs
 >;
 declare const callerSignal: AbortSignal;
 void typed.records.subscribe('workspace/note', { signal: callerSignal }, (): void => {});
@@ -120,14 +112,12 @@ if (catalogContext.role === 'workspace/member') {
 const owned = typed.contexts.open('workspace', 'workspace-id');
 const listed: Promise<ProtocolContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs,
-  typeof ContextProtocol.roleGroups
+  typeof ContextProtocol.codecs
 >[]> =
   typed.contexts.list();
 const observed: Promise<ContextView<ProtocolContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs,
-  typeof ContextProtocol.roleGroups
+  typeof ContextProtocol.codecs
 >>> =
   typed.contexts.observe({ signal: callerSignal });
 void listed;
@@ -143,7 +133,7 @@ void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: c
     void memberAccess;
     void row?.context.leave();
     // @ts-expect-error a member-only selection never exposes owner membership management.
-    void row?.context.members();
+    void row?.context.members;
   });
 // @ts-expect-error one-shot root materialization is not part of the catalog API.
 void typed.contexts.list({ access: 'member', materializeRoot: true });
@@ -151,26 +141,25 @@ void typed.contexts.list({ access: 'member', materializeRoot: true });
 void typed.contexts.observe({ access: 'owner', materializeRoot: true });
 declare const listedContext: ProtocolContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs,
-  typeof ContextProtocol.roleGroups
+  typeof ContextProtocol.codecs
 >;
 if (listedContext.access === 'owner') {
   if (listedContext.path === 'workspace') {
     void listedContext.records.query('workspace/note');
-    void listedContext.members().list();
+    void listedContext.members.list();
     // @ts-expect-error an owned workspace context cannot access the project subtree.
     void listedContext.records.query('project');
-    // @ts-expect-error the project role group does not belong to the workspace root.
-    void listedContext.members('project');
+    // @ts-expect-error membership roles are bound to the context root.
+    void listedContext.members.set('did:example:alice', { role: 'project/outsider', data: { label: 'guest' } });
   } else {
     const projectPath: 'project' = listedContext.path;
     void projectPath;
     void listedContext.records.query('project');
-    void listedContext.members('project').list();
+    void listedContext.members.list();
     // @ts-expect-error an owned project context cannot access the workspace subtree.
     void listedContext.records.query('workspace/note');
-    // @ts-expect-error the workspace role group does not belong to the project root.
-    void listedContext.members('viewers');
+    // @ts-expect-error membership roles are bound to the context root.
+    void listedContext.members.set('did:example:alice', { role: 'workspace/viewer', data: { expires: true } });
   }
 }
 // @ts-expect-error role records are membership, not contexts.
@@ -184,12 +173,11 @@ void owned.then((value): void => {
   void path;
   void value.records.query('workspace/note');
   void value.invite('did:example:alice', { preview: { title: 'Shared workspace' } });
-  void value.invite('did:example:alice', { group: 'viewers' });
   // @ts-expect-error invitation preview values are intentionally string-only.
   void value.invite('did:example:alice', { preview: { count: 1 } });
-  // @ts-expect-error only groups declared for this context root can be invited.
-  void value.invite('did:example:alice', { group: 'project' });
-  const members = value.members();
+  // @ts-expect-error invitations use the bound context's protocol policy.
+  void value.invite('did:example:alice', { path: 'project' });
+  const members = value.members;
   const assigned: Promise<ContextMember<
     typeof ContextDefinition,
     typeof ContextProtocol.codecs,
@@ -228,14 +216,8 @@ void owned.then((value): void => {
   });
   // @ts-expect-error role data is correlated with the selected path.
   void members.set('did:example:bob', { data: { label: 'wrong' }, role: 'workspace/viewer' });
-  // @ts-expect-error a role outside the declared group cannot be assigned.
+  // @ts-expect-error a role outside this context's read rules cannot be assigned.
   void members.set('did:example:bob', { data: {}, role: 'workspace/other' });
-  const viewers = value.members('viewers');
-  void viewers.set('did:example:bob', { data: { expires: true }, role: 'workspace/viewer' });
-  // @ts-expect-error only groups declared for this context root can be selected.
-  value.members('project');
-  // @ts-expect-error undeclared role groups cannot be selected.
-  value.members('missing');
   // @ts-expect-error a bound context cannot create a second copy of its root.
   void value.records.create('workspace', { data: { name: 'duplicate' } });
   // @ts-expect-error context records expose only their root and descendants.
@@ -259,10 +241,8 @@ void owned.then((value): void => {
 });
 
 void typed.contexts.open('project', 'project-id').then((value): void => {
-  // @ts-expect-error this root has no default role group, so the group is required.
   void value.invite('did:example:alice');
-  void value.invite('did:example:alice', { group: 'project' });
-  const members = value.members('project');
+  const members = value.members;
   void members.set('did:example:alice', {
     data : { label: 'guest' },
     role : 'project/outsider',
@@ -272,8 +252,8 @@ void typed.contexts.open('project', 'project-id').then((value): void => {
 void typed.contexts.invitations.list().then((invitations): void => {
   const invitation = invitations[0];
   if (invitation !== undefined) {
-    const group: 'default' | 'project' | 'viewers' = invitation.group;
-    void group;
+    const path: 'workspace' | 'project' = invitation.path;
+    void path;
     void invitation.accept().then((shared): void => {
       const role: 'workspace/member' | 'workspace/viewer' | 'project/outsider' = shared.role;
       void role;
@@ -290,16 +270,12 @@ void typed.contexts.invitations.observe({ signal: callerSignal }).then((view): v
   void view.getSnapshot().hasMore;
 });
 
-declare const plainTyped: TypedEnbox<typeof ContextDefinition, typeof ContextProtocol.codecs>;
-// @ts-expect-error protocols without role groups do not expose an invitation inbox.
-void plainTyped.contexts.invitations;
-void plainTyped.contexts.open('workspace', 'workspace-id').then((value): void => {
-  // @ts-expect-error contexts without a declared membership group cannot invite.
+void typed.contexts.open('invite', 'invite-id').then((value): void => {
+  // @ts-expect-error content without root read roles cannot invite members.
   void value.invite('did:example:alice');
 });
 
-void typed.contexts.follow({
-  group    : 'project',
+void typed.contexts.follow('project', {
   id       : 'project-id',
   ownerDid : 'did:example:owner',
 }).then((value): void => {
@@ -321,7 +297,7 @@ if (context.access === 'member') {
   void context.leave();
   void context.refresh();
   // @ts-expect-error only owners manage context membership.
-  context.members();
+  void context.members;
 }
 
 const created: Promise<ContextRecord<{ text: string }>> = context.records.create('workspace/note', {
@@ -482,7 +458,7 @@ void context.records.create('workspace/live/session', {
 void context.records.patch('workspace/note', 'note-id', { text: null });
 // @ts-expect-error context records.patch cannot introduce fields outside the payload type.
 void context.records.patch('workspace/note', 'note-id', { missing: true });
-// @ts-expect-error membership is available only through ownedContext.members().
+// @ts-expect-error membership is available only through ownedContext.members.
 void context.records.create('workspace/member', { data: { label: 'member' }, recipient: 'did:example:member' });
 // @ts-expect-error role records are not part of context content.
 void context.records.query('workspace/member');

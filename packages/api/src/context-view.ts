@@ -3,9 +3,20 @@ import type { ObservableStore } from './observable-store.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
 
+/** A saved follow choice, including contexts whose access cannot currently be restored. */
+export type SavedContextFollow = Readonly<{
+  key: string;
+  id: string;
+  ownerDid: string;
+  /** Protocol path of the saved context root. */
+  path: string;
+}>;
+
 /** Immutable state of one protocol's local context catalog. */
 export type ContextViewState<Context> = Readonly<{
   contexts: readonly Context[];
+  /** Current saved follows in key order; these coordinates alone do not establish access. */
+  savedFollows: readonly SavedContextFollow[];
 }> & Readonly<
   | { status: 'loading'; error?: never }
   | { status: 'ready'; error?: never }
@@ -23,6 +34,7 @@ export interface ContextView<Context> extends ObservableStore<ContextViewState<C
 
 type ContextViewOptions<Context> = {
   callerSignal?: AbortSignal;
+  getSavedFollows?(): readonly SavedContextFollow[];
   list(): Promise<readonly Context[]>;
   openWakeSubscription(
     wake: () => void,
@@ -43,13 +55,15 @@ export async function createContextView<Context>(
 }
 
 class ObservedContextView<Context> extends ObservedView<ContextViewState<Context>> implements ContextView<Context> {
+  private readonly _getSavedFollows: () => readonly SavedContextFollow[];
   private readonly _list: ContextViewOptions<Context>['list'];
   private readonly _openWakeSubscription: ContextViewOptions<Context>['openWakeSubscription'];
 
   private _wakeSubscription?: { close(): Promise<void> };
 
   public constructor(options: ContextViewOptions<Context>) {
-    super(immutableState({ status: 'loading', contexts: [] }), options.callerSignal, options.signal);
+    super(immutableState({ status: 'loading', contexts: [], savedFollows: [] }), options.callerSignal, options.signal);
+    this._getSavedFollows = options.getSavedFollows ?? ((): readonly SavedContextFollow[] => []);
     this._list = options.list;
     this._openWakeSubscription = options.openWakeSubscription;
   }
@@ -58,7 +72,10 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
   public async open(): Promise<void> {
     try {
       const wakeSubscription = await this._openWakeSubscription(
-        (): void => { this.requestMaterialization(); },
+        (): void => {
+          // The initial list includes changes delivered while subscriptions are still opening.
+          if (this._wakeSubscription !== undefined) { this.requestMaterialization(); }
+        },
         (error): void => {
           if (!this.isClosed) {
             this.publishError(error);
@@ -89,7 +106,7 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
     try {
       const contexts = await this._list();
       if (this.canPublishMaterialization(generation)) {
-        this.publish(immutableState({ status: 'ready', contexts }));
+        this.publish(immutableState({ status: 'ready', contexts, savedFollows: this._getSavedFollows() }));
       }
     } catch (error: unknown) {
       if (this.canPublishMaterialization(generation)) {
@@ -110,17 +127,27 @@ class ObservedContextView<Context> extends ObservedView<ContextViewState<Context
   }
 
   private publishError(error: Error): void {
-    this.publish(immutableState({ status: 'error', contexts: this.getSnapshot().contexts, error }));
+    this.publish(immutableState({ ...this.getSnapshot(), status: 'error', error }));
   }
 }
 
 function immutableState<Context>(state: ContextViewState<Context>): ContextViewState<Context> {
-  return Object.freeze({ ...state, contexts: Object.freeze([...state.contexts]) });
+  return Object.freeze({
+    ...state,
+    contexts     : Object.freeze([...state.contexts]),
+    savedFollows : Object.freeze(state.savedFollows.map(follow => Object.freeze({ ...follow }))),
+  });
 }
 
 function statesEqual<Context>(a: ContextViewState<Context>, b: ContextViewState<Context>): boolean {
   return a.status === b.status &&
     a.error === b.error &&
     a.contexts.length === b.contexts.length &&
-    a.contexts.every((context, index) => context === b.contexts[index]);
+    a.contexts.every((context, index) => context === b.contexts[index]) &&
+    a.savedFollows.length === b.savedFollows.length &&
+    a.savedFollows.every((follow, index) => {
+      const other = b.savedFollows[index];
+      return follow.key === other.key && follow.id === other.id &&
+        follow.ownerDid === other.ownerDid && follow.path === other.path;
+    });
 }

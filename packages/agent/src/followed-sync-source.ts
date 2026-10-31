@@ -18,7 +18,7 @@ export type FollowedSyncSource = {
   protocolRole: string;
   /** Exact role-readable paths derived from the accepted hosted protocol definition. */
   protocolPaths: [string, ...string[]];
-  /** Mutually-exclusive role paths, ordered from strongest to weakest. */
+  /** Candidate role paths in declared preference order for this context. */
   roles: [string, ...string[]];
 };
 
@@ -27,7 +27,7 @@ export type FollowedSyncSourceInput = Pick<
   FollowedSyncSource,
   'actorDid' | 'contextId' | 'protocol' | 'sourceDid'
 > & {
-  /** Mutually-exclusive role paths tried strongest-first during this explicit follow. */
+  /** Role candidates tried in declared preference order during this explicit follow. */
   roles: [string, ...string[]];
 };
 

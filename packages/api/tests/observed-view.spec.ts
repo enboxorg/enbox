@@ -27,6 +27,75 @@ class ControlledView extends ObservedView<State> {
 
 async function microtasks(): Promise<void> { for (let i = 0; i < 5; i += 1) { await Promise.resolve(); } }
 
+describe('ContextView saved follows', () => {
+  it('waits for subscription setup before materializing an opening wake', async () => {
+    let finishOpening!: () => void;
+    const pendingOpening = new Promise<void>(resolve => { finishOpening = resolve; });
+    const list = sinon.stub().resolves(['context']);
+    const opening = createContextView({
+      list,
+      openWakeSubscription: async (wake) => {
+        wake();
+        await pendingOpening;
+        return { close: async (): Promise<void> => {} };
+      },
+    });
+    await microtasks();
+    expect(list.called).toBe(false);
+    finishOpening();
+    const view = await opening;
+    try {
+      expect((await view.ready()).contexts).toEqual(['context']);
+      expect(list.calledOnce).toBe(true);
+    } finally {
+      await view.close();
+    }
+  });
+
+  it('publishes immutable saved choices without member handles and preserves them on failure', async () => {
+    let savedFollows = [{ key: 'owner/context', id: 'context', ownerDid: 'did:example:owner', path: 'page' }];
+    let wake!: () => void;
+    let fail!: (error: Error) => void;
+    const view = await createContextView({
+      getSavedFollows      : () => savedFollows,
+      list                 : async () => [],
+      openWakeSubscription : async (notify, onError) => {
+        wake = notify;
+        fail = onError;
+        return { close: async (): Promise<void> => {} };
+      },
+    });
+    try {
+      const initial = await view.ready();
+      expect(initial.contexts).toEqual([]);
+      expect(initial.savedFollows).toEqual(savedFollows);
+      expect(Object.isFrozen(initial.savedFollows)).toBe(true);
+      expect(Object.isFrozen(initial.savedFollows[0])).toBe(true);
+
+      const listener = sinon.spy();
+      view.subscribe(listener);
+      savedFollows = savedFollows.map(follow => ({ ...follow }));
+      wake();
+      await microtasks();
+      expect(view.getSnapshot()).toBe(initial);
+      expect(listener.called).toBe(false);
+
+      savedFollows[0].path = 'anotherRoot';
+      expect(initial.savedFollows[0].path).toBe('page');
+      wake();
+      await microtasks();
+      expect(view.getSnapshot().savedFollows).toEqual(savedFollows);
+      expect(listener.calledOnce).toBe(true);
+
+      const error = new Error('journal subscription failed');
+      fail(error);
+      expect(view.getSnapshot()).toEqual({ status: 'error', contexts: [], savedFollows, error });
+    } finally {
+      await view.close();
+    }
+  });
+});
+
 describe('ObservedView refresh barriers', () => {
   it('keeps record refresh out of the public context-catalog surface', async () => {
     const catalog = await createContextView({
@@ -34,7 +103,7 @@ describe('ObservedView refresh barriers', () => {
       openWakeSubscription : async () => ({ close: async (): Promise<void> => {} }),
     });
     try {
-      expect(await catalog.ready()).toEqual({ status: 'ready', contexts: ['context'] });
+      expect(await catalog.ready()).toEqual({ status: 'ready', contexts: ['context'], savedFollows: [] });
       expect('refresh' in catalog).toBe(false);
     } finally {
       await catalog.close();

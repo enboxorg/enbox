@@ -28,8 +28,9 @@ protocol readiness, and replication.
 ### 1. Define the model
 
 This example makes each `notebook/page` an encrypted collaborative context.
-Members can edit; viewers can read. `roleGroups` records that policy once so
-owner and member call sites do not repeat role paths or precedence.
+Members can edit; viewers can read. The page root's `read` action rules declare
+which roles clients try, in preference order, so call sites do not repeat that
+policy.
 
 ```ts title="src/features/notebooks/protocol.ts"
 import { defineProtocol, recordCodecs } from '@enbox/browser';
@@ -87,11 +88,6 @@ export const NotebookProtocol = defineProtocol({
   change   : recordCodecs.json<{ body: string }>(),
   member   : recordCodecs.json<{ name: string }>(),
   viewer   : recordCodecs.json<{ name: string }>(),
-}, {
-  roleGroups: {
-    // Strongest to weakest. Enbox uses this order for membership and follow.
-    default: ['notebook/page/member', 'notebook/page/viewer'],
-  },
 });
 ```
 
@@ -617,9 +613,11 @@ The `NotebookProtocol` above contains the complete access policy:
    `recipient` is the member DID.
 2. `$actions` on each data path grant member or viewer capabilities. They are
    the authorization policy.
-3. `roleGroups` lists mutually exclusive roles from strongest to weakest. It
-   lets `members().set()` change roles and lets recipients follow the best
-   valid assignment without handling role records directly.
+3. The context root's `$actions` lists its direct-child roles granting `read`
+   in declared preference order. Following tries those roles; `members.set()`
+   changes assignments within that root. There is no separate app-level role
+   list or override. Array order does not change DWN permissions or imply role
+   inheritance.
 4. The owner establishes membership, then sends an invitation. The invitation
    is discovery only; `accept()` independently proves the owner, role, context,
    and audience key before following anything.
@@ -646,7 +644,7 @@ await page.records.create('notebook/page/change', {
   data: { body: 'First draft' },
 });
 
-const members = page.members();
+const members = page.members;
 let alice = await members.set(aliceDid, {
   role : 'notebook/page/member',
   data : { name: 'Alice' },
@@ -665,12 +663,12 @@ if (alice.delivery.state === 'delivered') {
 }
 ```
 
-`members().set()` creates or replaces the preferred assignment, provisions the
+`members.set()` creates or replaces the selected assignment, provisions the
 audience key, attempts key delivery, and returns queryable delivery state.
 `get()`, `list()`, `observe()`, `remove()`, and `retryDelivery()` use DIDs and
 typed role data; role-record IDs and duplicate cleanup remain internal.
 Repeat `set()` for each participant. Calling it for the same DID with another
-role changes that member's access. Use `members().observe()` to drive an access
+role changes that member's access. Use `members.observe()` to drive an access
 list instead of polling it.
 
 `delivery.state === 'delivered'` means the recipient DWN accepted the key
@@ -729,10 +727,19 @@ the invitation as membership proof: it resolves the owner-hosted role record,
 protocol, context root, and audience key before admitting the context. A failed
 accept remains retryable. `dismiss()` removes only the inbox item.
 
-Apps that already receive the owner DID, context ID, and group through another
-channel can bypass inbox discovery with
-`contexts.follow({ ownerDid, id, group })`. Following performs the same current
-membership proof.
+Invitations carry the exact context root path, such as `notebook/page`, with the
+owner DID and context ID. Apps receiving those coordinates through another
+channel can bypass inbox discovery:
+
+```ts
+const shared = await notebooks.contexts.follow('notebook/page', {
+  ownerDid,
+  id: contextId,
+});
+```
+
+Following derives candidates from that root's read rules, proves current
+membership, and saves the recipient's decision before reporting success.
 
 <Callout type="warn" title="The invitation inbox is an open write endpoint">
 Any DID may submit a bounded invitation so strangers can offer a context.
@@ -750,15 +757,84 @@ Once records have replicated, member reads, queries, and views remain available
 offline. Member mutations are sent to the context owner's DWN and therefore
 require it to be reachable; Enbox does not queue those mutations offline.
 
-The followed-source catalog survives restarts only in the same agent storage.
-A fresh browser, device, or cleared profile starts with no accepted follows,
-and the accepted invitation may already be gone. For cross-device “shared with
-me,” add an encrypted root record such as `shareBookmark` to the application
-protocol and store `{ ownerDid, contextId, group }` after acceptance. On
-startup, observe those bookmarks and call
-`contexts.follow({ ownerDid, id: contextId, group })` for any missing catalog
-entry. Treat the owner's role record as authority: keep a bookmark after a
-transient follow failure, while a confirmed revocation should retire it.
+Accepted shares survive fresh browsers and devices through encrypted,
+recipient-owned `enboxContextFollow` records in the application's protocol.
+`defineProtocol()` adds this private managed path alongside the invitation inbox;
+application code does not declare a bookmark type or run a reconciliation loop.
+Existing own-protocol sync carries these records between devices.
+
+Every saved decision contains the owner DID, context ID, and whether the recipient
+still wants to follow. A follow decision also saves the exact context root path;
+a forget does not depend on one. A newer choice with a path this app cannot use
+remains the latest choice instead of exposing an older follow. Explicit forgets are retained
+as decisions too, so an older follow cannot return merely because another device
+was offline. The newest signed timestamp, then record ID, determines the current
+decision; newly written decisions advance beyond the latest timestamp already observed.
+Current role records, endpoints, keys, and local acceptance identifiers remain
+verified separately on each device.
+
+`contexts.observe()` restores known saved follows in the background while keeping
+owned roots and existing accepted contexts available. An unreachable owner or a
+missing role leaves the saved choice intact. Successful recipient-protocol sync
+and matching owner-context recovery events retry while a view is active.
+Reopening the observation or calling `contexts.list()` retries known choices.
+An explicit `follow(path, coordinates)` retries only its supplied target;
+no additional timer polls unavailable owners. Revocation ends access
+immediately when verified, but only an explicit `forget()` or `leave()` changes
+the saved following choice.
+
+A saved choice can outlive its member handle. Forget it by coordinates when access
+is revoked or the owner is unreachable:
+
+```ts
+await notebooks.contexts.forget({ ownerDid, id: contextId });
+```
+
+This requires a session with sync storage and the protocol's managed following
+path. It rejects with `TypeError` when either is unavailable. The saved context
+path itself need not be supported, so unavailable choices can still be forgotten.
+
+Both context observation modes include `savedFollows` alongside `contexts`.
+`contexts` contains usable handles; `savedFollows` contains the latest positive
+choices, including shares whose owner is unreachable or whose context path this
+app cannot restore. Each choice has `{ key, id, ownerDid, path }` and can be
+passed directly to `contexts.forget()`. The first ready state includes the local
+journal's pages without waiting for remote restoration. Later journal changes
+update this state even when no accepted context changes.
+
+```ts
+const view = await notebooks.contexts.observe();
+const { contexts, savedFollows } = await view.ready();
+const accepted = new Set(contexts.map(context => context.key));
+const unavailable = savedFollows.filter(follow => !accepted.has(follow.key));
+// A user can choose one of these coordinates to forget, even on a fresh device.
+```
+
+This saves the forget without verifying remote authority or withdrawing membership.
+Repeating an already-current forget reuses that decision and finishes any remaining
+local acceptance cleanup.
+The handle's `forget()` stays fenced to its exact acceptance; a stale handle does
+not override a newer one. `leave()` requires a current handle and withdraws the
+owner role before saving the forget. Those writes are not atomic: if withdrawal
+succeeds but saving fails, the call rejects. Coordinate-based `contexts.forget()`
+can complete the saved choice without restoring access. A retired `leave()`
+rejects with `ContextRetiredError`.
+
+`contexts.list()` waits for a restoration attempt and may wait for owner network
+timeouts. Use `contexts.observe()` for nonblocking live UI data. Unexpected owner
+restoration failures are logged while the saved choices and available contexts
+remain intact.
+
+Following, accepting, forgetting, and leaving require writing the recipient's
+own protocol records. Default application permissions include that access;
+explicit read-only grant policies remain read-only. Applications granted protocol
+write access are trusted to change the identity's shared follow choices.
+Restoration independently verifies current remote membership and keys; the saved
+choice does not confer access.
+
+The journal is immutable and append-only. This version reads its local history in
+pages and does not compact it automatically. Any retention policy must preserve
+effective forget decisions so an older offline follow cannot reappear.
 
 ### One owned-and-shared catalog
 
@@ -779,7 +855,8 @@ unsubscribeCatalog();
 await catalog.close();
 ```
 
-`contexts.list()` returns the same owner-and-member catalog once. When a member
+`contexts.list()` attempts to restore locally known saved follows and returns the
+owner-and-member catalog once. When a member
 list also needs decoded root metadata such as a title, ask the live catalog to
 materialize each root:
 
@@ -798,9 +875,10 @@ By default, `contexts.list()` and `contexts.observe()` include both declared
 collaboration roots owned by the connected identity and accepted member
 contexts. If the same `(ownerDid, contextId)` appears through both routes,
 owner access wins.
-Owned roots are discovered from local records at roots named by `roleGroups`;
-accepted member contexts come from the durable, agent-local followed-source
-catalog.
+Owned roots are discovered from local records at paths whose read rules select
+direct-child context roles. Accepted member contexts come from the locally
+verified followed-source catalog, restored from synchronized recipient intent
+when needed.
 `contexts.open()` remains available for binding any non-role context path, but
 only declared collaboration roots are automatically enumerated.
 
@@ -811,10 +889,11 @@ replication freshness.
 ### Membership lifecycle and errors
 
 - `memberContext.leave()` withdraws the exact role record at the accepted
-  endpoint and then retires the local acceptance. The role must authorize
-  recipient `co-delete`.
-- `memberContext.forget()` removes only the local acceptance and does not change
-  owner-hosted membership.
+  endpoint, saves a cross-device forget, and retires the local acceptance. The role
+  must authorize recipient `co-delete`.
+- `memberContext.forget()` saves a cross-device forget and retires the exact local
+  acceptance without changing owner-hosted membership. Stale handles cannot forget
+  a newer acceptance.
 - A replacement role proven at the accepted endpoint updates the catalog and
   fences retained handles with `ContextRetiredError`; reload the context from
   `contexts.list()` or `contexts.observe()`.

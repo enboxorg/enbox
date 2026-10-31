@@ -49,7 +49,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
       .rejects.toThrow('\'protocolPaths\' must contain non-empty paths');
   });
 
-  it('should reject an empty or duplicate role group', async () => {
+  it('should reject empty or duplicate role candidates', async () => {
     await expect(store.replace(followedSource({
       roles: [] as unknown as FollowedSyncSource['roles'],
     }))).rejects.toThrow('\'roles\' must contain at least one role');
@@ -61,7 +61,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
     }))).rejects.toThrow('\'roles\' must not contain duplicate roles');
   });
 
-  it('should preserve role priority and require the active role to belong to the group', async () => {
+  it('should preserve declared role preference and require the active role among the candidates', async () => {
     const source = followedSource();
 
     await store.replace(source);

@@ -1350,7 +1350,7 @@ export class SyncEngineLevel implements SyncEngine {
     return task;
   }
 
-  /** Resolve the strongest role that one reachable hosted endpoint proves. */
+  /** Try reachable hosted endpoints with roles in declared preference order. */
   private async resolveFollowedSource(
     input: FollowedSyncSourceInput,
     delegateDid: string | undefined,
@@ -1383,7 +1383,7 @@ export class SyncEngineLevel implements SyncEngine {
     throw new FollowedSourceNotReadyError('none of the requested roles is available yet');
   }
 
-  /** Resolve the strongest active role at one exact hosted endpoint. */
+  /** Resolve the first active role in declared preference order at this hosted endpoint. */
   private async resolveFollowedSourceAtEndpoint(
     input: FollowedSyncSourceInput,
     delegateDid: string | undefined,

@@ -1,13 +1,18 @@
 import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { ProtocolRolePaths, TypedCreateRequest, TypedEnbox } from '@enbox/api';
+import type { ContextRolePath, ContextRolesAtPath, ContextRootPath, ProtocolRolePaths, TypedCreateRequest, TypedEnbox } from '@enbox/api';
 
 import { defineProtocol, recordCodecs } from '@enbox/api';
+
+enum Action { Read = 'read' }
 
 const RoleDefinition = {
   protocol  : 'https://example.com/protocols/typed-roles',
   published : true,
   types     : {
-    admin: {
+    blind  : { dataFormats: ['application/json'] },
+    note   : { dataFormats: ['application/json'] },
+    writer : { dataFormats: ['application/json'] },
+    admin  : {
       dataFormats: ['application/json'],
     },
     workspace: {
@@ -21,13 +26,27 @@ const RoleDefinition = {
       dataFormats: ['application/json'],
     },
   },
-  structure: {
+  uses      : { other: 'https://example.com/other' },
+  structure : {
     admin     : { $role: true },
     workspace : {
       $actions: [
+        { who: 'anyone', can: ['read'] },
+        { role: 'admin', can: ['read'] },
+        { role: 'other:workspace/member', can: ['read'] },
+        { role: 'workspace/writer', can: ['create'] },
         { role: 'workspace/member', can: ['read'] },
-        { role: 'workspace/viewer', can: ['read'] },
+        { role: 'workspace/viewer', can: [Action.Read] },
       ],
+      blind  : { $role: true },
+      writer : { $role: true },
+      note   : {
+        $actions: [
+          { role: 'workspace/member', can: ['read'] },
+          { role: 'workspace/note/member', can: ['read'] },
+        ],
+        member: { $role: true },
+      },
       member : { $role: true },
       viewer : { $role: true },
     },
@@ -35,38 +54,65 @@ const RoleDefinition = {
 } as const satisfies ProtocolDefinition;
 
 const RoleProtocol = defineProtocol(RoleDefinition, {
+  blind     : recordCodecs.json<unknown>(),
+  note      : recordCodecs.json<unknown>(),
+  writer    : recordCodecs.json<unknown>(),
   admin     : recordCodecs.json<{ label: string }>(),
   member    : recordCodecs.json<{ label: string }>(),
   viewer    : recordCodecs.json<{ label: string }>(),
   workspace : recordCodecs.json<{ name: string }>(),
-}, {
-  roleGroups: {
-    default : ['workspace/member', 'workspace/viewer'],
-    viewers : ['workspace/viewer'],
-  },
 });
 void RoleProtocol;
 
-const mutableRoles: ['workspace/member', 'workspace/viewer'] = ['workspace/member', 'workspace/viewer'];
-const MutableRoleProtocol = defineProtocol(RoleDefinition, RoleProtocol.codecs, {
-  roleGroups: { default: mutableRoles },
-});
-// @ts-expect-error defineProtocol copies and freezes mutable role-group inputs.
-MutableRoleProtocol.roleGroups.default.reverse();
+// @ts-expect-error shared role selection comes from the protocol's read actions.
+defineProtocol(RoleDefinition, RoleProtocol.codecs, {});
 
-// @ts-expect-error role groups accept only encrypted contextual role paths.
-defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { default: ['workspace'] } });
+const root: ContextRootPath<typeof RoleDefinition> = 'workspace';
+const nestedRoot: ContextRootPath<typeof RoleDefinition> = 'workspace/note';
+const nestedMember: ContextRolesAtPath<typeof RoleDefinition, 'workspace/note'> = 'workspace/note/member';
+const viewerMember: ContextRolesAtPath<typeof RoleDefinition, 'workspace'> = 'workspace/viewer';
+void root;
+void nestedRoot;
+void nestedMember;
+void viewerMember;
+// @ts-expect-error roles are not context roots.
+const roleRoot: ContextRootPath<typeof RoleDefinition> = 'workspace/member';
+// @ts-expect-error ancestor roles are not membership for the child context.
+const ancestorMember: ContextRolesAtPath<typeof RoleDefinition, 'workspace/note'> = 'workspace/member';
+// @ts-expect-error a role without root read access cannot establish shared context access.
+const blindMember: ContextRolePath<typeof RoleDefinition> = 'workspace/blind';
+// @ts-expect-error create alone does not make a role eligible for following.
+const writerMember: ContextRolePath<typeof RoleDefinition> = 'workspace/writer';
+void roleRoot;
+void ancestorMember;
+void blindMember;
+void writerMember;
 
-// @ts-expect-error a non-empty role-group declaration must include the protocol-global default.
-defineProtocol(RoleDefinition, RoleProtocol.codecs, { roleGroups: { viewers: ['workspace/viewer'] } });
+const _UnencryptedDefinition = {
+  ...RoleDefinition,
+  types: { ...RoleDefinition.types, workspace: { dataFormats: ['application/json'] } },
+} as const satisfies ProtocolDefinition;
+// @ts-expect-error shared-context roles require encrypted audience support.
+const unencryptedRoot: ContextRootPath<typeof _UnencryptedDefinition> = 'workspace';
+void unencryptedRoot;
+
+const _NestedOnlyDefinition = {
+  ...RoleDefinition,
+  structure: {
+    ...RoleDefinition.structure,
+    workspace: { ...RoleDefinition.structure.workspace, $actions: [{ who: 'anyone', can: ['read'] }] },
+  },
+} as const satisfies ProtocolDefinition;
+// @ts-expect-error a union of roots cannot borrow read authority from a descendant's actions.
+const parentFromUnion: ContextRolesAtPath<typeof _NestedOnlyDefinition, 'workspace' | 'workspace/note'> = 'workspace/member';
+void parentFromUnion;
 
 type RolePath = ProtocolRolePaths<typeof RoleDefinition>;
 type RoleCodecs = typeof RoleProtocol.codecs;
 
 declare const typed: TypedEnbox<
   typeof RoleDefinition,
-  RoleCodecs,
-  typeof RoleProtocol.roleGroups
+  RoleCodecs
 >;
 declare const roleOrRecordPath: 'admin' | 'workspace';
 
@@ -100,7 +146,7 @@ void typed.records.create(roleOrRecordPath, {
   recipient : 'did:example:alice',
 });
 
-const sharedContext = typed.contexts.follow({
+const sharedContext = typed.contexts.follow('workspace', {
   id       : 'workspace-id',
   ownerDid : 'did:example:owner',
 });
@@ -117,24 +163,20 @@ void sharedContext.then(context => {
   return context.refresh();
 });
 
-const viewerContext = typed.contexts.follow({
-  id       : 'workspace-id',
-  ownerDid : 'did:example:owner',
-  group    : 'viewers',
-});
-void viewerContext.then(context => {
-  const role: 'workspace/viewer' = context.role;
-  void role;
-});
+const forgetting: Promise<void> = typed.contexts.forget({ id: 'workspaceContext', ownerDid: 'did:example:owner' });
+void forgetting;
 
-// @ts-expect-error undeclared role groups cannot be followed.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', group: 'missing' });
+// @ts-expect-error a forget requires the owner's DID even when no live handle exists.
+void typed.contexts.forget({ id: 'workspaceContext' });
+
+// @ts-expect-error a follow requires a protocol context root.
+void typed.contexts.follow('workspace/member', { id: 'workspace-id', ownerDid: 'did:example:owner' });
 
 // @ts-expect-error callers no longer supply role arrays.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace/member'] });
+void typed.contexts.follow('workspace', { id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace/member'] });
 
 // @ts-expect-error the singular role contract was removed.
-void typed.contexts.follow({ id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });
+void typed.contexts.follow('workspace', { id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });
 
 // @ts-expect-error role-record creates require a recipient.
 void typed.records.create('admin', { data: { label: 'administrator' } });

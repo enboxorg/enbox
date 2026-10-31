@@ -347,7 +347,7 @@ describe('observed stores', () => {
       contexts = [{ id: 'second' }];
       wake();
       await store.retry();
-      expect(store.getSnapshot()).toEqual({ status: 'ready', contexts, isLoadingMore: false });
+      expect(store.getSnapshot()).toEqual({ status: 'ready', contexts, savedFollows: [], isLoadingMore: false });
       expect(opens).toBe(2);
       expect(closes).toBe(1);
     } finally { stop(); await owner.close(); }
@@ -577,7 +577,7 @@ describe('observed stores', () => {
       note    : recordCodecs.json<{ title: string }>(),
       preview : recordCodecs.json<{ body: string }>(),
       member  : recordCodecs.json<{ label: string }>(),
-    }, { roleGroups: { default: ['note/member'] } });
+    });
     const context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [protocol] }) });
     const owner = fixture();
     const typed = context.enbox.using(protocol);
