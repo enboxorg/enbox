@@ -1643,35 +1643,44 @@ export function testRecordsReadHandler(): void {
           it('preserves role authorization when the stored context preference is reordered', async () => {
             const owner = await TestDataGenerator.generateDidKeyPersona();
             const member = await TestDataGenerator.generateDidKeyPersona();
-            const definition: ProtocolDefinition = {
-              protocol  : 'https://example.com/context-role-preference',
+            const definition = {
+              protocol  : 'https://example.com/protocols/notebook',
               published : false,
-              types     : { context: {}, admin: {}, viewer: {} },
+              types     : { notebook: {}, page: {}, editor: {}, viewer: {} },
               structure : {
-                context: {
-                  $actions: [
-                    { role: 'context/admin', can: ['read'] },
-                    { role: 'context/viewer', can: ['read'] },
-                  ],
-                  admin  : { $role: true },
-                  viewer : { $role: true },
+                notebook: {
+                  page: {
+                    $actions: [
+                      { role: 'notebook/page/editor', can: ['read', 'co-update'] },
+                      { role: 'notebook/page/viewer', can: ['read'] },
+                    ],
+                    editor : { $role: true },
+                    viewer : { $role: true },
+                  },
                 },
               },
-            };
+            } satisfies ProtocolDefinition;
             const configure = await ProtocolsConfigure.create({ definition, signer: Jws.createSigner(owner) });
             expect((await dwn.processMessage(owner.did, configure.message)).status.code).toBe(202);
 
-            const context = await TestDataGenerator.generateRecordsWrite({
+            const notebook = await TestDataGenerator.generateRecordsWrite({
               author       : owner,
               protocol     : definition.protocol,
-              protocolPath : 'context',
+              protocolPath : 'notebook',
             });
-            expect((await dwn.processMessage(owner.did, context.message, { dataStream: context.dataStream })).status.code).toBe(202);
+            expect((await dwn.processMessage(owner.did, notebook.message, { dataStream: notebook.dataStream })).status.code).toBe(202);
+            const page = await TestDataGenerator.generateRecordsWrite({
+              author          : owner,
+              parentContextId : notebook.message.contextId,
+              protocol        : definition.protocol,
+              protocolPath    : 'notebook/page',
+            });
+            expect((await dwn.processMessage(owner.did, page.message, { dataStream: page.dataStream })).status.code).toBe(202);
             const viewer = await TestDataGenerator.generateRecordsWrite({
               author          : owner,
-              parentContextId : context.message.contextId,
+              parentContextId : page.message.contextId,
               protocol        : definition.protocol,
-              protocolPath    : 'context/viewer',
+              protocolPath    : 'notebook/page/viewer',
               recipient       : member.did,
             });
             expect((await dwn.processMessage(owner.did, viewer.message, { dataStream: viewer.dataStream })).status.code).toBe(202);
@@ -1685,11 +1694,11 @@ export function testRecordsReadHandler(): void {
               expect(stored.status.code).toBe(200);
               expect(stored.entries).toHaveLength(1);
               const installed = (stored.entries![0] as ProtocolsConfigureMessage).descriptor.definition;
-              expect(resolveProtocolContextRoles(installed, 'context')).toEqual(expectedRoles);
+              expect(resolveProtocolContextRoles(installed, 'notebook/page')).toEqual(expectedRoles);
 
-              for (const [protocolRole, status] of [['context/viewer', 200], ['context/admin', 401]] as const) {
+              for (const [protocolRole, status] of [['notebook/page/viewer', 200], ['notebook/page/editor', 401]] as const) {
                 const read = await RecordsRead.create({
-                  filter : { recordId: context.message.recordId },
+                  filter : { recordId: page.message.recordId },
                   protocolRole,
                   signer : Jws.createSigner(member),
                 });
@@ -1699,12 +1708,12 @@ export function testRecordsReadHandler(): void {
               }
             };
 
-            await assertStoredPreferenceAndAccess(['context/admin', 'context/viewer']);
+            await assertStoredPreferenceAndAccess(['notebook/page/editor', 'notebook/page/viewer']);
             const reordered = structuredClone(definition);
-            reordered.structure.context.$actions!.reverse();
+            reordered.structure.notebook.page.$actions.reverse();
             const update = await ProtocolsConfigure.create({ definition: reordered, signer: Jws.createSigner(owner) });
             expect((await dwn.processMessage(owner.did, update.message)).status.code).toBe(202);
-            await assertStoredPreferenceAndAccess(['context/viewer', 'context/admin']);
+            await assertStoredPreferenceAndAccess(['notebook/page/viewer', 'notebook/page/editor']);
           });
 
           it('uses a root-level role to authorize a read', async () => {
