@@ -311,7 +311,7 @@ describe('TypedProtocol API', () => {
     });
 
     it('validates following and forgotten intents without trusting invalid owner coordinates', () => {
-      const intent = { ownerDid: 'did:example:owner', contextId: 'workspace-a', group: 'default', following: true };
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', group: 'default', following: true };
       const forgotten = { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false };
       expect(isContextFollowIntent(intent)).toBe(true);
       expect(isContextFollowIntent(forgotten)).toBe(true);
@@ -329,7 +329,7 @@ describe('TypedProtocol API', () => {
     it('encrypts following intents and keeps them private and immutable in the recipient tenant', async () => {
       const protocol = defineRoleGroups({ default: ['workspace/member'] });
       const typed = new TypedEnbox(dwnAlice, protocol);
-      const intent = { ownerDid: 'did:example:owner', contextId: 'workspace-a', group: 'default', following: true };
+      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', group: 'default', following: true };
       const record = await typed.records.create(CONTEXT_FOLLOW_PATH, { data: intent });
 
       expect(record.encryption).toBeDefined();

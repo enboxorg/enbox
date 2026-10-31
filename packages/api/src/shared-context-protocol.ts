@@ -3,6 +3,7 @@ import type { RecordCodecMap } from './record-codec.js';
 
 import { Did } from '@enbox/dids';
 import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
+import { isValidRecordContextId } from './record-query.js';
 import { recordCodecs } from './record-codec.js';
 
 /** Reserved record type used by the shared-context invitation inbox. */
@@ -96,8 +97,7 @@ export function isContextFollowIntent(value: unknown): value is ContextFollowInt
   return isObject(value)
     && typeof value.ownerDid === 'string'
     && Did.parse(value.ownerDid)?.uri === value.ownerDid
-    && typeof value.contextId === 'string'
-    && value.contextId.length > 0
+    && isValidRecordContextId(value.contextId)
     && (value.following === false || (value.following === true
       && typeof value.group === 'string' && value.group.length > 0));
 }

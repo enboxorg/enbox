@@ -141,6 +141,9 @@ function fixture(initial: ContextFollowRecord[] = []): {
 
 describe('ContextFollowing', () => {
   const request = { group: 'default', id: 'page-1', ownerDid };
+  const recipientRecovery: SyncEvent = {
+    type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', protocol,
+  };
 
   it('persists verified intent once and restores it on a fresh device', async () => {
     const first = fixture();
@@ -473,7 +476,7 @@ describe('ContextFollowing', () => {
     test.openView.returns(pending.promise);
     const error = sinon.spy();
     const opening = test.coordinator.observe(error);
-    test.coordinator.retry();
+    test.coordinator.retryAfterSync(recipientRecovery);
     await settled((): boolean => test.openView.calledOnce);
     expect(error.called).toBe(false);
     expect(test.follow.called).toBe(false);
@@ -500,7 +503,7 @@ describe('ContextFollowing', () => {
     const lease = await test.coordinator.observe(error);
     try {
       await settled((): boolean => ready.calledOnce);
-      test.coordinator.retry();
+      test.coordinator.retryAfterSync(recipientRecovery);
       pending.resolve();
       await settled((): boolean => test.sources.size === 1);
       expect(test.follow.calledOnce).toBe(true);
@@ -536,12 +539,12 @@ describe('ContextFollowing', () => {
     test.follow.onFirstCall().rejects(new Error('owner unavailable'));
     const lease = await test.coordinator.observe((): void => {});
     await settled((): boolean => test.follow.callCount === 1);
-    test.coordinator.retry();
+    test.coordinator.retryAfterSync(recipientRecovery);
     await settled((): boolean => test.sources.size === 1);
     expect(test.follow.callCount).toBe(2);
     expect(test.append.callCount).toBe(0);
     await lease.close();
-    test.coordinator.retry();
+    test.coordinator.retryAfterSync(recipientRecovery);
     expect(test.openView.callCount).toBe(1);
   });
 
@@ -561,7 +564,7 @@ describe('ContextFollowing', () => {
     try {
       await settled((): boolean => test.follow.calledOnce);
       for (let wake = 0; wake < 3; wake++) {
-        test.coordinator.retry();
+        test.coordinator.retryAfterSync(recipientRecovery);
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       const forgetting = test.coordinator.forget(source);

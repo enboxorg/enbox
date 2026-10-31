@@ -801,45 +801,32 @@ Change delivery is at least once, so consumers should tolerate duplicates.
 
 ## Contexts
 
-Typed contexts provide the same confined records API to owners and members,
-plus declarative membership, invitations, live catalogs, exact-context
-replication, and explicit `refresh()`, `forget()`, and `leave()` lifecycle
-operations. Tenant routing, role records, grants, delivery keys, and feed
-cursors remain internal.
+Typed contexts expose confined records, membership, invitations, and member lifecycle
+operations such as `refresh()`, `forget()`, and `leave()`. The SDK manages tenant
+routing, grants, delivery keys, replication, and feed cursors.
 
-Following or accepting an invitation saves an encrypted, recipient-owned reference
-inside the application's protocol. `contexts.observe()` restores synchronized
-references in the background; `contexts.list()` attempts restoration of locally
-known references once. Each device verifies the owner's current membership and
-keys before exposing a member context. Temporary unavailability keeps the saved
-choice for a later attempt.
+Following or accepting an invitation saves an encrypted choice in the application's
+protocol. Each device independently verifies current membership and keys; saved
+choices are not membership proof. Owner unavailability preserves the choice, and
+apps need no separate bookmark protocol or reconciliation controller.
 
-Use `contexts.forget({ ownerDid, id })` to clear a saved choice even when the owner
-is unreachable or access has been revoked. It does not withdraw the owner's role.
-A member handle's `forget()` is fenced to its exact acceptance, so a stale handle
-cannot change a newer choice. Forget decisions contain only the coordinates and
-`following: false`; a role group is needed only for a follow decision.
+`contexts.observe()` restores choices in the background. `contexts.list()` waits
+for one restoration attempt and may incur owner network timeouts. Recipient sync
+and owner recovery retry without another timer; unexpected restoration failures
+are logged while known contexts remain available.
 
-`leave()` withdraws the role before saving the forget. These two writes are not
-atomic: if saving fails after withdrawal, the call rejects and coordinate-based
-`contexts.forget()` can finish the saved choice. A retired `leave()` rejects with
-`ContextRetiredError`. These actions require writing the recipient's own protocol;
-read-only grants are not widened.
+`contexts.forget({ ownerDid, id })` works without a live acceptance and leaves the
+owner's role intact. A member handle's `forget()` first checks that its acceptance
+is still current, so an already-retired handle cannot override a later follow.
 
-`contexts.list()` can wait for owner lookups and network timeouts during its one
-restoration attempt. Use `contexts.observe()` for a live UI that keeps known
-contexts available while restoration runs in the background. Relevant recipient
-sync and owner-context recovery events retry saved choices without another timer.
-Unexpected restoration failures are logged without closing the whole catalog.
+`leave()` withdraws the role and then saves the forget. If saving fails, the call
+rejects and coordinate-based `contexts.forget()` can finish it. These writes are
+not atomic; a retired `leave()` rejects with `ContextRetiredError`.
 
-Applications with protocol-write grants act for the same identity and can change
-its shared follow choices. Remote membership and keys are still verified
-independently. The immutable journal currently retains its history and reads it in
-pages; automatic compaction is not included. A future retention policy must keep
-effective forget decisions so older offline follows cannot return.
-
-Saved references are user intent, never portable membership proof. Applications
-do not need a separate bookmark protocol or reconciliation controller.
+Changing a saved choice requires own-protocol write access; read-only grants are
+not widened. All apps with that access can change the identity's shared choices.
+The immutable journal retains and reads its history in pages without automatic
+compaction. Future compaction must retain effective forgets so older offline follows cannot return.
 
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
 to `protocolContextKey(context.ownerDid, context.id)`.

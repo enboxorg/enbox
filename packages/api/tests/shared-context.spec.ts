@@ -2283,15 +2283,9 @@ describe('TypedEnbox contexts', () => {
     const append = typed['appendContextFollow'].bind(typed);
     const pendingWrite = sinon.stub(typed as never, 'appendContextFollow').callsFake(async (...args: Parameters<typeof append>): ReturnType<typeof append> => {
       const written = await append(...args);
-      const previous = intentRecords[0];
-      const timestamp = new Date(Date.now() + 60_000).toISOString().replace('Z', '000Z');
-      const recordId = 'newer-follow';
-      intentRecords.push({
-        ...previous,
-        recordId,
-        contextId  : recordId,
-        descriptor : { ...previous.descriptor, dateCreated: timestamp, messageTimestamp: timestamp },
-      });
+      intentRecords.push(newerIntentEntry(intentRecords.at(-1)!, 'newer-follow', {
+        ownerDid: sourceDid, contextId, following: true, group: 'default',
+      }));
       return written;
     });
     try {

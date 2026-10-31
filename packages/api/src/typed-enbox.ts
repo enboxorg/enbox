@@ -2623,9 +2623,6 @@ export class TypedEnbox<
       }
       throw error;
     }
-    if (!isValidRecordContextId(value.contextId)) {
-      return undefined;
-    }
     // App-specific group declarations must not erase a newer saved choice.
     return { id: record.id, timestamp: record.timestamp, value };
   }

@@ -36,7 +36,7 @@ export type ContextFollowingOptions = {
 };
 
 type Observation = {
-  /** Last attempted record ID per context, including failures; retry() clears these. */
+  /** Last attempted record ID per context, including failures; relevant recovery events clear these. */
   attemptedRecordIds: Map<string, string>;
   controller: AbortController;
   draining: boolean;
@@ -69,10 +69,10 @@ export class ContextFollowing {
       const initialDecision = (await this.readLatestIntents()).get(key);
       const acceptedBeforeFollow = await this._options.sync.listFollowedSources();
       const source = await this.verifyAndAcceptContext(request);
-      const outcome = await this.saveFollowUnlessNewerForget(request, initialDecision)
+      const wroteDecision = await this.saveFollowUnlessNewerForget(request, initialDecision)
         .catch((error: unknown): Promise<never> => this.rollbackFailedFollow(source, acceptedBeforeFollow, error));
 
-      if (outcome === 'saved') {
+      if (wroteDecision) {
         // Include decisions received during the write; read failures here must not undo saved access.
         await this.readLatestIntents();
       }
@@ -147,26 +147,17 @@ export class ContextFollowing {
         return;
     }
     if (!syncEventCoversProtocol(event, this._options.protocol)) { return; }
-    if (event.tenantDid === this._options.actorDid) {
-      this.retry();
-    } else {
-      this.retry(event.tenantDid, event.contextId);
-    }
-  }
-
-  /** Retry retained choices, optionally within one owner's context subtree. */
-  public retry(ownerDid?: string, contextId?: string): void {
     const observation = this._observation;
     if (observation === undefined || !this.isObserving(observation)) { return; }
-    if (ownerDid === undefined) {
+    if (event.tenantDid === this._options.actorDid) {
       observation.attemptedRecordIds.clear();
       this.requestReconciliation(observation);
       return;
     }
     let matched = false;
     for (const [key, record] of this._latestIntentRecords) {
-      if (record.value.ownerDid === ownerDid
-        && (contextId === undefined || FilterUtility.matchesSubtree(contextId, record.value.contextId))) {
+      if (record.value.ownerDid === event.tenantDid
+        && (event.contextId === undefined || FilterUtility.matchesSubtree(event.contextId, record.value.contextId))) {
         observation.attemptedRecordIds.delete(key);
         matched = true;
       }
@@ -230,19 +221,19 @@ export class ContextFollowing {
     });
   }
 
-  /** Reuse an equivalent choice, honor a forget received during verification, or save the new follow. */
+  /** Skip an equivalent choice or newer forget; return whether this call appended a follow decision. */
   private async saveFollowUnlessNewerForget(
     request: FollowRequest,
     initialDecision: ContextFollowRecord | undefined,
-  ): Promise<'already-following' | 'saved' | 'forgotten'> {
+  ): Promise<boolean> {
     const key = protocolContextKey(request.ownerDid, request.id);
     const latest = (await this.readLatestIntents()).get(key);
     if (latest?.value.following === true && latest.value.group === request.group) {
-      return 'already-following';
+      return false;
     }
     // An older forget can be reversed by this follow; a forget received since it began wins.
     if (!sameRecord(initialDecision, latest) && latest?.value.following === false) {
-      return 'forgotten';
+      return false;
     }
     const written = await this._options.append({
       contextId : request.id,
@@ -251,7 +242,7 @@ export class ContextFollowing {
       ownerDid  : request.ownerDid,
     }, latest?.timestamp);
     this.rememberLatestIntents([written]);
-    return 'saved';
+    return true;
   }
 
   /** Undo only a new, unsaved acceptance, then rethrow the failure that prevented saving. */
@@ -498,7 +489,9 @@ export class ContextFollowing {
   private report(observation: Observation, error: unknown): void {
     if (this.isObserving(observation)) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      for (const listener of [...observation.listeners]) {
+      // Subscription changes during delivery apply to the next failure notification.
+      const listeners = [...observation.listeners];
+      for (const listener of listeners) {
         try {
           listener(failure);
         } catch {
