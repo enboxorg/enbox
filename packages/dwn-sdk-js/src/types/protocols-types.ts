@@ -231,6 +231,12 @@ export type ProtocolRuleSet = {
    * Key agreement setting for records at this protocol path.
    */
   $keyAgreement?: ProtocolKeyAgreement;
+  /**
+   * Authorization rules for this path. Direct-child role rules granting `read`
+   * also declare context-following preference in array order, as returned by
+   * `resolveProtocolContextRoles`. This does not change authorization evaluation
+   * or imply role inheritance; object property order has no meaning.
+   */
   $actions?: ProtocolActionRule[];
 
   /**
