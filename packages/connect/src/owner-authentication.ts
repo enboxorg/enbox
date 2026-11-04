@@ -12,6 +12,7 @@ export const CONNECT_AUTHENTICATION_MAX_REQUEST_BYTES = 262_144;
 const MAX_PROOF_BYTES = 16_384;
 const CLOCK_SKEW_SECONDS = 30;
 const PURPOSE = 'enbox-connect-authentication';
+type SigningAlgorithm = 'EdDSA' | 'ES256K' | 'ES256';
 
 export type ConnectAuthenticationFailure =
   | 'invalid-request' | 'invalid-proof' | 'unsupported-key' | 'invalid-signature'
@@ -176,15 +177,7 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   const algorithm = signingAlgorithm(method.publicKeyJwk);
   if (algorithm !== header.alg) { throw new ConnectAuthenticationError('unsupported-key'); }
   const key = method.publicKeyJwk as Jwk;
-  let valid: boolean;
-  try {
-    const signature = Convert.base64Url(encodedSignature).toUint8Array();
-    if (signature.byteLength !== 64) { throw new ConnectAuthenticationError('invalid-signature'); }
-    const params = { key, signature, data: new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`) };
-    valid = algorithm === 'EdDSA' ? await Ed25519.verify(params)
-      : algorithm === 'ES256K' ? await Secp256k1.verify(params) : await Secp256r1.verify(params);
-  } catch { throw new ConnectAuthenticationError('invalid-signature'); }
-  if (!valid) { throw new ConnectAuthenticationError('invalid-signature'); }
+  await verifyProofSignature(key, algorithm, encodedHeader, encodedPayload, encodedSignature);
   const verified = Object.freeze({
     proof, subject   : providerDid, audience  : authentication.audience, challenge : authentication.challenge,
     requestDigest, issuedAt  : payload.iat, expiresAt : payload.exp, methodId  : method.id,
@@ -198,10 +191,37 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   return verified;
 }
 
+async function verifyProofSignature(
+  key: Jwk,
+  algorithm: SigningAlgorithm,
+  encodedHeader: string,
+  encodedPayload: string,
+  encodedSignature: string,
+): Promise<void> {
+  let valid: boolean;
+  try {
+    const signature = Convert.base64Url(encodedSignature).toUint8Array();
+    if (signature.byteLength !== 64) { throw new ConnectAuthenticationError('invalid-signature'); }
+    const params = { key, signature, data: new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`) };
+    switch (algorithm) {
+      case 'EdDSA':
+        valid = await Ed25519.verify(params);
+        break;
+      case 'ES256K':
+        valid = await Secp256k1.verify(params);
+        break;
+      case 'ES256':
+        valid = await Secp256r1.verify(params);
+        break;
+    }
+  } catch { throw new ConnectAuthenticationError('invalid-signature'); }
+  if (!valid) { throw new ConnectAuthenticationError('invalid-signature'); }
+}
+
 function assertAuthenticationRequest(request: ConnectRequest): void {
   assertConnectAuthenticationParams(request.authentication);
   const client = Did.parse(request.clientDid);
-  if (!client || client.uri !== request.clientDid || client.method !== 'jwk' || client.path || client.query || client.fragment ||
+  if (client?.uri !== request.clientDid || client?.method !== 'jwk' || client.path || client.query || client.fragment ||
       typeof request.appName !== 'string' || request.appName.length === 0 || request.appName.length > 256 ||
       !/^[A-Za-z0-9_-]{22,128}$/u.test(request.nonce) || !/^[A-Za-z0-9_-]{22,128}$/u.test(request.state) ||
       !Array.isArray(request.permissionRequests) || request.permissionRequests.length > 32 ||
@@ -230,7 +250,7 @@ function assertAuthenticationRequest(request: ConnectRequest): void {
 
 function assertProvider(request: ConnectRequest, providerDid: string): void {
   const parsed = Did.parse(providerDid);
-  if (!parsed || parsed.uri !== providerDid || providerDid.length > 2_048 || parsed.path || parsed.query || parsed.fragment ||
+  if (parsed?.uri !== providerDid || parsed?.method === undefined || providerDid.length > 2_048 || parsed.path || parsed.query || parsed.fragment ||
       providerDid === request.clientDid || providerDid === request.delegateDid ||
       !request.supportedDidMethods.includes(`did:${parsed.method}`) ||
       (request.expectedProviderDid !== undefined && request.expectedProviderDid !== providerDid)) {
@@ -264,11 +284,16 @@ function absoluteMethodId(value: string, subject: string): string {
   return value.startsWith('#') ? `${subject}${value}` : value;
 }
 
-function signingAlgorithm(key: Jwk | undefined): 'EdDSA' | 'ES256K' | 'ES256' {
+function signingAlgorithm(key: Jwk | undefined): SigningAlgorithm {
   if (!isPublicJwk(key)) { throw new ConnectAuthenticationError('unsupported-key'); }
-  const algorithm = key.kty === 'OKP' && key.crv === 'Ed25519' ? 'EdDSA'
-    : key.kty === 'EC' && key.crv === 'secp256k1' ? 'ES256K'
-      : key.kty === 'EC' && key.crv === 'P-256' ? 'ES256' : undefined;
+  let algorithm: SigningAlgorithm | undefined;
+  if (key.kty === 'OKP' && key.crv === 'Ed25519') {
+    algorithm = 'EdDSA';
+  } else if (key.kty === 'EC' && key.crv === 'secp256k1') {
+    algorithm = 'ES256K';
+  } else if (key.kty === 'EC' && key.crv === 'P-256') {
+    algorithm = 'ES256';
+  }
   if (algorithm === undefined || (key.alg !== undefined && key.alg !== algorithm)) {
     throw new ConnectAuthenticationError('unsupported-key');
   }
@@ -296,10 +321,18 @@ function canonical(value: unknown, depth = 0): string {
   if (Array.isArray(value)) { return `[${value.map(item => canonical(item, depth + 1)).join(',')}]`; }
   if (object(value)) {
     const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).filter(key => record[key] !== undefined).sort()
-      .map(key => `${JSON.stringify(key)}:${canonical(record[key], depth + 1)}`).join(',')}}`;
+    const entries = Object.keys(record).filter(key => record[key] !== undefined).sort(compareCodeUnits)
+      .map(key => `${JSON.stringify(key)}:${canonical(record[key], depth + 1)}`);
+    return `{${entries.join(',')}}`;
   }
   throw new ConnectAuthenticationError('invalid-request');
+}
+
+/** Preserve the v1 wire format's UTF-16 code-unit order, independently of locale. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) { return -1; }
+  if (left > right) { return 1; }
+  return 0;
 }
 
 function encode(value: unknown): string {

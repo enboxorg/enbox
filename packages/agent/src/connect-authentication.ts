@@ -51,7 +51,7 @@ export async function prepareConnectAuthenticationProof(
   }
 
   const identity = await agent.identity.get({ didUri: providerDid });
-  if (identity === undefined || identity.did.uri !== providerDid || identity.metadata.connectedDid !== undefined) {
+  if (identity?.did.uri !== providerDid || identity.metadata.connectedDid !== undefined) {
     throw new Error('Connect authentication: the selected DID is not a locally owned identity.');
   }
   return prepareOwnerAuthenticationProof({ request, owner: identity.did });

@@ -55,6 +55,30 @@ async function resign(proof: string, owner: BearerDid, change: {
 }
 
 describe('owner authentication proofs', () => {
+  it('should preserve the v1 UTF-16 canonical digest for mixed-case and Unicode keys in any insertion order', async () => {
+    const publicKey = { kty: 'OKP', crv: 'Ed25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' };
+    // Supplementary U+10000 sorts before U+E000 by UTF-16 code units. Locale
+    // collation, code-point sorting and Unicode normalization must not change
+    // this existing wire digest, including distinct composed/decomposed keys.
+    const entries = [
+      ['\uE000', 'private-use'], ['\u{10000}', 'supplementary'], ['é', 'composed'],
+      ['e\u0301', 'decomposed'], ['a', 'lower'], ['Z', 'upper-late'], ['A', 'upper-early'],
+    ];
+    const request: ConnectRequest = {
+      clientDid           : 'did:jwk:' + Convert.object(publicKey).toBase64Url(),
+      appName             : 'Canonical fixture', permissionRequests  : [], requestType         : 'authenticate',
+      authentication      : { version: 1, audience: 'https://identity.example', challenge: 'ABCDEFGHIJKLMNOPQRSTUV' },
+      nonce               : 'abcdefghijklmnopqrstuv', state               : 'zyxwvutsrqponmlkjihgfea', supportedDidMethods : ['did:jwk'],
+      responseKey         : { kty: 'OKP', crv: 'X25519', x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+      reply               : { mode: 'post_message' }, clientMetadata      : Object.fromEntries(entries),
+    };
+    // Captured from the original v1 canonical encoding before the comparator refactor.
+    const expected = '1wk99C4CLgQLCBI5q_0_t_XB7Jr04RE7_sac9CGephE';
+    expect(await connectAuthenticationRequestDigest(request)).toBe(expected);
+    const reordered = Object.fromEntries(Object.entries({ ...request, clientMetadata: Object.fromEntries([...entries].reverse()) }).reverse());
+    expect(await connectAuthenticationRequestDigest(reordered as ConnectRequest)).toBe(expected);
+  });
+
   it('should snapshot preflight context but start the proof lifetime only after slow approval setup', async () => {
     const { owner, request, resolver } = await fixture();
     const original = structuredClone(request);

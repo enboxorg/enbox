@@ -237,7 +237,7 @@ async function initAuthentication(options: WalletAuthenticationClientOptions): P
     authenticationResolver  : options.authenticationResolver,
     onAuthenticationRequest : options.onAuthenticationRequest,
   });
-  return client.authenticate({
+  return await client.authenticate({
     appName             : options.displayName,
     appIcon             : options.appIcon,
     applicationId       : options.applicationId,

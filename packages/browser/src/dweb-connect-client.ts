@@ -154,8 +154,8 @@ export class PopupClientTransport implements ConnectTransport {
   private _messageListener?: (event: MessageEvent) => void;
 
   private readonly _walletEpkPromise: Promise<Jwk>;
-  private _resolveWalletEpk?: (walletEpk: Jwk) => void;
-  private _rejectWalletEpk?: (error: Error) => void;
+  private readonly _resolveWalletEpk?: (walletEpk: Jwk) => void;
+  private readonly _rejectWalletEpk?: (error: Error) => void;
 
   private readonly _responsePromise: Promise<string>;
   private readonly _resolveResponse: (payload: string) => void;

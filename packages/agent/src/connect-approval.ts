@@ -727,6 +727,25 @@ function reportConnectApprovalProgress(
 // Approval ceremony
 // ---------------------------------------------------------------------------
 
+/** Validate and snapshot optional owner authentication before delegation begins. */
+async function prepareConnectApprovalAuthentication(
+  params: ExecuteConnectApprovalParams,
+): Promise<PreparedOwnerAuthenticationProof | undefined> {
+  const { agent, providerDid, request, verifiedRequesterOrigin } = params;
+  assertExpectedProviderDid(request, providerDid);
+  if (request.requestType === 'authenticate') {
+    throw new Error('Connect: use executeConnectAuthentication for an authentication-only request.');
+  }
+  if (verifiedRequesterOrigin !== undefined) {
+    assertVerifiedConnectRequesterOrigin(verifiedRequesterOrigin);
+  }
+  if (request.authentication === undefined) { return undefined; }
+  if (verifiedRequesterOrigin === undefined) {
+    throw new Error('Connect authentication: a verified requester origin is required.');
+  }
+  return await prepareConnectAuthenticationProof({ agent, providerDid, request, verifiedRequesterOrigin });
+}
+
 /**
  * Executes the wallet-side connect approval ceremony:
  *
@@ -749,27 +768,9 @@ function reportConnectApprovalProgress(
  */
 export async function executeConnectApproval(params: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   const { agent, providerDid, request } = params;
-  assertExpectedProviderDid(request, providerDid);
-  if (request.requestType === 'authenticate') {
-    throw new Error('Connect: use executeConnectAuthentication for an authentication-only request.');
-  }
-  if (params.verifiedRequesterOrigin !== undefined) {
-    assertVerifiedConnectRequesterOrigin(params.verifiedRequesterOrigin);
-  }
   // Validate and snapshot before any delegate creation or DWN mutation. Sign
   // only at completion so protocol setup cannot consume the proof's lifetime.
-  let authentication: PreparedOwnerAuthenticationProof | undefined;
-  if (request.authentication !== undefined) {
-    if (params.verifiedRequesterOrigin === undefined) {
-      throw new Error('Connect authentication: a verified requester origin is required.');
-    }
-    authentication = await prepareConnectAuthenticationProof({
-      agent,
-      providerDid,
-      request,
-      verifiedRequesterOrigin: params.verifiedRequesterOrigin,
-    });
-  }
+  const authentication = await prepareConnectApprovalAuthentication(params);
   const approvedProtocolOverrides = new Set(params.approvedProtocolOverrides);
 
   const approvalStart = nowMs();
