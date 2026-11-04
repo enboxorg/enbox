@@ -11,9 +11,13 @@
  * @module
  */
 
+import type { ConnectAuthenticationResolver } from './owner-authentication.js';
 import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '@enbox/dids';
 import type {
+  ConnectAuthenticationParams,
+  ConnectAuthenticationResponse,
+  ConnectAuthenticationResult,
   ConnectClientMetadata,
   ConnectPermissionRequest,
   ConnectRequest,
@@ -21,6 +25,7 @@ import type {
   ConnectResponse,
   ConnectResult,
   ConnectTransport,
+  VerifiedConnectAuthentication,
   WalletUriHandoff,
 } from './types.js';
 
@@ -29,7 +34,8 @@ import { DidJwk } from '@enbox/dids';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 
 import { CONNECT_DENIED_TOKEN } from './types.js';
-import { openResponse, sealRequest } from './envelope.js';
+import { assertConnectRequest, openAuthenticationResponse, openResponse, sealRequest } from './envelope.js';
+import { ConnectAuthenticationError, connectAuthenticationRequestDigest, verifyOwnerAuthenticationProof } from './owner-authentication.js';
 
 /** DID methods a connect client accepts for the connected identity by default. */
 const DEFAULT_SUPPORTED_DID_METHODS = ['did:dht', 'did:jwk'];
@@ -61,6 +67,14 @@ export type ConnectClientOptions = {
    * (`transport.requiresPin`). Required for such transports.
    */
   requestPin?: () => Promise<string>;
+  /** Service-controlled DID resolver for owner proofs; omitted uses uncached did:dht/did:jwk resolution. */
+  authenticationResolver?: ConnectAuthenticationResolver;
+  /**
+   * Register this public request with the service's durable transaction before
+   * delivery. The callback receives a separate clone, never private keys.
+   * Rejecting aborts delivery; verified proof facts do not replace this binding.
+   */
+  onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void;
 };
 
 /** Parameters for a single {@link ConnectClient.connect} handshake. */
@@ -76,6 +90,8 @@ export type ConnectClientConnectParams = {
 
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
+  /** Require and verify an owner proof alongside the requested delegation. */
+  authentication?: ConnectAuthenticationParams;
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
@@ -110,6 +126,12 @@ export type ConnectClientConnectParams = {
   supportedDidMethods?: string[];
 };
 
+/** Authentication-only callers cannot request a data delegate, grant, or grant lifetime. */
+export type ConnectClientAuthenticateParams = Omit<ConnectClientConnectParams,
+  'permissionRequests' | 'delegatePortableDid' | 'requestedSessionTtlSeconds' | 'requestType' | 'authentication'> & {
+  authentication: ConnectAuthenticationParams;
+};
+
 /**
  * Drives the app side of the connect handshake over a channel transport.
  *
@@ -131,11 +153,15 @@ export class ConnectClient {
   private readonly _transport: ConnectTransport;
   private readonly _onWalletUriReady?: (handoff: WalletUriHandoff) => Promise<void> | void;
   private readonly _requestPin?: () => Promise<string>;
+  private readonly _authenticationResolver?: ConnectAuthenticationResolver;
+  private readonly _onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void;
 
   constructor(options: ConnectClientOptions) {
     this._transport = options.transport;
     this._onWalletUriReady = options.onWalletUriReady;
     this._requestPin = options.requestPin;
+    this._authenticationResolver = options.authenticationResolver;
+    this._onAuthenticationRequest = options.onAuthenticationRequest;
   }
 
   /**
@@ -148,6 +174,42 @@ export class ConnectClient {
    *          the request in the wallet.
    */
   public async connect(params: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
+    if (params.requestType === 'authenticate') {
+      throw new Error('Connect: use authenticate() for an authentication-only request.');
+    }
+    const exchanged = await this._exchange(params, false);
+    if (exchanged === undefined) { return undefined; }
+    const { response, authentication } = exchanged;
+    if ('responseType' in response) { throw new ConnectAuthenticationError('invalid-proof'); }
+    const delegatePortableDid = resolveDelegatePortableDid({ localDelegatePortableDid: params.delegatePortableDid, response });
+    void this._transport.confirmComplete?.().catch((): undefined => undefined);
+    return {
+      delegatePortableDid,
+      delegateGrants     : response.delegateGrants,
+      connectedDid       : response.providerDid,
+      sessionRevocations : response.sessionRevocations,
+      ...(authentication === undefined ? {} : { authentication }),
+    };
+  }
+
+  /** Authenticate an owner without receiving or creating data-delegate credentials. */
+  public async authenticate(params: ConnectClientAuthenticateParams): Promise<ConnectAuthenticationResult | undefined> {
+    if (['permissionRequests', 'delegatePortableDid', 'requestedSessionTtlSeconds', 'requestType'].some(key => Object.hasOwn(params, key))) {
+      throw new ConnectAuthenticationError('invalid-request');
+    }
+    const exchanged = await this._exchange({ ...params, requestType: 'authenticate', permissionRequests: [] }, true);
+    if (exchanged === undefined) { return undefined; }
+    if (!('responseType' in exchanged.response) || exchanged.authentication === undefined) {
+      throw new ConnectAuthenticationError('invalid-proof');
+    }
+    void this._transport.confirmComplete?.().catch((): undefined => undefined);
+    return { connectedDid: exchanged.response.providerDid, authentication: exchanged.authentication };
+  }
+
+  private async _exchange(params: ConnectClientConnectParams, authenticationOnly: boolean): Promise<{
+    response: ConnectResponse | ConnectAuthenticationResponse;
+    authentication?: VerifiedConnectAuthentication;
+  } | undefined> {
     if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {
       throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
     }
@@ -168,12 +230,13 @@ export class ConnectClient {
 
     const profile = await this._transport.requestProfile(state);
 
-    const request: ConnectRequest = {
+    const request: ConnectRequest = structuredClone({
       clientDid                  : clientDid.uri,
       appName                    : params.appName,
       appIcon                    : params.appIcon,
       applicationId              : params.applicationId,
       clientMetadata             : params.clientMetadata,
+      authentication             : params.authentication,
       permissionRequests         : params.permissionRequests,
       requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
       delegateDid                : params.delegatePortableDid?.uri,
@@ -184,7 +247,13 @@ export class ConnectClient {
       state,
       responseKey                : responsePublicKey,
       reply                      : profile.reply,
-    };
+    });
+
+    assertConnectRequest(request);
+    if (request.authentication !== undefined) {
+      await connectAuthenticationRequestDigest(request);
+      await this._onAuthenticationRequest?.(structuredClone(request));
+    }
 
     const requestJwe = await sealRequest({ request, signer: clientDid, encryption: profile.encryption });
 
@@ -209,7 +278,7 @@ export class ConnectClient {
       pin = await this._requestPin();
     }
 
-    const response = await openResponse({
+    const response = await (authenticationOnly ? openAuthenticationResponse : openResponse)({
       jwe                 : responseCiphertext,
       recipientPrivateKey : responsePrivateKey,
       expected            : {
@@ -221,22 +290,15 @@ export class ConnectClient {
       pin,
     });
 
-    const delegatePortableDid = resolveDelegatePortableDid({
-      localDelegatePortableDid: params.delegatePortableDid,
-      response,
+    if (request.authentication === undefined) {
+      if (response.authenticationProof !== undefined) { throw new ConnectAuthenticationError('context-mismatch'); }
+      return { response };
+    }
+    if (response.authenticationProof === undefined) { throw new ConnectAuthenticationError('invalid-proof'); }
+    const authentication = await verifyOwnerAuthenticationProof({
+      proof: response.authenticationProof, request, providerDid: response.providerDid, resolver: this._authenticationResolver,
     });
-
-    // Best-effort completion signal so the wallet side can flip its pairing
-    // screen to a confirmed "connected" state. Fire-and-forget: it must
-    // never delay or fail the handshake result.
-    void this._transport.confirmComplete?.().catch((): undefined => undefined);
-
-    return {
-      delegatePortableDid,
-      delegateGrants     : response.delegateGrants,
-      connectedDid       : response.providerDid,
-      sessionRevocations : response.sessionRevocations,
-    };
+    return { response, authentication };
   }
 }
 

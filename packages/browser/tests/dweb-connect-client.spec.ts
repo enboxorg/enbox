@@ -1,16 +1,17 @@
-import type { ConnectApproval, ConnectPermissionRequest, ConnectResult } from '@enbox/connect';
+import type { ConnectApproval, ConnectPermissionRequest, ConnectRequest, ConnectResult } from '@enbox/connect';
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
-import { ConnectProvider } from '@enbox/connect';
 import { DidJwk } from '@enbox/dids';
 import { X25519 } from '@enbox/crypto';
+import { CONNECT_DENIED_TOKEN, ConnectProvider, createOwnerAuthenticationProof, randomToken } from '@enbox/connect';
 
-import { connectViaPopup } from '../src/dweb-connect-client.js';
 import { WalletPostMessageTransport } from '../src/dweb-connect-wallet.js';
+import { authenticateViaPopup, connectViaPopup } from '../src/dweb-connect-client.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
+  DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
 } from '../src/dweb-connect-messages.js';
 
@@ -159,6 +160,75 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
   // ── Full handshake ──────────────────────────────────────────
 
   describe('full handshake', () => {
+    it('authenticates the selected owner without returning a data delegate or asking for permissions', async () => {
+      const owner = await DidJwk.create();
+      const authentication = { version: 1 as const, audience: `${DAPP_ORIGIN}/`, challenge: randomToken() };
+      let registered: Readonly<ConnectRequest> | undefined;
+      const flow = authenticateViaPopup({
+        walletUrl               : WALLET_URL, appName                 : 'Sign-in client', authentication, expectedProviderDid     : owner.uri,
+        onAuthenticationRequest : async (request): Promise<void> => {
+          expect(dappToWallet.some(message => message.data.type === DWEB_CONNECT_REQUEST_MESSAGE_TYPE)).toBe(false);
+          registered = request;
+        },
+      });
+      flow.catch((): undefined => undefined);
+      await waitFor(() => windowOpenSpy.mock.calls.length > 0);
+      const wallet = await createWalletTransport();
+      const request = await wallet.awaitRequest();
+      expect(request.requestType).toBe('authenticate');
+      expect(request.permissionRequests).toEqual([]);
+      expect(request.delegateDid).toBeUndefined();
+      expect(JSON.parse(JSON.stringify(registered))).toEqual(request);
+      const authenticationProof = await createOwnerAuthenticationProof({ request, owner });
+      const sealed = await ConnectProvider.sealAuthenticationResponse({
+        request, providerDid: owner.uri, approval: { authenticationProof }, signer: await DidJwk.create(),
+      });
+      wallet.sendResponse(sealed);
+      const result = await flow;
+      expect(result?.connectedDid).toBe(owner.uri);
+      expect(result?.authentication.subject).toBe(owner.uri);
+      expect(result?.authentication.challenge).toBe(authentication.challenge);
+      expect(Object.keys(result!).sort()).toEqual(['authentication', 'connectedDid']);
+    });
+
+    it('closes the popup without delivering a request when service registration fails', async () => {
+      const flow = authenticateViaPopup({
+        walletUrl               : WALLET_URL,
+        authentication          : { version: 1, audience: `${DAPP_ORIGIN}/`, challenge: randomToken() },
+        onAuthenticationRequest : async (): Promise<void> => { throw new Error('Registration unavailable'); },
+      });
+      flow.catch((): undefined => undefined);
+      await createWalletTransport();
+      await expect(flow).rejects.toThrow('Registration unavailable');
+      expect(fakePopup.closed).toBe(true);
+      expect(dappToWallet.some(message => message.data.type === DWEB_CONNECT_REQUEST_MESSAGE_TYPE)).toBe(false);
+    });
+
+    it('closes an invalid authentication attempt without delivering the request', async () => {
+      const flow = authenticateViaPopup({
+        walletUrl      : WALLET_URL,
+        authentication : { version: 1, audience: 'http://insecure.example/', challenge: randomToken() },
+      });
+      flow.catch((): undefined => undefined);
+      await createWalletTransport();
+      await expect(flow).rejects.toThrow();
+      expect(fakePopup.closed).toBe(true);
+      expect(dappToWallet).toHaveLength(0);
+    });
+
+    it('returns no authentication when the wallet denies the sign-in request', async () => {
+      const flow = authenticateViaPopup({
+        walletUrl      : WALLET_URL,
+        authentication : { version: 1, audience: `${DAPP_ORIGIN}/`, challenge: randomToken() },
+      });
+      flow.catch((): undefined => undefined);
+      await waitFor(() => windowOpenSpy.mock.calls.length > 0);
+      const wallet = await createWalletTransport();
+      await wallet.awaitRequest();
+      wallet.sendResponse(CONNECT_DENIED_TOKEN);
+      expect(await flow).toBeUndefined();
+    });
+
     it('should complete an approved handshake end-to-end with real kernel crypto', async () => {
       const { flow } = await startDappFlow({ appName: 'Loopback Dapp' });
       const walletTransport = await createWalletTransport();

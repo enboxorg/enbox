@@ -30,7 +30,7 @@ export {
 } from './connect/status.js';
 export { normalizePermissionPolicy, normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export type { ProtocolPermissionOptions, WalletAuthenticationClientOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 export {
   applyLocalDwnDiscovery,

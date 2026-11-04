@@ -60,6 +60,41 @@ const response = await agent.dwn.processRequest({
 await agent.sync.sync();
 ```
 
+## Owner authentication during Connect
+
+`executeConnectAuthentication({ agent, providerDid, request, verifiedRequesterOrigin })`
+approves an identity-only `requestType: 'authenticate'` request. It signs with
+the selected locally owned DID's authentication key through the key manager,
+and returns `authenticationProof` plus an ephemeral envelope signer. It does
+not create a data delegate, install protocols, write grants, or open a session.
+Pass the result as `approval` to `ConnectProvider.sealAuthenticationResponse`.
+
+An authentication-bearing delegation request goes through
+`executeConnectApproval` and returns the proof alongside its grants. Pass the
+original full request and the separately verified requester origin; rewriting
+request metadata would change the proof's transaction binding. The ceremony
+uses the verified origin for stored session metadata. The origin must come
+from the popup transport or a trusted, service-owned relay policy, never from
+`applicationId` or other request display hints.
+
+The receiving service must verify the proof and consume its challenge once
+when establishing an account session or issuing an OAuth code. DWN delegation
+and owner authentication remain distinct even when approved together.
+
+Combined approval is not atomic across DWN writes and the final authentication
+signature. If signing fails after grant delivery, the promise rejects and no
+successful combined result is returned, but protocols or grants may already
+exist. The caller must reconcile the outcome and revoke or reuse approved
+delegation as appropriate; it must not report rollback or retry grant creation
+blindly. The service must not complete login without a verified owner proof.
+
+Wallet capability discovery/negotiation is not implemented by these helpers.
+Older wallets reject the identity-only request type. An older wallet receiving
+a combined request may create the explicitly requested grants while omitting
+the proof, causing the client to reject login afterward. Enable combined mode
+only for wallets whose authentication support is known until an advertisement
+and preflight capability check is available.
+
 ## Key Classes
 
 | Class | Purpose |

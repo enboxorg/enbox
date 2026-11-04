@@ -125,7 +125,7 @@ describe('connect envelope', () => {
       const { request } = await createTestRequest();
 
       expect(() => assertConnectRequest({ ...request, requestType: 'replace' }))
-        .toThrow('`requestType` must be "connect" or "refresh"');
+        .toThrow('`requestType` must be "connect", "refresh", or "authenticate"');
     });
 
     it('should reject a refresh request without an existing delegate', async () => {

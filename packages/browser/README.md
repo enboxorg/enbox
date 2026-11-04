@@ -59,6 +59,30 @@ Native connection, record, and context primitives remain available for custom
 flows. `defineStore`'s `observe()` factory owns all native view types through
 one subscription and cleanup mechanism.
 
+## Wallet sign-in without a data session
+
+Call `authenticateViaPopup()` directly from a user action to request an owner
+authentication proof. Supply the wallet URL and a service-issued
+`authentication: { version: 1, audience, challenge }` request. The result is
+`{ connectedDid, authentication }`, or `undefined` when denied; no DWN delegate
+session is created. The service verifies the returned proof against its exact
+pending request and consumes the challenge once before establishing login.
+Supply `onAuthenticationRequest` to register that exact generated request with
+the service before wallet delivery; the callback must resolve successfully
+before approval can proceed. A registration failure closes the popup.
+
+`connectViaPopup()` also accepts `authentication` to combine sign-in with its
+explicit DWN permission request. The existing application/connection-store
+APIs continue to manage data sessions. The Connect proof is an Enbox wallet
+primitive; OAuth/OIDC token issuance belongs to the receiving service.
+
+Authentication capability discovery/negotiation is not implemented. Use
+combined mode only with known-capable wallets: older wallets can grant the
+requested data access and then return no owner proof, which fails login.
+Likewise, a final signing failure can leave previously written grants in
+place. Callers must reconcile or revoke that partial outcome before retrying;
+a rejected combined operation is not evidence of a DWN rollback.
+
 ## Browser runtime
 
 Every browser dapp must register an application-owned service worker that calls

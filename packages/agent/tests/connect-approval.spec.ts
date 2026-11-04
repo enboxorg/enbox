@@ -1,4 +1,6 @@
+import type { DidResolutionResult } from '@enbox/dids';
 import type { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
+import type { ConnectApproval, ConnectRequest } from '@enbox/connect';
 
 import sinon from 'sinon';
 
@@ -8,9 +10,11 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
+import { X25519 } from '@enbox/crypto';
 import { type BearerDid, DidDht, DidJwk } from '@enbox/dids';
 import { Convert, logger } from '@enbox/common';
 import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, Protocols } from '@enbox/dwn-sdk-js';
+import { randomToken, verifyOwnerAuthenticationProof } from '@enbox/connect';
 
 import { AgentPermissionsApi, DwnInterface, DwnPermissionGrant } from '../src/index.js';
 import {
@@ -675,6 +679,80 @@ describe('connect approval ceremony', () => {
 
       // The approval output never carries in-band decryption keys.
       expect('delegateDecryptionKeys' in result).toBe(false);
+    });
+
+    it('binds combined owner authentication to the original request while storing the verified popup origin', async () => {
+      const client = await DidJwk.create();
+      const responseKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        ...approvalRequest(),
+        clientDid           : client.uri, supportedDidMethods : ['did:dht'], nonce               : randomToken(), state               : randomToken(),
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responseKey.x }, reply               : { mode: 'post_message' },
+        clientMetadata      : { origin: 'https://untrusted-hint.example' },
+        authentication      : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+      };
+      const { capturedSessions, createGrantsStub, revocationGrantStub } = await stubApprovalDependencies();
+      const ownerSign = sinon.spy(testHarness.agent.keyManager, 'sign');
+      const result = await executeConnectApproval({
+        agent                   : testHarness.agent, providerDid             : providerIdentity.did.uri, request,
+        transport               : 'postMessage', verifiedRequesterOrigin : 'https://login.example',
+      });
+      expect(result.authenticationProof).toBeDefined();
+      expect(ownerSign.calledAfter(createGrantsStub)).toBe(true);
+      expect(ownerSign.calledAfter(revocationGrantStub)).toBe(true);
+      expect(result.delegateGrants.length).toBeGreaterThan(0);
+      expect(capturedSessions[0]).toMatchObject({ origin: 'https://login.example' });
+      const resolver = { resolve: async (): Promise<DidResolutionResult> => ({
+        didDocument: providerIdentity.did.document, didDocumentMetadata: {}, didResolutionMetadata: {},
+      }) };
+      const verified = await verifyOwnerAuthenticationProof({
+        proof: result.authenticationProof!, request, providerDid: providerIdentity.did.uri, resolver,
+      });
+      expect(verified.subject).toBe(providerIdentity.did.uri);
+      await expect(verifyOwnerAuthenticationProof({
+        proof       : result.authenticationProof!, providerDid : providerIdentity.did.uri, resolver,
+        request     : { ...request, clientMetadata: { origin: 'https://login.example' } },
+      })).rejects.toThrow('context-mismatch');
+    });
+
+    it('rejects a late owner-signing failure without claiming that previously written grants were rolled back', async () => {
+      const client = await DidJwk.create();
+      const responseKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        ...approvalRequest(),
+        clientDid           : client.uri,
+        supportedDidMethods : ['did:dht'],
+        nonce               : randomToken(),
+        state               : randomToken(),
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responseKey.x },
+        reply               : { mode: 'post_message' },
+        authentication      : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+      };
+      const { createGrantsStub, revocationGrantStub } = await stubApprovalDependencies();
+      // This collaborator owns grant persistence and fanout. Retain its state
+      // after the later KMS failure rather than modeling a fictitious transaction.
+      const writtenGrantIds = new Set<string>();
+      const grantMessages: ConnectApproval['delegateGrants'] = permissionGrants.map((grant) => grant.message);
+      createGrantsStub.callsFake(async (): Promise<ConnectApproval['delegateGrants']> => {
+        for (const grant of grantMessages) { writtenGrantIds.add(grant.recordId); }
+        return grantMessages;
+      });
+      const ownerSign = sinon.stub(testHarness.agent.keyManager, 'sign')
+        .rejects(new Error('Owner authentication signer unavailable'));
+
+      await expect(executeConnectApproval({
+        agent                   : testHarness.agent,
+        providerDid             : providerIdentity.did.uri,
+        request,
+        transport               : 'postMessage',
+        verifiedRequesterOrigin : 'https://login.example',
+      })).rejects.toThrow('Owner authentication signer unavailable');
+
+      expect(createGrantsStub.calledOnce).toBe(true);
+      expect(revocationGrantStub.callCount).toBe(permissionGrants.length);
+      expect(ownerSign.calledAfter(createGrantsStub)).toBe(true);
+      expect(ownerSign.calledAfter(revocationGrantStub)).toBe(true);
+      expect([...writtenGrantIds]).toEqual(grantMessages.map((grant) => grant.recordId));
     });
 
     it('should report approval phases in order', async () => {

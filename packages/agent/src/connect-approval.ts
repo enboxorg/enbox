@@ -19,7 +19,14 @@
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { ConnectApproval, ConnectClientMetadata, ConnectPermissionRequest, ConnectRequest, SessionRevocation } from '@enbox/connect';
+import type {
+  ConnectApproval,
+  ConnectClientMetadata,
+  ConnectPermissionRequest,
+  ConnectRequest,
+  PreparedOwnerAuthenticationProof,
+  SessionRevocation,
+} from '@enbox/connect';
 import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnRecordsPermissionScope } from './types/dwn.js';
 
 import { Ed25519 } from '@enbox/crypto';
@@ -30,6 +37,7 @@ import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enb
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { createGrantKeyRecordsForGrants } from './dwn-encryption.js';
+import { assertVerifiedConnectRequesterOrigin, prepareConnectAuthenticationProof } from './connect-authentication.js';
 import { hasEncryptedProtocolTypes, prepareProtocol } from './connect-protocol-preparation.js';
 import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
@@ -118,7 +126,7 @@ export type CreateConnectSessionMetadataOptions = {
  * UIs, but the ceremony deliberately does not persist it in grants during
  * the closed-schema compatibility rollout.
  */
-export type ConnectApprovalRequest = Pick<
+export type ConnectApprovalRequest = (Pick<
   ConnectRequest,
   | 'appName'
   | 'appIcon'
@@ -128,7 +136,7 @@ export type ConnectApprovalRequest = Pick<
   | 'requestedSessionTtlSeconds'
   | 'delegateDid'
   | 'expectedProviderDid'
->;
+> & { authentication?: undefined; requestType?: 'connect' | 'refresh' }) | ConnectRequest;
 
 /** A user-visible phase of the connect approval ceremony. */
 export type ConnectApprovalProgressPhase =
@@ -156,6 +164,12 @@ export type ExecuteConnectApprovalParams = {
 
   /** Transport recorded in the grant session metadata. */
   transport: ConnectSessionTransport;
+
+  /**
+   * Origin verified by the popup transport. The original request remains the
+   * authentication-proof input; only stored session metadata uses this origin.
+   */
+  verifiedRequesterOrigin?: string;
 
   /**
    * Provider-selected session lifetime in seconds. When present, this wins
@@ -736,6 +750,26 @@ function reportConnectApprovalProgress(
 export async function executeConnectApproval(params: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   const { agent, providerDid, request } = params;
   assertExpectedProviderDid(request, providerDid);
+  if (request.requestType === 'authenticate') {
+    throw new Error('Connect: use executeConnectAuthentication for an authentication-only request.');
+  }
+  if (params.verifiedRequesterOrigin !== undefined) {
+    assertVerifiedConnectRequesterOrigin(params.verifiedRequesterOrigin);
+  }
+  // Validate and snapshot before any delegate creation or DWN mutation. Sign
+  // only at completion so protocol setup cannot consume the proof's lifetime.
+  let authentication: PreparedOwnerAuthenticationProof | undefined;
+  if (request.authentication !== undefined) {
+    if (params.verifiedRequesterOrigin === undefined) {
+      throw new Error('Connect authentication: a verified requester origin is required.');
+    }
+    authentication = await prepareConnectAuthenticationProof({
+      agent,
+      providerDid,
+      request,
+      verifiedRequesterOrigin: params.verifiedRequesterOrigin,
+    });
+  }
   const approvedProtocolOverrides = new Set(params.approvedProtocolOverrides);
 
   const approvalStart = nowMs();
@@ -799,8 +833,11 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       appName        : request.appName,
       appIcon        : request.appIcon,
       ttlSeconds     : sessionTtlSeconds,
-      clientMetadata : request.clientMetadata,
-      transport      : params.transport,
+      clientMetadata : params.verifiedRequesterOrigin === undefined ? request.clientMetadata : {
+        ...request.clientMetadata,
+        origin: params.verifiedRequesterOrigin,
+      },
+      transport: params.transport,
     });
 
     reportConnectApprovalProgress(params.onProgress, 'protocols');
@@ -966,6 +1003,7 @@ export async function executeConnectApproval(params: ExecuteConnectApprovalParam
       delegateGrants : [...createdGrants, ...revGrantResults.map(({ revGrant }) => revGrant.message)],
       sessionRevocations,
       responseSigner,
+      ...(authentication === undefined ? {} : { authenticationProof: await authentication.sign() }),
     };
   } catch (err) {
     outcome = 'fail';

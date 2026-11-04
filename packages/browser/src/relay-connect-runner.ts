@@ -163,6 +163,9 @@ export function visibilityAwareSleep(ms: number): Promise<void> {
  * delegated credentials, or `undefined` when the user denied in the wallet.
  */
 export async function runRelayConnect(options: RelayConnectOptions): Promise<ConnectResult | undefined> {
+  if (options.requestType === 'authenticate') {
+    throw new Error('Connect: runRelayConnect creates data sessions; use ConnectClient.authenticate for identity-only requests.');
+  }
   if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {
     throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
   }
