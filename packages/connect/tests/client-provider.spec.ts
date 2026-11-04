@@ -242,7 +242,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     });
 
     expect(result).toBeDefined();
-    expect(result!.delegatePortableDid).toBe(localPortableDid);
+    expect(result!.delegatePortableDid).toEqual(localPortableDid);
     expect(result!.connectedDid).toBe(provider.uri);
   });
 

@@ -44,6 +44,48 @@ async function loopback(mode: 'relay' | 'popup', action: WalletAction,
 }
 
 describe('ConnectClient owner authentication', () => {
+  it('should snapshot caller options before key generation and transport waits', async () => {
+    const owner = await DidJwk.create();
+    const { client, observed } = await loopback('relay', async (request, signer, pin): Promise<string> =>
+      ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri, signer, pin,
+        approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) } }));
+    const params = { appName             : 'Approved application', expectedProviderDid : owner.uri,
+      authentication      : { version: 1 as const, audience: 'https://identity.example', challenge: randomToken() } };
+    const original = structuredClone(params);
+    const pending = client.authenticate(params);
+    params.appName = 'Changed application';
+    params.expectedProviderDid = 'did:example:changed';
+    params.authentication.audience = 'https://changed.example';
+    params.authentication.challenge = randomToken();
+    const result = await pending;
+    expect(observed.requests[0].appName).toBe(original.appName);
+    expect(observed.requests[0].expectedProviderDid).toBe(original.expectedProviderDid);
+    expect(observed.requests[0].authentication).toEqual(original.authentication);
+    expect(result?.authentication.audience).toBe(original.authentication.audience);
+    expect(result?.authentication.challenge).toBe(original.authentication.challenge);
+  });
+
+  it('should keep pre-supplied delegate credentials tied to the original connect request', async () => {
+    const owner = await DidJwk.create();
+    const delegate = await DidJwk.create();
+    const portable = await delegate.export();
+    const original = structuredClone(portable);
+    const { client } = await loopback('relay', async (request, signer, pin): Promise<string> => {
+      expect(request.delegateDid).toBe(delegate.uri);
+      return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer, pin, approval    : {
+        delegateDid         : delegate.uri, delegateGrants      : [], sessionRevocations  : [],
+        authenticationProof : await createOwnerAuthenticationProof({ request, owner }),
+      } });
+    });
+    const pending = client.connect({ appName             : 'Approved application', permissionRequests  : [], delegatePortableDid : portable,
+      authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() } });
+    portable.uri = 'did:jwk:changed';
+    portable.privateKeys = [];
+    const result = await pending;
+    expect(result?.delegatePortableDid).toEqual(original);
+    expect(result?.authentication?.subject).toBe(owner.uri);
+  });
+
   it('should register an isolated public request before delivery and never deliver after failed durable registration', async () => {
     const owner = await DidJwk.create();
     let registered = false;
@@ -107,7 +149,7 @@ describe('ConnectClient owner authentication', () => {
     });
     const result = await client.connect({ appName             : 'Data app', permissionRequests  : [], delegatePortableDid : portable,
       authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() } });
-    expect(result?.delegatePortableDid).toBe(portable);
+    expect(result?.delegatePortableDid).toEqual(portable);
     expect(result?.authentication?.subject).toBe(owner.uri);
     expect(result?.connectedDid).toBe(owner.uri);
   });

@@ -40,7 +40,8 @@ export async function createConnectAuthenticationProof(
 export async function prepareConnectAuthenticationProof(
   params: CreateConnectAuthenticationProofParams,
 ): Promise<PreparedOwnerAuthenticationProof> {
-  const { agent, providerDid, request, verifiedRequesterOrigin } = params;
+  const { agent, providerDid, verifiedRequesterOrigin } = params;
+  const request = structuredClone(params.request);
   assertExpectedProviderDid(request, providerDid);
   if (request.authentication === undefined) {
     throw new Error('Connect authentication: the request did not ask for an owner authentication proof.');
@@ -64,11 +65,12 @@ export async function prepareConnectAuthenticationProof(
 export async function executeConnectAuthentication(
   params: CreateConnectAuthenticationProofParams,
 ): Promise<ConnectAuthenticationApprovalResult> {
-  if (params.request.requestType !== 'authenticate' || params.request.permissionRequests.length !== 0 ||
-      params.request.delegateDid !== undefined || params.request.requestedSessionTtlSeconds !== undefined) {
+  const snapshot = { ...params, request: structuredClone(params.request) };
+  if (snapshot.request.requestType !== 'authenticate' || snapshot.request.permissionRequests.length !== 0 ||
+      snapshot.request.delegateDid !== undefined || snapshot.request.requestedSessionTtlSeconds !== undefined) {
     throw new Error('Connect authentication: identity-only approval requires an authentication-only request.');
   }
-  const authenticationProof = await createConnectAuthenticationProof(params);
+  const authenticationProof = await createConnectAuthenticationProof(snapshot);
   // This key signs only the transport envelope; it never becomes a data
   // delegate, is not imported into the agent, and is never returned as credentials.
   const responseSigner = await DidJwk.create();

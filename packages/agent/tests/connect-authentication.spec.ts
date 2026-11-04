@@ -86,6 +86,22 @@ describe('Connect owner authentication approval', () => {
     expect(signer.called).toBe(false);
   });
 
+  it('keeps the origin-checked request unchanged while looking up the owner identity', async () => {
+    const approved = structuredClone(request);
+    sinon.stub(harness.agent.identity, 'get').callsFake(async () => {
+      request.authentication!.audience = 'https://unapproved.example';
+      request.authentication!.challenge = randomToken();
+      request.requestType = 'connect';
+      return owner;
+    });
+    const result = await executeConnectAuthentication({
+      agent: harness.agent, providerDid: owner.did.uri, request, verifiedRequesterOrigin: ORIGIN,
+    });
+    const verified = await verifyOwnerAuthenticationProof({ proof: result.authenticationProof, request: approved, providerDid: owner.did.uri });
+    expect(verified.audience).toBe(approved.authentication!.audience);
+    expect(verified.challenge).toBe(approved.authentication!.challenge);
+  });
+
   it('rejects a missing or delegated identity even when private signing material is present', async () => {
     const identityGet = sinon.stub(harness.agent.identity, 'get');
     identityGet.resolves(undefined);

@@ -168,12 +168,15 @@ export class ConnectClient {
    * Executes one connect handshake: build + sign + seal the request, deliver
    * it, await the wallet's ciphertext, open and value-check the response, and
    * map it to a {@link ConnectResult}.
+   * Parameter values are snapshotted at entry; a pre-supplied delegate is
+   * returned as an independent copy of those approved credentials.
    *
    * @param params - The handshake parameters.
    * @returns The delegated credentials, or `undefined` when the user denied
    *          the request in the wallet.
    */
-  public async connect(params: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
+  public async connect(input: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
+    const params = structuredClone(input);
     if (params.requestType === 'authenticate') {
       throw new Error('Connect: use authenticate() for an authentication-only request.');
     }
@@ -193,7 +196,8 @@ export class ConnectClient {
   }
 
   /** Authenticate an owner without receiving or creating data-delegate credentials. */
-  public async authenticate(params: ConnectClientAuthenticateParams): Promise<ConnectAuthenticationResult | undefined> {
+  public async authenticate(input: ConnectClientAuthenticateParams): Promise<ConnectAuthenticationResult | undefined> {
+    const params = structuredClone(input);
     if (['permissionRequests', 'delegatePortableDid', 'requestedSessionTtlSeconds', 'requestType'].some(key => Object.hasOwn(params, key))) {
       throw new ConnectAuthenticationError('invalid-request');
     }

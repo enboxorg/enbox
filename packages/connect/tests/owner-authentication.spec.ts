@@ -4,7 +4,7 @@ import type { ConnectAuthenticationReplayStore, ConnectAuthenticationResolver } 
 
 import { Convert } from '@enbox/common';
 import { X25519 } from '@enbox/crypto';
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { DidDht, DidJwk } from '@enbox/dids';
 
 import { randomToken } from '../src/client.js';
@@ -55,6 +55,65 @@ async function resign(proof: string, owner: BearerDid, change: {
 }
 
 describe('owner authentication proofs', () => {
+  it('should keep verified and consumed bindings on the initial request across asynchronous resolution', async () => {
+    const { owner, request } = await fixture();
+    const original = structuredClone(request);
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    let consumed: Parameters<ConnectAuthenticationReplayStore['consume']>[0] | undefined;
+    const pending = verifyOwnerAuthenticationProof({
+      proof, request, providerDid : owner.uri, now         : NOW,
+      resolver    : { resolve: async () => {
+        request.authentication!.audience = 'https://unverified.example';
+        request.authentication!.challenge = randomToken();
+        return { didDocument: owner.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
+      } },
+      replayStore: { consume: async binding => { consumed = binding; return true; } },
+    });
+    request.nonce = randomToken();
+    request.expectedProviderDid = 'did:example:changed';
+    const verified = await pending;
+    expect(verified.audience).toBe(original.authentication!.audience);
+    expect(verified.challenge).toBe(original.authentication!.challenge);
+    expect(verified.requestDigest).toBe(await connectAuthenticationRequestDigest(original));
+    expect(consumed).toEqual({ audience      : verified.audience, challenge     : verified.challenge, subject       : owner.uri,
+      requestDigest : verified.requestDigest, expiresAt     : NOW + 300 });
+  });
+
+  it('should reject a proof that expires during DID resolution before consuming the challenge', async () => {
+    const { owner, request } = await fixture();
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const clock = spyOn(Date, 'now').mockReturnValue(NOW * 1000);
+    let consumptions = 0;
+    try {
+      await expect(verifyOwnerAuthenticationProof({
+        proof, request, providerDid : owner.uri,
+        resolver    : { resolve: async () => {
+          clock.mockReturnValue((NOW + 300) * 1000);
+          return { didDocument: owner.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
+        } },
+        replayStore: { consume: async () => { consumptions++; return true; } },
+      })).rejects.toMatchObject({ code: 'expired-proof' });
+      expect(consumptions).toBe(0);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('should fail closed when an asynchronous replay store finishes after proof expiry', async () => {
+    const { owner, request, resolver } = await fixture();
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const clock = spyOn(Date, 'now').mockReturnValue(NOW * 1000);
+    let consumptions = 0;
+    try {
+      await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, resolver,
+        replayStore : { consume: async () => {
+          consumptions++;
+          clock.mockReturnValue((NOW + 300) * 1000);
+          return true;
+        } },
+      })).rejects.toMatchObject({ code: 'expired-proof' });
+      expect(consumptions).toBe(1);
+    } finally { clock.mockRestore(); }
+  });
+
   it('should preserve the v1 UTF-16 canonical digest for mixed-case and Unicode keys in any insertion order', async () => {
     const publicKey = { kty: 'OKP', crv: 'Ed25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' };
     // Supplementary U+10000 sorts before U+E000 by UTF-16 code units. Locale

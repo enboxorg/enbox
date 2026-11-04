@@ -135,8 +135,11 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   now?: number;
   replayStore?: ConnectAuthenticationReplayStore;
 }): Promise<VerifiedConnectAuthentication> {
-  const requestDigest = await connectAuthenticationRequestDigest(request);
-  assertProvider(request, providerDid);
+  // Keep every checked and returned binding on the same caller-independent
+  // context, including while an asynchronous resolver or replay store runs.
+  const snapshot = structuredClone(request);
+  const requestDigest = await connectAuthenticationRequestDigest(snapshot);
+  assertProvider(snapshot, providerDid);
   if (typeof proof !== 'string' || proof.length > MAX_PROOF_BYTES) { throw new ConnectAuthenticationError('invalid-proof'); }
   const parts = proof.split('.');
   if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/u.test(part))) {
@@ -151,20 +154,12 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
       !exactKeys(payload, ['iss', 'sub', 'aud', 'nonce', 'request_hash', 'purpose', 'iat', 'exp'])) {
     throw new ConnectAuthenticationError('invalid-proof');
   }
-  const authentication = request.authentication as ConnectAuthenticationParams;
+  const authentication = snapshot.authentication as ConnectAuthenticationParams;
   if (payload.iss !== providerDid || payload.sub !== providerDid || payload.aud !== authentication.audience ||
       payload.nonce !== authentication.challenge || payload.request_hash !== requestDigest || payload.purpose !== PURPOSE) {
     throw new ConnectAuthenticationError('context-mismatch');
   }
-  const checkedAt = now ?? Math.floor(Date.now() / 1_000);
-  assertNow(checkedAt);
-  if (typeof payload.iat !== 'number' || typeof payload.exp !== 'number' ||
-      !Number.isSafeInteger(payload.iat) || !Number.isSafeInteger(payload.exp) ||
-      payload.iat < 0 || payload.exp <= payload.iat ||
-      payload.exp - payload.iat > CONNECT_AUTHENTICATION_MAX_AGE_SECONDS ||
-      payload.iat > checkedAt + CLOCK_SKEW_SECONDS || checkedAt >= payload.exp) {
-    throw new ConnectAuthenticationError('expired-proof');
-  }
+  assertProofTimeWindow(payload, now ?? Math.floor(Date.now() / 1_000));
   let document: DidDocument;
   try {
     const result = await (resolver ?? new UniversalResolver({ didResolvers: [DidDht, DidJwk] })).resolve(providerDid);
@@ -178,6 +173,9 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   if (algorithm !== header.alg) { throw new ConnectAuthenticationError('unsupported-key'); }
   const key = method.publicKeyJwk as Jwk;
   await verifyProofSignature(key, algorithm, encodedHeader, encodedPayload, encodedSignature);
+  // A proof valid on arrival may expire while resolving its DID or checking
+  // the signature. Do not consume a challenge for an already-expired proof.
+  assertProofTimeWindow(payload, now ?? Math.floor(Date.now() / 1_000));
   const verified = Object.freeze({
     proof, subject   : providerDid, audience  : authentication.audience, challenge : authentication.challenge,
     requestDigest, issuedAt  : payload.iat, expiresAt : payload.exp, methodId  : method.id,
@@ -188,7 +186,24 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   })) {
     throw new ConnectAuthenticationError('replayed-proof');
   }
+  // Replay stores can also be asynchronous. A late completion fails closed;
+  // it does not undo a challenge the store already consumed.
+  assertProofTimeWindow(payload, now ?? Math.floor(Date.now() / 1_000));
   return verified;
+}
+
+function assertProofTimeWindow(
+  payload: Record<string, unknown>,
+  checkedAt: number,
+): asserts payload is Record<string, unknown> & { iat: number; exp: number } {
+  assertNow(checkedAt);
+  if (typeof payload.iat !== 'number' || typeof payload.exp !== 'number' ||
+      !Number.isSafeInteger(payload.iat) || !Number.isSafeInteger(payload.exp) ||
+      payload.iat < 0 || payload.exp <= payload.iat ||
+      payload.exp - payload.iat > CONNECT_AUTHENTICATION_MAX_AGE_SECONDS ||
+      payload.iat > checkedAt + CLOCK_SKEW_SECONDS || checkedAt >= payload.exp) {
+    throw new ConnectAuthenticationError('expired-proof');
+  }
 }
 
 async function verifyProofSignature(

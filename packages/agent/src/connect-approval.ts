@@ -766,7 +766,14 @@ async function prepareConnectApprovalAuthentication(
  *          `ConnectProvider.sealApprovedResponse`, plus the response signer.
  * @throws Error when the request is invalid or required grant delivery fails.
  */
-export async function executeConnectApproval(params: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
+export async function executeConnectApproval(input: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
+  // Progress observers and asynchronous collaborators must not change an
+  // approved request or its controls while grants are being prepared.
+  const params = {
+    ...input,
+    request                   : structuredClone(input.request),
+    approvedProtocolOverrides : input.approvedProtocolOverrides === undefined ? undefined : [...input.approvedProtocolOverrides],
+  };
   const { agent, providerDid, request } = params;
   // Validate and snapshot before any delegate creation or DWN mutation. Sign
   // only at completion so protocol setup cannot consume the proof's lifetime.

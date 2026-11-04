@@ -715,6 +715,39 @@ describe('connect approval ceremony', () => {
       })).rejects.toThrow('context-mismatch');
     });
 
+    it('uses one approved request and origin for grants and proof despite progress-observer mutations', async () => {
+      const client = await DidJwk.create();
+      const responseKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        ...structuredClone(approvalRequest()), clientDid           : client.uri, supportedDidMethods : ['did:dht'], nonce               : randomToken(), state               : randomToken(),
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responseKey.x }, reply               : { mode: 'post_message' },
+        authentication      : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+      };
+      const original = structuredClone(request);
+      const { createGrantsStub, capturedSessions } = await stubApprovalDependencies();
+      const input: Parameters<typeof executeConnectApproval>[0] = {
+        agent                   : testHarness.agent, providerDid             : providerIdentity.did.uri, request,
+        transport               : 'postMessage', verifiedRequesterOrigin : 'https://login.example',
+        onProgress              : ({ phase }) => {
+          if (phase === 'delegate') {
+            input.verifiedRequesterOrigin = 'https://unapproved.example';
+            request.authentication!.audience = 'https://unapproved.example';
+          }
+          if (phase === 'permission-grants') {
+            request.permissionRequests[0].permissionScopes[0].protocol = 'https://unapproved.example/protocol';
+          }
+        },
+      };
+      const result = await executeConnectApproval(input);
+      expect(createGrantsStub.firstCall.args[3]).toEqual(original.permissionRequests.flatMap(entry => entry.permissionScopes));
+      expect(capturedSessions[0]).toMatchObject({ origin: 'https://login.example' });
+      const verified = await verifyOwnerAuthenticationProof({ proof       : result.authenticationProof!, request     : original,
+        providerDid : providerIdentity.did.uri, resolver    : { resolve: async (): Promise<DidResolutionResult> => ({
+          didDocument: providerIdentity.did.document, didDocumentMetadata: {}, didResolutionMetadata: {},
+        }) } });
+      expect(verified.audience).toBe('https://login.example/');
+    });
+
     it('rejects a late owner-signing failure without claiming that previously written grants were rolled back', async () => {
       const client = await DidJwk.create();
       const responseKey = await X25519.generateKey();
