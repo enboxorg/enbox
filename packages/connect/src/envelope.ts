@@ -394,12 +394,15 @@ export async function sealAuthenticationResponse(params: {
   return sealResponseEnvelope(params);
 }
 
-async function sealResponseEnvelope({ response, signer, responseKey, pin }: {
+async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, pin }: {
   response: ConnectResponse | ConnectAuthenticationResponse;
   signer: BearerDid;
   responseKey: Jwk;
   pin?: string;
 }): Promise<string> {
+  // Capture the agreed recipient and response before asynchronous KMS signing.
+  const response = structuredClone(inputResponse);
+  const responseKey = structuredClone(inputResponseKey);
   const jwt = await signJwt({ did: signer, data: response });
 
   return await CompactJwe.encrypt({

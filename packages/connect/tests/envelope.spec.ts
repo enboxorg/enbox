@@ -16,7 +16,7 @@ import {
   sealResponse,
 } from '../src/envelope.js';
 import { CompactJwe, CryptoUtils, X25519 } from '@enbox/crypto';
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 const WALLET_ORIGIN = 'https://wallet.example';
 
@@ -333,6 +333,39 @@ describe('connect envelope', () => {
         expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
       });
       expect(opened).toEqual(response);
+    });
+
+    it('should preserve the response recipient and binding while the signer awaits', async () => {
+      const { request, responsePrivateKey } = await createTestRequest();
+      const signer = await DidJwk.create();
+      const response = buildTestResponse(request);
+      const expected = structuredClone(response);
+      const alternateKey = await X25519.generateKey();
+      let release!: () => void;
+      let started!: () => void;
+      const gate = new Promise<void>((resolve): void => { release = resolve; });
+      const entered = new Promise<void>((resolve): void => { started = resolve; });
+      const original = signer.getSigner.bind(signer);
+      const stub = spyOn(signer, 'getSigner').mockImplementation(async (...args: Parameters<BearerDid['getSigner']>): ReturnType<BearerDid['getSigner']> => {
+        started();
+        await gate;
+        return original(...args);
+      });
+      try {
+        const pending = sealResponse({ response, signer, responseKey: request.responseKey });
+        await entered;
+        response.state = 'changed-state';
+        response.nonce = 'changed-nonce';
+        request.responseKey.x = alternateKey.x;
+        release();
+        const jwe = await pending;
+        const binding = { clientDid: expected.aud, nonce: expected.nonce, state: expected.state };
+        await expect(openResponse({ jwe, recipientPrivateKey: responsePrivateKey, expected: binding })).resolves.toEqual(expected);
+        await expect(openResponse({ jwe, recipientPrivateKey: alternateKey, expected: binding })).rejects.toThrow();
+      } finally {
+        release();
+        stub.mockRestore();
+      }
     });
 
     it('should round-trip a response with a PIN', async () => {
