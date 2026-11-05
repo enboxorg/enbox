@@ -314,12 +314,12 @@ export function testSubscriptionScenarios(): void {
 
       it('filters by a module across different message types', async () => {
         // NOTE: This test validates the ability to filter by a specific module across different message types.
-        //       This will return any of the `RecordsWrite`, `RecordsDelete` and `ModuleConfigure` messages that are associated with the module
+        //       This will return any of the `RecordsWrite`, `RecordsDelete` and `ModulesConfigure` messages that are associated with the module
         //       Additionally this will return permission-module `RecordsWrite` messages that are associated with the module.
 
         // scenario:
-        //    alice creates two different subscriptions, one for each module (proto1, proto2)
-        //    alice configures the two different modules (proto1, proto2)
+        //    alice creates two different subscriptions, one for each module (module 1, module 2)
+        //    alice configures the two different modules (module 1, module 2)
         //    alice creates records for each module
         //    bob requests permissions for both modules
         //    alice grants bob permissions for both modules
@@ -331,58 +331,58 @@ export function testSubscriptionScenarios(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const proto1Messages:string[] = [];
-        const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+        const module1MessageCids:string[] = [];
+        const module1SubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
           if (msg.type !== 'event') { return; }
           const { message } = msg.event;
-          proto1Messages.push(await Message.getCid(message));
+          module1MessageCids.push(await Message.getCid(message));
         };
 
-        const proto1Subscription = await TestDataGenerator.generateMessagesSubscribe({
+        const module1Subscription = await TestDataGenerator.generateMessagesSubscribe({
           author  : alice,
-          filters : [{ module: 'http://proto1' }]
+          filters : [{ module: 'https://example.com/modules/one' }]
         });
-        const proto1SubscriptionReply = await dwn.processMessage(alice.did, proto1Subscription.message, {
-          subscriptionHandler: proto1Handler
+        const module1SubscriptionReply = await dwn.processMessage(alice.did, module1Subscription.message, {
+          subscriptionHandler: module1SubscriptionHandler
         });
-        expect(proto1SubscriptionReply.status.code).toBe(200);
-        expect(proto1SubscriptionReply.subscription).toBeDefined();
+        expect(module1SubscriptionReply.status.code).toBe(200);
+        expect(module1SubscriptionReply.subscription).toBeDefined();
 
-        const proto2Messages:string[] = [];
-        const proto2Handler = async (msg: SubscriptionMessage):Promise<void> => {
+        const module2MessageCids:string[] = [];
+        const module2SubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
           if (msg.type !== 'event') { return; }
           const { message } = msg.event;
-          proto2Messages.push(await Message.getCid(message));
+          module2MessageCids.push(await Message.getCid(message));
         };
 
-        const proto2Subscription = await TestDataGenerator.generateMessagesSubscribe({
+        const module2Subscription = await TestDataGenerator.generateMessagesSubscribe({
           author  : alice,
-          filters : [{ module: 'http://proto2' }]
+          filters : [{ module: 'https://example.com/modules/two' }]
         });
-        const proto2SubscriptionReply = await dwn.processMessage(alice.did, proto2Subscription.message, {
-          subscriptionHandler: proto2Handler
+        const module2SubscriptionReply = await dwn.processMessage(alice.did, module2Subscription.message, {
+          subscriptionHandler: module2SubscriptionHandler
         });
-        expect(proto2SubscriptionReply.status.code).toBe(200);
-        expect(proto2SubscriptionReply.subscription).toBeDefined();
+        expect(module2SubscriptionReply.status.code).toBe(200);
+        expect(module2SubscriptionReply.subscription).toBeDefined();
 
-        // configure proto1
-        const protoConf1 = await TestDataGenerator.generateModulesConfigure({
+        // configure module 1
+        const module1Configure = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
-          moduleDefinition : { ...freeForAll, module: 'http://proto1' }
+          moduleDefinition : { ...freeForAll, module: 'https://example.com/modules/one' }
         });
 
-        const proto1 = protoConf1.message.descriptor.definition.module;
-        const protoConf1Response = await dwn.processMessage(alice.did, protoConf1.message);
-        expect(protoConf1Response.status.code).toBe(202);
+        const module1Uri = module1Configure.message.descriptor.definition.module;
+        const module1ConfigureReply = await dwn.processMessage(alice.did, module1Configure.message);
+        expect(module1ConfigureReply.status.code).toBe(202);
 
-        // configure proto2
-        const protoConf2 = await TestDataGenerator.generateModulesConfigure({
+        // configure module 2
+        const module2Configure = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
-          moduleDefinition : { ...freeForAll, module: 'http://proto2' }
+          moduleDefinition : { ...freeForAll, module: 'https://example.com/modules/two' }
         });
-        const proto2 = protoConf2.message.descriptor.definition.module;
-        const protoConf2Response = await dwn.processMessage(alice.did, protoConf2.message);
-        expect(protoConf2Response.status.code).toBe(202);
+        const module2Uri = module2Configure.message.descriptor.definition.module;
+        const module2ConfigureReply = await dwn.processMessage(alice.did, module2Configure.message);
+        expect(module2ConfigureReply.status.code).toBe(202);
 
         const postProperties = {
           modulePath : 'post',
@@ -390,139 +390,139 @@ export function testSubscriptionScenarios(): void {
           dataFormat : freeForAll.types.post.dataFormats[0],
         };
 
-        // create a record for proto1
-        const write1proto1 = await TestDataGenerator.generateRecordsWrite({ author: alice, module: proto1, ...postProperties });
-        const write1Response = await dwn.processMessage(alice.did, write1proto1.message, { dataStream: write1proto1.dataStream });
-        expect(write1Response.status.code).toBe(202);
+        // create a record for module 1
+        const module1Write = await TestDataGenerator.generateRecordsWrite({ author: alice, module: module1Uri, ...postProperties });
+        const module1WriteReply = await dwn.processMessage(alice.did, module1Write.message, { dataStream: module1Write.dataStream });
+        expect(module1WriteReply.status.code).toBe(202);
 
-        // create a record for proto2
-        const write1proto2 = await TestDataGenerator.generateRecordsWrite({ author: alice, module: proto2, ...postProperties });
-        const write1Proto2Response = await dwn.processMessage(alice.did, write1proto2.message, { dataStream: write1proto2.dataStream });
-        expect(write1Proto2Response.status.code).toBe(202);
+        // create a record for module 2
+        const module2Write = await TestDataGenerator.generateRecordsWrite({ author: alice, module: module2Uri, ...postProperties });
+        const module2WriteReply = await dwn.processMessage(alice.did, module2Write.message, { dataStream: module2Write.dataStream });
+        expect(module2WriteReply.status.code).toBe(202);
 
-        // bob requests permissions for proto1
-        const requestProto1 = await PermissionsModule.createRequest({
+        // bob requests permissions for module 1
+        const module1PermissionRequest = await PermissionsModule.createRequest({
           signer    : Jws.createSigner(bob),
-          scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: proto1 },
+          scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: module1Uri },
           delegated : false,
         });
-        const requestProto1Response = await dwn.processMessage(
+        const module1PermissionRequestReply = await dwn.processMessage(
           alice.did,
-          requestProto1.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(requestProto1.permissionRequestBytes) }
+          module1PermissionRequest.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module1PermissionRequest.permissionRequestBytes) }
         );
-        expect(requestProto1Response.status.code).toBe(202);
+        expect(module1PermissionRequestReply.status.code).toBe(202);
 
-        // bob requests permissions for proto2
-        const requestProto2 = await PermissionsModule.createRequest({
+        // bob requests permissions for module 2
+        const module2PermissionRequest = await PermissionsModule.createRequest({
           signer    : Jws.createSigner(bob),
-          scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: proto2 },
+          scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: module2Uri },
           delegated : false,
         });
-        const requestProto2Response = await dwn.processMessage(
+        const module2PermissionRequestReply = await dwn.processMessage(
           alice.did,
-          requestProto2.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(requestProto2.permissionRequestBytes) }
+          module2PermissionRequest.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module2PermissionRequest.permissionRequestBytes) }
         );
-        expect(requestProto2Response.status.code).toBe(202);
+        expect(module2PermissionRequestReply.status.code).toBe(202);
 
-        // alice grants permissions for proto1
-        const grantProto1 = await PermissionsModule.createGrant({
+        // alice grants permissions for module 1
+        const module1Grant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
-          scope       : requestProto1.permissionRequestData.scope,
+          scope       : module1PermissionRequest.permissionRequestData.scope,
           dateExpires : Time.createOffsetTimestamp({ seconds: 5 }),
           grantedTo   : bob.did,
         });
-        const grantProto1Response = await dwn.processMessage(
+        const module1GrantReply = await dwn.processMessage(
           alice.did,
-          grantProto1.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(grantProto1.permissionGrantBytes) }
+          module1Grant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module1Grant.permissionGrantBytes) }
         );
-        expect(grantProto1Response.status.code).toBe(202);
+        expect(module1GrantReply.status.code).toBe(202);
 
-        // alice grants permissions for proto2
-        const grantProto2 = await PermissionsModule.createGrant({
+        // alice grants permissions for module 2
+        const module2Grant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
-          scope       : requestProto2.permissionRequestData.scope,
+          scope       : module2PermissionRequest.permissionRequestData.scope,
           dateExpires : Time.createOffsetTimestamp({ seconds: 5 }),
           grantedTo   : bob.did,
         });
-        const grantProto2Response = await dwn.processMessage(
+        const module2GrantReply = await dwn.processMessage(
           alice.did,
-          grantProto2.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(grantProto2.permissionGrantBytes) }
+          module2Grant.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module2Grant.permissionGrantBytes) }
         );
-        expect(grantProto2Response.status.code).toBe(202);
+        expect(module2GrantReply.status.code).toBe(202);
 
         // poll until the messages are received by the handlers
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          // check for proto1 messages
-          expect(proto1Messages).toHaveLength(4);
-          expect(proto1Messages).toEqual(expect.arrayContaining([
-            await Message.getCid(protoConf1.message),
-            await Message.getCid(write1proto1.message),
-            await Message.getCid(requestProto1.recordsWrite.message),
-            await Message.getCid(grantProto1.recordsWrite.message),
+          // check for module 1 messages
+          expect(module1MessageCids).toHaveLength(4);
+          expect(module1MessageCids).toEqual(expect.arrayContaining([
+            await Message.getCid(module1Configure.message),
+            await Message.getCid(module1Write.message),
+            await Message.getCid(module1PermissionRequest.recordsWrite.message),
+            await Message.getCid(module1Grant.recordsWrite.message),
           ]));
 
-          // check for proto2 messages
-          expect(proto2Messages).toHaveLength(4);
-          expect(proto2Messages).toEqual(expect.arrayContaining([
-            await Message.getCid(protoConf2.message),
-            await Message.getCid(write1proto2.message),
-            await Message.getCid(requestProto2.recordsWrite.message),
-            await Message.getCid(grantProto2.recordsWrite.message),
+          // check for module 2 messages
+          expect(module2MessageCids).toHaveLength(4);
+          expect(module2MessageCids).toEqual(expect.arrayContaining([
+            await Message.getCid(module2Configure.message),
+            await Message.getCid(module2Write.message),
+            await Message.getCid(module2PermissionRequest.recordsWrite.message),
+            await Message.getCid(module2Grant.recordsWrite.message),
           ]));
         });
 
-        // delete proto1 message
-        const deleteProto1Message = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: write1proto1.message.recordId });
-        const deleteProto1MessageReply = await dwn.processMessage(alice.did, deleteProto1Message.message);
-        expect(deleteProto1MessageReply.status.code).toBe(202);
+        // delete module 1 message
+        const module1Delete = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: module1Write.message.recordId });
+        const module1DeleteReply = await dwn.processMessage(alice.did, module1Delete.message);
+        expect(module1DeleteReply.status.code).toBe(202);
 
-        // delete proto2 message
-        const deleteProto2Message = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: write1proto2.message.recordId });
-        const deleteProto2MessageReply = await dwn.processMessage(alice.did, deleteProto2Message.message);
-        expect(deleteProto2MessageReply.status.code).toBe(202);
+        // delete module 2 message
+        const module2Delete = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: module2Write.message.recordId });
+        const module2DeleteReply = await dwn.processMessage(alice.did, module2Delete.message);
+        expect(module2DeleteReply.status.code).toBe(202);
 
-        // revoke permissions for proto1
-        const revokeProto1 = await PermissionsModule.createRevocation({
+        // revoke permissions for module 1
+        const module1Revocation = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : PermissionGrant.parse(grantProto1.dataEncodedMessage),
+          grant  : PermissionGrant.parse(module1Grant.dataEncodedMessage),
         });
-        const revokeProto1Response = await dwn.processMessage(
+        const module1RevocationReply = await dwn.processMessage(
           alice.did,
-          revokeProto1.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(revokeProto1.permissionRevocationBytes) }
+          module1Revocation.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module1Revocation.permissionRevocationBytes) }
         );
-        expect(revokeProto1Response.status.code).toBe(202);
+        expect(module1RevocationReply.status.code).toBe(202);
 
-        // revoke permissions for proto2
-        const revokeProto2 = await PermissionsModule.createRevocation({
+        // revoke permissions for module 2
+        const module2Revocation = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
-          grant  : PermissionGrant.parse(grantProto2.dataEncodedMessage),
+          grant  : PermissionGrant.parse(module2Grant.dataEncodedMessage),
         });
-        const revokeProto2Response = await dwn.processMessage(
+        const module2RevocationReply = await dwn.processMessage(
           alice.did,
-          revokeProto2.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(revokeProto2.permissionRevocationBytes) }
+          module2Revocation.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(module2Revocation.permissionRevocationBytes) }
         );
-        expect(revokeProto2Response.status.code).toBe(202);
+        expect(module2RevocationReply.status.code).toBe(202);
 
         // poll until the messages are received by the handlers
         await Poller.pollUntilSuccessOrTimeout(async () => {
-          // check for the delete and revocation in proto1 messages
-          expect(proto1Messages).toHaveLength(6); // 2 additional messages
-          expect(proto1Messages).toEqual(expect.arrayContaining([
-            await Message.getCid(deleteProto1Message.message),
-            await Message.getCid(revokeProto1.recordsWrite.message),
+          // check for the delete and revocation in module 1 messages
+          expect(module1MessageCids).toHaveLength(6); // 2 additional messages
+          expect(module1MessageCids).toEqual(expect.arrayContaining([
+            await Message.getCid(module1Delete.message),
+            await Message.getCid(module1Revocation.recordsWrite.message),
           ]));
 
-          // check for the delete and revocation in proto2 messages
-          expect(proto2Messages).toHaveLength(6); // 2 additional messages
-          expect(proto2Messages).toEqual(expect.arrayContaining([
-            await Message.getCid(deleteProto2Message.message),
-            await Message.getCid(revokeProto2.recordsWrite.message),
+          // check for the delete and revocation in module 2 messages
+          expect(module2MessageCids).toHaveLength(6); // 2 additional messages
+          expect(module2MessageCids).toEqual(expect.arrayContaining([
+            await Message.getCid(module2Delete.message),
+            await Message.getCid(module2Revocation.recordsWrite.message),
           ]));
         });
       });

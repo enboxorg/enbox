@@ -96,13 +96,13 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
   });
 
   it('should query the durable feed through the local RPC shim', async () => {
-    const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
+    const { reply: moduleConfigureReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition: testModule },
     });
-    expect(protoReply.status.code).toBe(202);
+    expect(moduleConfigureReply.status.code).toBe(202);
 
     const { messageCid: writeMessageCid, reply: writeReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
@@ -146,13 +146,13 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     await syncEngine.startSync({ interval: '30s' });
     remoteMessageQueries = 0;
 
-    const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
+    const { reply: moduleConfigureReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
       messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition: testModule },
     });
-    expect(protoReply.status.code).toBe(202);
+    expect(moduleConfigureReply.status.code).toBe(202);
 
     // Write a record after sync starts. Its complete subscription event should
     // enter the normal socket admission path without a redundant feed query.

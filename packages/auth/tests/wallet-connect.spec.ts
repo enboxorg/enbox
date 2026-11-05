@@ -55,7 +55,7 @@ function buildTestGrant(module: string, grantId: string): any {
 function buildTestGrantNonMessages(grantId: string): any {
   const grantData = JSON.stringify({
     dateExpires : '2040-06-25T16:09:16.693356Z',
-    scope       : { interface: 'Records', method: 'Write', module: 'https://proto.example/other' },
+    scope       : { interface: 'Records', method: 'Write', module: 'https://modules.example/other' },
     delegated   : true,
   });
   const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -90,13 +90,13 @@ function createInitClientResult(delegateGrants: any[] = []): any {
 
 const CHAT_PERMISSION_REQUESTS: any = [{
   moduleDefinition: {
-    module    : 'https://proto.example/chat',
+    module    : 'https://modules.example/chat',
     published : true,
     types     : {},
     structure : {},
   },
   permissionScopes: [
-    { interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' },
+    { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
   ],
 }];
 
@@ -155,8 +155,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/chat', 'rec1'),
-      buildTestGrant('https://proto.example/notes', 'rec2'),
+      buildTestGrant('https://modules.example/chat', 'rec1'),
+      buildTestGrant('https://modules.example/notes', 'rec2'),
       buildTestGrantNonMessages('rec3'), // Records grant — should not contribute to sync scope
     ] as any;
 
@@ -167,7 +167,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
+    expect(result).toEqual(['https://modules.example/chat', 'https://modules.example/notes']);
     // 3 grants stored in delegate partition via processDwnRequest
     expect(processCalls).toHaveLength(3);
 
@@ -189,8 +189,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/chat', 'rec1'),
-      buildTestGrant('https://proto.example/chat', 'rec2'),
+      buildTestGrant('https://modules.example/chat', 'rec1'),
+      buildTestGrant('https://modules.example/chat', 'rec2'),
     ] as any;
 
     const result = await processConnectedGrants({
@@ -200,7 +200,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/chat']);
+    expect(result).toEqual(['https://modules.example/chat']);
   });
 
   test('throws when grant processing fails', async () => {
@@ -210,7 +210,7 @@ describe('processConnectedGrants', () => {
       }),
     });
 
-    const grants = [buildTestGrant('https://proto.example/chat', 'rec1')] as any;
+    const grants = [buildTestGrant('https://modules.example/chat', 'rec1')] as any;
 
     await expect(
       processConnectedGrants({
@@ -257,8 +257,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/a', 'rec-a'),
-      buildTestGrant('https://proto.example/b', 'rec-b'),
+      buildTestGrant('https://modules.example/a', 'rec-a'),
+      buildTestGrant('https://modules.example/b', 'rec-b'),
     ] as any;
 
     await expect(
@@ -292,8 +292,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/a', 'rec-a'),
-      buildTestGrant('https://proto.example/b', 'rec-b'),
+      buildTestGrant('https://modules.example/a', 'rec-a'),
+      buildTestGrant('https://modules.example/b', 'rec-b'),
     ] as any;
 
     // Should succeed — 409 is treated as idempotent success.
@@ -304,7 +304,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+    expect(result).toEqual(['https://modules.example/a', 'https://modules.example/b']);
   });
 });
 
@@ -600,7 +600,7 @@ describe('walletConnect', () => {
       },
     });
 
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
 
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
@@ -665,7 +665,7 @@ describe('walletConnect', () => {
     });
 
     // Provide a grant so connectedModules is non-empty and sync registration is attempted.
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     await expect(
@@ -702,7 +702,7 @@ describe('walletConnect', () => {
     });
 
     // Provide a Messages.Read grant so sync registration is attempted.
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     // Should not throw from cleanup — only from the original error

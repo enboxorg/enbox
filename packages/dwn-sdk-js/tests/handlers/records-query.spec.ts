@@ -1717,8 +1717,8 @@ export function testRecordsQueryHandler(): void {
           signer           : Jws.createSigner(alice),
           messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
         });
-        const protoReply = await dwn.processMessage(alice.did, modulesConfigure.message);
-        expect(protoReply.status.code).toBe(202);
+        const moduleConfigureReply = await dwn.processMessage(alice.did, modulesConfigure.message);
+        expect(moduleConfigureReply.status.code).toBe(202);
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, published: true, dateCreated: firstDayOf2020, datePublished: firstDayOf2021, messageTimestamp: firstDayOf2020
         });
@@ -1944,8 +1944,8 @@ export function testRecordsQueryHandler(): void {
           signer           : Jws.createSigner(alice),
           messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
         });
-        const protoReply = await dwn.processMessage(alice.did, modulesConfigure.message);
-        expect(protoReply.status.code).toBe(202);
+        const moduleConfigureReply = await dwn.processMessage(alice.did, modulesConfigure.message);
+        expect(moduleConfigureReply.status.code).toBe(202);
 
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author: alice, dateCreated: firstDayOf2020, messageTimestamp: firstDayOf2020
@@ -2388,8 +2388,8 @@ export function testRecordsQueryHandler(): void {
           signer           : Jws.createSigner(alice),
           messageTimestamp : Time.createTimestamp({ year: 2019, month: 1, day: 1 }),
         });
-        const protoReply = await dwn.processMessage(alice.did, modulesConfigure.message);
-        expect(protoReply.status.code).toBe(202);
+        const moduleConfigureReply = await dwn.processMessage(alice.did, modulesConfigure.message);
+        expect(moduleConfigureReply.status.code).toBe(202);
         const schema = 'aSchema';
 
         const write1 = await TestDataGenerator.generateRecordsWrite({

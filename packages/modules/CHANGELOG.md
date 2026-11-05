@@ -1,4 +1,4 @@
-# @enbox/protocols
+# @enbox/modules
 
 ## 0.2.120
 

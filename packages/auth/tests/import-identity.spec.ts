@@ -77,13 +77,13 @@ describe('importFromPortable', () => {
         emitter,
         storage,
         defaultSync                : '30s',
-        defaultIdentitySyncModules : ['https://proto.example/profile'],
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { portableIdentity: {} as any },
     );
 
     expect(syncRegCalls).toHaveLength(1);
-    expect(syncRegCalls[0].options.modules).toEqual(['https://proto.example/profile']);
+    expect(syncRegCalls[0].options.modules).toEqual(['https://modules.example/profile']);
     expect(syncStartCalls).toHaveLength(1);
     expect(syncStartCalls[0].interval).toBe('30s');
   });
@@ -139,7 +139,7 @@ describe('importFromPortable', () => {
 
     const grantData = JSON.stringify({
       dateExpires : '2040-01-01T00:00:00.000000Z',
-      scope       : { interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' },
+      scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
       delegated   : true,
     });
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -170,7 +170,7 @@ describe('importFromPortable', () => {
 
     expect(syncRegCalls).toHaveLength(1);
     // Should register with the scoped module, NOT 'all'.
-    expect(syncRegCalls[0].options.modules).toEqual(['https://proto.example/chat']);
+    expect(syncRegCalls[0].options.modules).toEqual(['https://modules.example/chat']);
     expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
   });
 

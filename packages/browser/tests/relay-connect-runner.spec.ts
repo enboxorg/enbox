@@ -26,8 +26,8 @@ import {
 
 const PERMISSIONS: ConnectPermissionRequest[] = [
   {
-    moduleDefinition : { module: 'https://proto.example.com', published: false, types: {}, structure: {} },
-    permissionScopes : [{ module: 'https://proto.example.com', interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+    moduleDefinition : { module: 'https://modules.example.com', published: false, types: {}, structure: {} },
+    permissionScopes : [{ module: 'https://modules.example.com', interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
   },
 ];
 

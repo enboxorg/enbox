@@ -1669,14 +1669,14 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent, {
         sync                : '10s',
-        identitySyncModules : ['https://proto.example/profile'],
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:dht:testuser123');
 
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:dht:testuser123');
-      expect(registerCalls[0].options.modules).toEqual(['https://proto.example/profile']);
+      expect(registerCalls[0].options.modules).toEqual(['https://modules.example/profile']);
     });
 
     test('leaves local identity sync registration to the application when no explicit scope is configured', async () => {
@@ -1712,7 +1712,7 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent, {
         sync                : '10s',
-        identitySyncModules : ['https://proto.example/profile'],
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:delegate');
@@ -1772,7 +1772,7 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent, {
         sync                : '10s',
-        identitySyncModules : ['https://proto.example/profile'],
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:delegate');
@@ -1807,7 +1807,7 @@ describe('AuthManager', () => {
       });
       const manager = createTestManager(agent, {
         sync                : 'off',
-        identitySyncModules : ['https://proto.example/profile'],
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:dht:testuser123');

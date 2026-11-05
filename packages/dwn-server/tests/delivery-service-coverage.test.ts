@@ -1922,7 +1922,7 @@ describe('DeliveryService — coverage', () => {
         module     : 'http://example.com/composed',
         modulePath : 'message',
         contextId  : 'ctx-1',
-        recordId   : 'cross-proto-skip',
+        recordId   : 'cross-module-skip',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 

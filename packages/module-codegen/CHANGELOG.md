@@ -1,4 +1,4 @@
-# @enbox/protocol-codegen
+# @enbox/module-codegen
 
 ## 0.1.11
 

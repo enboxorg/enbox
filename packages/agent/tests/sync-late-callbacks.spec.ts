@@ -66,7 +66,7 @@ function createLiveMockAgent(): LiveMockAgent {
 
 describe('SyncEngineLevel late subscription callbacks', () => {
   let db: Level<string, string>;
-  const scope = { kind: 'moduleSet', modules: ['https://proto.example.com'] };
+  const scope = { kind: 'moduleSet', modules: ['https://modules.example.com'] };
   const target = {
     did                : 'did:example:alice',
     dwnUrl             : 'https://dwn.example.com',

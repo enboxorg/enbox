@@ -864,7 +864,7 @@ describe('DwnApi', () => {
       it('returns published module definitions for requests from external DID', async () => {
         // Configure a published module on Alice's local DWN.
         const publicModule = await dwnAlice.modules.configure({
-          definition: { ...moduleDefinition, module: 'http://proto-published', published: true }
+          definition: { ...moduleDefinition, module: 'http://module-published', published: true }
         });
         expect(publicModule.status.code).toBe(202);
 
@@ -878,20 +878,20 @@ describe('DwnApi', () => {
         const publishedResponse = await dwnBob.modules.query({
           from   : aliceDid.uri,
           filter : {
-            module: 'http://proto-published'
+            module: 'http://module-published'
           }
         });
 
         // Verify that one query result is returned.
         expect(publishedResponse.status.code).toBe(200);
         expect(publishedResponse.modules).toHaveLength(1);
-        expect(publishedResponse.modules[0].definition.module).toBe('http://proto-published');
+        expect(publishedResponse.modules[0].definition.module).toBe('http://module-published');
       });
 
       it('does not return unpublished module definitions for requests from external DID', async () => {
         // Configure an unpublished module on Alice's DWN.
         const notPublicModule = await dwnAlice.modules.configure({
-          definition: { ...moduleDefinition, module: 'http://proto-not-published', published: false }
+          definition: { ...moduleDefinition, module: 'http://module-not-published', published: false }
         });
         expect(notPublicModule.status.code).toBe(202);
 
@@ -905,7 +905,7 @@ describe('DwnApi', () => {
         const nonPublishedResponse = await dwnBob.modules.query({
           from   : aliceDid.uri,
           filter : {
-            module: 'http://proto-not-published'
+            module: 'http://module-not-published'
           }
         });
 

@@ -417,7 +417,7 @@ describe('restoreSession', () => {
             return {
               reply: {
                 status  : { code: 200, detail: 'OK' },
-                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+                entries : [buildMockGrantEntry('https://modules.example.com/notes')],
               },
             };
           }
@@ -431,7 +431,7 @@ describe('restoreSession', () => {
 
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.modules).toContain('https://proto.example.com/notes');
+      expect(registerCalls[0].options.modules).toContain('https://modules.example.com/notes');
       expect(lifecycleOptions).toHaveLength(1);
       expect(lifecycleOptions[0].timeout).toBeGreaterThan(0);
       expect(lifecycleOptions[0].timeout).toBeLessThanOrEqual(10_000);
@@ -503,7 +503,7 @@ describe('restoreSession', () => {
             return {
               reply: {
                 status  : { code: 200, detail: 'OK' },
-                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+                entries : [buildMockGrantEntry('https://modules.example.com/notes')],
               },
             };
           }
@@ -563,8 +563,8 @@ describe('restoreSession', () => {
 
       // Build grant entries that include one with PermissionsModule.uri scope
       // and one with a normal module.
-      const permissionsProtoUri = 'https://identity.foundation/dwn/permissions';
-      const customProtoUri = 'https://myapp.example/proto';
+      const permissionsModuleUri = 'https://identity.foundation/dwn/permissions';
+      const customModuleUri = 'https://myapp.example/module';
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
@@ -577,8 +577,8 @@ describe('restoreSession', () => {
               reply: {
                 status  : { code: 200, detail: 'OK' },
                 entries : [
-                  buildMockGrantEntry(customProtoUri),
-                  buildMockGrantEntry(permissionsProtoUri),
+                  buildMockGrantEntry(customModuleUri),
+                  buildMockGrantEntry(permissionsModuleUri),
                 ],
               },
             };
@@ -594,8 +594,8 @@ describe('restoreSession', () => {
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
       // Only the custom module should appear, not the permissions module.
-      expect(registerCalls[0].options.modules).toContain(customProtoUri);
-      expect(registerCalls[0].options.modules).not.toContain(permissionsProtoUri);
+      expect(registerCalls[0].options.modules).toContain(customModuleUri);
+      expect(registerCalls[0].options.modules).not.toContain(permissionsModuleUri);
     });
 
     test('requests revocation-filtered grants for the restored delegate sync scope', async () => {
@@ -615,7 +615,7 @@ describe('restoreSession', () => {
         syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
         permissionsFetchGrants : async (params) => {
           grantRequests.push(params);
-          const validGrant = buildMockGrantEntry('https://proto.example/valid');
+          const validGrant = buildMockGrantEntry('https://modules.example/valid');
           return [{ grant: DwnPermissionGrant.parse(validGrant), message: validGrant }];
         },
       });
@@ -632,7 +632,7 @@ describe('restoreSession', () => {
         checkRevoked : true,
       }]);
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.modules).toContain('https://proto.example/valid');
+      expect(registerCalls[0].options.modules).toContain('https://modules.example/valid');
     });
 
     test('returns all for an unscoped grant (no module in scope)', async () => {
@@ -715,7 +715,7 @@ describe('restoreSession', () => {
 
       const grantData = JSON.stringify({
         dateExpires : '2040-06-25T16:09:16.693356Z',
-        scope       : { interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' },
+        scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
         delegated   : true,
       });
       const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

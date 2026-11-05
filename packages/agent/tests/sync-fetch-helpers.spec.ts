@@ -48,7 +48,7 @@ describe('sync-fetch-helpers', () => {
 
       expect(isTenantModuleConfig(author.did, module)(message)).toBe(true);
       expect(isTenantModuleConfig('did:example:other', module)(message)).toBe(false);
-      expect(isTenantModuleConfig(author.did, 'https://other.example/proto')(message)).toBe(false);
+      expect(isTenantModuleConfig(author.did, 'https://other.example/module')(message)).toBe(false);
     });
   });
 });

@@ -884,14 +884,14 @@ export function testMessagesSubscribeHandler(): void {
             expect(grant1Reply.status.code).toBe(202);
 
             // bob uses the grant to subscribe to module 1 messages
-            const proto1MessageCids: string[] = [];
-            let proto1EncodedData: string | undefined;
-            const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+            const module1MessageCids: string[] = [];
+            let module1EncodedData: string | undefined;
+            const module1SubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               const messageCid = await Message.getCid(message);
-              proto1MessageCids.push(messageCid);
-              proto1EncodedData = msg.encodedData;
+              module1MessageCids.push(messageCid);
+              module1EncodedData = msg.encodedData;
             };
 
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
@@ -899,7 +899,7 @@ export function testMessagesSubscribeHandler(): void {
               filters            : [{ module: module1.module }],
               permissionGrantIds : [grant1Message.recordId]
             });
-            const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: proto1Handler });
+            const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: module1SubscriptionHandler });
             expect(bobReply1.status.code).toBe(200);
 
             const allMessages: string[] = [];
@@ -917,42 +917,42 @@ export function testMessagesSubscribeHandler(): void {
             expect(allReply.status.code).toBe(200);
 
             // alice writes a message to module 1
-            const proto1Data = Encoder.stringToBytes('module payload');
-            const { message: proto1Message, dataStream: proto1DataStream } = await TestDataGenerator.generateRecordsWrite({
-              data       : proto1Data,
+            const module1Data = Encoder.stringToBytes('module payload');
+            const { message: module1RecordMessage, dataStream: module1DataStream } = await TestDataGenerator.generateRecordsWrite({
+              data       : module1Data,
               module     : module1.module,
               modulePath : 'post',
               schema     : module1.types.post.schema,
               author     : alice
             });
-            const proto1Reply = await dwn.processMessage(alice.did, proto1Message, { dataStream: proto1DataStream });
-            expect(proto1Reply.status.code).toBe(202);
+            const module1WriteReply = await dwn.processMessage(alice.did, module1RecordMessage, { dataStream: module1DataStream });
+            expect(module1WriteReply.status.code).toBe(202);
 
             // alice writes a message to module 2
-            const { message: proto2Message, dataStream: proto2DataStream } = await TestDataGenerator.generateRecordsWrite({
+            const { message: module2RecordMessage, dataStream: module2DataStream } = await TestDataGenerator.generateRecordsWrite({
               module     : module2.module,
               modulePath : 'post',
               schema     : module2.types.post.schema,
               author     : alice
             });
-            const proto2Reply = await dwn.processMessage(alice.did, proto2Message, { dataStream: proto2DataStream });
-            expect(proto2Reply.status.code).toBe(202);
+            const module2WriteReply = await dwn.processMessage(alice.did, module2RecordMessage, { dataStream: module2DataStream });
+            expect(module2WriteReply.status.code).toBe(202);
 
             // ensure that all messages have been received as a control
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(allMessages).toHaveLength(2);
               const expectedAllCids = [
-                await Message.getCid(proto1Message),
-                await Message.getCid(proto2Message)
+                await Message.getCid(module1RecordMessage),
+                await Message.getCid(module2RecordMessage)
               ];
               expect(allMessages.sort()).toEqual(expectedAllCids.sort());
 
-              // proto 1 messages should only have one message
-              expect(proto1MessageCids).toHaveLength(1);
-              const expectedProto1Cids = [await Message.getCid(proto1Message)];
-              expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
+              // module 1 should only have one message
+              expect(module1MessageCids).toHaveLength(1);
+              const expectedModule1Cids = [await Message.getCid(module1RecordMessage)];
+              expect(module1MessageCids.sort()).toEqual(expectedModule1Cids.sort());
             });
-            expect(proto1EncodedData).toBe(Encoder.bytesToBase64Url(proto1Data));
+            expect(module1EncodedData).toBe(Encoder.bytesToBase64Url(module1Data));
 
           });
 

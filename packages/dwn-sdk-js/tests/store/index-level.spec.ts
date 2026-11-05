@@ -1840,7 +1840,7 @@ describe('IndexLevel', () => {
 
         for (let i = 0; i < ids.length; i++) {
           await compoundIndex.put(compoundTenant, ids[i], {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'thread/post',
             messageTimestamp : timestamps[i],
           });
@@ -1848,7 +1848,7 @@ describe('IndexLevel', () => {
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -1866,7 +1866,7 @@ describe('IndexLevel', () => {
 
         for (let i = 0; i < ids.length; i++) {
           await compoundIndex.put(compoundTenant, ids[i], {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'thread/post',
             messageTimestamp : timestamps[i],
           });
@@ -1874,7 +1874,7 @@ describe('IndexLevel', () => {
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending }
         );
 
@@ -1885,7 +1885,7 @@ describe('IndexLevel', () => {
       it('should support limit', async () => {
         for (let i = 0; i < 5; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
@@ -1893,7 +1893,7 @@ describe('IndexLevel', () => {
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
 
@@ -1904,7 +1904,7 @@ describe('IndexLevel', () => {
       it('should support cursor pagination ascending', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
@@ -1913,7 +1913,7 @@ describe('IndexLevel', () => {
         // first page
         const page1 = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
         expect(page1).toHaveLength(3);
@@ -1923,7 +1923,7 @@ describe('IndexLevel', () => {
         const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
         const page2 = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', cursor }
         );
         expect(page2).toHaveLength(3);
@@ -1933,7 +1933,7 @@ describe('IndexLevel', () => {
       it('should support cursor pagination descending', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
@@ -1942,7 +1942,7 @@ describe('IndexLevel', () => {
         // first page descending
         const page1 = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, limit: 3 }
         );
         expect(page1).toHaveLength(3);
@@ -1952,7 +1952,7 @@ describe('IndexLevel', () => {
         const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
         const page2 = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, cursor }
         );
         expect(page2).toHaveLength(3);
@@ -1963,7 +1963,7 @@ describe('IndexLevel', () => {
         // insert records with same module+modulePath but different 'published' values
         for (let i = 0; i < 4; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false
@@ -1974,7 +1974,7 @@ describe('IndexLevel', () => {
         // published should be verified as a residual filter
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items', published: true }],
+          [{ module: 'https://modules.example', modulePath: 'items', published: true }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -1985,12 +1985,12 @@ describe('IndexLevel', () => {
       it('should only return results matching the specific filter values', async () => {
         // insert records with different module paths
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
@@ -2003,7 +2003,7 @@ describe('IndexLevel', () => {
         // query for only module.xyz + thread/post
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2013,12 +2013,12 @@ describe('IndexLevel', () => {
 
       it('should fall back to non-compound strategy for OR (multi-filter) queries', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
@@ -2027,8 +2027,8 @@ describe('IndexLevel', () => {
         const results = await compoundIndex.query(
           compoundTenant,
           [
-            { module: 'https://proto.xyz', modulePath: 'thread/post' },
-            { module: 'https://proto.xyz', modulePath: 'thread/reply' },
+            { module: 'https://modules.example', modulePath: 'thread/post' },
+            { module: 'https://modules.example', modulePath: 'thread/reply' },
           ],
           { sortProperty: 'messageTimestamp' }
         );
@@ -2043,7 +2043,7 @@ describe('IndexLevel', () => {
         // a hypothetical single-property index when both module and modulePath are present
 
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Item',
@@ -2062,7 +2062,7 @@ describe('IndexLevel', () => {
         // query using module+modulePath compound index
         const moduleResults = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
         expect(moduleResults).toHaveLength(1);
@@ -2071,7 +2071,7 @@ describe('IndexLevel', () => {
 
       it('should not use compound index when sort property does not match', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Item',
@@ -2083,7 +2083,7 @@ describe('IndexLevel', () => {
         // it should still return correct results via fallback strategy
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'dateCreated' }
         );
         expect(results).toHaveLength(1);
@@ -2094,7 +2094,7 @@ describe('IndexLevel', () => {
       it('should count items matching a compound index filter', async () => {
         for (let i = 0; i < 10; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
@@ -2111,7 +2111,7 @@ describe('IndexLevel', () => {
 
         const count = await compoundIndex.count(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2121,7 +2121,7 @@ describe('IndexLevel', () => {
       it('should count items with residual filter verification', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false, msg-4: true, msg-5: false
@@ -2130,7 +2130,7 @@ describe('IndexLevel', () => {
 
         const count = await compoundIndex.count(
           compoundTenant,
-          [{ module: 'https://proto.xyz', modulePath: 'items', published: true }],
+          [{ module: 'https://modules.example', modulePath: 'items', published: true }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2139,7 +2139,7 @@ describe('IndexLevel', () => {
 
       it('should return 0 when no items match', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
@@ -2156,7 +2156,7 @@ describe('IndexLevel', () => {
       it('should fall back to full query for non-compound-index filters', async () => {
         for (let i = 0; i < 4; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            module           : 'https://proto.xyz',
+            module           : 'https://modules.example',
             modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i < 2,
@@ -2175,12 +2175,12 @@ describe('IndexLevel', () => {
 
       it('should count correctly with OR (multi-filter) queries', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          module           : 'https://proto.xyz',
+          module           : 'https://modules.example',
           modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
@@ -2194,8 +2194,8 @@ describe('IndexLevel', () => {
         const count = await compoundIndex.count(
           compoundTenant,
           [
-            { module: 'https://proto.xyz', modulePath: 'thread/post' },
-            { module: 'https://proto.xyz', modulePath: 'thread/reply' },
+            { module: 'https://modules.example', modulePath: 'thread/post' },
+            { module: 'https://modules.example', modulePath: 'thread/reply' },
           ],
           { sortProperty: 'messageTimestamp' }
         );

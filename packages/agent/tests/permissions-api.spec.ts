@@ -1556,7 +1556,7 @@ describe('AgentPermissionsApi', () => {
 
       // Messages.Read is the only valid Messages scope — one grant per module
       // covers Query, Read, and Subscribe operations.
-      const protoGrant = await testHarness.agent.permissions.createGrant({
+      const moduleGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
@@ -1564,7 +1564,7 @@ describe('AgentPermissionsApi', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module },
       });
 
-      const otherProtoGrant = await testHarness.agent.permissions.createGrant({
+      const otherModuleGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
@@ -1572,7 +1572,7 @@ describe('AgentPermissionsApi', () => {
         scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: otherModule },
       });
 
-      const deviceXMessageGrants = [ protoGrant, otherProtoGrant ];
+      const deviceXMessageGrants = [ moduleGrant, otherModuleGrant ];
 
       // All Messages feed operations match the same Read grant for the given module.
       for (const messageType of [
@@ -1584,7 +1584,7 @@ describe('AgentPermissionsApi', () => {
           messageType,
           module,
         }, deviceXMessageGrants);
-        expect(matched?.message.recordId).toBe(protoGrant.message.recordId);
+        expect(matched?.message.recordId).toBe(moduleGrant.message.recordId);
       }
 
       // Unknown module returns no match.
@@ -1601,7 +1601,7 @@ describe('AgentPermissionsApi', () => {
         module      : otherModule
       }, deviceXMessageGrants);
 
-      expect(otherMatch?.message.recordId).toBe(otherProtoGrant.message.recordId);
+      expect(otherMatch?.message.recordId).toBe(otherModuleGrant.message.recordId);
     });
 
     it('Messages.Read unified scope covers Query, Read, and Subscribe with module', async () => {

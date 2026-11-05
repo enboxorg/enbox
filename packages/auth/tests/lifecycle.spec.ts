@@ -181,40 +181,40 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('returns module list for scoped Messages.Read grants', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/b' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/b' }),
     ];
     const result = deriveSyncScopeFromGrants(grants);
-    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+    expect(result).toEqual(['https://modules.example/a', 'https://modules.example/b']);
   });
 
   test('ignores narrow Messages.Read grants because module-root sync requires root coverage', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a', modulePath: 'post' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/b', contextId: 'bafyroot/bafychild' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/c' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a', modulePath: 'post' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/b', contextId: 'bafyroot/bafychild' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/c' }),
     ];
-    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/c']);
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://modules.example/c']);
   });
 
   test('deduplicates module URIs', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a' }),
     ];
-    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/a']);
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://modules.example/a']);
   });
 
   test.each([
     ['non-Messages grants (Records.Write does not authorize sync)', [
-      mockGrant({ interface: 'Records', method: 'Write', module: 'https://proto.example/chat' }),
-      mockGrant({ interface: 'Modules', method: 'Query', module: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Records', method: 'Write', module: 'https://modules.example/chat' }),
+      mockGrant({ interface: 'Modules', method: 'Query', module: 'https://modules.example/chat' }),
     ]],
     ['Messages grants with method !== Read', [
-      mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://modules.example/chat' }),
     ]],
     ['expired Messages.Read grants', [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }, '2020-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a' }, '2020-01-01T00:00:00.000000Z'),
     ]],
   ])('derives an empty scope from %s', (_name, grants) => {
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
@@ -222,10 +222,10 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('includes non-expired and excludes expired grants in the same set', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/expired' }, '2020-01-01T00:00:00.000000Z'),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/valid' }, '2040-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/expired' }, '2020-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/valid' }, '2040-01-01T00:00:00.000000Z'),
     ];
-    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/valid']);
+    expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://modules.example/valid']);
   });
 
   test('returns empty array when no grants are provided', () => {
@@ -242,16 +242,16 @@ describe('deriveSyncScopeFromGrants', () => {
   test('returns all when wildcard grant appears first among scoped grants', () => {
     const grants = [
       mockGrant({ interface: 'Messages', method: 'Read' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/notes' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/notes' }),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toBe('all');
   });
 
   test('returns all when wildcard grant appears last among scoped grants', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' }),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/notes' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/notes' }),
       mockGrant({ interface: 'Messages', method: 'Read' }),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toBe('all');
@@ -273,7 +273,7 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('ignores scoped Messages.Subscribe grants (not Messages.Read)', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://modules.example/chat' }),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
   });
@@ -288,7 +288,7 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('ignores scoped Messages.Sync-like method grants', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Sync', module: 'https://proto.example/chat' }),
+      mockGrant({ interface: 'Messages', method: 'Sync', module: 'https://modules.example/chat' }),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
   });
@@ -312,13 +312,13 @@ describe('deriveActiveSyncScope', () => {
   test('returns modules from active Messages.Read grants', async () => {
     const agent = createMockAgent({
       permissionsFetchGrants: async () => [
-        buildGrantEntry('https://proto.example/a', 'g1'),
-        buildGrantEntry('https://proto.example/b', 'g2'),
+        buildGrantEntry('https://modules.example/a', 'g1'),
+        buildGrantEntry('https://modules.example/b', 'g2'),
       ],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
-    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+    expect(result).toEqual(['https://modules.example/a', 'https://modules.example/b']);
   });
 
   test('excludes revoked grants', async () => {
@@ -326,12 +326,12 @@ describe('deriveActiveSyncScope', () => {
     const agent = createMockAgent({
       permissionsFetchGrants: async (params: any) => {
         fetchParams = params;
-        return [buildGrantEntry('https://proto.example/valid', 'g-valid')];
+        return [buildGrantEntry('https://modules.example/valid', 'g-valid')];
       },
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
-    expect(result).toEqual(['https://proto.example/valid']);
+    expect(result).toEqual(['https://modules.example/valid']);
     expect(fetchParams).toEqual({
       author       : 'did:delegate',
       target       : 'did:delegate',
@@ -351,11 +351,11 @@ describe('deriveActiveSyncScope', () => {
         }
         return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
       },
-      permissionsFetchGrants: async () => [buildGrantEntry('https://proto.example/a', 'g1')],
+      permissionsFetchGrants: async () => [buildGrantEntry('https://modules.example/a', 'g1')],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
-    expect(result).toEqual(['https://proto.example/a']);
+    expect(result).toEqual(['https://modules.example/a']);
     expect(filters.some(filter =>
       filter?.modulePath === PermissionsModule.revocationPath && filter.contextId === undefined
     )).toBe(false);
@@ -408,7 +408,7 @@ describe('deriveActiveSyncScope', () => {
   test('wildcard wins when mixed with scoped grants', async () => {
     const agent = createMockAgent({
       permissionsFetchGrants: async () => [
-        buildGrantEntry('https://proto.example/chat', 'g-scoped'),
+        buildGrantEntry('https://modules.example/chat', 'g-scoped'),
         buildUnscopedGrantEntry('g-unscoped'),
       ],
     });
@@ -443,8 +443,8 @@ describe('processConnectedGrants', () => {
       });
 
       const grants = [
-        buildGrantMessage('https://proto.a', 'grant-a'),
-        buildGrantMessage('https://proto.b', 'grant-b'),
+        buildGrantMessage('https://modules.a', 'grant-a'),
+        buildGrantMessage('https://modules.b', 'grant-b'),
       ];
 
       await expect(
@@ -564,7 +564,7 @@ describe('importDelegateAndSetupSync', () => {
       });
 
       // A Modules.Query grant has no module but is NOT a Messages grant.
-      const grants = [buildUnscopedGrantMessage('grant-proto-query', 'Modules', 'Query')];
+      const grants = [buildUnscopedGrantMessage('grant-module-query', 'Modules', 'Query')];
 
       const result = await importDelegateAndSetupSync({
         userAgent           : agent,
@@ -595,7 +595,7 @@ describe('importDelegateAndSetupSync', () => {
         dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
       });
 
-      const grants = [buildGrantMessage('https://proto.example/chat', 'grant-chat')];
+      const grants = [buildGrantMessage('https://modules.example/chat', 'grant-chat')];
 
       const result = await importDelegateAndSetupSync({
         userAgent           : agent,
@@ -607,7 +607,7 @@ describe('importDelegateAndSetupSync', () => {
 
       expect(result).toBeDefined();
       expect(syncCalls).toHaveLength(1);
-      expect(syncCalls[0].options.modules).toContain('https://proto.example/chat');
+      expect(syncCalls[0].options.modules).toContain('https://modules.example/chat');
     });
 
     test('rethrows errors from sync setIdentityOptions', async () => {
@@ -622,7 +622,7 @@ describe('importDelegateAndSetupSync', () => {
         dwnProcessRawMessage   : async () => ({ status: { code: 202, detail: 'Accepted' } }),
       });
 
-      const grants = [buildGrantMessage('https://proto.example/chat', 'grant-chat')];
+      const grants = [buildGrantMessage('https://modules.example/chat', 'grant-chat')];
 
       await expect(
         importDelegateAndSetupSync({
@@ -650,9 +650,9 @@ describe('importDelegateAndSetupSync', () => {
       });
 
       const grants = [
-        buildGrantMessage('https://proto.example/chat', 'grant-chat'),
+        buildGrantMessage('https://modules.example/chat', 'grant-chat'),
         buildUnscopedGrantMessage('grant-unrestricted'),
-        buildGrantMessage('https://proto.example/notes', 'grant-notes'),
+        buildGrantMessage('https://modules.example/notes', 'grant-notes'),
       ];
 
       await importDelegateAndSetupSync({
@@ -707,8 +707,8 @@ describe('registerSyncScopeForIdentity', () => {
         const filter = params?.messageParams?.filter;
         if (filter?.modulePath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/chat', 'g1'),
-            buildGrantMessage('https://proto.example/notes', 'g2'),
+            buildGrantMessage('https://modules.example/chat', 'g1'),
+            buildGrantMessage('https://modules.example/notes', 'g2'),
           ] } };
         }
         return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
@@ -725,7 +725,7 @@ describe('registerSyncScopeForIdentity', () => {
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:connected1');
     expect(syncCalls[0].options.delegateDid).toBe('did:jwk:delegate1');
-    expect(syncCalls[0].options.modules).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
+    expect(syncCalls[0].options.modules).toEqual(['https://modules.example/chat', 'https://modules.example/notes']);
   });
 
   test('delegate with unscoped Messages.Read grant: calls setIdentityOptions with modules: all', async () => {
@@ -803,7 +803,7 @@ describe('registerSyncScopeForIdentity', () => {
         const filter = params?.messageParams?.filter;
         if (filter?.modulePath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [
-            buildGrantMessage('https://proto.example/chat', 'g1'),
+            buildGrantMessage('https://modules.example/chat', 'g1'),
           ] } };
         }
         return { reply: { status: { code: 200, detail: 'OK' }, entries: [] } };
@@ -829,12 +829,12 @@ describe('registerSyncScopeForIdentity', () => {
     await registerSyncScopeForIdentity({
       userAgent           : agent,
       connectedDid        : 'did:dht:connected1',
-      identitySyncModules : ['https://proto.example/profile'],
+      identitySyncModules : ['https://modules.example/profile'],
     });
 
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:connected1');
-    expect(syncCalls[0].options.modules).toEqual(['https://proto.example/profile']);
+    expect(syncCalls[0].options.modules).toEqual(['https://modules.example/profile']);
     // Local session — delegateDid should not be present in the options payload.
     expect(syncCalls[0].options.delegateDid).toBeUndefined();
   });
@@ -865,7 +865,7 @@ describe('registerSyncScopeForIdentity', () => {
       registerSyncScopeForIdentity({
         userAgent           : agent,
         connectedDid        : 'did:dht:connected1',
-        identitySyncModules : ['https://proto.example/profile'],
+        identitySyncModules : ['https://modules.example/profile'],
       })
     ).rejects.toThrow('database unavailable');
   });

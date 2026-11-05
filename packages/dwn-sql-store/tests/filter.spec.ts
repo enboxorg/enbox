@@ -117,10 +117,10 @@ describe('filterSelectQuery', () => {
 
   describe('EqualFilter', () => {
     it('should filter by exact string match', async () => {
-      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'proto-a' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'proto-b' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'module-a' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'module-b' });
 
-      const filters: Filter[] = [{ module: 'proto-a' }];
+      const filters: Filter[] = [{ module: 'module-a' }];
 
       let query = db
         .selectFrom('messageStoreMessages')
@@ -361,13 +361,13 @@ describe('filterSelectQuery', () => {
 
   describe('multiple filters (OR)', () => {
     it('should combine multiple filters as OR', async () => {
-      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'proto-a', method: 'Write' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'proto-b', method: 'Read' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-3', module: 'proto-c', method: 'Delete' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'module-a', method: 'Write' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'module-b', method: 'Read' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-3', module: 'module-c', method: 'Delete' });
 
-      // Filter 1: module = proto-a, Filter 2: method = Delete => OR => cid-1 and cid-3
+      // Filter 1: module = module-a, Filter 2: method = Delete => OR => cid-1 and cid-3
       const filters: Filter[] = [
-        { module: 'proto-a' },
+        { module: 'module-a' },
         { method: 'Delete' },
       ];
 

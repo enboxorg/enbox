@@ -593,13 +593,13 @@ describe('e2e: grant revocation stops future delivery', () => {
 
     // Send permissions module + grants to DWN server so retry can
     // confirm revocations remotely.
-    const { reply: permProto } = await ownerHarness.agent.processDwnRequest({
+    const { reply: permissionsQueryReply } = await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
       messageType   : DwnInterface.ModulesQuery,
       messageParams : { filter: { module: PermissionsModule.uri } },
     });
-    for (const e of permProto.entries ?? []) {
+    for (const e of permissionsQueryReply.entries ?? []) {
       await sendRemoteSetupRequest({
         dwnUrl: testDwnUrl, targetDid: ownerDid, message: e as any,
       });

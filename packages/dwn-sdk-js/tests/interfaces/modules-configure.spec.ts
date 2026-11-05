@@ -230,7 +230,7 @@ describe('ModulesConfigure', () => {
 
     it('should include permissionGrantId in the descriptor when provided', async () => {
       const alice = await TestDataGenerator.generatePersona();
-      const grantId = 'grant-proto-789';
+      const grantId = 'grant-module-789';
 
       const definition = { ...dexModuleDefinition };
       const modulesConfigure = await ModulesConfigure.create({

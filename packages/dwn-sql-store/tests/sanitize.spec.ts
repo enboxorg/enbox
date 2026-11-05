@@ -73,7 +73,7 @@ describe('sanitize utilities', () => {
   describe('extractTagsAndSanitizeIndexes()', () => {
     it('should extract tag-prefixed fields into tags object', () => {
       const records = {
-        'module'    : 'proto-1',
+        'module'    : 'module-1',
         'tag.color' : 'red',
         'tag.size'  : 42,
       };
@@ -81,7 +81,7 @@ describe('sanitize utilities', () => {
       const result = extractTagsAndSanitizeIndexes(records);
 
       expect(result.tags).toEqual({ color: 'red', size: 42 });
-      expect(result.indexes).toEqual({ module: 'proto-1' });
+      expect(result.indexes).toEqual({ module: 'module-1' });
     });
 
     it('should sanitize boolean values in indexes before extracting tags', () => {
@@ -98,21 +98,21 @@ describe('sanitize utilities', () => {
     });
 
     it('should return empty tags when no tag-prefixed fields exist', () => {
-      const records = { module: 'proto-1', method: 'Write' };
+      const records = { module: 'module-1', method: 'Write' };
       const result = extractTagsAndSanitizeIndexes(records);
 
       expect(result.tags).toEqual({});
-      expect(result.indexes).toEqual({ module: 'proto-1', method: 'Write' });
+      expect(result.indexes).toEqual({ module: 'module-1', method: 'Write' });
     });
 
     it('should not mutate the original records object', () => {
-      const records = { 'tag.color': 'red', 'module': 'proto-1' };
+      const records = { 'tag.color': 'red', 'module': 'module-1' };
       const original = { ...records };
       extractTagsAndSanitizeIndexes(records);
 
       // The function creates a shallow copy of records for indexes, so original is not affected
       expect(original['tag.color']).toBe('red');
-      expect(original.module).toBe('proto-1');
+      expect(original.module).toBe('module-1');
     });
   });
 
@@ -121,13 +121,13 @@ describe('sanitize utilities', () => {
   describe('sanitizeFiltersAndSeparateTags()', () => {
     it('should separate tag filters from non-tag filters', () => {
       const filters: Filter[] = [
-        { module: 'proto-1', 'tag.color': 'red' },
+        { module: 'module-1', 'tag.color': 'red' },
       ];
 
       const result = sanitizeFiltersAndSeparateTags(filters);
 
       expect(result).toHaveLength(1);
-      expect(result[0].filter).toEqual({ module: 'proto-1' });
+      expect(result[0].filter).toEqual({ module: 'module-1' });
       expect(result[0].tags).toEqual({ color: 'red' });
     });
 
@@ -144,21 +144,21 @@ describe('sanitize utilities', () => {
 
     it('should handle multiple filters', () => {
       const filters: Filter[] = [
-        { module: 'proto-a' },
+        { module: 'module-a' },
         { method: 'Write', 'tag.priority': 5 },
       ];
 
       const result = sanitizeFiltersAndSeparateTags(filters);
 
       expect(result).toHaveLength(2);
-      expect(result[0].filter).toEqual({ module: 'proto-a' });
+      expect(result[0].filter).toEqual({ module: 'module-a' });
       expect(result[0].tags).toEqual({});
       expect(result[1].filter).toEqual({ method: 'Write' });
       expect(result[1].tags).toEqual({ priority: 5 });
     });
 
     it('should handle filters with no tags', () => {
-      const filters: Filter[] = [{ module: 'proto-1' }];
+      const filters: Filter[] = [{ module: 'module-1' }];
       const result = sanitizeFiltersAndSeparateTags(filters);
 
       expect(result[0].tags).toEqual({});

@@ -182,7 +182,7 @@ describe('dwn-encryption', () => {
 
       const recordsWrite = {
         recordId   : 'rec-fail-read',
-        descriptor : { module: 'https://example.com/proto' },
+        descriptor : { module: 'https://example.com/module' },
         encryption : {
           recipients: [{
             header: {
@@ -232,7 +232,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'delivery-record',
         descriptor : {
-          module     : 'https://example.com/proto',
+          module     : 'https://example.com/module',
           modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
         encryption: {
@@ -265,7 +265,7 @@ describe('dwn-encryption', () => {
         dataStream   : DataStream.fromBytes(storedBytes),
         recordsWrite : {
           recordId   : 'plaintext-record',
-          descriptor : { module: 'https://example.com/proto', modulePath: 'note' },
+          descriptor : { module: 'https://example.com/module', modulePath: 'note' },
         } as any,
         target: 'did:example:alice',
       });
@@ -274,7 +274,7 @@ describe('dwn-encryption', () => {
     });
 
     describe('audience decrypt failure taxonomy for role-wrapped records', () => {
-      const TAXONOMY_MODULE = 'https://proto.example.com';
+      const TAXONOMY_MODULE = 'https://modules.example.com';
 
       function makeRoleWrappedReadReply(keyId: string = 'wrapped-role-key'): any {
         return {
@@ -1348,7 +1348,7 @@ describe('dwn-encryption', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
-          module    : 'https://proto.example.com',
+          module    : 'https://modules.example.com',
         },
       });
       const contextReadGrant = await TestDataGenerator.generateGrantCreate({
@@ -1359,7 +1359,7 @@ describe('dwn-encryption', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          module    : 'https://proto.example.com',
+          module    : 'https://modules.example.com',
           contextId : 'context-a',
         },
       });
@@ -1371,7 +1371,7 @@ describe('dwn-encryption', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          module    : 'https://proto.example.com',
+          module    : 'https://modules.example.com',
         },
       });
       const processDwnRequest = sinon.stub().rejects(new Error('ineligible grants should not write records'));
@@ -1392,7 +1392,7 @@ describe('dwn-encryption', () => {
       const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
       const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
       const ownerPrivateKey = await X25519.generateKey();
-      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://proto.example.com');
+      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://modules.example.com');
       const readGrant = await TestDataGenerator.generateGrantCreate({
         author      : grantor,
         grantedTo   : grantee,
@@ -1436,7 +1436,7 @@ describe('dwn-encryption', () => {
       const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
       const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
       const ownerPrivateKey = await X25519.generateKey();
-      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://proto.example.com');
+      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://modules.example.com');
       const writeGrant = await TestDataGenerator.generateGrantCreate({
         author      : grantor,
         grantedTo   : grantee,
@@ -1683,7 +1683,7 @@ describe('dwn-encryption', () => {
       mockAgent: any;
       recordsWrite: RecordsWriteMessage;
     }> => {
-      const module = 'https://proto.example.com';
+      const module = 'https://modules.example.com';
       const grantor = await TestDataGenerator.generatePersona({ did: 'did:example:alice' });
       const grantee = await TestDataGenerator.generatePersona({ did: 'did:example:delegate' });
       const grant = await TestDataGenerator.generateGrantCreate({
@@ -1846,7 +1846,7 @@ describe('dwn-encryption', () => {
 
       const recordsWrite = {
         recordId   : 'rec-1',
-        descriptor : { module: 'https://example.com/proto' },
+        descriptor : { module: 'https://example.com/module' },
         encryption : {
           recipients: [{
             header: { derivationScheme: KeyDerivationScheme.ModulePath, kid: 'key-1' },
@@ -1870,7 +1870,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-path-1',
         contextId  : 'rec-path-1',
-        descriptor : { module: 'https://proto.example.com' },
+        descriptor : { module: 'https://modules.example.com' },
         encryption : {
           keyEncryption: [{
             derivationScheme : KeyDerivationScheme.ModulePath,
@@ -1897,13 +1897,13 @@ describe('dwn-encryption', () => {
         rootKeyId         : 'cached-root',
         derivationScheme  : KeyDerivationScheme.ModulePath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://proto.example.com', 'message'],
+        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://modules.example.com', 'message'],
       };
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
           grantorDid        : 'did:example:alice',
-          module            : 'https://proto.example.com',
+          module            : 'https://modules.example.com',
           scope             : { kind: 'modulePath', modulePath: 'message' },
         }]),
       };
@@ -1911,7 +1911,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-exact',
         contextId  : 'rec-exact',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       const result = await resolveKeyDecrypter({
@@ -1934,13 +1934,13 @@ describe('dwn-encryption', () => {
         rootKeyId         : 'cached-root',
         derivationScheme  : KeyDerivationScheme.ModulePath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://proto.example.com', 'message'],
+        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://modules.example.com', 'message'],
       };
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : cachedKey,
           grantorDid        : 'did:example:alice',
-          module            : 'https://proto.example.com',
+          module            : 'https://modules.example.com',
           scope             : { kind: 'modulePath', modulePath: 'message' },
         }]),
       };
@@ -1948,7 +1948,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-descendant',
         contextId  : 'rec-descendant',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message/reply' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message/reply' },
       } as unknown as RecordsWriteMessage;
 
       const result = await resolveKeyDecrypter({
@@ -1971,13 +1971,13 @@ describe('dwn-encryption', () => {
         rootKeyId         : 'module-root',
         derivationScheme  : KeyDerivationScheme.ModulePath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://proto.example.com'],
+        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://modules.example.com'],
       };
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : moduleKey,
           grantorDid        : 'did:example:alice',
-          module            : 'https://proto.example.com',
+          module            : 'https://modules.example.com',
           scope             : { kind: 'module' },
         }]),
       };
@@ -1985,7 +1985,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-wide',
         contextId  : 'rec-wide',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       const result = await resolveKeyDecrypter({
@@ -2006,20 +2006,20 @@ describe('dwn-encryption', () => {
         rootKeyId         : 'bob-module-root',
         derivationScheme  : KeyDerivationScheme.ModulePath,
         derivedPrivateKey : { kty: 'OKP', crv: 'X25519', x: 'x', d: 'd' } as any,
-        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://proto.example.com'],
+        derivationPath    : [KeyDerivationScheme.ModulePath, 'https://modules.example.com'],
       };
       const delegateCache = {
         get: sinon.stub().returns([{
           derivedPrivateKey : moduleKey,
           grantorDid        : 'did:example:bob',
-          module            : 'https://proto.example.com',
+          module            : 'https://modules.example.com',
           scope             : { kind: 'module' },
         }]),
       };
       const recordsWrite = {
         recordId   : 'rec-wrong-grantor',
         contextId  : 'rec-wrong-grantor',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       await expect(resolveKeyDecrypter({
@@ -2051,7 +2051,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-uncovered',
         contextId  : 'rec-uncovered',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       await expect(resolveKeyDecrypter({
@@ -2071,7 +2071,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-no-cache',
         contextId  : 'rec-no-cache',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       await expect(resolveKeyDecrypter({
@@ -2109,7 +2109,7 @@ describe('dwn-encryption', () => {
       const recordsWrite = {
         recordId   : 'rec-no-grant-key',
         contextId  : 'rec-no-grant-key',
-        descriptor : { module: 'https://proto.example.com', modulePath: 'message' },
+        descriptor : { module: 'https://modules.example.com', modulePath: 'message' },
       } as unknown as RecordsWriteMessage;
 
       await expect(resolveKeyDecrypter({
@@ -2125,7 +2125,7 @@ describe('dwn-encryption', () => {
       expect(mockAgent.processDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
         recipient : 'did:example:delegate',
         module    : EncryptionModule.uri,
-        tags      : { module: 'https://proto.example.com' },
+        tags      : { module: 'https://modules.example.com' },
       });
       expect(mockAgent.sendDwnRequest.calledOnce).toBe(true);
       expect(delegateCache.set.called).toBe(false);
@@ -2171,7 +2171,7 @@ describe('dwn-encryption', () => {
 
       const cachedKeys = delegateCache.set.firstCall.args[1];
       expect(cachedKeys).toHaveLength(1);
-      expect(cachedKeys[0].module).toBe('https://proto.example.com');
+      expect(cachedKeys[0].module).toBe('https://modules.example.com');
       expect(cachedKeys[0].scope).toEqual({ kind: 'modulePath', modulePath: 'message' });
       expect(mockAgent.processDwnRequest.callCount).toBe(2);
       expect(mockAgent.permissions.isGrantRevoked.calledOnceWith({
@@ -2182,7 +2182,7 @@ describe('dwn-encryption', () => {
     });
 
     it('should hydrate a read-grant role-path durable grantKey referenced by a covered read rule', async () => {
-      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://proto.example.com');
+      const moduleDefinition = await createGrantKeyCoverageModuleDefinition('https://modules.example.com');
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         grantScopeModulePath   : 'chat/message',
         payloadScopeModulePath : 'chat/member',
@@ -2206,7 +2206,7 @@ describe('dwn-encryption', () => {
         author        : 'did:example:delegate',
         target        : 'did:example:alice',
         messageType   : DwnInterface.ModulesQuery,
-        messageParams : { filter: { module: 'https://proto.example.com' } },
+        messageParams : { filter: { module: 'https://modules.example.com' } },
       });
     });
 
@@ -2254,7 +2254,7 @@ describe('dwn-encryption', () => {
       expect(mockAgent.sendDwnRequest.firstCall.args[0].messageParams.filter).toEqual({
         recipient : 'did:example:delegate',
         module    : EncryptionModule.uri,
-        tags      : { module: 'https://proto.example.com' },
+        tags      : { module: 'https://modules.example.com' },
       });
       expect(delegateCache.set.calledOnce).toBe(true);
     });
@@ -2317,7 +2317,7 @@ describe('dwn-encryption', () => {
     it('should reject a durable grantKey whose payload does not match its record tags', async () => {
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         mutateRecordTags: (tags): void => {
-          tags.module = 'https://proto.example.com/other';
+          tags.module = 'https://modules.example.com/other';
         },
       });
 
@@ -2355,7 +2355,7 @@ describe('dwn-encryption', () => {
     it('should reject a durable grantKey whose derivationPath does not match its scope', async () => {
       const { mockAgent, delegateCache, recordsWrite } = await makeGrantKeyResolverFixture({
         mutatePayload: (payload): void => {
-          payload.keyMaterial.derivationPath = [KeyDerivationScheme.ModulePath, 'https://proto.example.com', 'other'];
+          payload.keyMaterial.derivationPath = [KeyDerivationScheme.ModulePath, 'https://modules.example.com', 'other'];
         },
       });
 

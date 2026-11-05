@@ -154,7 +154,7 @@ describe('vaultConnect', () => {
         emitter,
         storage,
         defaultSync                : '15s',
-        defaultIdentitySyncModules : ['https://proto.example/profile'],
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { createIdentity: true },
     );
@@ -167,7 +167,7 @@ describe('vaultConnect', () => {
       'https://identity.foundation/modules/web5/jwk-store',
     ]);
     expect(syncCalls[1].did).toBe('did:dht:testuser123');
-    expect(syncCalls[1].options.modules).toEqual(['https://proto.example/profile']);
+    expect(syncCalls[1].options.modules).toEqual(['https://modules.example/profile']);
   });
 
   test('recovers remote identities before creating a fallback identity on fresh vault restore', async () => {
@@ -195,7 +195,7 @@ describe('vaultConnect', () => {
         emitter,
         storage,
         defaultSync                : '15s',
-        defaultIdentitySyncModules : ['https://proto.example/profile'],
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
     );
@@ -307,7 +307,7 @@ describe('vaultConnect', () => {
         userAgent                  : agent,
         emitter,
         storage,
-        defaultIdentitySyncModules : ['https://proto.example/profile'],
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { password: 'test-pass' },
     );
@@ -558,7 +558,7 @@ describe('vaultConnect', () => {
 
     const grantData = JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' },
+      scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
       delegated   : true,
     });
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -601,7 +601,7 @@ describe('vaultConnect', () => {
     expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
     expect(syncCalls[1].did).toBe('did:dht:external');
-    expect(syncCalls[1].options.modules).toEqual(['https://proto.example/chat']);
+    expect(syncCalls[1].options.modules).toEqual(['https://modules.example/chat']);
     expect(syncCalls[1].options.delegateDid).toBe('did:dht:testuser123');
   });
 

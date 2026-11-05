@@ -408,9 +408,9 @@ describe('AdminStore', () => {
       }
 
       // Filter for Modules interface — should include the module install.
-      const { messages: protoMsgs } = await adminStore.getTenantMessages(persona.did, { interface: 'Modules' });
-      expect(protoMsgs.length).toBeGreaterThanOrEqual(1);
-      for (const msg of protoMsgs) {
+      const { messages: moduleMessages } = await adminStore.getTenantMessages(persona.did, { interface: 'Modules' });
+      expect(moduleMessages.length).toBeGreaterThanOrEqual(1);
+      for (const msg of moduleMessages) {
         expect(msg.interface).toBe('Modules');
       }
     });
@@ -442,11 +442,11 @@ describe('AdminStore', () => {
       const modules = await adminStore.getTenantModuleCounts(persona.did);
       expect(modules.length).toBeGreaterThanOrEqual(1);
 
-      for (const proto of modules) {
-        expect(proto.module).toBeDefined();
-        expect(typeof proto.module).toBe('string');
-        expect(typeof proto.messageCount).toBe('number');
-        expect(proto.messageCount).toBeGreaterThan(0);
+      for (const moduleSummary of modules) {
+        expect(moduleSummary.module).toBeDefined();
+        expect(typeof moduleSummary.module).toBe('string');
+        expect(typeof moduleSummary.messageCount).toBe('number');
+        expect(moduleSummary.messageCount).toBeGreaterThan(0);
       }
     });
 

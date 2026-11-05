@@ -58,8 +58,8 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
   });
 
   test('non-empty modules + password → handler connect (handler signal wins)', () => {
-    const proto = { module: 'x', published: true, types: {}, structure: {} } as any;
-    expect(isVaultConnect({ modules: [proto], password: 'test' })).toBe(false);
+    const moduleDefinition = { module: 'x', published: true, types: {}, structure: {} } as any;
+    expect(isVaultConnect({ modules: [moduleDefinition], password: 'test' })).toBe(false);
   });
 
   test('connectHandler + createIdentity → handler connect (handler signal wins)', () => {
@@ -68,9 +68,9 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
   });
 
   test('non-empty modules + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
-    const proto = { module: 'x', published: true, types: {}, structure: {} } as any;
+    const moduleDefinition = { module: 'x', published: true, types: {}, structure: {} } as any;
     expect(isVaultConnect({
-      modules      : [proto],
+      modules      : [moduleDefinition],
       dwnEndpoints : ['https://dwn.example.com'],
       metadata     : { name: 'Alice' },
     })).toBe(false);

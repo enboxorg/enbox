@@ -119,15 +119,15 @@ describe('SyncEngineLevel — identity management', () => {
       const unsubscribe = syncEngine.on((event): void => { events.push(event); });
       sinon.stub(syncEngine as any, 'refreshRoleLinksForActor').rejects(new Error('routing unavailable'));
 
-      await expect(syncEngine.setIdentityOptions({ did, options: { modules: ['https://proto.example'] } }))
+      await expect(syncEngine.setIdentityOptions({ did, options: { modules: ['https://modules.example'] } }))
         .rejects.toThrow('routing unavailable');
 
       unsubscribe();
-      expect(await syncEngine.getIdentityOptions(did)).toEqual({ modules: ['https://proto.example'] });
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ modules: ['https://modules.example'] });
       expect(events).toContainEqual({
         type      : 'identity:registration-change',
         tenantDid : did,
-        options   : { modules: ['https://proto.example'] },
+        options   : { modules: ['https://modules.example'] },
       });
     });
 
@@ -155,12 +155,12 @@ describe('SyncEngineLevel — identity management', () => {
       });
 
       try {
-        await first.setIdentityOptions({ did, options: { modules: ['https://proto.example'] } });
+        await first.setIdentityOptions({ did, options: { modules: ['https://modules.example'] } });
         await receivedSet;
         await first.removeIdentity(did);
         await receivedEvents;
 
-        expect(events).toEqual([{ modules: ['https://proto.example'] }, undefined]);
+        expect(events).toEqual([{ modules: ['https://modules.example'] }, undefined]);
         expect(invalidateTargets.callCount).toBe(2);
       } finally {
         (first as any).closeWakePublishers();
@@ -175,9 +175,9 @@ describe('SyncEngineLevel — identity management', () => {
 
       await expect(syncEngine.ensureIdentityOptions({
         did,
-        options: { modules: ['https://proto.example'] },
+        options: { modules: ['https://modules.example'] },
       })).resolves.toBe(true);
-      expect(await syncEngine.getIdentityOptions(did)).toEqual({ modules: ['https://proto.example'] });
+      expect(await syncEngine.getIdentityOptions(did)).toEqual({ modules: ['https://modules.example'] });
     });
 
     it('should skip storage, quota, and routing work for semantically equal options', async () => {
@@ -204,18 +204,18 @@ describe('SyncEngineLevel — identity management', () => {
 
     it('should apply a changed delegate under the existing identity fence', async () => {
       const did = 'did:example:ensure-delegate';
-      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://proto.example'] } });
+      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://modules.example'] } });
 
       await expect(syncEngine.ensureIdentityOptions({
         did,
         options: {
           delegateDid : 'did:example:delegate',
-          modules     : ['https://proto.example'],
+          modules     : ['https://modules.example'],
         },
       })).resolves.toBe(true);
       expect(await syncEngine.getIdentityOptions(did)).toEqual({
         delegateDid : 'did:example:delegate',
-        modules     : ['https://proto.example'],
+        modules     : ['https://modules.example'],
       });
     });
 
@@ -252,7 +252,7 @@ describe('SyncEngineLevel — identity management', () => {
   describe('refreshIdentityRouting', () => {
     it('should not resurrect an identity removed before a queued routing refresh', async () => {
       const did = 'did:example:refresh-remove';
-      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://proto.example'] } });
+      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://modules.example'] } });
 
       let releaseRemoval!: () => void;
       const removalGate = new Promise<void>((resolve): void => { releaseRemoval = resolve; });
@@ -493,7 +493,7 @@ describe('SyncEngineLevel — identity management', () => {
   describe('getIdentitySyncStatus', () => {
     it('should combine registration with one tenant-scoped status report', async () => {
       const did = 'did:example:status';
-      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://proto.example'] } });
+      await syncEngine.setIdentityOptions({ did, options: { modules: ['https://modules.example'] } });
       const report = {
         connectivity : 'online' as const,
         currentness  : 'syncing' as const,
@@ -511,7 +511,7 @@ describe('SyncEngineLevel — identity management', () => {
       const getStatus = sinon.stub(syncEngine as any, 'getSyncStatus').withArgs(did).resolves(report);
 
       await expect(syncEngine.getIdentitySyncStatus(did)).resolves.toEqual({
-        registration: { modules: ['https://proto.example'] },
+        registration: { modules: ['https://modules.example'] },
         ...report,
       });
       expect(getStatus.calledOnce).toBe(true);
@@ -540,10 +540,10 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should not normalize non-empty module arrays', async () => {
-      await syncEngine.setIdentityOptions({ did: 'did:example:specific', options: { modules: ['https://proto.example'] } });
+      await syncEngine.setIdentityOptions({ did: 'did:example:specific', options: { modules: ['https://modules.example'] } });
       const options = await syncEngine.getIdentityOptions('did:example:specific');
       expect(options).toBeDefined();
-      expect(options!.modules).toEqual(['https://proto.example']);
+      expect(options!.modules).toEqual(['https://modules.example']);
     });
 
     it('should throw on unexpected Level errors', async () => {
@@ -598,12 +598,12 @@ describe('SyncEngineLevel — identity management', () => {
     });
 
     it('should persist a specific module list and retrieve it as an array', async () => {
-      const protos = ['https://proto.example.com/chat/1.0', 'https://proto.example.com/notes/1.0'];
-      await syncEngine.setIdentityOptions({ did: 'did:example:scope-list', options: { modules: protos } });
+      const moduleUris = ['https://modules.example.com/chat/1.0', 'https://modules.example.com/notes/1.0'];
+      await syncEngine.setIdentityOptions({ did: 'did:example:scope-list', options: { modules: moduleUris } });
       const options = await syncEngine.getIdentityOptions('did:example:scope-list');
       expect(options).toBeDefined();
       expect(Array.isArray(options!.modules)).toBe(true);
-      expect(options!.modules).toEqual(protos);
+      expect(options!.modules).toEqual(moduleUris);
     });
 
     it('should reject an empty modules array', async () => {
@@ -634,16 +634,16 @@ describe('SyncEngineLevel — identity management', () => {
       await syncEngine.setIdentityOptions({ did: 'did:example:scope-switch', options: { modules: 'all' } });
       await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-switch',
-        options : { modules: ['https://proto.example.com/notes/1.0'] },
+        options : { modules: ['https://modules.example.com/notes/1.0'] },
       });
       const options = await syncEngine.getIdentityOptions('did:example:scope-switch');
-      expect(options!.modules).toEqual(['https://proto.example.com/notes/1.0']);
+      expect(options!.modules).toEqual(['https://modules.example.com/notes/1.0']);
     });
 
     it('should update from a specific list to modules: all', async () => {
       await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-widen',
-        options : { modules: ['https://proto.example.com/notes/1.0'] },
+        options : { modules: ['https://modules.example.com/notes/1.0'] },
       });
       await syncEngine.setIdentityOptions({
         did     : 'did:example:scope-widen',
@@ -664,7 +664,7 @@ describe('SyncEngineLevel — identity management', () => {
       } as any;
       const engine = new SyncEngineLevel({ db, agent: mockAgent });
 
-      await engine.setIdentityOptions({ did: 'did:example:all-protos', options: { modules: 'all' } });
+      await engine.setIdentityOptions({ did: 'did:example:all-modules', options: { modules: 'all' } });
       const targets = await (engine as any).getSyncTargets();
 
       expect(targets).toHaveLength(2);
@@ -685,14 +685,14 @@ describe('SyncEngineLevel — identity management', () => {
 
       await engine.setIdentityOptions({
         did     : 'did:example:scoped',
-        options : { modules: ['https://proto1.example.com', 'https://proto2.example.com'] },
+        options : { modules: ['https://module1.example.com', 'https://module2.example.com'] },
       });
       const targets = await (engine as any).getSyncTargets();
 
       expect(targets).toHaveLength(1);
       expect(targets[0].scope).toEqual({
         kind    : 'moduleSet',
-        modules : ['https://proto1.example.com', 'https://proto2.example.com'],
+        modules : ['https://module1.example.com', 'https://module2.example.com'],
       });
       expect(targets[0].authorization).toEqual({ kind: 'owner' });
     });
@@ -763,7 +763,7 @@ describe('SyncEngineLevel — identity management', () => {
       });
       await engine.setIdentityOptions({
         did     : 'did:example:bob',
-        options : { modules: ['https://proto.example.com/chat/1.0'] },
+        options : { modules: ['https://modules.example.com/chat/1.0'] },
       });
 
       const targets = await (engine as any).getSyncTargets();
@@ -775,7 +775,7 @@ describe('SyncEngineLevel — identity management', () => {
       expect(aliceTarget!.scope).toEqual({ kind: 'full' });
       expect(bobTarget!.scope).toEqual({
         kind    : 'moduleSet',
-        modules : ['https://proto.example.com/chat/1.0'],
+        modules : ['https://modules.example.com/chat/1.0'],
       });
     });
   });
@@ -889,11 +889,11 @@ describe('SyncEngineLevel — identity management', () => {
 
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      await engine.setIdentityOptions({ did: 'did:example:hotadd1', options: { modules: ['https://proto.example'] } });
+      await engine.setIdentityOptions({ did: 'did:example:hotadd1', options: { modules: ['https://modules.example'] } });
 
       expect(hotAddStub.calledOnce).toBe(true);
       expect(hotAddStub.firstCall.args[0]).toBe('did:example:hotadd1');
-      expect(hotAddStub.firstCall.args[1]).toEqual({ modules: ['https://proto.example'] });
+      expect(hotAddStub.firstCall.args[1]).toEqual({ modules: ['https://modules.example'] });
     });
 
     it('should pass options to addIdentityToLiveSync when modules is all', async () => {
@@ -1034,13 +1034,13 @@ describe('SyncEngineLevel — identity management', () => {
     it('should rebuild only the new scope when setIdentityOptions races a settle re-initialization', async () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:settle-update-race';
-      await engine.setIdentityOptions({ did, options: { modules: ['https://old.example/proto'] } });
+      await engine.setIdentityOptions({ did, options: { modules: ['https://old.example/module'] } });
       (engine as any)._runtime = new SyncRuntime(true);
 
       const oldTarget = {
         did,
         dwnUrl             : 'https://dwn.example.com',
-        scope              : { kind: 'modules', modules: ['https://old.example/proto'] },
+        scope              : { kind: 'modules', modules: ['https://old.example/module'] },
         authorization      : { kind: 'owner' },
         authorizationEpoch : 'owner-epoch',
         projectionId       : 'projection-old',
@@ -1048,7 +1048,7 @@ describe('SyncEngineLevel — identity management', () => {
       const newTarget = {
         did,
         dwnUrl             : 'https://dwn.example.com',
-        scope              : { kind: 'modules', modules: ['https://new.example/proto'] },
+        scope              : { kind: 'modules', modules: ['https://new.example/module'] },
         authorization      : { kind: 'owner' },
         authorizationEpoch : 'owner-epoch',
         projectionId       : 'projection-new',
@@ -1093,7 +1093,7 @@ describe('SyncEngineLevel — identity management', () => {
 
       let updateSettled = false;
       const updatePromise = engine
-        .setIdentityOptions({ did, options: { modules: ['https://new.example/proto'] } })
+        .setIdentityOptions({ did, options: { modules: ['https://new.example/module'] } })
         .then((): void => { updateSettled = true; });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(updateSettled).toBe(false);
@@ -1591,7 +1591,7 @@ describe('SyncEngineLevel — identity management', () => {
       (engine as any)._agent = mockAgent;
 
       const getOrCreateLinkStub = sinon.stub().callsFake(async (params: any) => ({
-        tenantDid          : 'did:example:proto',
+        tenantDid          : 'did:example:module',
         remoteEndpoint     : 'https://dwn.example.com',
         projectionId       : 'projection-1',
         authorizationEpoch : params.authorizationEpoch,
@@ -1610,14 +1610,14 @@ describe('SyncEngineLevel — identity management', () => {
       sinon.stub(engine as any, 'openLocalPushSubscription').resolves(true);
       sinon.stub(engine as any, 'establishLinkBaseline').resolves();
 
-      await (engine as any).addIdentityToLiveSync('did:example:proto', {
-        modules: ['https://proto1.example', 'https://proto2.example'],
+      await (engine as any).addIdentityToLiveSync('did:example:module', {
+        modules: ['https://module1.example', 'https://module2.example'],
       });
 
       expect(getOrCreateLinkStub.calledOnce).toBe(true);
       expect(getOrCreateLinkStub.firstCall.args[0].scope).toEqual({
         kind    : 'moduleSet',
-        modules : ['https://proto1.example', 'https://proto2.example'],
+        modules : ['https://module1.example', 'https://module2.example'],
       });
       expect(getOrCreateLinkStub.firstCall.args[0].authorization).toEqual({ kind: 'owner' });
     });
@@ -1835,7 +1835,7 @@ describe('SyncEngineLevel — identity management', () => {
       const hotRemoveStub = sinon.stub(engine as any, 'removeIdentityFromLiveSync').resolves();
       const hotAddStub = sinon.stub(engine as any, 'addIdentityToLiveSync').resolves(new Set());
 
-      const newOptions = { modules: ['https://new-proto.example'], delegateDid: 'did:example:delegate' };
+      const newOptions = { modules: ['https://new-module.example'], delegateDid: 'did:example:delegate' };
       await engine.setIdentityOptions({ did: 'did:example:update1', options: newOptions });
 
       expect(hotRemoveStub.calledOnce).toBe(true);
