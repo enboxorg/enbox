@@ -13,15 +13,15 @@ describe('Records', () => {
     it('should throw if given private key is not supported', async () => {
       const derivedKey: DerivedPrivateJwk = {
         rootKeyId         : 'unused',
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationScheme  : KeyDerivationScheme.ModulePath,
         derivedPrivateKey : (await ed25519.generateKeyPair()).privateJwk
       };
       await expect(Records.derivePrivateKey(derivedKey, ['a'])).rejects.toThrow(DwnErrorCode.RecordsDerivePrivateKeyUnSupportedCurve);
     });
   });
 
-  describe('constructKeyDerivationPathUsingProtocolPathScheme()', () => {
-    it('should construct a valid key derivation path using protocol path scheme', async () => {
+  describe('constructKeyDerivationPathUsingModulePathScheme()', () => {
+    it('should construct a valid key derivation path using module path scheme', async () => {
       const descriptor: RecordsWriteDescriptor = {
         interface        : DwnInterfaceName.Records,
         method           : DwnMethodName.Write,
@@ -30,12 +30,12 @@ describe('Records', () => {
         dataSize         : 123,
         dateCreated      : '2022-12-19T10:20:30.123456Z',
         messageTimestamp : '2022-12-19T10:20:30.123456Z',
-        protocol         : 'http://test-protocol.xyz',
-        protocolPath     : 'testRecord',
+        module           : 'http://test-module.xyz',
+        modulePath       : 'testRecord',
       };
 
-      const path = Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
-      expect(path).toEqual([KeyDerivationScheme.ProtocolPath, 'http://test-protocol.xyz', 'testRecord']);
+      const path = Records.constructKeyDerivationPathUsingModulePathScheme(descriptor);
+      expect(path).toEqual([KeyDerivationScheme.ModulePath, 'http://test-module.xyz', 'testRecord']);
     });
 
     it('should throw a scheme-specific error for unsupported derivation schemes', () => {
@@ -48,8 +48,8 @@ describe('Records', () => {
           dataSize         : 123,
           dateCreated      : '2022-12-19T10:20:30.123456Z',
           messageTimestamp : '2022-12-19T10:20:30.123456Z',
-          protocol         : 'http://test-protocol.xyz',
-          protocolPath     : 'testRecord',
+          module           : 'http://test-module.xyz',
+          modulePath       : 'testRecord',
         },
       };
 
@@ -99,13 +99,13 @@ describe('Records', () => {
   describe('convertFilter()', () => {
     it('should lower contextId to a segment-aware subtree filter', () => {
       const result = Records.convertFilter({
-        contextId    : 'root/branch',
-        protocolPath : 'root/branch/leaf',
+        contextId  : 'root/branch',
+        modulePath : 'root/branch/leaf',
       });
 
       expect(result).toEqual({
-        contextId    : { subtree: 'root/branch' },
-        protocolPath : 'root/branch/leaf',
+        contextId  : { subtree: 'root/branch' },
+        modulePath : 'root/branch/leaf',
       });
     });
   });

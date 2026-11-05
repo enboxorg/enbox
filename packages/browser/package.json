@@ -12,7 +12,7 @@
     "clean": "rm -rf dist",
     "build:esm": "rm -rf dist/esm dist/types && bun tsc -p tsconfig.json && bun run typecheck:contracts",
     "typecheck:contracts": "bun tsc -p type-tests/tsconfig.json && bun tsc -p type-tests/worker/tsconfig.json",
-    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile --external @enbox/agent --external @enbox/api --external @enbox/auth --external @enbox/auth/browser --external @enbox/common --external @enbox/connect --external @enbox/crypto --external @enbox/dids --external @enbox/dwn-sdk-js --external @enbox/protocols",
+    "build:browser": "rm -rf dist/browser.mjs && bun ../../build/browser-bundle.js --metafile --external @enbox/agent --external @enbox/api --external @enbox/auth --external @enbox/auth/browser --external @enbox/common --external @enbox/connect --external @enbox/crypto --external @enbox/dids --external @enbox/dwn-sdk-js --external @enbox/modules",
     "build": "bun run clean && bun run build:esm && bun run build:browser",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -75,7 +75,7 @@
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@enbox/dwn-sdk-js": "workspace:*",
-    "@enbox/protocols": "workspace:*"
+    "@enbox/modules": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "22.19.15",

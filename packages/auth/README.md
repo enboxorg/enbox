@@ -35,24 +35,24 @@ import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
 directly. It exports the browser auth surface plus `PasswordProvider.fromCallback()`
 and `PasswordProvider.chain()`.
 
-## Delegated Protocol Requests
+## Delegated Module Requests
 
-Handler-based connect accepts raw protocol definitions and structural
-definition carriers such as `TypedProtocol`. A carrier's application-only
+Handler-based connect accepts raw module definitions and structural
+definition carriers such as `TypedModule`. A carrier's application-only
 fields are not sent to the wallet:
 
 ```ts
 await auth.connect({
   connectHandler,
-  protocols: [
-    NotesProtocol, // default: read, write, delete
-    { protocol: PhotosProtocol, permissions: ['read'] },
+  modules: [
+    NotesModule, // default: read, write, delete
+    { module: PhotosModule, permissions: ['read'] },
   ],
 });
 ```
 
 The explicit `{ definition: RawDefinition, permissions }` form remains
-available. A non-empty `protocols` array intentionally selects delegated
+available. A non-empty `modules` array intentionally selects delegated
 handler routing; owner applications should continue to use `connectVault()`.
 
 ## Identity-only wallet authentication

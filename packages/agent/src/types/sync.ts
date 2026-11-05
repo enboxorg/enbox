@@ -17,24 +17,24 @@ export type SyncIdentityOptions = {
    */
   delegateDid?: string;
   /**
-   * The protocols that should be synced for this identity.
-   * - `'all'` — sync all protocols (full replica).
-   * - `string[]` — sync only the listed protocol URIs.
+   * The modules that should be synced for this identity.
+   * - `'all'` — sync all modules (full replica).
+   * - `string[]` — sync only the listed module URIs.
    *
-   * Composed protocols are not expanded automatically. If a protocol definition
-   * declares `uses`, include every referenced protocol that the local DWN must
-   * install or use while applying records for the requested protocol set.
+   * Composed modules are not expanded automatically. If a module definition
+   * declares `uses`, include every referenced module that the local DWN must
+   * install or use while applying records for the requested module set.
    */
-  protocols: 'all' | [string, ...string[]];
+  modules: 'all' | [string, ...string[]];
 };
 
-/** Whether an identity's sync registration includes a protocol. */
-export function syncRegistrationCoversProtocol(
+/** Whether an identity's sync registration includes a module. */
+export function syncRegistrationCoversModule(
   registration: SyncIdentityOptions | undefined,
-  protocol: string,
+  module: string,
 ): boolean {
   return registration !== undefined
-    && (registration.protocols === 'all' || registration.protocols.includes(protocol));
+    && (registration.modules === 'all' || registration.modules.includes(module));
 }
 
 /**
@@ -66,21 +66,21 @@ export type NonEmptyStringArray = [string, ...string[]];
 /**
  * Describes the primary CID set a replication link syncs.
  *
- * Full, protocol-set, and exact-context sync use durable message-feed filters.
+ * Full, module-set, and exact-context sync use durable message-feed filters.
  */
 export type SyncScope = {
   /** Full-tenant scope. Valid only for owner sync or unscoped delegated grants. */
   kind: 'full';
 } | {
-  /** Protocol-set scope over one or more protocol roots. */
-  kind: 'protocolSet';
-  protocols: NonEmptyStringArray;
+  /** Module-set scope over one or more module roots. */
+  kind: 'moduleSet';
+  modules: NonEmptyStringArray;
 } | {
   /** One contextual record tree, restricted to exact role-readable paths. */
   kind: 'context';
-  protocol: string;
+  module: string;
   contextId: string;
-  protocolPaths: NonEmptyStringArray;
+  modulePaths: NonEmptyStringArray;
 };
 
 /**
@@ -108,66 +108,70 @@ export type SyncAuthorizationGrant = {
 export type SyncRoleAuthorization = {
   kind: 'role';
   actorDid: string;
-  protocolRole: string;
+  moduleRole: string;
   roleRecordId: string;
 };
 
 /**
- * Normalizes a protocol list into canonical scope-union order.
+ * Normalizes a module list into canonical scope-union order.
  */
-export function normalizeSyncProtocols(protocols: [string, ...string[]] | string[]): NonEmptyStringArray {
-  const unique = [...new Set(protocols)].sort(lexicographicalCompare);
+export function normalizeSyncModules(modules: [string, ...string[]] | string[]): NonEmptyStringArray {
+  if (!Array.isArray(modules) || modules.some(module => typeof module !== 'string' || module.length === 0)) {
+    throw new TypeError('SyncScope: modules must be a non-empty string array.');
+  }
+  const unique = [...new Set(modules)].sort(lexicographicalCompare);
   if (unique.length === 0) {
-    throw new Error('SyncScope: protocol-set scope requires at least one protocol URI.');
+    throw new Error('SyncScope: module-set scope requires at least one module URI.');
   }
   return unique as NonEmptyStringArray;
 }
 
 /** Converts persisted identity options into the canonical sync scope. */
-export function syncScopeFromProtocols(
-  protocols: SyncIdentityOptions['protocols'],
+export function syncScopeFromModules(
+  modules: SyncIdentityOptions['modules'],
 ): Exclude<SyncScope, { kind: 'context' }> {
-  return protocols === 'all'
+  return modules === 'all'
     ? { kind: 'full' }
-    : { kind: 'protocolSet', protocols: normalizeSyncProtocols(protocols) };
+    : { kind: 'moduleSet', modules: normalizeSyncModules(modules) };
 }
 
-/** Returns the protocol list covered by a scope, or `undefined` for full scope. */
-export function protocolsForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
+/** Returns the module list covered by a scope, or `undefined` for full scope. */
+export function modulesForSyncScope(scope: SyncScope): NonEmptyStringArray | undefined {
   if (scope.kind === 'full') {
     return undefined;
   }
-  return scope.kind === 'context' ? [scope.protocol] : scope.protocols;
+  return scope.kind === 'context' ? [scope.module] : scope.modules;
 }
 
-/** Whether a replication scope includes a protocol. */
-export function syncScopeCoversProtocol(scope: SyncScope, protocol: string): boolean {
+/** Whether a replication scope includes a module. */
+export function syncScopeCoversModule(scope: SyncScope, module: string): boolean {
   return scope.kind === 'full'
-    || (scope.kind === 'context' ? scope.protocol === protocol : scope.protocols.includes(protocol));
+    || (scope.kind === 'context' ? scope.module === module : scope.modules.includes(module));
 }
 
-/** Returns the single protocol root covered by a context or one-protocol scope, if any. */
-export function singleProtocolForSyncScope(scope: SyncScope): string | undefined {
+/** Returns the single module root covered by a context or one-module scope, if any. */
+export function singleModuleForSyncScope(scope: SyncScope): string | undefined {
   if (scope.kind === 'context') {
-    return scope.protocol;
+    return scope.module;
   }
-  return scope.kind === 'protocolSet' && scope.protocols.length === 1 ? scope.protocols[0] : undefined;
+  return scope.kind === 'moduleSet' && scope.modules.length === 1 ? scope.modules[0] : undefined;
 }
 
 /** Projects a sync scope into the filters used by durable message-feed operations. */
 export function messageFeedFiltersForSyncScope(scope: SyncScope): MessagesFilter[] | undefined {
+  scope = canonicalizeSyncScope(scope);
   if (scope.kind === 'full') {
     return undefined;
   }
   if (scope.kind === 'context') {
-    return scope.protocolPaths.map(protocolPath => ({
+    return scope.modulePaths.map(modulePath => ({
       interface       : 'Records',
-      protocol        : scope.protocol,
-      protocolPath,
+      module          : scope.module,
+      modulePath,
       contextIdPrefix : scope.contextId,
     }));
   }
-  return scope.protocols.map(protocol => ({ protocol }));
+  return scope.modules.map(module => ({ module }));
 }
 
 /**
@@ -196,18 +200,28 @@ async function hashCanonicalObject(value: Record<string, unknown>): Promise<stri
 
 /** Returns a canonical JSON-ready representation of a sync scope. */
 export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
+  const allowedKeys = scope.kind === 'full' ? ['kind']
+    : scope.kind === 'context' ? ['kind', 'module', 'contextId', 'modulePaths']
+      : scope.kind === 'moduleSet' ? ['kind', 'modules'] : [];
+  if (allowedKeys.length === 0 || Object.keys(scope).some(key => !allowedKeys.includes(key))) {
+    throw new TypeError('SyncScope: unsupported sync scope; use module-format fields.');
+  }
   if (scope.kind === 'full') {
     return { kind: 'full' };
   }
   if (scope.kind === 'context') {
+    if (typeof scope.module !== 'string' || scope.module.length === 0 ||
+        typeof scope.contextId !== 'string' || scope.contextId.length === 0) {
+      throw new TypeError('SyncScope: context scopes require a module URI and context ID.');
+    }
     return {
-      contextId     : scope.contextId,
-      kind          : 'context',
-      protocol      : scope.protocol,
-      protocolPaths : normalizeSyncProtocols(scope.protocolPaths),
+      contextId   : scope.contextId,
+      kind        : 'context',
+      module      : scope.module,
+      modulePaths : normalizeSyncModules(scope.modulePaths),
     };
   }
-  return { kind: 'protocolSet', protocols: normalizeSyncProtocols(scope.protocols) };
+  return { kind: 'moduleSet', modules: normalizeSyncModules(scope.modules) };
 }
 
 /**
@@ -251,7 +265,7 @@ export async function computeAuthorizationEpoch(input:
     return hashCanonicalObject({
       actorDid     : input.actorDid,
       kind         : 'role',
-      protocolRole : input.protocolRole,
+      moduleRole   : input.moduleRole,
       roleRecordId : input.roleRecordId,
       version      : SYNC_AUTHORIZATION_EPOCH_VERSION,
     });
@@ -423,10 +437,10 @@ export type PushFailure = {
   /** Requested root CID whose push did not converge. */
   cid: string;
   /**
-   * Root protocol URI. The push path never sets this — it is filled in
+   * Root module URI. The push path never sets this — it is filled in
    * downstream from the link scope or the quota-probe options.
    */
-  protocol?: string;
+  module?: string;
   /** Non-root dependency CID that caused this root to fail, when applicable. */
   dependencyCid?: string;
   /** Structured remote apply result kind that produced the failure. */
@@ -565,10 +579,10 @@ export type SyncDrainResult = {
 export type SyncEventScope = {
   /** Present only when the event belongs to an exact-context link. */
   contextId?: string;
-  /** Present only when the event belongs to a single-protocol link. */
-  protocol?: string;
-  /** Present when the event belongs to a protocol-bounded link. */
-  protocols?: NonEmptyStringArray;
+  /** Present only when the event belongs to a single-module link. */
+  module?: string;
+  /** Present when the event belongs to a module-bounded link. */
+  modules?: NonEmptyStringArray;
 };
 
 /** Project a link scope into the scope metadata attached to observability events. */
@@ -578,26 +592,26 @@ export function syncEventScope(scope: SyncScope | undefined): SyncEventScope {
   }
 
   if (scope.kind === 'context') {
-    return { contextId: scope.contextId, protocol: scope.protocol, protocols: [scope.protocol] };
+    return { contextId: scope.contextId, module: scope.module, modules: [scope.module] };
   }
 
-  const coveredProtocols = protocolsForSyncScope(scope);
-  if (coveredProtocols === undefined) {
+  const coveredModules = modulesForSyncScope(scope);
+  if (coveredModules === undefined) {
     return {};
   }
 
-  const protocols = [...coveredProtocols] as NonEmptyStringArray;
-  return protocols.length === 1
-    ? { protocol: protocols[0], protocols }
-    : { protocols };
+  const modules = [...coveredModules] as NonEmptyStringArray;
+  return modules.length === 1
+    ? { module: modules[0], modules }
+    : { modules };
 }
 
-/** Whether sync-event scope metadata includes a protocol; a protocol set is authoritative when both labels exist. */
-export function syncEventCoversProtocol(scope: SyncEventScope, protocol: string): boolean {
-  if (scope.protocols !== undefined) {
-    return scope.protocols.includes(protocol);
+/** Whether sync-event scope metadata includes a module; a module set is authoritative when both labels exist. */
+export function syncEventCoversModule(scope: SyncEventScope, module: string): boolean {
+  if (scope.modules !== undefined) {
+    return scope.modules.includes(module);
   }
-  return scope.protocol === undefined || scope.protocol === protocol;
+  return scope.module === undefined || scope.module === module;
 }
 
 type SyncEventBase = {
@@ -607,20 +621,20 @@ type SyncEventBase = {
 
 /**
  * What a sync-delivered message is, extracted from its descriptor so event
- * consumers can route a change (e.g. invalidate an app cache for one protocol
+ * consumers can route a change (e.g. invalidate an app cache for one module
  * path) without re-reading the local store.
  */
 export type SyncMessageDescriptor = {
-  /** DWN interface name, e.g. `Records` or `Protocols`. */
+  /** DWN interface name, e.g. `Records` or `Modules`. */
   interface: string;
   /** DWN method name, e.g. `Write` or `Delete`. */
   method: string;
   /** The message's `messageTimestamp`, when present. */
   messageTimestamp?: string;
-  /** Protocol URI, for protocol-bound messages. */
-  protocol?: string;
-  /** Protocol path, for records messages. */
-  protocolPath?: string;
+  /** Module URI, for module-bound messages. */
+  module?: string;
+  /** Module path, for records messages. */
+  modulePath?: string;
   /** Record ID, for records messages. */
   recordId?: string;
   /** Context ID, for contextual records messages. */
@@ -648,7 +662,7 @@ export type SyncEvent =
     /** Opaque local acceptance carried by this transition. */
     followedSourceAcceptanceId: string;
     followedSourceId: string | undefined;
-    protocol: string;
+    module: string;
     tenantDid: string;
   }
   | SyncEventBase & { type: 'link:status-change'; from: LinkStatus; to: LinkStatus }
@@ -690,8 +704,8 @@ export type DeadLetterEntry = {
   tenantDid: string;
   /** The remote DWN endpoint involved. */
   remoteEndpoint: string;
-  /** The protocol URI, if applicable. */
-  protocol?: string;
+  /** The module URI, if applicable. */
+  module?: string;
   /** Machine-readable error code (for example, an HTTP status or admission reason). */
   errorCode?: string;
   /** Human-readable error detail. */
@@ -864,8 +878,8 @@ export interface SyncEngine {
 
   /**
    * Create or replace an identity's sync options.
-   * Callers must explicitly specify which protocols to sync (`'all'` for a
-   * full replica, or a list of protocol URIs) so that sync scope is always
+   * Callers must explicitly specify which modules to sync (`'all'` for a
+   * full replica, or a list of module URIs) so that sync scope is always
    * a deliberate choice rather than an invisible default.
    *
    * When live sync is active, a new identity is hot-added without disrupting
@@ -887,7 +901,7 @@ export interface SyncEngine {
    *
    * The comparison and optional update run under the same per-DID lifecycle
    * fence, so callers do not need a read/compare/single-flight wrapper.
-   * Protocol-list order and duplicates do not count as changes. Returns
+   * Module-list order and duplicates do not count as changes. Returns
    * `true` when new options were applied and `false` for an existing,
    * semantically equal registration.
    *

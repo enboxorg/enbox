@@ -1,5 +1,5 @@
-import type { DataFormatAtPath, ProtocolPaths, TagKeys, TagsAtPath } from './protocol-types.js';
-import type { Pagination, ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { DataFormatAtPath, ModulePaths, TagKeys, TagsAtPath } from './module-types.js';
+import type { ModuleDefinition, Pagination, RecordsFilter } from '@enbox/dwn-sdk-js';
 
 import { DateSort, getTypeName } from '@enbox/dwn-sdk-js';
 
@@ -27,7 +27,7 @@ type TagFilterForSchema<Schema> =
         ? EnumValue<Schema, boolean>
         : never;
 
-type ScalarTagKeys<D extends ProtocolDefinition, Path extends string> = {
+type ScalarTagKeys<D extends ModuleDefinition, Path extends string> = {
   [Key in TagKeys<TagsAtPath<D, Path>>]: TagsAtPath<D, Path>[Key] extends {
     type: 'string' | 'number' | 'integer' | 'boolean';
   } ? Key : never;
@@ -53,14 +53,14 @@ const CONTEXT_ID_MAX_LENGTH = 600;
 const CONTEXT_ID_PATTERN = /^[a-zA-Z0-9]+(?:\/[a-zA-Z0-9]+)*$/;
 
 /**
- * Type-safe scalar tag filters explicitly declared by the protocol at one
- * exact path. Undefined tags allowed by protocol policy, array-valued tags,
+ * Type-safe scalar tag filters explicitly declared by the module at one
+ * exact path. Undefined tags allowed by module policy, array-valued tags,
  * and tag policy inherited through `$ref` remain available through the raw
  * DWN API instead of widening this surface.
  */
 type RecordTagFilters<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
 > = [TagsAtPath<D, Path>] extends [never]
   ? never
   : [ScalarTagKeys<D, Path>] extends [never]
@@ -70,24 +70,24 @@ type RecordTagFilters<
     };
 
 /**
- * Filter fields accepted by the typed query surface for one protocol path.
- * Protocol identity fields are injected from the typed protocol, while
+ * Filter fields accepted by the typed query surface for one module path.
+ * Module identity fields are injected from the typed module, while
  * context selection is expressed through {@link RecordQuery.within}.
  */
 export type RecordFilter<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Omit<RecordsFilter, 'author' | 'contextId' | 'parentId' | 'recipient' | 'protocol' | 'protocolPath' | 'schema' | 'tags' | 'dataFormat'> & {
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
+> = Omit<RecordsFilter, 'author' | 'contextId' | 'parentId' | 'recipient' | 'module' | 'modulePath' | 'schema' | 'tags' | 'dataFormat'> & {
   /** One author, or a non-empty set of authors. */
   author?: StringSelection;
 
   /** One recipient, or a non-empty set of recipients. */
   recipient?: StringSelection;
 
-  /** A data format declared for this exact protocol path. */
+  /** A data format declared for this exact module path. */
   dataFormat?: DataFormatAtPath<D, Path>;
 
-  /** Protocol-declared scalar tag filters for this exact path. */
+  /** Module-declared scalar tag filters for this exact path. */
   tags?: RecordTagFilters<D, Path>;
 };
 
@@ -100,19 +100,19 @@ export type RecordFilter<
  * published records only, exactly as it does for a query.
  */
 export type RecordQuery<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
 > = {
   /** A remote DWN tenant to query. Omit for the connected tenant's local DWN. */
   from?: string;
 
-  /** Additional value filters; protocol identity and context are compiled automatically. */
+  /** Additional value filters; module identity and context are compiled automatically. */
   filter?: RecordFilter<D, Path>;
 
   /**
-   * Select records within one protocol context.
+   * Select records within one module context.
    *
-   * Combined with the exact protocol path, a path one level below the
+   * Combined with the exact module path, a path one level below the
    * context selects direct children; a deeper path selects descendants at
    * that exact path.
    */
@@ -124,17 +124,17 @@ export type RecordQuery<
   /** Maximum records returned by one `query()` page. Continue through `RecordPage.next()`. */
   pagination?: { limit?: number };
 
-  /** Protocol role used to authorize the operation. */
-  protocolRole?: string;
+  /** Module role used to authorize the operation. */
+  moduleRole?: string;
 };
 
 /** @internal Canonical low-level request produced from a typed record query. */
 type CompiledRecordQuery = {
   from?: string;
-  filter: RecordsFilter & { protocol: string; protocolPath: string };
+  filter: RecordsFilter & { module: string; modulePath: string };
   dateSort?: DateSort;
   pagination?: Pagination;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 /**
@@ -142,47 +142,47 @@ type CompiledRecordQuery = {
  * shape shared by query, count, and observed-view consumers.
  */
 export function compileRecordQuery(
-  definition: ProtocolDefinition,
-  protocolPath: string,
+  definition: ModuleDefinition,
+  modulePath: string,
   query: {
     from?: string;
     filter?: RecordFilterInput;
     dateSort?: DateSort;
     pagination?: { limit?: number };
-    protocolRole?: string;
+    moduleRole?: string;
     within?: string;
   } = {},
 ): CompiledRecordQuery {
   assertValidQueryControls(query.dateSort, query.pagination);
-  assertValidRecordWithin(protocolPath, query.within, true);
+  assertValidRecordWithin(modulePath, query.within, true);
 
   return {
-    from         : query.from,
-    filter       : buildRecordFilter(definition, protocolPath, query.filter, query.dateSort, query.within),
-    dateSort     : query.dateSort,
-    pagination   : query.pagination,
-    protocolRole : query.protocolRole,
+    from       : query.from,
+    filter     : buildRecordFilter(definition, modulePath, query.filter, query.dateSort, query.within),
+    dateSort   : query.dateSort,
+    pagination : query.pagination,
+    moduleRole : query.moduleRole,
   };
 }
 
 /** @internal Compile and validate the shared selection filter. */
 export function compileRecordFilter(
-  definition: ProtocolDefinition,
-  protocolPath: string,
+  definition: ModuleDefinition,
+  modulePath: string,
   filter: RecordFilterInput | undefined,
   within?: string,
-): RecordsFilter & { protocol: string; protocolPath: string } {
-  assertValidRecordWithin(protocolPath, within, false);
-  return buildRecordFilter(definition, protocolPath, filter, undefined, within);
+): RecordsFilter & { module: string; modulePath: string } {
+  assertValidRecordWithin(modulePath, within, false);
+  return buildRecordFilter(definition, modulePath, filter, undefined, within);
 }
 
 function buildRecordFilter(
-  definition: ProtocolDefinition,
-  protocolPath: string,
+  definition: ModuleDefinition,
+  modulePath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
   within?: string,
-): RecordsFilter & { protocol: string; protocolPath: string } {
+): RecordsFilter & { module: string; modulePath: string } {
   assertValidFilter(filter, dateSort);
 
   const { author, recipient, ...rest } = filter ?? {};
@@ -195,13 +195,13 @@ function buildRecordFilter(
     compiledFilter.published = true;
   }
 
-  const typeName = getTypeName(protocolPath);
+  const typeName = getTypeName(modulePath);
   const schema = definition.types[typeName]?.schema;
   return {
     ...compiledFilter,
     ...(within === undefined ? {} : { contextId: within }),
-    protocol: definition.protocol,
-    protocolPath,
+    module: definition.module,
+    modulePath,
     ...(schema === undefined ? {} : { schema }),
   };
 }
@@ -226,13 +226,13 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
 
 /** @internal Validate one typed record context selector. */
 export function assertValidRecordWithin(
-  protocolPath : string,
+  modulePath : string,
   within : string | undefined,
   requiredForNestedPath : boolean,
 ): void {
   if (within === undefined) {
-    if (requiredForNestedPath && protocolPath.includes('/')) {
-      throw new TypeError(`Record scope: nested protocol path '${protocolPath}' requires a within selector.`);
+    if (requiredForNestedPath && modulePath.includes('/')) {
+      throw new TypeError(`Record scope: nested module path '${modulePath}' requires a within selector.`);
     }
     return;
   }
@@ -241,8 +241,8 @@ export function assertValidRecordWithin(
     throw new TypeError('Record scope: within must be at most 600 characters of alphanumeric path segments.');
   }
 
-  if (within.split('/').length > protocolPath.split('/').length) {
-    throw new TypeError(`Record scope: within cannot be deeper than protocol path '${protocolPath}'.`);
+  if (within.split('/').length > modulePath.split('/').length) {
+    throw new TypeError(`Record scope: within cannot be deeper than module path '${modulePath}'.`);
   }
 }
 

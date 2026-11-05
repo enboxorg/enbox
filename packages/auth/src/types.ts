@@ -3,7 +3,7 @@
  * Public types for the authentication and identity management SDK.
  */
 
-import type { AgentSessionIdentity, ConnectionStatus, DwnProtocolDefinition, EnboxUserAgent, GetConnectionStatusOptions, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
+import type { AgentSessionIdentity, ConnectionStatus, DwnModuleDefinition, EnboxUserAgent, GetConnectionStatusOptions, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
 import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
 import type { DidDhtNetworkConfig, PortableDid } from '@enbox/dids';
 
@@ -52,13 +52,13 @@ export type SyncOption =
   | { interval?: SyncIntervalString };
 
 /**
- * Protocol scope used when auth registers a local identity for sync.
+ * Module scope used when auth registers a local identity for sync.
  *
  * Auth never chooses `'all'` implicitly. Applications that truly want a
  * full-DWN replica must pass `'all'` explicitly; product-scoped apps should
- * pass the protocol URI list they own.
+ * pass the module URI list they own.
  */
-export type IdentitySyncProtocols = 'all' | [string, ...string[]];
+export type IdentitySyncModules = 'all' | [string, ...string[]];
 
 // ─── Auth State Machine ─────────────────────────────────────────
 
@@ -331,12 +331,12 @@ export interface AuthManagerOptions {
   sync?: SyncOption;
 
   /**
-   * Protocol scope to register for local identity sync.
+   * Module scope to register for local identity sync.
    *
    * Omit this to leave local identities unregistered by auth. Use `'all'`
    * only for applications that explicitly mirror the entire identity DWN.
    */
-  identitySyncProtocols?: IdentitySyncProtocols;
+  identitySyncModules?: IdentitySyncModules;
 
   /** Default DWN endpoints for new identities. */
   dwnEndpoints?: string[];
@@ -347,7 +347,7 @@ export interface AuthManagerOptions {
   /**
    * Default connect handler for delegated connect flows.
    *
-   * Used by `connect()` when the caller provides `protocols` (or other
+   * Used by `connect()` when the caller provides `modules` (or other
    * non-vault-connect options) but does not pass a per-call handler.
    *
    * @example
@@ -359,7 +359,7 @@ export interface AuthManagerOptions {
    * });
    *
    * // Later — uses the default handler automatically
-   * const session = await auth.connect({ protocols: [NotesProtocol] });
+   * const session = await auth.connect({ modules: [NotesModule] });
    * ```
    */
   connectHandler?: ConnectHandler;
@@ -398,7 +398,7 @@ export interface VaultConnectOptions {
   sync?: SyncOption;
 
   /** Override manager default local identity sync scope. */
-  identitySyncProtocols?: IdentitySyncProtocols;
+  identitySyncModules?: IdentitySyncModules;
 
   /** Override manager default DWN endpoints. */
   dwnEndpoints?: string[];
@@ -453,48 +453,48 @@ export interface RestoreFromPhraseOptions extends Omit<VaultConnectOptions, 'dwn
 
 // ─── DWeb Connect ────────────────────────────────────────────────
 
-/** Shorthand permission names for DWN protocol scopes. */
+/** Shorthand permission names for DWN module scopes. */
 export type Permission = 'write' | 'read' | 'delete';
 
-/** Default permissions granted when only a protocol definition is provided. */
+/** Default permissions granted when only a module definition is provided. */
 export const DEFAULT_PERMISSIONS: Permission[] = ['read', 'write', 'delete'];
 
 /**
- * Dependency-neutral structural shape for an object that carries a protocol
+ * Dependency-neutral structural shape for an object that carries a module
  * definition.
  *
  * Higher-level packages can add their own fields (for example runtime codecs)
  * without `@enbox/auth` depending on those packages. Only `definition` crosses
  * the auth/connect boundary.
  */
-export type ProtocolDefinitionCarrier = {
-  readonly definition: DwnProtocolDefinition;
+export type ModuleDefinitionCarrier = {
+  readonly definition: DwnModuleDefinition;
 };
 
-/** A protocol request with an explicit permission policy. */
-export type ProtocolPermissionRequest =
+/** A module request with an explicit permission policy. */
+export type ModulePermissionRequest =
   | {
     /** A raw definition, preserving the original explicit request shape. */
-    readonly definition: DwnProtocolDefinition | ProtocolDefinitionCarrier;
+    readonly definition: DwnModuleDefinition | ModuleDefinitionCarrier;
     readonly permissions: readonly Permission[];
   }
   | {
     /** A raw definition or higher-level definition carrier. */
-    readonly protocol: DwnProtocolDefinition | ProtocolDefinitionCarrier;
+    readonly module: DwnModuleDefinition | ModuleDefinitionCarrier;
     readonly permissions: readonly Permission[];
   };
 
 /**
- * A protocol permission request in simplified form.
+ * A module permission request in simplified form.
  *
  * Dapp developers can pass a raw definition or any structural
- * {@link ProtocolDefinitionCarrier} with default permissions, or pair either
+ * {@link ModuleDefinitionCarrier} with default permissions, or pair either
  * form with an explicit permission policy.
  */
-export type ProtocolRequest =
-  | DwnProtocolDefinition
-  | ProtocolDefinitionCarrier
-  | ProtocolPermissionRequest;
+export type ModuleRequest =
+  | DwnModuleDefinition
+  | ModuleDefinitionCarrier
+  | ModulePermissionRequest;
 
 /**
  * Options for a handler-based (delegated) connect flow.
@@ -505,7 +505,7 @@ export type ProtocolRequest =
  */
 export interface HandlerConnectOptions {
   /**
-   * Protocols to request access to.
+   * Modules to request access to.
    *
    * Each entry can be a raw definition or a structural definition carrier
    * (uses default permissions), or an object with explicit permissions.
@@ -513,16 +513,16 @@ export interface HandlerConnectOptions {
    * @example
    * ```ts
    * // Default permissions (read, write, delete)
-   * protocols: [NotesDefinition, NotesProtocol]
+   * modules: [NotesDefinition, NotesModule]
    *
    * // Explicit permissions
-   * protocols: [
+   * modules: [
    *   { definition: NotesDefinition, permissions: ['read', 'write'] },
-   *   { protocol: PhotosProtocol, permissions: ['read'] },
+   *   { module: PhotosModule, permissions: ['read'] },
    * ]
    * ```
    */
-  protocols?: readonly ProtocolRequest[];
+  modules?: readonly ModuleRequest[];
 
   /**
    * Connect handler for this call. Overrides the default handler set
@@ -547,8 +547,8 @@ export interface HandlerConnectOptions {
 
 /** Options for adding fresh grants to an existing delegated session. */
 export type RefreshOptions = {
-  /** Non-empty protocol list. Pass the same protocol requests used for the initial connect. */
-  protocols: readonly ProtocolRequest[];
+  /** Non-empty module list. Pass the same module requests used for the initial connect. */
+  modules: readonly ModuleRequest[];
   /** Per-call handler override. Defaults to the manager's configured handler. */
   connectHandler?: ConnectHandler;
 };
@@ -568,7 +568,7 @@ export type ConnectionMonitorOptions = GetConnectionStatusOptions & {
  *
  * `connect()` routes to the appropriate flow based on the options:
  *
- * - **Handler-based connect** (dapps): triggered when `protocols` or
+ * - **Handler-based connect** (dapps): triggered when `modules` or
  *   `connectHandler` is provided.
  *   Delegates to the connect handler for credential acquisition.
  *
@@ -619,11 +619,11 @@ export interface WalletConnectOptions {
   walletUri?: string;
 
   /**
-   * Protocol permission requests for the wallet connect flow.
+   * Module permission requests for the wallet connect flow.
    *
    * Each entry is a `ConnectPermissionRequest` containing a
-   * `protocolDefinition` and `permissionScopes`. Use
-   * `WalletConnect.createPermissionRequestForProtocol()` from `@enbox/auth`
+   * `moduleDefinition` and `permissionScopes`. Use
+   * `WalletConnect.createPermissionRequestForModule()` from `@enbox/auth`
    * to build these.
    */
   permissionRequests: ConnectPermissionRequest[];
@@ -659,7 +659,7 @@ export interface ImportFromPortableOptions {
   sync?: SyncOption;
 
   /** Override manager default local identity sync scope. */
-  identitySyncProtocols?: IdentitySyncProtocols;
+  identitySyncModules?: IdentitySyncModules;
 }
 
 /** Options for {@link AuthManager.restoreSession}. */
@@ -762,6 +762,9 @@ export const DEFAULT_DWN_ENDPOINTS = ['https://enbox-dwn.fly.dev'];
  * @internal
  */
 export const STORAGE_KEYS = {
+  /** Data-format boundary for sessions and their revocation retry journal. */
+  SESSION_FORMAT: 'enbox:auth:sessionFormat',
+
   /** Complete session binding and revocation metadata; presence enables restore. */
   SESSION: 'enbox:auth:session',
 

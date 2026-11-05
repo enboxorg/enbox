@@ -1,7 +1,7 @@
 /**
  * Permission request normalization utilities.
  *
- * Converts simplified `ProtocolRequest` entries (raw definitions, structural
+ * Converts simplified `ModuleRequest` entries (raw definitions, structural
  * definition carriers, or explicit permission policies) into agent-level
  * `ConnectPermissionRequest` objects used by connect handlers.
  *
@@ -10,68 +10,71 @@
  */
 
 import type { ConnectPermissionRequest } from '@enbox/connect';
-import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { DwnModuleDefinition } from '@enbox/agent';
 
 import type {
+  ModuleDefinitionCarrier,
+  ModulePermissionRequest,
+  ModuleRequest,
   Permission,
-  ProtocolDefinitionCarrier,
-  ProtocolPermissionRequest,
-  ProtocolRequest,
 } from './types.js';
 
 import { DEFAULT_PERMISSIONS } from './types.js';
 import { WalletConnect } from './wallet-connect-client.js';
 
 /**
- * Normalize simplified `ProtocolRequest[]` into agent-level
+ * Normalize simplified `ModuleRequest[]` into agent-level
  * `ConnectPermissionRequest[]`.
  */
-export function normalizeProtocolRequests(
-  protocols: readonly ProtocolRequest[] | undefined,
+export function normalizeModuleRequests(
+  modules: readonly ModuleRequest[] | undefined,
 ): ConnectPermissionRequest[] {
-  if (!protocols || protocols.length === 0) { return []; }
+  if (!modules || modules.length === 0) { return []; }
 
-  const normalized = protocols.map((entry, index) => {
-    const explicit = isProtocolPermissionRequest(entry);
+  const normalized = modules.map((entry, index) => {
+    if (isObjectRecord(entry) && Object.hasOwn(entry, 'protocol')) {
+      throw new TypeError(`normalizeModuleRequests: modules[${index}] uses the removed protocol field.`);
+    }
+    const explicit = isModulePermissionRequest(entry);
     const source = explicit
-      ? getExplicitProtocolSource(entry)
+      ? getExplicitModuleSource(entry)
       : entry;
-    const definition = getProtocolDefinition(source, index);
+    const definition = getModuleDefinition(source, index);
     const permissions = normalizePermissionPolicy(
       explicit ? entry.permissions : undefined,
-      `normalizeProtocolRequests: protocols[${index}].permissions`,
+      `normalizeModuleRequests: modules[${index}].permissions`,
     );
 
     return { definition, permissions };
   });
 
-  assertUniqueProtocolUris(normalized);
+  assertUniqueModuleUris(normalized);
 
   return normalized.map(({ definition, permissions }) => {
-    return WalletConnect.createPermissionRequestForProtocol({
+    return WalletConnect.createPermissionRequestForModule({
       definition,
       permissions,
     });
   });
 }
 
-type NormalizedProtocolRequest = {
-  definition: DwnProtocolDefinition;
+type NormalizedModuleRequest = {
+  definition: DwnModuleDefinition;
   permissions: Permission[];
 };
 
 /** Reject duplicate requests before producing any agent-level permission request. */
-function assertUniqueProtocolUris(protocols: readonly NormalizedProtocolRequest[]): void {
+function assertUniqueModuleUris(modules: readonly NormalizedModuleRequest[]): void {
   const firstIndexes = new Map<string, number>();
-  for (const [index, { definition }] of protocols.entries()) {
-    const protocolUri = definition.protocol;
-    const firstIndex = firstIndexes.get(protocolUri);
+  for (const [index, { definition }] of modules.entries()) {
+    const moduleUri = definition.module;
+    const firstIndex = firstIndexes.get(moduleUri);
     if (firstIndex !== undefined) {
       throw new TypeError(
-        `normalizeProtocolRequests: duplicate protocol URI '${protocolUri}' at indexes ${firstIndex} and ${index}.`,
+        `normalizeModuleRequests: duplicate module URI '${moduleUri}' at indexes ${firstIndex} and ${index}.`,
       );
     }
-    firstIndexes.set(protocolUri, index);
+    firstIndexes.set(moduleUri, index);
   }
 }
 
@@ -119,27 +122,27 @@ function isPermission(value: unknown): value is Permission {
   return value === 'read' || value === 'write' || value === 'delete';
 }
 
-/** Whether a protocol request carries an explicit permission policy. */
-function isProtocolPermissionRequest(entry: ProtocolRequest): entry is ProtocolPermissionRequest {
+/** Whether a module request carries an explicit permission policy. */
+function isModulePermissionRequest(entry: ModuleRequest): entry is ModulePermissionRequest {
   return isObjectRecord(entry) && Object.hasOwn(entry, 'permissions');
 }
 
 /** Select the definition source from either supported explicit request shape. */
-function getExplicitProtocolSource(
-  entry: ProtocolPermissionRequest,
-): DwnProtocolDefinition | ProtocolDefinitionCarrier {
-  return 'protocol' in entry ? entry.protocol : entry.definition;
+function getExplicitModuleSource(
+  entry: ModulePermissionRequest,
+): DwnModuleDefinition | ModuleDefinitionCarrier {
+  return 'module' in entry ? entry.module : entry.definition;
 }
 
 /** Unwrap a raw definition from a dependency-neutral structural carrier. */
-function getProtocolDefinition(
-  source: DwnProtocolDefinition | ProtocolDefinitionCarrier,
-  protocolIndex: number,
-): DwnProtocolDefinition {
+function getModuleDefinition(
+  source: DwnModuleDefinition | ModuleDefinitionCarrier,
+  moduleIndex: number,
+): DwnModuleDefinition {
   const candidate: unknown = source;
   let definition: unknown;
   if (isObjectRecord(candidate)
-    && typeof candidate.protocol === 'string'
+    && typeof candidate.module === 'string'
     && Object.hasOwn(candidate, 'types')
     && Object.hasOwn(candidate, 'structure')) {
     definition = candidate;
@@ -147,19 +150,23 @@ function getProtocolDefinition(
     definition = candidate.definition;
   }
 
+  if (isObjectRecord(definition) && Object.hasOwn(definition, 'protocol')) {
+    throw new TypeError(`normalizeModuleRequests: modules[${moduleIndex}] definition uses the removed protocol field.`);
+  }
+
   if (!isObjectRecord(definition)
-    || typeof definition.protocol !== 'string'
-    || definition.protocol === ''
+    || typeof definition.module !== 'string'
+    || definition.module === ''
     || typeof definition.published !== 'boolean'
     || !isObjectRecord(definition.types)
     || !isObjectRecord(definition.structure)) {
     throw new TypeError(
-      `normalizeProtocolRequests: protocols[${protocolIndex}] must provide a protocol definition with ` +
-      'a non-empty protocol URI, boolean published flag, and object-valued types and structure.',
+      `normalizeModuleRequests: modules[${moduleIndex}] must provide a module definition with ` +
+      'a non-empty module URI, boolean published flag, and object-valued types and structure.',
     );
   }
 
-  return definition as DwnProtocolDefinition;
+  return definition as DwnModuleDefinition;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {

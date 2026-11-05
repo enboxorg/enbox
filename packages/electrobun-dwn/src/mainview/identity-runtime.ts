@@ -5,7 +5,7 @@ import type { AgentSessionIdentity, AuthState, PortableIdentity } from '@enbox/a
 import { AuthManager } from '@enbox/auth';
 import { DwnApi } from '@enbox/api/advanced';
 import { TypedEnbox } from '@enbox/api';
-import { ProfileDefinition, ProfileProtocol } from '@enbox/protocols';
+import { ProfileDefinition, ProfileModule } from '@enbox/modules';
 
 import { getAppStore } from './state/app-store.js';
 import { createResolutionErrorResult, errorMessage, normalizeEndpointList, normalizeOptionalString } from './utils/identity-helpers.js';
@@ -52,19 +52,19 @@ export type ExportedIdentity = {
   json: string;
 };
 
-export type ProtocolDefinitionLike = {
-  protocol: string;
+export type ModuleDefinitionLike = {
+  module: string;
   [key: string]: unknown;
 };
 
-export type InstalledProtocolsSnapshot = {
+export type InstalledModulesSnapshot = {
   did: string;
-  protocols: string[];
+  modules: string[];
 };
 
-export type EnsureProtocolInstalledResult = {
+export type EnsureModuleInstalledResult = {
   did: string;
-  protocol: string;
+  module: string;
   alreadyInstalled: boolean;
   status: {
     code: number;
@@ -183,8 +183,8 @@ export interface IdentityRuntime {
   unlock(password: string): Promise<IdentityWalletSnapshot>;
   disconnect(clearStorage?: boolean): Promise<IdentityWalletSnapshot>;
   clearRecoveryPhrase(): Promise<IdentityWalletSnapshot>;
-  listInstalledProtocols(): Promise<InstalledProtocolsSnapshot>;
-  ensureProtocolInstalled(definition: ProtocolDefinitionLike): Promise<EnsureProtocolInstalledResult>;
+  listInstalledModules(): Promise<InstalledModulesSnapshot>;
+  ensureModuleInstalled(definition: ModuleDefinitionLike): Promise<EnsureModuleInstalledResult>;
   getDidProfile(didUri: string): Promise<EditableDidProfileSnapshot>;
   saveDidProfile(input: EditableDidProfileInput): Promise<SaveDidProfileResult>;
 }
@@ -515,61 +515,61 @@ class IdentityRuntimeController implements IdentityRuntime {
     return this._refreshAndEmit();
   }
 
-  async listInstalledProtocols(): Promise<InstalledProtocolsSnapshot> {
+  async listInstalledModules(): Promise<InstalledModulesSnapshot> {
     const { did, dwn } = await this._createConnectedDwnApi();
-    const response = await dwn.protocols.query({});
+    const response = await dwn.modules.query({});
 
     if (response.status.code >= 300) {
-      throw new Error(response.status.detail || `Failed to query installed protocols (${response.status.code}).`);
+      throw new Error(response.status.detail || `Failed to query installed modules (${response.status.code}).`);
     }
 
-    const protocols = Array.from(
+    const modules = Array.from(
       new Set(
-        response.protocols
-          .map((protocol) => protocol.definition?.protocol)
-          .filter((protocolUri): protocolUri is string => typeof protocolUri === 'string' && protocolUri.trim().length > 0)
-          .map((protocolUri) => protocolUri.trim()),
+        response.modules
+          .map((module) => module.definition?.module)
+          .filter((moduleUri): moduleUri is string => typeof moduleUri === 'string' && moduleUri.trim().length > 0)
+          .map((moduleUri) => moduleUri.trim()),
       ),
     );
 
-    return { did, protocols };
+    return { did, modules };
   }
 
-  async ensureProtocolInstalled(definition: ProtocolDefinitionLike): Promise<EnsureProtocolInstalledResult> {
-    const protocolUri = typeof definition?.protocol === 'string'
-      ? definition.protocol.trim()
+  async ensureModuleInstalled(definition: ModuleDefinitionLike): Promise<EnsureModuleInstalledResult> {
+    const moduleUri = typeof definition?.module === 'string'
+      ? definition.module.trim()
       : '';
 
-    if (!protocolUri) {
-      throw new Error('Protocol definition is missing a protocol URI.');
+    if (!moduleUri) {
+      throw new Error('Module definition is missing a module URI.');
     }
 
     const { did, dwn } = await this._createConnectedDwnApi();
-    const queryResponse = await dwn.protocols.query({
-      filter: { protocol: protocolUri },
+    const queryResponse = await dwn.modules.query({
+      filter: { module: moduleUri },
     });
 
     if (queryResponse.status.code >= 300) {
-      throw new Error(queryResponse.status.detail || `Failed to check protocol installation (${queryResponse.status.code}).`);
+      throw new Error(queryResponse.status.detail || `Failed to check module installation (${queryResponse.status.code}).`);
     }
 
-    if (queryResponse.protocols.length > 0) {
+    if (queryResponse.modules.length > 0) {
       return {
         did,
-        protocol         : protocolUri,
+        module           : moduleUri,
         alreadyInstalled : true,
         status           : { code: 200, detail: 'Already installed' },
       };
     }
 
-    const configureResponse = await dwn.protocols.configure({ definition });
+    const configureResponse = await dwn.modules.configure({ definition });
     if (configureResponse.status.code >= 300) {
-      throw new Error(configureResponse.status.detail || `Failed to install protocol (${configureResponse.status.code}).`);
+      throw new Error(configureResponse.status.detail || `Failed to install module (${configureResponse.status.code}).`);
     }
 
     return {
       did,
-      protocol         : protocolUri,
+      module           : moduleUri,
       alreadyInstalled : false,
       status           : configureResponse.status,
     };
@@ -582,15 +582,15 @@ class IdentityRuntimeController implements IdentityRuntime {
     }
 
     const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
-    const installedResponse = await dwn.protocols.query({
-      filter: { protocol: ProfileDefinition.protocol },
+    const installedResponse = await dwn.modules.query({
+      filter: { module: ProfileDefinition.module },
     });
 
     if (installedResponse.status.code >= 300) {
-      throw new Error(installedResponse.status.detail || `Failed to check profile protocol installation (${installedResponse.status.code}).`);
+      throw new Error(installedResponse.status.detail || `Failed to check profile module installation (${installedResponse.status.code}).`);
     }
 
-    if (installedResponse.protocols.length === 0) {
+    if (installedResponse.modules.length === 0) {
       return {
         did     : normalizedDidUri,
         profile : { displayName: '' },
@@ -598,7 +598,7 @@ class IdentityRuntimeController implements IdentityRuntime {
       };
     }
 
-    const typed = new TypedEnbox(dwn, ProfileProtocol);
+    const typed = new TypedEnbox(dwn, ProfileModule);
     const { records: profileRecords } = await typed.records.query('profile');
     const profileRecord = profileRecords[0];
     if (!profileRecord) {
@@ -696,10 +696,10 @@ class IdentityRuntimeController implements IdentityRuntime {
       throw new Error('Display name is required.');
     }
 
-    await this._ensureProtocolInstalledForDid(normalizedDidUri, ProfileDefinition);
+    await this._ensureModuleInstalledForDid(normalizedDidUri, ProfileDefinition);
 
     const { dwn } = await this._createDwnApiForDid(normalizedDidUri);
-    const typed = new TypedEnbox(dwn, ProfileProtocol);
+    const typed = new TypedEnbox(dwn, ProfileModule);
     const { records: profileRecords } = await typed.records.query('profile');
     const profileRecord = profileRecords[0]
       ? await profileRecords[0].update({ data: profileData })
@@ -1015,31 +1015,31 @@ class IdentityRuntimeController implements IdentityRuntime {
     };
   }
 
-  private async _ensureProtocolInstalledForDid(didUri: string, definition: ProtocolDefinitionLike): Promise<void> {
-    const protocolUri = typeof definition?.protocol === 'string'
-      ? definition.protocol.trim()
+  private async _ensureModuleInstalledForDid(didUri: string, definition: ModuleDefinitionLike): Promise<void> {
+    const moduleUri = typeof definition?.module === 'string'
+      ? definition.module.trim()
       : '';
 
-    if (!protocolUri) {
-      throw new Error('Protocol definition is missing a protocol URI.');
+    if (!moduleUri) {
+      throw new Error('Module definition is missing a module URI.');
     }
 
     const { dwn } = await this._createDwnApiForDid(didUri);
-    const queryResponse = await dwn.protocols.query({
-      filter: { protocol: protocolUri },
+    const queryResponse = await dwn.modules.query({
+      filter: { module: moduleUri },
     });
 
     if (queryResponse.status.code >= 300) {
-      throw new Error(queryResponse.status.detail || `Failed to check protocol installation (${queryResponse.status.code}).`);
+      throw new Error(queryResponse.status.detail || `Failed to check module installation (${queryResponse.status.code}).`);
     }
 
-    if (queryResponse.protocols.length > 0) {
+    if (queryResponse.modules.length > 0) {
       return;
     }
 
-    const configureResponse = await dwn.protocols.configure({ definition });
+    const configureResponse = await dwn.modules.configure({ definition });
     if (configureResponse.status.code >= 300) {
-      throw new Error(configureResponse.status.detail || `Failed to install protocol (${configureResponse.status.code}).`);
+      throw new Error(configureResponse.status.detail || `Failed to install module (${configureResponse.status.code}).`);
     }
   }
 
@@ -1055,7 +1055,7 @@ class IdentityRuntimeController implements IdentityRuntime {
     file?: Blob;
     existingRecord?: EnboxRecord<Blob>;
     parentContextId: string;
-    typed: TypedEnbox<typeof ProfileDefinition, typeof ProfileProtocol.codecs>;
+    typed: TypedEnbox<typeof ProfileDefinition, typeof ProfileModule.codecs>;
     path: 'profile/avatar' | 'profile/hero';
   }): Promise<void> {
     if (action === 'keep') {

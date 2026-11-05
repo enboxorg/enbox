@@ -1,0 +1,33 @@
+---
+title: "@enbox/modules"
+description: Module definitions and type-safe schema helpers for structuring data in Decentralized Web Nodes.
+---
+
+`@enbox/modules` provides pre-built module definitions, codecs, and readers for common DWN data.
+
+## What it does
+
+- **Typed modules** — Ships ready-to-use definitions and runtime codecs for profiles, preferences, and wallet discovery.
+- **Profile reader** — Resolves and caches public profile data from other users' DWNs.
+- **JSON Schemas** — Publishes schemas alongside module data types for validation and code generation.
+
+## When to use it
+
+- When you want to reuse a well-tested module definition rather than writing one from scratch
+- When you need to read another user's public profile without building a cache and retry layer
+
+## Relationship to @enbox/api
+
+Use the exported `*Module` constants directly with `enbox.using()`. The
+matching `*Definition` exports remain available for low-level DWN operations.
+Apps declaring their own modules use `defineModule()` and `recordCodecs`
+from `@enbox/api` instead.
+
+## Key exports
+
+| Export | Description |
+|---|---|
+| `ProfileModule` | Public profile, image, and link records |
+| `PreferencesModule` | Owner-only application preferences |
+| `ConnectModule` | Public wallet discovery information |
+| `createProfileReader()` | Cached public-profile reader for connected and anonymous records surfaces |

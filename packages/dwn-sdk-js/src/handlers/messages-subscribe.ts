@@ -1,7 +1,7 @@
 import type { Filter } from '../types/query-types.js';
 import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { MessagesRoleAuthorizationState } from '../core/messages-role-authorization.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { MessagesFilter, MessagesSubscribeMessage, MessagesSubscribeReply } from '../types/messages-types.js';
 import type { ProgressGapInfo, ProgressToken, ReplicationFeedReader, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
@@ -69,7 +69,7 @@ export class MessagesSubscribeHandler implements MethodHandler {
     const { filters, cursor: eventLogCursor } = message.descriptor;
     const includeShadowFilters = authorization.kind === 'owner'
       || (authorization.kind === 'delegate' && !authorization.metadataOnly);
-    const callerMessageFilters = Messages.convertFilters(filters, this.deps.coreProtocols, includeShadowFilters);
+    const callerMessageFilters = Messages.convertFilters(filters, this.deps.coreModules, includeShadowFilters);
     const messagesFilters = [...callerMessageFilters];
     if (authorization.kind === 'role') {
       messagesFilters.push(MessagesRoleAuthorization.roleWakeFilter(authorization.state));

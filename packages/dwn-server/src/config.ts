@@ -273,8 +273,8 @@ export const config = {
   forwardingEnabled: process.env.DWN_FORWARDING_ENABLED === 'true',
 
   /**
-   * Enable protocol-aware record delivery: when a RecordsWrite/RecordsDelete is
-   * processed at a protocol path with `$delivery`, proactively deliver to
+   * Enable module-aware record delivery: when a RecordsWrite/RecordsDelete is
+   * processed at a module path with `$delivery`, proactively deliver to
    * participants' DWN endpoints. Disabled by default.
    */
   deliveryEnabled: process.env.DWN_DELIVERY_ENABLED === 'true',

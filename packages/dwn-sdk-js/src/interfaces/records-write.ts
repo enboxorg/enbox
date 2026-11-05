@@ -19,7 +19,7 @@ import { Cid } from '../utils/cid.js';
 import { Encryption } from '../utils/encryption.js';
 import { Jws } from '../utils/jws.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
@@ -40,20 +40,20 @@ import {
   getInitialWrite,
   verifyEqualityOfImmutableProperties,
 } from './records-write-query.js';
-import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
+import { normalizeModuleUrl, normalizeSchemaUrl, validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 
 export type RecordsWriteOptions = {
   recipient?: string;
-  protocol: string;
-  protocolPath: string;
-  protocolRole?: string;
+  module: string;
+  modulePath: string;
+  moduleRole?: string;
   schema?: string;
   tags?: RecordsWriteTags;
   recordId?: string;
 
   /**
-   * Must be given if this message is for a non-root protocol record.
-   * If not given, it means this write is for a root protocol record.
+   * Must be given if this message is for a non-root module record.
+   * If not given, it means this write is for a root module record.
    */
   parentContextId?: string;
 
@@ -87,8 +87,8 @@ export type RecordsWriteOptions = {
 
   /**
    * When `true`, this record is a squash (snapshot) write that atomically creates a snapshot
-   * and deletes all older sibling records at the same protocol path within the same parent context.
-   * Only valid at protocol paths with `$squash: true`. Must be an initial write (new record).
+   * and deletes all older sibling records at the same module path within the same parent context.
+   * Only valid at module paths with `$squash: true`. Must be an initial write (new record).
    */
   squash?: true;
 
@@ -96,7 +96,7 @@ export type RecordsWriteOptions = {
 
 export type {
   EncryptionInput,
-  ProtocolPathKeyEncryptionInput,
+  ModulePathKeyEncryptionInput,
   SourceRoleAudienceKeyEncryptionInput,
   X25519KeyEncryptionInput,
 } from '../utils/encryption.js';
@@ -128,7 +128,7 @@ export type CreateFromOptions = {
 
   attestationSigners?: MessageSigner[];
   encryptionInput?: EncryptionInput;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 /**
@@ -297,8 +297,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
    * @param options.dataSize Size of data in number of bytes. Must be defined if `options.dataCid` is defined; must be `undefined` otherwise.
    * @param options.dateCreated If `undefined`, it will be auto-filled with current time.
    * @param options.messageTimestamp If `undefined`, it will be auto-filled with current time.
-   * @param options.parentContextId Must be given if this message is for a non-root protocol record.
-   *                                If not given, it means this write is for a root protocol record.
+   * @param options.parentContextId Must be given if this message is for a non-root module record.
+   *                                If not given, it means this write is for a root module record.
    */
   public static async create(options: RecordsWriteOptions): Promise<RecordsWrite> {
     RecordsWrite.validateCreateOptions(options, { requireSignerForDelegatedGrant: true });
@@ -333,7 +333,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
         signer         : options.signer,
         delegatedGrant : options.delegatedGrant,
         ...permissionGrantInvocation,
-        protocolRole   : options.protocolRole,
+        moduleRole     : options.moduleRole,
       });
     }
 
@@ -355,8 +355,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     const descriptor: RecordsWriteDescriptor = {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Write,
-      protocol         : normalizeProtocolUrl(options.protocol),
-      protocolPath     : options.protocolPath,
+      module           : normalizeModuleUrl(options.module),
+      modulePath       : options.modulePath,
       recipient        : options.recipient,
       schema           : options.schema === undefined ? undefined : normalizeSchemaUrl(options.schema),
       tags             : options.tags,
@@ -381,8 +381,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   private static validateCreateOptions(options: RecordsWriteOptions, optionsOverrides: { requireSignerForDelegatedGrant: boolean }): void {
-    if (options.protocol === undefined || options.protocolPath === undefined) {
-      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingProtocol, '`protocol` and `protocolPath` are required');
+    if (options.module === undefined || options.modulePath === undefined) {
+      throw new DwnError(DwnErrorCode.RecordsWriteCreateMissingModule, '`module` and `modulePath` are required');
     }
 
     if ((options.data === undefined && options.dataCid === undefined) ||
@@ -454,8 +454,8 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       recipient          : sourceMessage.descriptor.recipient,
       recordId           : sourceMessage.recordId,
       dateCreated        : sourceMessage.descriptor.dateCreated,
-      protocol           : sourceMessage.descriptor.protocol,
-      protocolPath       : sourceMessage.descriptor.protocolPath,
+      module             : sourceMessage.descriptor.module,
+      modulePath         : sourceMessage.descriptor.modulePath,
       schema             : sourceMessage.descriptor.schema,
       parentContextId    : Records.getParentContextFromOfContextId(sourceMessage.contextId),
       // mutable properties below
@@ -467,7 +467,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       dataCid            : options.data ? undefined : sourceMessage.descriptor.dataCid, // if new `data` not given, use value from source message
       dataSize           : options.data ? undefined : sourceMessage.descriptor.dataSize, // if new `data` not given, use value from source message
       dataFormat         : options.dataFormat ?? sourceMessage.descriptor.dataFormat,
-      protocolRole       : options.protocolRole ?? sourceRecordsWrite.signaturePayload!.protocolRole, // if not given, use value from source message
+      moduleRole         : options.moduleRole ?? sourceRecordsWrite.signaturePayload!.moduleRole, // if not given, use value from source message
       delegatedGrant     : options.delegatedGrant,
       // finally still need signers
       signer             : options.signer,
@@ -523,9 +523,9 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     signer: MessageSigner,
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
-    protocolRole?: string,
+    moduleRole?: string,
   }): Promise<void> {
-    const { signer, delegatedGrant, permissionGrantId, protocolRole } = options;
+    const { signer, delegatedGrant, permissionGrantId, moduleRole } = options;
 
     // compute delegated grant ID and author if delegated grant is given
     let delegatedGrantId;
@@ -543,12 +543,12 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     // compute `recordId` if not given at construction time
     this._message.recordId = this._message.recordId ?? await RecordsWrite.getEntryId(authorDid, descriptor);
 
-    // compute `contextId` — all records belong to a protocol
+    // compute `contextId` — all records belong to a module
     if (this.parentContextId === undefined || this.parentContextId === '') {
-      // root protocol record
+      // root module record
       this._message.contextId = this._message.recordId;
     } else {
-      // non-root protocol record
+      // non-root module record
       this._message.contextId = this.parentContextId + '/' + this._message.recordId;
     }
 
@@ -562,7 +562,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       signer,
       delegatedGrantId,
       permissionGrantId,
-      protocolRole
+      moduleRole
     });
 
     this._message.authorization = { signature };
@@ -665,7 +665,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
 
     await this.validateEncryptionCidIntegrity(signaturePayload);
 
-    validateProtocolUrlNormalized(this.message.descriptor.protocol);
+    validateModuleUrlNormalized(this.message.descriptor.module);
     if (this.message.descriptor.schema !== undefined) {
       validateSchemaUrlNormalized(this.message.descriptor.schema);
     }
@@ -678,7 +678,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
   }
 
   /**
-   * Validates the `messageTimestamp`/`dateCreated` equality and, for a protocol context root,
+   * Validates the `messageTimestamp`/`dateCreated` equality and, for a module context root,
    * the deterministic `contextId` — both of which only apply to the initial write of a record.
    * No-op when `isInitialWrite` is `false`.
    */
@@ -697,7 +697,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
       );
     }
 
-    // if the message is a protocol context root, the `contextId` must match the expected deterministic value
+    // if the message is a module context root, the `contextId` must match the expected deterministic value
     if (this.message.descriptor.parentId === undefined) {
       const expectedContextId = await this.getEntryId();
 
@@ -869,7 +869,7 @@ export class RecordsWrite implements MessageInterface<RecordsWriteMessage> {
     signer: MessageSigner,
     delegatedGrantId?: string,
     permissionGrantId?: string,
-    protocolRole?: string
+    moduleRole?: string
   }): Promise<GeneralJws> {
     return createSignerSignature(input);
   }

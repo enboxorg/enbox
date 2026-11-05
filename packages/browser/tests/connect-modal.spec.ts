@@ -15,8 +15,8 @@ const WALLETS: WalletOption[] = [
 
 const PERMISSIONS: ConnectPermissionRequest[] = [
   {
-    protocolDefinition : { protocol: 'https://proto.example.com', types: {}, structure: {} },
-    permissionScopes   : [{ protocol: 'https://proto.example.com', interface: 'Records', method: 'Write' }],
+    moduleDefinition : { module: 'https://proto.example.com', types: {}, structure: {} },
+    permissionScopes : [{ module: 'https://proto.example.com', interface: 'Records', method: 'Write' }],
   } as unknown as ConnectPermissionRequest,
 ];
 

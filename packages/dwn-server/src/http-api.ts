@@ -32,7 +32,7 @@ import {
   normalizeReadableStream,
   parseHttpDwnRpcRequestBody,
 } from '@enbox/dwn-clients';
-import { DateSort, type Dwn, ProtocolsQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
+import { DateSort, type Dwn, ModulesQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -577,21 +577,21 @@ export class HttpApi {
   async #matchDidRoutes(req: Request, url: URL, path: string): Promise<Response> {
     const leadTailSlashRegex = /^\/|\/$/g;
 
-    // /:did/read/protocols/:protocol/*  (also matches trailing slash with empty path)
+    // /:did/read/modules/:module/*  (also matches trailing slash with empty path)
     {
-      const match = /^\/([^/]+)\/read\/protocols\/([^/]+)\/(.*)$/.exec(path);
+      const match = /^\/([^/]+)\/read\/modules\/([^/]+)\/(.*)$/.exec(path);
       if (match && req.method === 'GET') {
-        const [, did, protocolParam, protocolPathRaw] = match;
-        return this.#handleReadProtocolRecord(did, protocolParam, protocolPathRaw, url, leadTailSlashRegex);
+        const [, did, moduleParam, modulePathRaw] = match;
+        return this.#handleReadModuleRecord(did, moduleParam, modulePathRaw, url, leadTailSlashRegex);
       }
     }
 
-    // /:did/read/protocols/:protocol
+    // /:did/read/modules/:module
     {
-      const match = /^\/([^/]+)\/read\/protocols\/([^/]+)$/.exec(path);
+      const match = /^\/([^/]+)\/read\/modules\/([^/]+)$/.exec(path);
       if (match && req.method === 'GET') {
-        const [, did, protocolParam] = match;
-        return this.#handleReadProtocol(did, protocolParam);
+        const [, did, moduleParam] = match;
+        return this.#handleReadModule(did, moduleParam);
       }
     }
 
@@ -604,12 +604,12 @@ export class HttpApi {
       }
     }
 
-    // /:did/query/protocols
+    // /:did/query/modules
     {
-      const match = /^\/([^/]+)\/query\/protocols$/.exec(path);
+      const match = /^\/([^/]+)\/query\/modules$/.exec(path);
       if (match && req.method === 'GET') {
         const [, did] = match;
-        return this.#handleQueryProtocols(did);
+        return this.#handleQueryModules(did);
       }
     }
 
@@ -1019,12 +1019,12 @@ export class HttpApi {
     return this.#readReplyToResponse(reply);
   }
 
-  async #handleReadProtocolRecord(
-    did: string, protocolParam: string, protocolPathRaw: string,
+  async #handleReadModuleRecord(
+    did: string, moduleParam: string, modulePathRaw: string,
     url: URL, leadTailSlashRegex: RegExp
   ): Promise<Response> {
-    if (!protocolPathRaw || protocolPathRaw.replace(leadTailSlashRegex, '') === '') {
-      return new Response('protocol path is required', { status: 400 });
+    if (!modulePathRaw || modulePathRaw.replace(leadTailSlashRegex, '') === '') {
+      return new Response('module path is required', { status: 400 });
     }
 
     try {
@@ -1041,9 +1041,9 @@ export class HttpApi {
         lastLevelObject[lastKey!] = value;
       }
 
-      const protocol = Convert.base64Url(protocolParam).toString();
-      queryOptions.filter.protocol = protocol;
-      queryOptions.filter.protocolPath = protocolPathRaw.replace(leadTailSlashRegex, '');
+      const module = Convert.base64Url(moduleParam).toString();
+      queryOptions.filter.module = module;
+      queryOptions.filter.modulePath = modulePathRaw.replace(leadTailSlashRegex, '');
 
       const query = await RecordsQuery.create({
         filter     : queryOptions.filter,
@@ -1074,11 +1074,11 @@ export class HttpApi {
     }
   }
 
-  async #handleReadProtocol(did: string, protocolParam: string): Promise<Response> {
+  async #handleReadModule(did: string, moduleParam: string): Promise<Response> {
     try {
-      const protocol = Convert.base64Url(protocolParam).toString();
-      const query = await ProtocolsQuery.create({
-        filter: { protocol },
+      const module = Convert.base64Url(moduleParam).toString();
+      const query = await ModulesQuery.create({
+        filter: { module },
       });
       const { entries, status } = await this.dwn.processMessage(did, query.message);
       if (status.code === 200) {
@@ -1098,8 +1098,8 @@ export class HttpApi {
     }
   }
 
-  async #handleQueryProtocols(did: string): Promise<Response> {
-    const query = await ProtocolsQuery.create({});
+  async #handleQueryModules(did: string): Promise<Response> {
+    const query = await ModulesQuery.create({});
     const { entries, status } = await this.dwn.processMessage(did, query.message);
     if (status.code === 200) {
       return Response.json(entries, { status: status.code });

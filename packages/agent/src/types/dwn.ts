@@ -14,11 +14,11 @@ import type {
   MessagesSubscribeMessage,
   MessagesSubscribeOptions,
   MessagesSubscribeReply,
-  ProtocolsConfigureMessage,
-  ProtocolsConfigureOptions,
-  ProtocolsQueryMessage,
-  ProtocolsQueryOptions,
-  ProtocolsQueryReply,
+  ModulesConfigureMessage,
+  ModulesConfigureOptions,
+  ModulesQueryMessage,
+  ModulesQueryOptions,
+  ModulesQueryReply,
   RecordsCountMessage,
   RecordsCountOptions,
   RecordsCountReply,
@@ -43,8 +43,8 @@ import {
   MessagesQuery,
   MessagesRead,
   MessagesSubscribe,
-  ProtocolsConfigure,
-  ProtocolsQuery,
+  ModulesConfigure,
+  ModulesQuery,
   RecordsCount,
   RecordsDelete,
   RecordsQuery,
@@ -82,8 +82,8 @@ export enum DwnInterface {
   MessagesQuery = 'MessagesQuery',
   MessagesRead = 'MessagesRead',
   MessagesSubscribe = 'MessagesSubscribe',
-  ProtocolsConfigure = 'ProtocolsConfigure',
-  ProtocolsQuery = 'ProtocolsQuery',
+  ModulesConfigure = 'ModulesConfigure',
+  ModulesQuery = 'ModulesQuery',
   RecordsCount = 'RecordsCount',
   RecordsDelete = 'RecordsDelete',
   RecordsQuery = 'RecordsQuery',
@@ -100,8 +100,8 @@ export interface DwnMessage {
   [DwnInterface.MessagesQuery] : MessagesQueryMessage;
   [DwnInterface.MessagesRead] : MessagesReadMessage;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage;
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage;
-  [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage;
+  [DwnInterface.ModulesConfigure] : ModulesConfigureMessage;
+  [DwnInterface.ModulesQuery] : ModulesQueryMessage;
   [DwnInterface.RecordsCount] : RecordsCountMessage;
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage;
   [DwnInterface.RecordsQuery] : RecordsQueryMessage;
@@ -114,8 +114,8 @@ export interface DwnMessageDescriptor {
   [DwnInterface.MessagesQuery] : MessagesQueryMessage['descriptor'];
   [DwnInterface.MessagesRead] : MessagesReadMessage['descriptor'];
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeMessage['descriptor'];
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigureMessage['descriptor'];
-  [DwnInterface.ProtocolsQuery] : ProtocolsQueryMessage['descriptor'];
+  [DwnInterface.ModulesConfigure] : ModulesConfigureMessage['descriptor'];
+  [DwnInterface.ModulesQuery] : ModulesQueryMessage['descriptor'];
   [DwnInterface.RecordsCount] : RecordsCountMessage['descriptor'];
   [DwnInterface.RecordsDelete] : RecordsDeleteMessage['descriptor'];
   [DwnInterface.RecordsQuery] : RecordsQueryMessage['descriptor'];
@@ -128,8 +128,8 @@ export interface DwnMessageParams {
   [DwnInterface.MessagesQuery] : Omit<MessagesQueryOptions, 'signer'>;
   [DwnInterface.MessagesRead] : RequireOnly<MessagesReadOptions, 'messageCid'>;
   [DwnInterface.MessagesSubscribe] : Partial<MessagesSubscribeOptions>;
-  [DwnInterface.ProtocolsConfigure] : RequireOnly<ProtocolsConfigureOptions, 'definition'>;
-  [DwnInterface.ProtocolsQuery] : ProtocolsQueryOptions;
+  [DwnInterface.ModulesConfigure] : RequireOnly<ModulesConfigureOptions, 'definition'>;
+  [DwnInterface.ModulesQuery] : ModulesQueryOptions;
   [DwnInterface.RecordsCount] : RecordsCountOptions;
   [DwnInterface.RecordsDelete] : RequireOnly<RecordsDeleteOptions, 'recordId'>;
   [DwnInterface.RecordsQuery] : RecordsQueryOptions;
@@ -142,8 +142,8 @@ export interface DwnMessageReply {
   [DwnInterface.MessagesQuery] : MessagesQueryReply;
   [DwnInterface.MessagesRead] : MessagesReadReply;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribeReply;
-  [DwnInterface.ProtocolsConfigure] : GenericMessageReply;
-  [DwnInterface.ProtocolsQuery] : ProtocolsQueryReply;
+  [DwnInterface.ModulesConfigure] : GenericMessageReply;
+  [DwnInterface.ModulesQuery] : ModulesQueryReply;
   [DwnInterface.RecordsCount] : RecordsCountReply;
   [DwnInterface.RecordsDelete] : GenericMessageReply;
   [DwnInterface.RecordsQuery] : RecordsQueryReply;
@@ -159,8 +159,8 @@ export interface MessageHandler {
   // define all of them individually as undefined
   [DwnInterface.MessagesQuery] : undefined;
   [DwnInterface.MessagesRead] : undefined;
-  [DwnInterface.ProtocolsConfigure] : undefined;
-  [DwnInterface.ProtocolsQuery] : undefined;
+  [DwnInterface.ModulesConfigure] : undefined;
+  [DwnInterface.ModulesQuery] : undefined;
   [DwnInterface.RecordsCount] : undefined;
   [DwnInterface.RecordsDelete] : undefined;
   [DwnInterface.RecordsQuery] : undefined;
@@ -196,7 +196,7 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
   subscriptionHandler?: MessageHandler[T];
   /**
    * The recipient's role-path public key for this write, at the record's own
-   * `protocolPath`. When writing a `$role` record with a `recipient`, the agent
+   * `modulePath`. When writing a `$role` record with a `recipient`, the agent
    * provisions a `$encryption/delivery` record wrapping the role-audience key to
    * this key.
    *
@@ -216,7 +216,7 @@ export type ProcessDwnRequest<T extends DwnInterface> = DwnRequest<T> & {
    * delivery is wrapped to (skipping recipient DID resolution) and guarantees an
    * outcome is always reported, so the caller can enforce its own delivery
    * policy. When omitted, the agent resolves the recipient's key from its
-   * installed protocol definition (local, then via the recipient's DWN), and a
+   * installed module definition (local, then via the recipient's DWN), and a
    * recipient whose key cannot be resolved is likewise reported with
    * `delivered: false` rather than failing the write.
    *
@@ -247,8 +247,8 @@ export type DecryptRecordDataParams = {
   granteeDid?: string;
   /** Delegated grant that authorized the operation which returned the record. */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
-  /** Protocol role carried by the request. Used only as an audience-route hint; does not grant access. */
-  protocolRole?: string;
+  /** Module role carried by the request. Used only as an audience-route hint; does not grant access. */
+  moduleRole?: string;
 };
 
 export type SendDwnRequest<T extends DwnInterface> = DwnRequest<T>
@@ -323,7 +323,7 @@ export type AudienceKeyDeliveryOutcome =
  *
  * The recipient's role-path public key is resolved FIRST (the supplied
  * `recipientRolePublicKey`, else remote resolution from the recipient's
- * installed protocol definition) — it is both the wrap target of a new delivery
+ * installed module definition) — it is both the wrap target of a new delivery
  * and the dedupe discriminant.
  *
  * Skip-if-exists: when a delivery wrapping the CURRENT audience key to that
@@ -338,7 +338,7 @@ export type AudienceKeyDeliveryOutcome =
  * and may duplicate. Concurrent OWNER-authorized calls in one agent for the same
  * tuple and recipient key are coalesced onto one execution. Calls carrying an
  * explicit authorization context (`granteeDid`, grant material, or
- * `protocolRole`) are deliberately NOT coalesced, so each call independently
+ * `moduleRole`) are deliberately NOT coalesced, so each call independently
  * exercises its authorization against current grant/revocation state.
  * Cross-device idempotency (deterministic delivery identity) is tracked by the
  * delivery-dedupe design (#1092). Duplicates are a storage/scan cost, not a
@@ -358,10 +358,10 @@ export type ReprovisionAudienceKeyDeliveryParams = {
   /** The owner tenant DID whose DWN holds the audience and delivery records. */
   target: string;
 
-  /** The protocol URI of the audience tuple. */
-  protocol: string;
+  /** The module URI of the audience tuple. */
+  module: string;
 
-  /** The `$role` protocol path of the audience tuple. */
+  /** The `$role` module path of the audience tuple. */
   rolePath: string;
 
   /**
@@ -398,8 +398,8 @@ export type ReprovisionAudienceKeyDeliveryParams = {
   /** Delegated grant message authorizing a delegated call's writes. */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 
-  /** Protocol role invoked for role-authorized writes. */
-  protocolRole?: string;
+  /** Module role invoked for role-authorized writes. */
+  moduleRole?: string;
 };
 
 export type DwnResponse<T extends DwnInterface> = {
@@ -443,25 +443,25 @@ export interface DwnMessageConstructor<T extends DwnInterface> {
 }
 
 export const dwnMessageConstructors: { [T in DwnInterface]: DwnMessageConstructor<T> } = {
-  [DwnInterface.MessagesQuery]      : MessagesQuery,
-  [DwnInterface.MessagesRead]       : MessagesRead,
-  [DwnInterface.MessagesSubscribe]  : MessagesSubscribe,
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure,
-  [DwnInterface.ProtocolsQuery]     : ProtocolsQuery,
-  [DwnInterface.RecordsCount]       : RecordsCount,
-  [DwnInterface.RecordsDelete]      : RecordsDelete,
-  [DwnInterface.RecordsQuery]       : RecordsQuery,
-  [DwnInterface.RecordsRead]        : RecordsRead,
-  [DwnInterface.RecordsSubscribe]   : RecordsSubscribe,
-  [DwnInterface.RecordsWrite]       : RecordsWrite,
+  [DwnInterface.MessagesQuery]     : MessagesQuery,
+  [DwnInterface.MessagesRead]      : MessagesRead,
+  [DwnInterface.MessagesSubscribe] : MessagesSubscribe,
+  [DwnInterface.ModulesConfigure]  : ModulesConfigure,
+  [DwnInterface.ModulesQuery]      : ModulesQuery,
+  [DwnInterface.RecordsCount]      : RecordsCount,
+  [DwnInterface.RecordsDelete]     : RecordsDelete,
+  [DwnInterface.RecordsQuery]      : RecordsQuery,
+  [DwnInterface.RecordsRead]       : RecordsRead,
+  [DwnInterface.RecordsSubscribe]  : RecordsSubscribe,
+  [DwnInterface.RecordsWrite]      : RecordsWrite,
 };
 
 export interface DwnMessageInstance {
   [DwnInterface.MessagesQuery] : MessagesQuery;
   [DwnInterface.MessagesRead] : MessagesRead;
   [DwnInterface.MessagesSubscribe] : MessagesSubscribe;
-  [DwnInterface.ProtocolsConfigure] : ProtocolsConfigure;
-  [DwnInterface.ProtocolsQuery] : ProtocolsQuery;
+  [DwnInterface.ModulesConfigure] : ModulesConfigure;
+  [DwnInterface.ModulesQuery] : ModulesQuery;
   [DwnInterface.RecordsCount] : RecordsCount;
   [DwnInterface.RecordsDelete] : RecordsDelete;
   [DwnInterface.RecordsQuery] : RecordsQuery;
@@ -489,7 +489,7 @@ export {
   KeyDerivationScheme as DwnKeyDerivationScheme,
   PermissionGrant as DwnPermissionGrant,
   PermissionRequest as DwnPermissionRequest,
-  PermissionsProtocol as DwnPermissionsProtocol,
+  PermissionsModule as DwnPermissionsModule,
 } from '@enbox/dwn-sdk-js';
 
 // Type-only re-exports (interfaces, type aliases)
@@ -505,8 +505,8 @@ export type {
   PermissionGrantData as DwnPermissionGrantData,
   PermissionRequestData as DwnPermissionRequestData,
   PermissionScope as DwnPermissionScope,
-  ProtocolDefinition as DwnProtocolDefinition,
-  ProtocolPermissionScope as DwnProtocolPermissionScope,
+  ModuleDefinition as DwnModuleDefinition,
+  ModulePermissionScope as DwnModulePermissionScope,
   PublicKeyJwk as DwnPublicKeyJwk,
   RecordsPermissionScope as DwnRecordsPermissionScope,
   SubscriptionListener as DwnSubscriptionListener,

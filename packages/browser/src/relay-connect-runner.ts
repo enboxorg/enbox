@@ -72,7 +72,7 @@ export interface RelayConnectOptions {
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
 
-  /** DWN protocols and permission scopes being requested. */
+  /** DWN modules and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
   /** Existing delegate credentials reused by a refresh request. */

@@ -1,27 +1,27 @@
 {
-  "live: protocol record lifecycle": [
+  "live: module record lifecycle": [
     "fetchInitialRecordsWrite",
-    "fetchParentRecord",
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition",
+    "fetchParentRecord"
   ],
   "live: role-authorized write": [
     "constructRecordChain",
     "fetchInitialWrite",
-    "fetchProtocolDefinition",
+    "fetchModuleDefinition",
     "queryLatestRoleRecords"
   ],
   "live: encrypted role-audience write": [
+    "fetchModuleDefinition",
     "fetchParentRecord",
-    "fetchProtocolDefinition",
     "queryAudienceRecords"
   ],
-  "live: composed protocol configure": [
-    "fetchProtocolDefinition"
+  "live: composed module configure": [
+    "fetchModuleDefinition"
   ],
   "live: grant-authorized write": [
     "fetchGrant",
-    "fetchOldestGrantRevocation",
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition",
+    "fetchOldestGrantRevocation"
   ],
   "live: messages-read of deleted record with grant": [
     "fetchGrant",
@@ -29,45 +29,45 @@
     "fetchOldestGrantRevocation"
   ],
   "live: record-limit candidate admission": [
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition"
   ],
   "live: squash backstop": [
     "fetchLatestSquashRecordAtScope",
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition"
   ],
   "live: dataless update of above-threshold record": [
-    "fetchProtocolDefinition",
+    "fetchModuleDefinition",
     "hasStoredData"
   ],
   "replicated: child admitted under dataless parent": [
-    "fetchParentRecord",
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition",
+    "fetchParentRecord"
   ],
   "replicated: role-invoking write admitted under dataless role record": [
     "constructRecordChain",
     "fetchInitialWrite",
-    "fetchProtocolDefinition",
+    "fetchModuleDefinition",
     "hasMatchingRoleRecord",
     "queryLatestRoleRecords"
   ],
   "replicated: initial write accepted by timestamped config": [
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition"
   ],
   "replicated: same-CID completion of dataless stub": [
-    "fetchProtocolDefinition",
+    "fetchModuleDefinition",
     "hasStoredData"
   ],
   "replicated: tombstone-beaten dataless update missing compacted data": [
-    "fetchProtocolDefinition",
+    "fetchModuleDefinition",
     "hasStoredData"
   ],
   "replicated: child of soft-deleted parent": [
-    "fetchParentRecord",
-    "fetchProtocolDefinition"
+    "fetchModuleDefinition",
+    "fetchParentRecord"
   ],
   "replicated: child of pruned parent": [
+    "fetchModuleDefinition",
     "fetchParentRecord",
-    "fetchProtocolDefinition",
     "isRecordPruned"
   ]
 }

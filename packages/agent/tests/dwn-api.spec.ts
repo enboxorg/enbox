@@ -1,5 +1,5 @@
 import type { JwkParamsOkpPublic } from '@enbox/crypto';
-import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { DidDht } from '@enbox/dids';
@@ -28,11 +28,11 @@ import type { DwnPermissionScope } from '../src/types/dwn.js';
 
 import { DEFAULT_LOCAL_DWN_STRATEGY } from '../src/local-dwn.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
-import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
+import emailModuleDefinition from './fixtures/module-definitions/email.json' with { type: 'json' };
+import freeForAllModuleDefinition from './fixtures/module-definitions/free-for-all.json' with { type: 'json' };
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
+import { RemoteModuleDefinitionError } from '../src/dwn-module-cache.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissionScope } from '../src/dwn-api.js';
@@ -40,7 +40,7 @@ import { AgentDwnApi, isDwnMessage, isMessagesPermissionScope, isRecordPermissio
 const testDwnUrls: string[] = [testDwnUrl];
 
 /**
- * Installs the free-for-all protocol on the given DWN for the given DID.
+ * Installs the free-for-all module on the given DWN for the given DID.
  * Use `processRequest` for local DWN and `sendRequest` for remote DWN.
  */
 async function installFreeForAll(
@@ -52,11 +52,11 @@ async function installFreeForAll(
   const { reply } = await harness.agent.dwn[fn]({
     author        : did,
     target        : did,
-    messageType   : DwnInterface.ProtocolsConfigure,
-    messageParams : { definition: freeForAllProtocolDefinition }
+    messageType   : DwnInterface.ModulesConfigure,
+    messageParams : { definition: freeForAllModuleDefinition }
   });
   if (reply.status.code !== 202) {
-    throw new Error(`Failed to install free-for-all protocol: ${reply.status.code} ${reply.status.detail}`);
+    throw new Error(`Failed to install free-for-all module: ${reply.status.code} ${reply.status.detail}`);
   }
 }
 
@@ -151,15 +151,15 @@ describe('AgentDwnApi', () => {
       const dwnApi = new AgentDwnApi({ dwn: ({} as unknown) as Dwn });
       const session = new AbortController();
 
-      dwnApi.registerAudienceKeyDeliveryProtocol({
-        protocol  : 'https://example.com/protocols/chat',
+      dwnApi.registerAudienceKeyDeliveryModule({
+        module    : 'https://example.com/modules/chat',
         rolePaths : ['thread/member'],
         signal    : session.signal,
         target    : 'did:example:alice',
       });
 
       await expect(dwnApi.getAudienceKeyDeliveryState({
-        protocol     : 'https://example.com/protocols/chat',
+        module       : 'https://example.com/modules/chat',
         roleRecordId : 'role-record',
         signal       : session.signal,
         target       : 'did:example:alice',
@@ -233,24 +233,24 @@ describe('AgentDwnApi', () => {
   });
 
   describe('remote mode (localDwnEndpoint)', () => {
-    it('only treats typed remote protocol absence as uninstalled', async () => {
+    it('only treats typed remote module absence as uninstalled', async () => {
       const dwnApi = new AgentDwnApi({
         agent            : testHarness.agent,
         localDwnEndpoint : 'http://127.0.0.1:55557',
       });
       const sendDwnRpcRequest = sinon.stub(dwnApi as any, 'sendDwnRpcRequest');
-      const protocol = 'https://uninstalled-protocol.example';
+      const module = 'https://uninstalled-module.example';
       const targetDid = 'did:example:alice';
 
       sendDwnRpcRequest.onFirstCall().resolves({
         status  : { code: 200, detail: 'OK' },
         entries : [],
       });
-      expect(await dwnApi['getProtocolDefinition'](targetDid, protocol)).toBeUndefined();
+      expect(await dwnApi['getModuleDefinition'](targetDid, module)).toBeUndefined();
 
       const unrelatedError = new Error('Unrelated upstream 404');
       sendDwnRpcRequest.onSecondCall().rejects(unrelatedError);
-      await expect(dwnApi['getProtocolDefinition'](targetDid, protocol)).rejects.toBe(unrelatedError);
+      await expect(dwnApi['getModuleDefinition'](targetDid, module)).rejects.toBe(unrelatedError);
     });
 
     it('routes processRequest through RPC in remote mode', async () => {
@@ -279,11 +279,11 @@ describe('AgentDwnApi', () => {
         localDwnEndpoint : 'http://127.0.0.1:55557',
       });
 
-      // ProtocolsQuery is a simple message type — no data stream required.
+      // ModulesQuery is a simple message type — no data stream required.
       const result = await dwnApi.processRequest({
         author        : 'did:dht:testagent',
         target        : 'did:dht:testagent',
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {},
       });
 
@@ -363,7 +363,7 @@ describe('AgentDwnApi', () => {
       expect(rpcSendStub.firstCall.args[0].dwnUrl).toBe('http://127.0.0.1:55557');
     });
 
-    it('invalidates cached protocol policy after an accepted raw configure', async () => {
+    it('invalidates cached module policy after an accepted raw configure', async () => {
       const rpcSendStub = sinon.stub().resolves({
         status: { code: 202, detail: 'Accepted' },
       });
@@ -378,32 +378,32 @@ describe('AgentDwnApi', () => {
         localDwnEndpoint : 'http://127.0.0.1:55557',
       });
       const tenant = 'did:dht:testtenant';
-      const protocol = 'https://example.com/protocol-cache';
+      const module = 'https://example.com/module-cache';
       const cacheKeys = [
-        `${tenant}~${protocol}`,
-        `local~owner~${tenant}~${protocol}`,
-        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
-        `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
-        `local-rpc~${tenant}~${protocol}`,
-        `remote~${tenant}~${protocol}`,
-        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${protocol}`,
-        `remote~did:key:delegate#key~grant-remote~${tenant}~${protocol}`,
+        `${tenant}~${module}`,
+        `local~owner~${tenant}~${module}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${module}`,
+        `local~delegate~did:key:delegate~grant-local~${tenant}~${module}`,
+        `local-rpc~${tenant}~${module}`,
+        `remote~${tenant}~${module}`,
+        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${module}`,
+        `remote~did:key:delegate#key~grant-remote~${tenant}~${module}`,
       ];
-      const protocolCache = (dwnApi as any)._protocolDefinitionCache;
+      const moduleCache = (dwnApi as any)._moduleDefinitionCache;
       for (const cacheKey of cacheKeys) {
-        protocolCache.set(cacheKey, { protocol });
+        moduleCache.set(cacheKey, { module });
       }
 
       await dwnApi.processRawMessage(tenant, {
         descriptor: {
-          interface  : 'Protocols',
+          interface  : 'Modules',
           method     : 'Configure',
-          definition : { protocol },
+          definition : { module },
         },
       } as any);
 
       for (const cacheKey of cacheKeys) {
-        expect(protocolCache.has(cacheKey)).toBe(false);
+        expect(moduleCache.has(cacheKey)).toBe(false);
       }
     });
 
@@ -489,7 +489,7 @@ describe('AgentDwnApi', () => {
       expect(mockAgent.rpc.sendDwnRequest.called).toBe(false);
     });
 
-    it('invalidates cached protocol policy only for successful replication outcomes', async () => {
+    it('invalidates cached module policy only for successful replication outcomes', async () => {
       const rpcApplyStub = sinon.stub();
       const mockAgent: any = {
         rpc: {
@@ -503,48 +503,48 @@ describe('AgentDwnApi', () => {
         localDwnEndpoint : 'http://127.0.0.1:55557',
       });
       const tenant = 'did:dht:testtenant';
-      const protocol = 'https://example.com/protocol-cache';
+      const module = 'https://example.com/module-cache';
       const cacheKeys = [
-        `${tenant}~${protocol}`,
-        `local~owner~${tenant}~${protocol}`,
-        `local~delegate~did:key:delegate~no-grant~${tenant}~${protocol}`,
-        `local~delegate~did:key:delegate~grant-local~${tenant}~${protocol}`,
-        `local-rpc~${tenant}~${protocol}`,
-        `remote~${tenant}~${protocol}`,
-        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${protocol}`,
-        `remote~did:key:delegate#key~grant-remote~${tenant}~${protocol}`,
+        `${tenant}~${module}`,
+        `local~owner~${tenant}~${module}`,
+        `local~delegate~did:key:delegate~no-grant~${tenant}~${module}`,
+        `local~delegate~did:key:delegate~grant-local~${tenant}~${module}`,
+        `local-rpc~${tenant}~${module}`,
+        `remote~${tenant}~${module}`,
+        `local-rpc~did:key:delegate#key~grant-local~${tenant}~${module}`,
+        `remote~did:key:delegate#key~grant-remote~${tenant}~${module}`,
       ];
-      const protocolCache = (dwnApi as any)._protocolDefinitionCache;
-      const protocolMessage = {
+      const moduleCache = (dwnApi as any)._moduleDefinitionCache;
+      const moduleMessage = {
         descriptor: {
-          interface  : 'Protocols',
+          interface  : 'Modules',
           method     : 'Configure',
-          definition : { protocol },
+          definition : { module },
         },
       } as any;
 
       for (const result of [{ kind: 'Applied' }, { kind: 'Duplicate' }, { kind: 'Superseded' }]) {
         for (const cacheKey of cacheKeys) {
-          protocolCache.set(cacheKey, { protocol });
+          moduleCache.set(cacheKey, { module });
         }
         rpcApplyStub.resolves(result);
 
-        await dwnApi.applyReplicatedMessage(tenant, protocolMessage);
+        await dwnApi.applyReplicatedMessage(tenant, moduleMessage);
 
         for (const cacheKey of cacheKeys) {
-          expect(protocolCache.has(cacheKey)).toBe(false);
+          expect(moduleCache.has(cacheKey)).toBe(false);
         }
       }
 
       for (const cacheKey of cacheKeys) {
-        protocolCache.set(cacheKey, { protocol });
+        moduleCache.set(cacheKey, { module });
       }
       rpcApplyStub.resolves({ kind: 'Invalid', reason: 'rejected' });
 
-      await dwnApi.applyReplicatedMessage(tenant, protocolMessage);
+      await dwnApi.applyReplicatedMessage(tenant, moduleMessage);
 
       for (const cacheKey of cacheKeys) {
-        expect(protocolCache.has(cacheKey)).toBe(true);
+        expect(moduleCache.has(cacheKey)).toBe(true);
       }
     });
 
@@ -606,14 +606,14 @@ describe('AgentDwnApi', () => {
         status: { code: 200, detail: 'OK' },
       });
       sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({
-        message: { descriptor: { interface: 'Protocols', method: 'Query' } },
+        message: { descriptor: { interface: 'Modules', method: 'Query' } },
       });
       sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
 
       const request = {
         author        : 'did:example:owner',
-        messageParams : { filter: { protocol: 'https://example.com/notes' } },
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { module: 'https://example.com/notes' } },
+        messageType   : DwnInterface.ModulesQuery,
         target        : 'did:example:owner',
       } as const;
 
@@ -630,8 +630,8 @@ describe('AgentDwnApi', () => {
 
       await expect(dwnApi.sendRequest({
         author         : 'did:example:owner',
-        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
-        messageType    : DwnInterface.ProtocolsQuery,
+        messageParams  : { filter: { module: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ModulesQuery,
         remoteEndpoint : 'https://hosted.example',
         target         : 'did:example:owner',
       })).rejects.toThrow(`Remote DWN requests are unavailable while localDwnStrategy is 'only'`);
@@ -657,14 +657,14 @@ describe('AgentDwnApi', () => {
         status: { code: 200, detail: 'OK' },
       });
       sinon.stub(dwnApi as any, 'constructDwnMessage').resolves({
-        message: { descriptor: { interface: 'Protocols', method: 'Query' } },
+        message: { descriptor: { interface: 'Modules', method: 'Query' } },
       });
       sinon.stub(Message, 'getCid').resolves('bafytestmessagecid');
 
       await dwnApi.sendRequest({
         author        : 'did:example:owner',
-        messageParams : { filter: { protocol: 'https://example.com/notes' } },
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageParams : { filter: { module: 'https://example.com/notes' } },
+        messageType   : DwnInterface.ModulesQuery,
         target        : foreignDid,
       });
 
@@ -674,8 +674,8 @@ describe('AgentDwnApi', () => {
       identityList.resolves([{ did: { uri: foreignDid }, metadata: {} }]);
       await expect(dwnApi.sendRequest({
         author         : 'did:example:owner',
-        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
-        messageType    : DwnInterface.ProtocolsQuery,
+        messageParams  : { filter: { module: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ModulesQuery,
         remoteEndpoint : 'https://pinned-foreign.example',
         target         : foreignDid,
       })).rejects.toThrow(`Remote DWN requests are unavailable while localDwnStrategy is 'only'`);
@@ -683,8 +683,8 @@ describe('AgentDwnApi', () => {
       identityList.resolves([]);
       await dwnApi.sendRequest({
         author         : 'did:example:owner',
-        messageParams  : { filter: { protocol: 'https://example.com/notes' } },
-        messageType    : DwnInterface.ProtocolsQuery,
+        messageParams  : { filter: { module: 'https://example.com/notes' } },
+        messageType    : DwnInterface.ModulesQuery,
         remoteEndpoint : 'https://pinned-foreign.example',
         target         : foreignDid,
       });
@@ -832,9 +832,9 @@ describe('AgentDwnApi', () => {
     });
 
     it('exposes machine-readable errorCode and info on a locally rejected write (squash backstop)', async () => {
-      // install a protocol with a $squash-enabled path
-      const squashProtocolDefinition: ProtocolDefinition = {
-        protocol  : 'http://squash-structured-errors-local.xyz',
+      // install a module with a $squash-enabled path
+      const squashModuleDefinition: ModuleDefinition = {
+        module    : 'http://squash-structured-errors-local.xyz',
         published : true,
         types     : {
           document : {},
@@ -855,8 +855,8 @@ describe('AgentDwnApi', () => {
       const { reply: configureReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: squashProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: squashModuleDefinition }
       });
       expect(configureReply.status.code).toBe(202);
 
@@ -866,9 +866,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : squashProtocolDefinition.protocol,
-          protocolPath : 'document'
+          dataFormat : 'text/plain',
+          module     : squashModuleDefinition.module,
+          modulePath : 'document'
         },
         dataStream: new Blob([Convert.string('document').toUint8Array() as BlobPart])
       });
@@ -882,8 +882,8 @@ describe('AgentDwnApi', () => {
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
           dataFormat       : 'text/plain',
-          protocol         : squashProtocolDefinition.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModuleDefinition.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentMessage!.contextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -901,8 +901,8 @@ describe('AgentDwnApi', () => {
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
           dataFormat       : 'text/plain',
-          protocol         : squashProtocolDefinition.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModuleDefinition.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentMessage!.contextId,
           messageTimestamp : olderTimestamp,
           dateCreated      : olderTimestamp
@@ -911,7 +911,7 @@ describe('AgentDwnApi', () => {
       });
 
       expect(rejectedReply.status.code).toBe(409);
-      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
 
       // the squash floor is readable as data — no parsing of the `detail` prose required
       expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);
@@ -924,9 +924,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : freeForAllProtocolDefinition.protocol,
-          protocolPath : 'post'
+          dataFormat : 'text/plain',
+          module     : freeForAllModuleDefinition.module,
+          modulePath : 'post'
         },
         dataStream: new Blob([dataBytes as BlobPart])
       });
@@ -954,14 +954,14 @@ describe('AgentDwnApi', () => {
         receivedMessages.push(await Message.getCid(message));
       };
 
-      // create a subscription message for protocol 'https://schemas.xyz/example'
+      // create a subscription message for module 'https://schemas.xyz/example'
       const { reply: { status: subscribeStatus, subscription } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesSubscribe,
         messageParams : {
           filters: [{
-            protocol: 'https://protocol.xyz/example'
+            module: 'https://module.xyz/example'
           }]
         },
         subscriptionHandler
@@ -971,10 +971,10 @@ describe('AgentDwnApi', () => {
       expect(subscribeStatus.code).toBe(200);
       expect(subscription).toBeDefined();
 
-      // install the protocol, this will match the subscription filter
-      const protocolDefinition: ProtocolDefinition = {
+      // install the module, this will match the subscription filter
+      const moduleDefinition: ModuleDefinition = {
         published : true,
-        protocol  : 'https://protocol.xyz/example',
+        module    : 'https://module.xyz/example',
         types     : {
           foo: {
             schema      : 'https://schemas.xyz/foo',
@@ -986,15 +986,15 @@ describe('AgentDwnApi', () => {
         }
       };
 
-      const { messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { messageCid: moduleMessageCid, reply: { status: moduleStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
@@ -1003,10 +1003,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'https://protocol.xyz/example',
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'https://module.xyz/example',
+          modulePath : 'foo',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1019,10 +1019,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'https://protocol.xyz/example',
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'https://module.xyz/example',
+          modulePath : 'foo',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -1035,10 +1035,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1050,7 +1050,7 @@ describe('AgentDwnApi', () => {
       // check that the subscription handler received the expected messages
       expect(receivedMessages).toHaveLength(3);
       expect(receivedMessages).toEqual(expect.arrayContaining([
-        protocolMessageCid,
+        moduleMessageCid,
         write1MessageCid,
         write2MessageCid
       ]));
@@ -1066,10 +1066,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1105,56 +1105,56 @@ describe('AgentDwnApi', () => {
       expect(readDataBytes).toEqual(dataBytes);
     });
 
-    it('handles ProtocolsConfigure', async () => {
-      const protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
+    it('handles ModulesConfigure', async () => {
+      const modulesConfigureResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: emailProtocolDefinition
+          definition: emailModuleDefinition
         }
       });
 
-      expect(protocolsConfigureResponse).toHaveProperty('message');
-      expect(protocolsConfigureResponse).toHaveProperty('messageCid');
-      expect(protocolsConfigureResponse).toHaveProperty('reply');
+      expect(modulesConfigureResponse).toHaveProperty('message');
+      expect(modulesConfigureResponse).toHaveProperty('messageCid');
+      expect(modulesConfigureResponse).toHaveProperty('reply');
 
-      const configureMessage = protocolsConfigureResponse.message!;
+      const configureMessage = modulesConfigureResponse.message!;
       expect(configureMessage.descriptor).toHaveProperty('definition');
-      expect(configureMessage.descriptor.definition).toEqual(emailProtocolDefinition);
+      expect(configureMessage.descriptor.definition).toEqual(emailModuleDefinition);
 
-      const configureReply = protocolsConfigureResponse.reply;
+      const configureReply = modulesConfigureResponse.reply;
       expect(configureReply).toHaveProperty('status');
       expect(configureReply.status.code).toBe(202);
     });
 
-    it('handles ProtocolsQuery', async () => {
-      // Configure a protocol to use for the ProtocolsQuery test.
-      const protocolsConfigureResponse = await testHarness.agent.dwn.processRequest({
+    it('handles ModulesQuery', async () => {
+      // Configure a module to use for the ModulesQuery test.
+      const modulesConfigureResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: emailProtocolDefinition
+          definition: emailModuleDefinition
         }
       });
-      expect(protocolsConfigureResponse.reply.status.code).toBe(202);
+      expect(modulesConfigureResponse.reply.status.code).toBe(202);
 
-      // Attempt to query for the protocol that was just configured.
-      const protocolsQueryResponse = await testHarness.agent.dwn.processRequest({
+      // Attempt to query for the module that was just configured.
+      const modulesQueryResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {
-          filter: { protocol: emailProtocolDefinition.protocol },
+          filter: { module: emailModuleDefinition.module },
         }
       });
 
-      expect(protocolsQueryResponse).toHaveProperty('message');
-      expect(protocolsQueryResponse).toHaveProperty('messageCid');
-      expect(protocolsQueryResponse).toHaveProperty('reply');
+      expect(modulesQueryResponse).toHaveProperty('message');
+      expect(modulesQueryResponse).toHaveProperty('messageCid');
+      expect(modulesQueryResponse).toHaveProperty('reply');
 
-      const queryReply = protocolsQueryResponse.reply;
+      const queryReply = modulesQueryResponse.reply;
       expect(queryReply).toHaveProperty('status');
       expect(queryReply.status.code).toBe(200);
       expect(queryReply).toHaveProperty('entries');
@@ -1162,8 +1162,8 @@ describe('AgentDwnApi', () => {
 
       if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
       if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
-      const protocolsConfigure = queryReply.entries[0];
-      expect(protocolsConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
+      const modulesConfigure = queryReply.entries[0];
+      expect(modulesConfigure.descriptor.definition).toEqual(emailModuleDefinition);
     });
 
     it('handles RecordsDelete messages', async () => {
@@ -1176,10 +1176,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1220,10 +1220,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1271,10 +1271,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1350,10 +1350,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1367,10 +1367,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -1384,10 +1384,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/other' // different schema
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -1416,9 +1416,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1450,9 +1450,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -1479,11 +1479,11 @@ describe('AgentDwnApi', () => {
         target        : bob.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          published    : true,
-          schema       : 'foo/bar',
-          dataFormat   : 'text/plain'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          published  : true,
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain'
         },
         dataStream,
       });
@@ -1557,10 +1557,10 @@ describe('AgentDwnApi', () => {
     });
 
     it('handles RecordsWrite messages to sign as delegate owner', async () => {
-      // install a protocol to use for the test
-      const protocolDefinition: ProtocolDefinition = {
+      // install a module to use for the test
+      const moduleDefinition: ModuleDefinition = {
         published : true,
-        protocol  : 'https://schemas.xyz/example',
+        module    : 'https://schemas.xyz/example',
         types     : {
           foo: {}
         },
@@ -1570,27 +1570,27 @@ describe('AgentDwnApi', () => {
       };
 
       // install for bob
-      const { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: moduleStatus } } = await testHarness.agent.dwn.processRequest({
         author        : bob.did.uri,
         target        : bob.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       // install for alice
-      const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: moduleStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
 
-      expect(protocolStatus2.code).toBe(202);
+      expect(moduleStatus2.code).toBe(202);
 
       // create a DID for alice's Device X and grant it delegated write permissions to alice's DWN
       const aliceDeviceX = await testHarness.agent.identity.create({
@@ -1604,7 +1604,7 @@ describe('AgentDwnApi', () => {
         grantedTo   : aliceDeviceX.did.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         delegated   : true,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, protocol: protocolDefinition.protocol }
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: moduleDefinition.module }
       });
 
       // bob authors a public record to his dwn
@@ -1615,10 +1615,10 @@ describe('AgentDwnApi', () => {
         target        : bob.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          published    : true,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain'
+          published  : true,
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          dataFormat : 'text/plain'
         },
         dataStream,
       });
@@ -1702,10 +1702,10 @@ describe('AgentDwnApi', () => {
         didMethod : 'jwk'
       });
 
-      // install a protocol to use for the test
-      const protocolDefinition: ProtocolDefinition = {
+      // install a module to use for the test
+      const moduleDefinition: ModuleDefinition = {
         published : true,
-        protocol  : 'https://schemas.xyz/example',
+        module    : 'https://schemas.xyz/example',
         types     : {
           foo: {}
         },
@@ -1715,27 +1715,27 @@ describe('AgentDwnApi', () => {
       };
 
       // install for bob
-      const { reply: { status: protocolStatus } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: moduleStatus } } = await testHarness.agent.dwn.processRequest({
         author        : bob.did.uri,
         target        : bob.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       // install for alice
-      const { reply: { status: protocolStatus2 } } = await testHarness.agent.dwn.processRequest({
+      const { reply: { status: moduleStatus2 } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
 
-      expect(protocolStatus2.code).toBe(202);
+      expect(moduleStatus2.code).toBe(202);
 
       // bob authors a public record to his dwn
       const dataStream = new Blob([ Convert.string('Hello, world!').toUint8Array() ]);
@@ -1745,10 +1745,10 @@ describe('AgentDwnApi', () => {
         target        : bob.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          published    : true,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain'
+          published  : true,
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          dataFormat : 'text/plain'
         },
         dataStream,
       });
@@ -1789,9 +1789,9 @@ describe('AgentDwnApi', () => {
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : 'https://schemas.xyz/example',
-            protocolPath : 'foo',
+            dataFormat : 'text/plain',
+            module     : 'https://schemas.xyz/example',
+            modulePath : 'foo',
           },
           granteeDid: aliceDeviceX.did.uri,
           dataStream,
@@ -1878,7 +1878,7 @@ describe('AgentDwnApi', () => {
       // operated by TBD are regularly restarted and DIDs are no longer persisted.
       await DidDht.publish({ did: alice.did });
 
-      // Install free-for-all protocol locally and on remote DWN.
+      // Install free-for-all module locally and on remote DWN.
       await installFreeForAll(testHarness, alice.did.uri);
       await installFreeForAll(testHarness, alice.did.uri, true);
     });
@@ -1888,9 +1888,9 @@ describe('AgentDwnApi', () => {
     });
 
     it('exposes machine-readable errorCode and info on a remotely rejected write (squash backstop)', async () => {
-      // install a protocol with a $squash-enabled path on the remote DWN
-      const squashProtocolDefinition: ProtocolDefinition = {
-        protocol  : 'http://squash-structured-errors-remote.xyz',
+      // install a module with a $squash-enabled path on the remote DWN
+      const squashModuleDefinition: ModuleDefinition = {
+        module    : 'http://squash-structured-errors-remote.xyz',
         published : true,
         types     : {
           document : {},
@@ -1911,8 +1911,8 @@ describe('AgentDwnApi', () => {
       const { reply: configureReply } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: squashProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: squashModuleDefinition }
       });
       expect(configureReply.status.code).toBe(202);
 
@@ -1922,9 +1922,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : squashProtocolDefinition.protocol,
-          protocolPath : 'document'
+          dataFormat : 'text/plain',
+          module     : squashModuleDefinition.module,
+          modulePath : 'document'
         },
         dataStream: new Blob([Convert.string('document').toUint8Array() as BlobPart])
       });
@@ -1938,8 +1938,8 @@ describe('AgentDwnApi', () => {
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
           dataFormat       : 'text/plain',
-          protocol         : squashProtocolDefinition.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModuleDefinition.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentMessage!.contextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -1957,8 +1957,8 @@ describe('AgentDwnApi', () => {
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
           dataFormat       : 'text/plain',
-          protocol         : squashProtocolDefinition.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModuleDefinition.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentMessage!.contextId,
           messageTimestamp : olderTimestamp,
           dateCreated      : olderTimestamp
@@ -1967,7 +1967,7 @@ describe('AgentDwnApi', () => {
       });
 
       expect(rejectedReply.status.code).toBe(409);
-      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
 
       // the squash floor is readable as data — no parsing of the `detail` prose required
       expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);
@@ -1983,10 +1983,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2031,14 +2031,14 @@ describe('AgentDwnApi', () => {
         receivedMessages.push(await Message.getCid(message));
       };
 
-      // create a subscription message for protocol 'https://schemas.xyz/example'
+      // create a subscription message for module 'https://schemas.xyz/example'
       const { reply: { status: subscribeStatus, subscription } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.MessagesSubscribe,
         messageParams : {
           filters: [{
-            protocol: 'https://protocol.xyz/example'
+            module: 'https://module.xyz/example'
           }]
         },
         subscriptionHandler
@@ -2048,10 +2048,10 @@ describe('AgentDwnApi', () => {
       expect(subscribeStatus.code).toBe(200);
       expect(subscription).toBeDefined();
 
-      // install the protocol, this will match the subscription filter
-      const protocolDefinition: ProtocolDefinition = {
+      // install the module, this will match the subscription filter
+      const moduleDefinition: ModuleDefinition = {
         published : true,
-        protocol  : 'https://protocol.xyz/example',
+        module    : 'https://module.xyz/example',
         types     : {
           foo: {
             schema      : 'https://schemas.xyz/foo',
@@ -2063,15 +2063,15 @@ describe('AgentDwnApi', () => {
         }
       };
 
-      const { messageCid: protocolMessageCid, reply: { status: protocolStatus } } = await testHarness.agent.dwn.sendRequest({
+      const { messageCid: moduleMessageCid, reply: { status: moduleStatus } } = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition
+          definition: moduleDefinition
         }
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       // create a test record that matches the subscription filter
       const dataBytes = Convert.string('Write 1').toUint8Array();
@@ -2080,10 +2080,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'https://protocol.xyz/example',
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'https://module.xyz/example',
+          modulePath : 'foo',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2096,10 +2096,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'https://protocol.xyz/example',
-          protocolPath : 'foo',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'https://module.xyz/example',
+          modulePath : 'foo',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -2112,10 +2112,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/foo'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/foo'
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -2127,7 +2127,7 @@ describe('AgentDwnApi', () => {
       // check that the subscription handler received the expected messages
       expect(receivedMessages).toHaveLength(3);
       expect(receivedMessages).toEqual(expect.arrayContaining([
-        protocolMessageCid,
+        moduleMessageCid,
         write1MessageCid,
         write2MessageCid
       ]));
@@ -2143,10 +2143,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2181,56 +2181,56 @@ describe('AgentDwnApi', () => {
       expect(readDataBytes).toEqual(dataBytes);
     });
 
-    it('handles ProtocolsConfigure', async () => {
-      const protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
+    it('handles ModulesConfigure', async () => {
+      const modulesConfigureResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: emailProtocolDefinition
+          definition: emailModuleDefinition
         }
       });
 
-      expect(protocolsConfigureResponse).toHaveProperty('message');
-      expect(protocolsConfigureResponse).toHaveProperty('messageCid');
-      expect(protocolsConfigureResponse).toHaveProperty('reply');
+      expect(modulesConfigureResponse).toHaveProperty('message');
+      expect(modulesConfigureResponse).toHaveProperty('messageCid');
+      expect(modulesConfigureResponse).toHaveProperty('reply');
 
-      const configureMessage = protocolsConfigureResponse.message!;
+      const configureMessage = modulesConfigureResponse.message!;
       expect(configureMessage.descriptor).toHaveProperty('definition');
-      expect(configureMessage.descriptor.definition).toEqual(emailProtocolDefinition);
+      expect(configureMessage.descriptor.definition).toEqual(emailModuleDefinition);
 
-      const configureReply = protocolsConfigureResponse.reply;
+      const configureReply = modulesConfigureResponse.reply;
       expect(configureReply).toHaveProperty('status');
       expect(configureReply.status.code).toBe(202);
     });
 
-    it('handles ProtocolsQuery', async () => {
-      // Configure a protocol to use for the ProtocolsQuery test.
-      const protocolsConfigureResponse = await testHarness.agent.dwn.sendRequest({
+    it('handles ModulesQuery', async () => {
+      // Configure a module to use for the ModulesQuery test.
+      const modulesConfigureResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: emailProtocolDefinition
+          definition: emailModuleDefinition
         }
       });
-      expect(protocolsConfigureResponse.reply.status.code).toBe(202);
+      expect(modulesConfigureResponse.reply.status.code).toBe(202);
 
-      // Attempt to query for the protocol that was just configured.
-      const protocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
+      // Attempt to query for the module that was just configured.
+      const modulesQueryResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {
-          filter: { protocol: emailProtocolDefinition.protocol },
+          filter: { module: emailModuleDefinition.module },
         }
       });
 
-      expect(protocolsQueryResponse).toHaveProperty('message');
-      expect(protocolsQueryResponse).toHaveProperty('messageCid');
-      expect(protocolsQueryResponse).toHaveProperty('reply');
+      expect(modulesQueryResponse).toHaveProperty('message');
+      expect(modulesQueryResponse).toHaveProperty('messageCid');
+      expect(modulesQueryResponse).toHaveProperty('reply');
 
-      const queryReply = protocolsQueryResponse.reply;
+      const queryReply = modulesQueryResponse.reply;
       expect(queryReply).toHaveProperty('status');
       expect(queryReply.status.code).toBe(200);
       expect(queryReply).toHaveProperty('entries');
@@ -2238,8 +2238,8 @@ describe('AgentDwnApi', () => {
 
       if (!Array.isArray(queryReply.entries)) {throw new Error('Type guard');}
       if (queryReply.entries.length !== 1) {throw new Error('Type guard');}
-      const protocolsConfigure = queryReply.entries[0];
-      expect(protocolsConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
+      const modulesConfigure = queryReply.entries[0];
+      expect(modulesConfigure.descriptor.definition).toEqual(emailModuleDefinition);
     });
 
     it('handles RecordsDelete messages', async () => {
@@ -2252,10 +2252,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2296,10 +2296,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2340,11 +2340,11 @@ describe('AgentDwnApi', () => {
     it('rejects an invalid remote response and tries the next DWN endpoint', async () => {
       const dataBytes = Convert.string('authentic remote record').toUint8Array();
       const recordsWrite = await RecordsWrite.create({
-        data         : dataBytes,
-        dataFormat   : 'text/plain',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        signer       : await testHarness.agent.dwn['getSigner'](alice.did.uri),
+        data       : dataBytes,
+        dataFormat : 'text/plain',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        signer     : await testHarness.agent.dwn['getSigner'](alice.did.uri),
       });
       const tamperedWrite = structuredClone(recordsWrite.message);
       tamperedWrite.descriptor.dataFormat = 'application/json';
@@ -2386,10 +2386,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2465,10 +2465,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2482,10 +2482,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/example'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/example'
         },
         dataStream: new Blob([dataBytes2])
       });
@@ -2499,10 +2499,10 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/other' // different schema
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/other' // different schema
         },
         dataStream: new Blob([dataBytes3])
       });
@@ -2527,9 +2527,9 @@ describe('AgentDwnApi', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          dataFormat   : 'text/plain'
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          dataFormat : 'text/plain'
         },
         dataStream: new Blob([dataBytes])
       });
@@ -2805,7 +2805,7 @@ describe('isRecordPermissionScope', () => {
     const recordsReadScope:DwnPermissionScope = {
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Read,
-      protocol  : 'https://schemas.xyz/example'
+      module    : 'https://schemas.xyz/example'
     };
 
     expect(isRecordPermissionScope(recordsReadScope)).toBe(true);
@@ -2819,7 +2819,7 @@ describe('isMessagesPermissionScope', () => {
     const recordsReadScope:DwnPermissionScope = {
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Read,
-      protocol  : 'https://schemas.xyz/example'
+      module    : 'https://schemas.xyz/example'
     };
 
     expect(isMessagesPermissionScope(recordsReadScope)).toBe(false);
@@ -2865,7 +2865,7 @@ describe('Encryption Callback Factories', () => {
 
       expect(keyDeriver).toHaveProperty('rootKeyId');
       expect(keyDeriver.rootKeyId).toContain('#enc');
-      expect(keyDeriver).toHaveProperty('derivationScheme', 'protocolPath');
+      expect(keyDeriver).toHaveProperty('derivationScheme', 'modulePath');
       expect(keyDeriver).toHaveProperty('derivePublicKey');
       expect(typeof keyDeriver.derivePublicKey).toBe('function');
     });
@@ -2900,82 +2900,82 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('getProtocolDefinition()', () => {
+  describe('getModuleDefinition()', () => {
     afterEach(() => { sinon.restore(); });
 
-    it('should return cached protocol definition', async () => {
-      // Install a protocol
+    it('should return cached module definition', async () => {
+      // Install a module
       const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: emailProtocolDefinition
+          definition: emailModuleDefinition
         }
       });
       expect(configureStatus.code).toBe(202);
 
       // First call - cache miss
-      const def1 = await testHarness.agent.dwn['getProtocolDefinition'](
+      const def1 = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        emailProtocolDefinition.protocol
+        emailModuleDefinition.module
       );
 
       expect(def1).toBeDefined();
-      expect(def1?.protocol).toBe(emailProtocolDefinition.protocol);
+      expect(def1?.module).toBe(emailModuleDefinition.module);
 
       // Second call - should hit cache
-      const def2 = await testHarness.agent.dwn['getProtocolDefinition'](
+      const def2 = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        emailProtocolDefinition.protocol
+        emailModuleDefinition.module
       );
 
       expect(def2).toBeDefined();
       expect(def2).toEqual(def1);
     });
 
-    it('should return undefined for uninstalled protocol', async () => {
-      const def = await testHarness.agent.dwn['getProtocolDefinition'](
+    it('should return undefined for uninstalled module', async () => {
+      const def = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        'https://uninstalled-protocol.example'
+        'https://uninstalled-module.example'
       );
 
       expect(def).toBeUndefined();
     });
 
-    it('should query a published protocol without a delegated grant', async () => {
+    it('should query a published module without a delegated grant', async () => {
       const { reply: { status } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: emailProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: emailModuleDefinition }
       });
       expect(status.code).toBe(202);
 
       const permissionLookup = sinon.stub(testHarness.agent.permissions, 'getPermissionForRequest').rejects(
         new PermissionGrantNotFoundError({
-          messageType : DwnInterface.ProtocolsQuery,
-          protocol    : emailProtocolDefinition.protocol,
+          messageType : DwnInterface.ModulesQuery,
+          module      : emailModuleDefinition.module,
         })
       );
 
-      const definition = await testHarness.agent.dwn['getProtocolDefinition'](
+      const definition = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        emailProtocolDefinition.protocol,
+        emailModuleDefinition.module,
         alice.did.uri,
       );
 
-      expect(definition).toEqual(emailProtocolDefinition);
+      expect(definition).toEqual(emailModuleDefinition);
       expect(permissionLookup.calledOnce).toBe(true);
     });
 
-    it('should propagate delegated protocol grant lookup failures', async () => {
+    it('should propagate delegated module grant lookup failures', async () => {
       const failure = new Error('grant store unavailable');
       const permissionLookup = sinon.stub(testHarness.agent.permissions, 'getPermissionForRequest').rejects(failure);
 
-      await expect(testHarness.agent.dwn['getProtocolDefinition'](
+      await expect(testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        emailProtocolDefinition.protocol,
+        emailModuleDefinition.module,
         alice.did.uri,
       )).rejects.toBe(failure);
 
@@ -2983,16 +2983,16 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('fetchRemoteProtocolDefinition()', () => {
+  describe('fetchRemoteModuleDefinition()', () => {
     afterEach(() => { sinon.restore(); });
 
     it('should delegate to the standalone function and return the definition', async () => {
-      // Install a protocol locally so we can simulate a successful remote fetch.
+      // Install a module locally so we can simulate a successful remote fetch.
       const { reply: { status: configureStatus } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: emailProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: emailModuleDefinition }
       });
       expect(configureStatus.code).toBe(202);
 
@@ -3003,20 +3003,20 @@ describe('Encryption Callback Factories', () => {
           return dwnApi['_dwn'].processMessage(params.targetDid, params.message);
         });
 
-      const def = await dwnApi['fetchRemoteProtocolDefinition'](
+      const def = await dwnApi['fetchRemoteModuleDefinition'](
         alice.did.uri,
-        emailProtocolDefinition.protocol,
+        emailModuleDefinition.module,
       );
 
       expect(def).toBeDefined();
-      expect(def.protocol).toBe(emailProtocolDefinition.protocol);
+      expect(def.module).toBe(emailModuleDefinition.module);
     });
   });
 
   describe('Auto-Encryption', () => {
-    const encryptedProtocolDefinition = {
+    const encryptedModuleDefinition = {
       published : true,
-      protocol  : 'https://protocol.xyz/encrypted-notes',
+      module    : 'https://module.xyz/encrypted-notes',
       types     : {
         note: {
           schema             : 'https://schemas.xyz/note',
@@ -3031,10 +3031,10 @@ describe('Encryption Callback Factories', () => {
 
     afterEach(() => { sinon.restore(); });
 
-    it('should not dispatch record data when remote protocol resolution fails', async () => {
+    it('should not dispatch record data when remote module resolution fails', async () => {
       const dwnApi = testHarness.agent.dwn;
       sinon.stub(dwnApi as any, 'getRemoteDwnEndpointUrls').resolves(['https://dwn.example']);
-      sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition').rejects(new Error('target unavailable'));
+      sinon.stub(dwnApi as any, 'fetchRemoteModuleDefinition').rejects(new Error('target unavailable'));
       const dispatchSpy = sinon.spy(testHarness.agent.rpc, 'sendDwnRequest');
 
       await expect(dwnApi.sendRequest({
@@ -3042,25 +3042,25 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'https://schemas.xyz/note',
+          dataFormat : 'text/plain',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([Convert.string('must remain local').toUint8Array()]),
-      })).rejects.toThrow('Unable to resolve protocol');
+      })).rejects.toThrow('Unable to resolve module');
 
       expect(dispatchSpy.called).toBe(false);
     });
 
-    it('should auto-inject $keyAgreement on ProtocolsConfigure', async () => {
+    it('should auto-inject $keyAgreement on ModulesConfigure', async () => {
       // The definition itself requests encryption; configuration derives the keys.
       const { reply: { status } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
       expect(status.code).toBe(202);
@@ -3069,9 +3069,9 @@ describe('Encryption Callback Factories', () => {
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {
-          filter: { protocol: encryptedProtocolDefinition.protocol },
+          filter: { module: encryptedModuleDefinition.module },
         }
       });
 
@@ -3079,7 +3079,7 @@ describe('Encryption Callback Factories', () => {
       expect(queryReply.entries).toHaveLength(1);
 
       const storedDefinition = queryReply.entries![0].descriptor.definition;
-      // Verify $keyAgreement was injected at the protocol root and 'note' level.
+      // Verify $keyAgreement was injected at the module root and 'note' level.
       expect(storedDefinition).toHaveProperty('$keyAgreement');
       expect(storedDefinition.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
       expect(storedDefinition.structure.note).toHaveProperty('$keyAgreement');
@@ -3087,13 +3087,13 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should auto-encrypt data on RecordsWrite', async () => {
-      // First configure the protocol with encryption
+      // First configure the module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3106,10 +3106,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -3123,7 +3123,7 @@ describe('Encryption Callback Factories', () => {
       expect(recordsWriteMessage.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
       expect(recordsWriteMessage.encryption!.initializationVector).toBeDefined();
       expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
       // Read the raw data without decryption to verify it's encrypted
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3147,9 +3147,9 @@ describe('Encryption Callback Factories', () => {
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3161,10 +3161,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -3200,9 +3200,9 @@ describe('Encryption Callback Factories', () => {
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3214,10 +3214,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -3229,8 +3229,8 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : encryptedProtocolDefinition.protocol,
-            protocolPath : 'note',
+            module     : encryptedModuleDefinition.module,
+            modulePath : 'note',
           }
         },
       });
@@ -3254,7 +3254,7 @@ describe('Encryption Callback Factories', () => {
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
-    it('should throw if protocol is not installed when encrypting', async () => {
+    it('should throw if module is not installed when encrypting', async () => {
       const dataBytes = Convert.string('secret').toUint8Array();
 
       try {
@@ -3263,23 +3263,23 @@ describe('Encryption Callback Factories', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'https://protocol.xyz/non-existent',
-            protocolPath : 'note',
-            dataFormat   : 'text/plain',
+            module     : 'https://module.xyz/non-existent',
+            modulePath : 'note',
+            dataFormat : 'text/plain',
           },
           dataStream: new Blob([dataBytes])
         });
         throw new Error('Expected an error to be thrown');
       } catch (error: any) {
-        expect(error.message).toContain('Unable to resolve protocol');
+        expect(error.message).toContain('Unable to resolve module');
       }
     });
 
-    it('should keep a plaintext protocol type plaintext', async () => {
-      const plaintextProtocolDefinition = {
-        ...encryptedProtocolDefinition,
-        protocol : 'https://protocol.xyz/plaintext-notes',
-        types    : {
+    it('should keep a plaintext module type plaintext', async () => {
+      const plaintextModuleDefinition = {
+        ...encryptedModuleDefinition,
+        module : 'https://module.xyz/plaintext-notes',
+        types  : {
           note: {
             schema      : 'https://schemas.xyz/note',
             dataFormats : ['text/plain'],
@@ -3289,8 +3289,8 @@ describe('Encryption Callback Factories', () => {
       const { reply: configureReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: plaintextProtocolDefinition },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: plaintextModuleDefinition },
       });
       expect(configureReply.status.code).toBe(202);
 
@@ -3300,10 +3300,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : plaintextProtocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'https://schemas.xyz/note',
+          dataFormat : 'text/plain',
+          module     : plaintextModuleDefinition.module,
+          modulePath : 'note',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes]),
       });
@@ -3314,13 +3314,13 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should handle Uint8Array data input for encryption', async () => {
-      // Configure protocol with encryption
+      // Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3333,11 +3333,11 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
-          data         : dataBytes,
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
+          data       : dataBytes,
         }
       });
 
@@ -3373,8 +3373,8 @@ describe('Encryption Callback Factories', () => {
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: encryptedProtocolDefinition },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: encryptedModuleDefinition },
       });
 
       const plaintextString = 'Streamed secret split across chunks';
@@ -3393,10 +3393,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'https://schemas.xyz/note',
+          dataFormat : 'text/plain',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream,
       });
@@ -3428,8 +3428,8 @@ describe('Encryption Callback Factories', () => {
         messageParams : {
           dataFormat      : 'text/plain',
           encryptionInput : {} as any,
-          protocol        : encryptedProtocolDefinition.protocol,
-          protocolPath    : 'note',
+          module          : encryptedModuleDefinition.module,
+          modulePath      : 'note',
           schema          : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([Convert.string('secret').toUint8Array()]),
@@ -3440,18 +3440,18 @@ describe('Encryption Callback Factories', () => {
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: encryptedProtocolDefinition },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: encryptedModuleDefinition },
       });
       const { message } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'https://schemas.xyz/note',
+          dataFormat : 'text/plain',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([Convert.string('original').toUint8Array()]),
       });
@@ -3462,31 +3462,31 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
+          dataFormat : 'text/plain',
           encryption,
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([Convert.string('replacement').toUint8Array()]),
       })).rejects.toThrow('pre-built encryption envelope can only be reused when record data is unchanged');
     });
 
-    it('should invalidate protocol definition cache on ProtocolsConfigure', async () => {
-      // Configure protocol with encryption
+    it('should invalidate module definition cache on ModulesConfigure', async () => {
+      // Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
       // Populate cache
-      const def1 = await testHarness.agent.dwn['getProtocolDefinition'](
+      const def1 = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        encryptedProtocolDefinition.protocol
+        encryptedModuleDefinition.module
       );
       expect(def1).toBeDefined();
       expect(def1!.structure.note).toHaveProperty('$keyAgreement');
@@ -3495,25 +3495,25 @@ describe('Encryption Callback Factories', () => {
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
       // Fetch again - should be the fresh definition, not the old cached one
-      const def2 = await testHarness.agent.dwn['getProtocolDefinition'](
+      const def2 = await testHarness.agent.dwn['getModuleDefinition'](
         alice.did.uri,
-        encryptedProtocolDefinition.protocol
+        encryptedModuleDefinition.module
       );
       expect(def2).toBeDefined();
       expect(def2!.structure.note).toHaveProperty('$keyAgreement');
     });
 
-    it('should handle nested protocol paths', async () => {
-      const nestedProtocol = {
+    it('should handle nested module paths', async () => {
+      const nestedModule = {
         published : true,
-        protocol  : 'https://protocol.xyz/nested-encrypted',
+        module    : 'https://module.xyz/nested-encrypted',
         types     : {
           thread: {
             schema             : 'https://schemas.xyz/thread',
@@ -3537,9 +3537,9 @@ describe('Encryption Callback Factories', () => {
       const { reply: { status } } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: nestedProtocol
+          definition: nestedModule
         }
       });
       expect(status.code).toBe(202);
@@ -3548,14 +3548,14 @@ describe('Encryption Callback Factories', () => {
       const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {
-          filter: { protocol: nestedProtocol.protocol },
+          filter: { module: nestedModule.module },
         }
       });
 
       const storedDef = queryReply.entries![0].descriptor.definition;
-      // Verify $keyAgreement exists at the protocol root, 'thread', and 'thread/message' levels.
+      // Verify $keyAgreement exists at the module root, 'thread', and 'thread/message' levels.
       expect(storedDef).toHaveProperty('$keyAgreement');
       expect(storedDef.$keyAgreement!.publicKeyJwk).toHaveProperty('crv', 'X25519');
       expect(storedDef.structure.thread).toHaveProperty('$keyAgreement');
@@ -3565,13 +3565,13 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should full round-trip: configure, write, read, query with encryption', async () => {
-      // 1. Configure protocol with encryption
+      // 1. Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3584,10 +3584,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -3621,8 +3621,8 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : encryptedProtocolDefinition.protocol,
-            protocolPath : 'note',
+            module     : encryptedModuleDefinition.module,
+            modulePath : 'note',
           }
         },
       });
@@ -3641,13 +3641,13 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should auto-encrypt record updates with fresh DEK', async () => {
-      // Configure protocol with encryption
+      // Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: encryptedProtocolDefinition
+          definition: encryptedModuleDefinition
         }
       });
 
@@ -3660,10 +3660,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([initialDataBytes])
       });
@@ -3681,12 +3681,12 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
-          recordId     : recordsWriteMessage.recordId,
-          dateCreated  : recordsWriteMessage.descriptor.dateCreated,
+          module      : encryptedModuleDefinition.module,
+          modulePath  : 'note',
+          dataFormat  : 'text/plain',
+          schema      : 'https://schemas.xyz/note',
+          recordId    : recordsWriteMessage.recordId,
+          dateCreated : recordsWriteMessage.descriptor.dateCreated,
         },
         dataStream: new Blob([updatedDataBytes])
       });
@@ -3696,7 +3696,7 @@ describe('Encryption Callback Factories', () => {
       const updateWriteMessage = updateMessage as RecordsWriteMessage;
       expect(updateWriteMessage).toHaveProperty('encryption');
       expect(updateWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(updateWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(updateWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
       // The update should have a different initialization vector (fresh DEK)
       expect(updateWriteMessage.encryption!.initializationVector)
@@ -3724,10 +3724,10 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should auto-encrypt record updates for multi-party context', async () => {
-      // A protocol with $role records
+      // A module with $role records
       const multiPartyDef = {
         published : true,
-        protocol  : 'https://protocol.xyz/mp-update-test',
+        module    : 'https://module.xyz/mp-update-test',
         types     : {
           thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
           participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
@@ -3741,11 +3741,11 @@ describe('Encryption Callback Factories', () => {
         }
       };
 
-      // Configure protocol
+      // Configure module
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : { definition: multiPartyDef }
       });
 
@@ -3755,10 +3755,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyDef.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyDef.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([Convert.string('thread root').toUint8Array()])
       });
@@ -3772,8 +3772,8 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol        : multiPartyDef.protocol,
-          protocolPath    : 'thread/chat',
+          module          : multiPartyDef.module,
+          modulePath      : 'thread/chat',
           parentContextId : threadContextId,
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
@@ -3785,7 +3785,7 @@ describe('Encryption Callback Factories', () => {
       const chatRecordId = chatWriteMessage.recordId;
       const chatEncryption = chatWriteMessage.encryption;
       expect(chatEncryption).toBeDefined();
-      expect(chatEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(chatEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
       // Update the chat message
       const updatedChat = 'Updated chat message';
@@ -3794,8 +3794,8 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol        : multiPartyDef.protocol,
-          protocolPath    : 'thread/chat',
+          module          : multiPartyDef.module,
+          modulePath      : 'thread/chat',
           parentContextId : threadContextId,
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
@@ -3807,10 +3807,10 @@ describe('Encryption Callback Factories', () => {
 
       expect(status.code).toBe(202);
 
-      // Updated message should still use the protocol path scheme.
+      // Updated message should still use the module path scheme.
       const updatedEncryption = (updatedChatMessage as RecordsWriteMessage).encryption;
       expect(updatedEncryption).toBeDefined();
-      expect(updatedEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(updatedEncryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
       // Read raw bytes, then decrypt the updated version.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
@@ -3834,11 +3834,11 @@ describe('Encryption Callback Factories', () => {
     });
   });
 
-  describe('Protocol-path encryption for readable audiences', () => {
-    // A protocol with $role records — indicates multi-party intent
-    const multiPartyProtocolDefinition = {
+  describe('Module-path encryption for readable audiences', () => {
+    // A module with $role records — indicates multi-party intent
+    const multiPartyModuleDefinition = {
       published : true,
-      protocol  : 'https://protocol.xyz/multi-party-chat',
+      module    : 'https://module.xyz/multi-party-chat',
       types     : {
         thread: {
           schema             : 'https://schemas.xyz/thread',
@@ -3864,10 +3864,10 @@ describe('Encryption Callback Factories', () => {
       }
     };
 
-    // A single-party protocol without $role.
-    const singlePartyProtocolDefinition = {
+    // A single-party module without $role.
+    const singlePartyModuleDefinition = {
       published : true,
-      protocol  : 'https://protocol.xyz/single-party-notes',
+      module    : 'https://module.xyz/single-party-notes',
       types     : {
         note: {
           schema             : 'https://schemas.xyz/note',
@@ -3880,14 +3880,14 @@ describe('Encryption Callback Factories', () => {
       }
     };
 
-    it('should encrypt root record with protocol path keys for multi-party protocol', async () => {
-      // Configure protocol with encryption
+    it('should encrypt root record with module path keys for multi-party module', async () => {
+      // Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: multiPartyProtocolDefinition
+          definition: multiPartyModuleDefinition
         }
       });
 
@@ -3900,10 +3900,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyModuleDefinition.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -3913,20 +3913,20 @@ describe('Encryption Callback Factories', () => {
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
       expect(recordsWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
       // contextId should equal recordId for root records
       expect(recordsWriteMessage.contextId).toBe(recordsWriteMessage.recordId);
     });
 
-    it('should encrypt non-root record with protocol path keys for multi-party protocol', async () => {
-      // Configure protocol with encryption
+    it('should encrypt non-root record with module path keys for multi-party module', async () => {
+      // Configure module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: multiPartyProtocolDefinition
+          definition: multiPartyModuleDefinition
         }
       });
 
@@ -3936,10 +3936,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyModuleDefinition.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([Convert.string('thread root').toUint8Array()])
       });
@@ -3955,8 +3955,8 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol        : multiPartyProtocolDefinition.protocol,
-          protocolPath    : 'thread/chat',
+          module          : multiPartyModuleDefinition.module,
+          modulePath      : 'thread/chat',
           parentContextId : threadContextId,
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
@@ -3969,17 +3969,17 @@ describe('Encryption Callback Factories', () => {
       const chatWriteMessage = chatMessage as RecordsWriteMessage;
       expect(chatWriteMessage).toHaveProperty('encryption');
       expect(chatWriteMessage.encryption!.keyEncryption).toHaveLength(1);
-      expect(chatWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(chatWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
     });
 
-    it('should still use ProtocolPath for single-party protocols', async () => {
-      // Configure single-party protocol with encryption
+    it('should still use ModulePath for single-party modules', async () => {
+      // Configure single-party module with encryption
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: singlePartyProtocolDefinition
+          definition: singlePartyModuleDefinition
         }
       });
 
@@ -3990,10 +3990,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : singlePartyProtocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : singlePartyModuleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -4002,17 +4002,17 @@ describe('Encryption Callback Factories', () => {
 
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
       expect(recordsWriteMessage).toHaveProperty('encryption');
-      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(recordsWriteMessage.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
     });
 
     it('owner should decrypt raw root record data through the application boundary', async () => {
-      // Configure protocol
+      // Configure module
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: multiPartyProtocolDefinition
+          definition: multiPartyModuleDefinition
         }
       });
 
@@ -4025,10 +4025,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyModuleDefinition.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -4036,7 +4036,7 @@ describe('Encryption Callback Factories', () => {
       const recordsWriteMessage = writeMessage as RecordsWriteMessage;
 
       // The low-level read stays raw; the application boundary uses the
-      // owner's protocol-path key.
+      // owner's module-path key.
       const { reply: readReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
@@ -4057,14 +4057,14 @@ describe('Encryption Callback Factories', () => {
       expect(Convert.uint8Array(decryptedBytes).toString()).toBe(plaintextString);
     });
 
-    it('full round-trip: root + child with protocol-path encryption', async () => {
-      // Configure protocol
+    it('full round-trip: root + child with module-path encryption', async () => {
+      // Configure module
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: multiPartyProtocolDefinition
+          definition: multiPartyModuleDefinition
         }
       });
 
@@ -4075,10 +4075,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyModuleDefinition.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([Convert.string(threadPlaintext).toUint8Array()])
       });
@@ -4093,8 +4093,8 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol        : multiPartyProtocolDefinition.protocol,
-          protocolPath    : 'thread/chat',
+          module          : multiPartyModuleDefinition.module,
+          modulePath      : 'thread/chat',
           parentContextId : threadContextId,
           dataFormat      : 'text/plain',
           schema          : 'https://schemas.xyz/chat',
@@ -4151,9 +4151,9 @@ describe('Encryption Callback Factories', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : multiPartyProtocolDefinition.protocol,
-            protocolPath : 'thread/chat',
-            contextId    : threadContextId,
+            module     : multiPartyModuleDefinition.module,
+            modulePath : 'thread/chat',
+            contextId  : threadContextId,
           }
         },
       });
@@ -4172,13 +4172,13 @@ describe('Encryption Callback Factories', () => {
     });
 
     it('should return stored ciphertext from a raw read', async () => {
-      // Configure protocol
+      // Configure module
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: multiPartyProtocolDefinition
+          definition: multiPartyModuleDefinition
         }
       });
 
@@ -4190,10 +4190,10 @@ describe('Encryption Callback Factories', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : multiPartyProtocolDefinition.protocol,
-          protocolPath : 'thread',
-          dataFormat   : 'application/json',
-          schema       : 'https://schemas.xyz/thread',
+          module     : multiPartyModuleDefinition.module,
+          modulePath : 'thread',
+          dataFormat : 'application/json',
+          schema     : 'https://schemas.xyz/thread',
         },
         dataStream: new Blob([dataBytes])
       });
@@ -4243,10 +4243,10 @@ describe('Role record write behavior', () => {
     await testHarness.closeStorage();
   });
 
-  // Multi-party protocol with $role records
-  const chatProtocol: ProtocolDefinition = {
+  // Multi-party module with $role records
+  const chatModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://protocol.xyz/chat',
+    module    : 'https://module.xyz/chat',
     types     : {
       thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
       participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
@@ -4260,10 +4260,10 @@ describe('Role record write behavior', () => {
     },
   };
 
-  const plaintextChatProtocol: ProtocolDefinition = {
-    ...chatProtocol,
-    protocol : 'https://protocol.xyz/plaintext-chat',
-    types    : {
+  const plaintextChatModule: ModuleDefinition = {
+    ...chatModule,
+    module : 'https://module.xyz/plaintext-chat',
+    types  : {
       thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
       participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
       chat        : { schema: 'https://schemas.xyz/chat', dataFormats: ['text/plain'] },
@@ -4273,18 +4273,18 @@ describe('Role record write behavior', () => {
   it('should preserve user data in $role records (no longer replaces with key payload)', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
-    // Install protocol
+    // Install module
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     await testHarness.agent.dwn.processRequest({
       author        : bob.did.uri,
       target        : bob.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     // Create thread
@@ -4293,10 +4293,10 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : chatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"Test"}')]),
     });
@@ -4310,8 +4310,8 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4327,9 +4327,9 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread/participant',
-          contextId    : threadContextId,
+          module     : chatModule.module,
+          modulePath : 'thread/participant',
+          contextId  : threadContextId,
         }
       },
     });
@@ -4348,13 +4348,13 @@ describe('Role record write behavior', () => {
   it('records a best-effort skip and provisions updates only with a supplied key', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
     const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-      .rejects(new RemoteProtocolDefinitionError('recipient protocol not installed', 'not-found'));
+      .rejects(new RemoteModuleDefinitionError('recipient module not installed', 'not-found'));
 
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
@@ -4362,24 +4362,24 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : chatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"BestEffort"}')]),
     });
 
     // The role write remains accepted; delivery state tells the caller that the
-    // recipient must install the protocol before the key can be delivered.
+    // recipient must install the module before the key can be delivered.
     const roleWrite = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4393,7 +4393,7 @@ describe('Role record write behavior', () => {
     expect(!roleWrite.audienceKeyDelivery!.delivered && roleWrite.audienceKeyDelivery!.failure)
       .toBe('awaiting-recipient-install');
     expect(roleWrite.audienceKeyDelivery!.recipientDid).toBe(bob.did.uri);
-    expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient protocol not installed');
+    expect(roleWrite.audienceKeyDelivery!.reason).toContain('recipient module not installed');
     await Poller.pollUntilSuccessOrTimeout(async () => {
       expect(await testHarness.audienceKeyDeliveryStore.get(
         alice.did.uri,
@@ -4407,8 +4407,8 @@ describe('Role record write behavior', () => {
 
     const initialRole = roleWrite.message as RecordsWriteMessage;
     const updateParams = {
-      protocol        : chatProtocol.protocol,
-      protocolPath    : 'thread/participant',
+      module          : chatModule.module,
+      modulePath      : 'thread/participant',
       parentContextId : (threadMessage as RecordsWriteMessage).contextId,
       dataFormat      : 'application/json',
       schema          : 'https://schemas.xyz/participant',
@@ -4447,9 +4447,9 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : { filter: {
-        protocol     : chatProtocol.protocol,
-        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-        recipient    : bob.did.uri,
+        module     : chatModule.module,
+        modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        recipient  : bob.did.uri,
       } },
     });
     expect(deliveries.reply.entries ?? []).toHaveLength(1);
@@ -4464,14 +4464,14 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"EdKey"}')]),
     });
 
@@ -4481,8 +4481,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite as const,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4520,7 +4520,7 @@ describe('Role record write behavior', () => {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: chatProtocol.protocol, protocolPath: 'thread/participant', recipient: bob.did.uri } },
+      messageParams : { filter: { module: chatModule.module, modulePath: 'thread/participant', recipient: bob.did.uri } },
     });
     expect(query.reply.entries?.length ?? 0).toBe(0);
   }, 10000);
@@ -4529,8 +4529,8 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     // sendRequest never provisions delivery — reject the option instead of dropping it.
@@ -4538,7 +4538,7 @@ describe('Role record write behavior', () => {
       author                 : alice.did.uri,
       target                 : alice.did.uri,
       messageType            : DwnInterface.RecordsWrite,
-      messageParams          : { recipient: alice.did.uri, protocol: chatProtocol.protocol, protocolPath: 'thread/participant', dataFormat: 'application/json', schema: 'https://schemas.xyz/participant' },
+      messageParams          : { recipient: alice.did.uri, module: chatModule.module, modulePath: 'thread/participant', dataFormat: 'application/json', schema: 'https://schemas.xyz/participant' },
       dataStream             : new Blob([new TextEncoder().encode('{}')]),
       recipientRolePublicKey : VALID_X25519_KEY,
     })).rejects.toThrow(/not supported on sendRequest/i);
@@ -4548,7 +4548,7 @@ describe('Role record write behavior', () => {
       author                 : alice.did.uri,
       target                 : alice.did.uri,
       messageType            : DwnInterface.RecordsQuery,
-      messageParams          : { filter: { protocol: chatProtocol.protocol } },
+      messageParams          : { filter: { module: chatModule.module } },
       recipientRolePublicKey : VALID_X25519_KEY,
     })).rejects.toThrow(/only supported when writing .*\$role record|non-raw, stored RecordsWrite/i);
 
@@ -4557,7 +4557,7 @@ describe('Role record write behavior', () => {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Raw"}')]),
     });
     await expect(testHarness.agent.dwn.processRequest({
@@ -4574,7 +4574,7 @@ describe('Role record write behavior', () => {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"StoreFalse"}')]),
     });
     await expect(testHarness.agent.dwn.processRequest({
@@ -4583,8 +4583,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : alice.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadForStoreFalse as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4595,8 +4595,8 @@ describe('Role record write behavior', () => {
     })).rejects.toThrow(/store:false|non-raw, stored RecordsWrite/i);
   }, 10000);
 
-  it('keeps accepted role writes non-blocking and wakes matching protocol views after projection persistence', async () => {
-    // Bob is a DWN-less recipient: no protocol is installed for him, so the owner
+  it('keeps accepted role writes non-blocking and wakes matching module views after projection persistence', async () => {
+    // Bob is a DWN-less recipient: no module is installed for him, so the owner
     // cannot resolve his role-path key. He supplies it out of band and the owner
     // wraps the delivery to it directly.
     const bob = await testHarness.createIdentity({ name: 'Bob Supplied', testDwnUrls });
@@ -4604,21 +4604,21 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Supplied"}')]),
     });
     const threadContextId = (threadMessage as RecordsWriteMessage).contextId!;
     const deliveryWakes = [
-      { protocol: chatProtocol.protocol, target: alice.did.uri },
-      { protocol: `${chatProtocol.protocol}/other`, target: alice.did.uri },
-      { protocol: chatProtocol.protocol, target: bob.did.uri },
+      { module: chatModule.module, target: alice.did.uri },
+      { module: `${chatModule.module}/other`, target: alice.did.uri },
+      { module: chatModule.module, target: bob.did.uri },
     ].map(scope => {
       const listener = sinon.spy();
       return {
@@ -4643,8 +4643,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4682,7 +4682,7 @@ describe('Role record write behavior', () => {
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: chatProtocol.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH, recipient: bob.did.uri } },
+      messageParams : { filter: { module: chatModule.module, modulePath: ENCRYPTION_CONTROL_DELIVERY_PATH, recipient: bob.did.uri } },
     });
     expect(deliveries.reply.entries ?? []).toHaveLength(1);
   }, 15000);
@@ -4693,14 +4693,14 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"BestEffortFail"}')]),
     });
 
@@ -4717,8 +4717,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4765,18 +4765,18 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Delegated"}')]),
     });
 
-    // Alice delegates Records/Write on the chat protocol to a session device (the
+    // Alice delegates Records/Write on the chat module to a session device (the
     // dashboard delegate analogue).
     const aliceDelegate = await testHarness.agent.identity.create({
       metadata  : { name: 'Alice Dashboard Delegate' },
@@ -4787,7 +4787,7 @@ describe('Role record write behavior', () => {
       grantedTo   : aliceDelegate.did.uri,
       dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
       delegated   : true,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, protocol: chatProtocol.protocol },
+      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: chatModule.module },
     });
 
     // The role write is authored on the owner's behalf via the delegated grant AND
@@ -4799,8 +4799,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4821,12 +4821,12 @@ describe('Role record write behavior', () => {
   it('rejects a supplied key up front when the path is not a deliverable $role recipient', async () => {
     const bob = await testHarness.createIdentity({ name: 'Bob Preflight', testDwnUrls });
 
-    // Protocol not installed on the target: nothing to resolve $role/$keyAgreement from.
+    // Module not installed on the target: nothing to resolve $role/$keyAgreement from.
     await expect(testHarness.agent.dwn.processRequest({
       author                 : alice.did.uri,
       target                 : alice.did.uri,
       messageType            : DwnInterface.RecordsWrite,
-      messageParams          : { recipient: bob.did.uri, protocol: chatProtocol.protocol, protocolPath: 'thread/participant', dataFormat: 'application/json', schema: 'https://schemas.xyz/participant' },
+      messageParams          : { recipient: bob.did.uri, module: chatModule.module, modulePath: 'thread/participant', dataFormat: 'application/json', schema: 'https://schemas.xyz/participant' },
       dataStream             : new Blob([new TextEncoder().encode('{"name":"Bob"}')]),
       recipientRolePublicKey : VALID_X25519_KEY,
     })).rejects.toThrow(/is not installed on target/i);
@@ -4834,8 +4834,8 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     // A missing recipient: a $role grant must name who it is granted to.
@@ -4843,17 +4843,17 @@ describe('Role record write behavior', () => {
       author                 : alice.did.uri,
       target                 : alice.did.uri,
       messageType            : DwnInterface.RecordsWrite,
-      messageParams          : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams          : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream             : new Blob([new TextEncoder().encode('{"title":"NoRecipient"}')]),
       recipientRolePublicKey : VALID_X25519_KEY,
-    })).rejects.toThrow(/protocol, protocolPath, and recipient/i);
+    })).rejects.toThrow(/module, modulePath, and recipient/i);
 
     // A non-$role path (thread): delivery only applies to $role records.
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: chatProtocol.protocol, protocolPath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
+      messageParams : { module: chatModule.module, modulePath: 'thread', dataFormat: 'application/json', schema: 'https://schemas.xyz/thread' },
       dataStream    : new Blob([new TextEncoder().encode('{"title":"Preflight"}')]),
     });
     await expect(testHarness.agent.dwn.processRequest({
@@ -4862,8 +4862,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chatModule.module,
+        modulePath      : 'thread/chat',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
@@ -4879,8 +4879,8 @@ describe('Role record write behavior', () => {
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: plaintextChatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: plaintextChatModule },
     });
 
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
@@ -4888,10 +4888,10 @@ describe('Role record write behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : plaintextChatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : plaintextChatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"Plain Chat"}')]),
     });
@@ -4902,8 +4902,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : plaintextChatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : plaintextChatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : (threadMessage as RecordsWriteMessage).contextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -4918,8 +4918,8 @@ describe('Role record write behavior', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : plaintextChatProtocol.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          module     : plaintextChatModule.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
       },
     });
@@ -4949,10 +4949,10 @@ describe('Owner encrypted read behavior', () => {
     await testHarness.closeStorage();
   });
 
-  // Multi-party protocol with $role records
-  const chatProtocol: ProtocolDefinition = {
+  // Multi-party module with $role records
+  const chatModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://protocol.xyz/chat-prd',
+    module    : 'https://module.xyz/chat-prd',
     types     : {
       thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
       participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'], encryptionRequired: true },
@@ -4966,13 +4966,13 @@ describe('Owner encrypted read behavior', () => {
     },
   };
 
-  it('owner should decrypt raw multi-party data via protocol-path keys', async () => {
-    // Configure protocol
+  it('owner should decrypt raw multi-party data via module-path keys', async () => {
+    // Configure module
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     // Create thread (root record)
@@ -4981,10 +4981,10 @@ describe('Owner encrypted read behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : chatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"Secret Thread"}')]),
     });
@@ -4998,8 +4998,8 @@ describe('Owner encrypted read behavior', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chatModule.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadContextId,
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
@@ -5007,16 +5007,16 @@ describe('Owner encrypted read behavior', () => {
       dataStream: new Blob([new TextEncoder().encode(chatText)]),
     });
 
-    // Query raw inline data and decrypt it through the owner's protocol-path key.
+    // Query raw inline data and decrypt it through the owner's module-path key.
     const { reply: readReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread/chat',
-          contextId    : threadContextId,
+          module     : chatModule.module,
+          modulePath : 'thread/chat',
+          contextId  : threadContextId,
         }
       },
     });
@@ -5024,7 +5024,7 @@ describe('Owner encrypted read behavior', () => {
     expect(readReply.entries).toHaveLength(1);
     const entry = readReply.entries![0];
     expect(entry.encryption).toBeDefined();
-    expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
     const decoded = await decryptInlineData(
       testHarness.agent.dwn,
@@ -5057,14 +5057,14 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
     bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
-    // Stub fetchRemoteProtocolDefinition to route through the local DWN.
+    // Stub fetchRemoteModuleDefinition to route through the local DWN.
     // In tests both Alice and Bob share the same local DWN node, so we
-    // use getProtocolDefinition (local) instead of the network call.
+    // use getModuleDefinition (local) instead of the network call.
     const dwnApi = testHarness.agent.dwn;
-    sinon.stub(dwnApi as any, 'fetchRemoteProtocolDefinition')
+    sinon.stub(dwnApi as any, 'fetchRemoteModuleDefinition')
       .callsFake(async (...args: any[]) => {
-        const [targetDid, protocolUri] = args as [string, string];
-        return dwnApi['getProtocolDefinition'](targetDid, protocolUri);
+        const [targetDid, moduleUri] = args as [string, string];
+        return dwnApi['getModuleDefinition'](targetDid, moduleUri);
       });
   });
 
@@ -5077,13 +5077,13 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     await testHarness.closeStorage();
   });
 
-  // Email protocol: relational access without $role records
-  const emailProtocol: ProtocolDefinition = {
+  // Email module: relational access without $role records
+  const emailModule: ModuleDefinition = {
     published : true,
-    protocol  : 'http://email-protocol.xyz/pre',
+    module    : 'http://email-module.xyz/pre',
     types     : {
-      thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'], encryptionRequired: true },
-      email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'], encryptionRequired: true },
+      thread : { schema: 'http://email-module.xyz/schema/thread', dataFormats: ['text/plain'], encryptionRequired: true },
+      email  : { schema: 'http://email-module.xyz/schema/email', dataFormats: ['text/plain'], encryptionRequired: true },
     },
     structure: {
       thread: {
@@ -5104,13 +5104,13 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     },
   };
 
-  it('cross-DWN root record should use ProtocolPath encryption with target key', async () => {
-    // Configure protocol for Alice (the DWN owner) with encryption
+  it('cross-DWN root record should use ModulePath encryption with target key', async () => {
+    // Configure module for Alice (the DWN owner) with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: emailProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: emailModule },
     });
 
     // Install the same URI as plaintext for Bob. The write must follow Alice's
@@ -5118,13 +5118,13 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
     await testHarness.agent.dwn.processRequest({
       author        : bob.did.uri,
       target        : bob.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : {
         definition: {
-          ...emailProtocol,
+          ...emailModule,
           types: {
-            email  : { schema: 'http://email-protocol.xyz/schema/email', dataFormats: ['text/plain'] },
-            thread : { schema: 'http://email-protocol.xyz/schema/thread', dataFormats: ['text/plain'] },
+            email  : { schema: 'http://email-module.xyz/schema/email', dataFormats: ['text/plain'] },
+            thread : { schema: 'http://email-module.xyz/schema/thread', dataFormats: ['text/plain'] },
           },
         },
       },
@@ -5143,11 +5143,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : emailProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'text/plain',
-        schema       : 'http://email-protocol.xyz/schema/thread',
-        recipient    : alice.did.uri,
+        module     : emailModule.module,
+        modulePath : 'thread',
+        dataFormat : 'text/plain',
+        schema     : 'http://email-module.xyz/schema/thread',
+        recipient  : alice.did.uri,
       },
       dataStream: new Blob([new TextEncoder().encode(threadText)]),
     });
@@ -5159,16 +5159,16 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
 
     const keyEncryption = recordsWriteMessage.encryption!.keyEncryption;
     expect(keyEncryption).toHaveLength(1);
-    expect(keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    expect(keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
   }, 15000);
 
-  it('Alice should decrypt raw cross-DWN root data via ProtocolPath', async () => {
-    // Configure protocol for Alice with encryption
+  it('Alice should decrypt raw cross-DWN root data via ModulePath', async () => {
+    // Configure module for Alice with encryption
     await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: emailProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: emailModule },
     });
 
     // Bob writes a root record to Alice's DWN
@@ -5178,11 +5178,11 @@ describe('Cross-DWN Encryption — External Author Support (PR E)', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : emailProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'text/plain',
-        schema       : 'http://email-protocol.xyz/schema/thread',
-        recipient    : alice.did.uri,
+        module     : emailModule.module,
+        modulePath : 'thread',
+        dataFormat : 'text/plain',
+        schema     : 'http://email-module.xyz/schema/thread',
+        recipient  : alice.did.uri,
       },
       dataStream: new Blob([new TextEncoder().encode(threadText)]),
     });

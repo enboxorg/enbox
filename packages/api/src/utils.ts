@@ -44,7 +44,7 @@ export function dataToBlob(data: any, dataFormat?: string): {
 
   // Track the detected MIME type separately from the Blob's type property because Bun's Blob
   // constructor appends `;charset=utf-8` to text-based types (e.g. `text/plain` becomes
-  // `text/plain;charset=utf-8`). The DWN protocol authorization performs exact string matching
+  // `text/plain;charset=utf-8`). The DWN module authorization performs exact string matching
   // on `dataFormat`, so we must use the canonical MIME type without parameters.
   let detectedMimeType: string | undefined;
 

@@ -12,7 +12,7 @@ export type {
   AdminHealthCheck,
   AdminMessageSummary,
   AdminPasskeySummary,
-  AdminProtocolSummary,
+  AdminModuleSummary,
   AdminServerStats,
   AdminSubscriptionSnapshot,
   AdminTenantDetail,

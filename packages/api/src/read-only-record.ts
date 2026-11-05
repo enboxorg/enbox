@@ -116,11 +116,11 @@ export class ReadOnlyRecord {
   /** Record's parent ID. */
   get parentId(): string | undefined { return this._descriptor.parentId; }
 
-  /** Record's protocol URI. */
-  get protocol(): string | undefined { return this._descriptor.protocol; }
+  /** Record's module URI. */
+  get module(): string | undefined { return this._descriptor.module; }
 
-  /** Record's protocol path. */
-  get protocolPath(): string | undefined { return this._descriptor.protocolPath; }
+  /** Record's module path. */
+  get modulePath(): string | undefined { return this._descriptor.modulePath; }
 
   /** Record's recipient. */
   get recipient(): string | undefined { return this._descriptor.recipient; }
@@ -128,7 +128,7 @@ export class ReadOnlyRecord {
   /** Record's schema. */
   get schema(): string | undefined { return this._descriptor.schema; }
 
-  /** Whether the initial write carried the protocol squash directive. */
+  /** Whether the initial write carried the module squash directive. */
   get squash(): boolean {
     return (this._initialWrite?.descriptor ?? this._descriptor).squash === true;
   }
@@ -233,8 +233,8 @@ export class ReadOnlyRecord {
       datePublished : this.datePublished,
       encryption    : this.encryption,
       parentId      : this.parentId,
-      protocol      : this.protocol,
-      protocolPath  : this.protocolPath,
+      module        : this.module,
+      modulePath    : this.modulePath,
       published     : this.published,
       recipient     : this.recipient,
       recordId      : this.id,
@@ -252,7 +252,7 @@ export class ReadOnlyRecord {
     let str = 'ReadOnlyRecord: {\n';
     str += `  ID: ${this.id}\n`;
     str += this.contextId ? `  Context ID: ${this.contextId}\n` : '';
-    str += this.protocol ? `  Protocol: ${this.protocol}\n` : '';
+    str += this.module ? `  Module: ${this.module}\n` : '';
     str += this.schema ? `  Schema: ${this.schema}\n` : '';
     str += `  Data CID: ${this.dataCid}\n`;
     str += `  Data Format: ${this.dataFormat}\n`;

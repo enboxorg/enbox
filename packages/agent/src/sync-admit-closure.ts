@@ -2,9 +2,9 @@ import type {
   DependencyRef,
   GenericMessage,
   MessagesQueryReply,
+  ModulesConfigureMessage,
+  ModulesQueryReply,
   ProgressToken,
-  ProtocolsConfigureMessage,
-  ProtocolsQueryReply,
   RecordsFilter,
   RecordsQueryReply,
   RecordsReadReply,
@@ -37,10 +37,10 @@ import {
 import {
   dependencyKey,
   hasTerminalDependency,
-  isTenantProtocolConfig,
+  isTenantModuleConfig,
   matchesEncryptionControlDependency,
   missingDependencyDetail,
-  newestProtocolConfig,
+  newestModuleConfig,
   recordsWriteRequiresData,
 } from './sync-fetch-helpers.js';
 import { DwnInterfaceName, DwnMethodName, Encoder, Message, RecordsWrite } from '@enbox/dwn-sdk-js';
@@ -107,7 +107,7 @@ type ScopeCheckResult = 'in-scope' | 'out-of-scope' | 'unknown';
  * structured replication result.
  *
  * A **closure** is one root message plus the transitive set of dependency
- * messages — protocol configs, initial writes, parents, grants, role
+ * messages — module configs, initial writes, parents, grants, role
  * records, encryption-control records, record data — that must be applied
  * for the root to become applicable.
  *
@@ -205,7 +205,7 @@ class AdmitClosureContext {
     // Only the ROOT is scope-gated. Dependencies are asserted in-scope by
     // construction: they were fetched because an in-scope root requires
     // them, so they inherit its admissibility. Re-checking them here would
-    // reject legitimate cross-protocol prerequisites.
+    // reject legitimate cross-module prerequisites.
     const rootScope = cid === rootCid ? await this.checkRootScope(entry) : 'in-scope';
     if (rootScope !== 'in-scope') {
       return {
@@ -460,19 +460,19 @@ class AdmitClosureContext {
     }
 
     switch (ref.type) {
-      case 'Protocol':
-        return this.fetchProtocolConfig(ref.protocol);
+      case 'Module':
+        return this.fetchModuleConfig(ref.module);
       case 'Parent':
       case 'Ancestor':
       case 'InitialWrite':
         return this.fetchInitialWriteDependency(ref);
-      case 'CrossProtocolRef':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+      case 'CrossModuleRef':
+        return this.fetchRecordsByRecordId(ref.recordId, ref.module);
       case 'Role':
         return this.fetchRecords({
-          protocol     : ref.protocol,
-          protocolPath : ref.protocolPath,
-          recipient    : ref.recipient,
+          module     : ref.module,
+          modulePath : ref.modulePath,
+          recipient  : ref.recipient,
           ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
         });
       case 'Grant':
@@ -508,18 +508,18 @@ class AdmitClosureContext {
       return [existing];
     }
 
-    return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+    return this.fetchRecordsByRecordId(ref.recordId, ref.module);
   }
 
-  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<SyncMessageEntry[]> {
-    return this.fetchRecords({ recordId, ...(protocol === undefined ? {} : { protocol }) });
+  private async fetchRecordsByRecordId(recordId: string, module?: string): Promise<SyncMessageEntry[]> {
+    return this.fetchRecords({ recordId, ...(module === undefined ? {} : { module }) });
   }
 
   private async fetchRecords(filter: RecordsFilter): Promise<SyncMessageEntry[]> {
-    const protocol = filter.protocol;
-    const permissionGrantId = protocol === undefined
+    const module = filter.module;
+    const permissionGrantId = module === undefined
       ? undefined
-      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -553,7 +553,7 @@ class AdmitClosureContext {
         dwnUrl             : this.deps.dwnUrl,
         delegateDid        : this.deps.delegateDid,
         permissionGrantIds : this.deps.permissionGrantIds,
-        filters            : [{ protocol: ref.protocol, protocolPathPrefix: ref.protocolPath }],
+        filters            : [{ module: ref.module, modulePathPrefix: ref.modulePath }],
         cursor,
         agent              : this.deps.agent,
         runRemoteRequest   : this.deps.runRemoteRequest,
@@ -640,9 +640,9 @@ class AdmitClosureContext {
   }
 
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<SyncMessageEntry[]> {
-    const permissionGrantId = ref.protocol === undefined
+    const permissionGrantId = ref.module === undefined
       ? undefined
-      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
@@ -684,42 +684,42 @@ class AdmitClosureContext {
     return [entry];
   }
 
-  private async fetchProtocolConfig(protocol: string): Promise<SyncMessageEntry[]> {
-    const config = await this.fetchProtocol(protocol);
+  private async fetchModuleConfig(module: string): Promise<SyncMessageEntry[]> {
+    const config = await this.fetchModule(module);
     const entries = config === undefined ? [] : [{ message: config }];
     await this.rememberEntries(entries);
     return entries;
   }
 
-  private async fetchProtocol(protocol: string): Promise<ProtocolsConfigureMessage | undefined> {
-    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ProtocolsQuery, protocol);
+  private async fetchModule(module: string): Promise<ModulesConfigureMessage | undefined> {
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ModulesQuery, module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { message } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
-        filter: { protocol },
+        filter: { module },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
-      messageType : DwnInterface.ProtocolsQuery,
+      messageType : DwnInterface.ModulesQuery,
       store       : false,
       target      : this.deps.did,
     });
 
-    const reply = await this.runRemote((signal): Promise<ProtocolsQueryReply> =>
+    const reply = await this.runRemote((signal): Promise<ModulesQueryReply> =>
       this.deps.agent.rpc.sendDwnRequest({
         dwnUrl    : this.deps.dwnUrl,
         message,
         targetDid : this.deps.did,
         ...(signal === undefined ? {} : { signal }),
-      }) as Promise<ProtocolsQueryReply>
+      }) as Promise<ModulesQueryReply>
     );
     if (reply.status.code !== 200 || reply.entries === undefined) {
       return undefined;
     }
 
-    const configs = reply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol));
-    return newestProtocolConfig(configs);
+    const configs = reply.entries.filter(isTenantModuleConfig(this.deps.did, module));
+    return newestModuleConfig(configs);
   }
 
   private async rememberEntries(entries: SyncMessageEntry[]): Promise<void> {

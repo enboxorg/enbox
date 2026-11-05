@@ -51,7 +51,7 @@ export function rangeFilter(): Arbitrary<RangeFilter> {
 /** Property names commonly used as filter keys in DWN. */
 const filterPropertyNames = [
   'recordId', 'attester', 'parentId', 'recipient', 'contextId',
-  'author', 'protocolPath', 'schema', 'protocol', 'dataFormat',
+  'author', 'modulePath', 'schema', 'module', 'dataFormat',
   'dateCreated', 'datePublished', 'dateUpdated',
 ];
 

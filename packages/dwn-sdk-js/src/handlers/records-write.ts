@@ -1,6 +1,6 @@
-import type { CoreProtocol } from '../core/core-protocol.js';
+import type { CoreModule } from '../core/core-module.js';
+import type { ModuleRuleSet } from '../types/modules-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
-import type { ProtocolRuleSet } from '../types/protocols-types.js';
 import type { GenericMessage, GenericMessageReply } from '../types/message-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsQueryReplyEntry, RecordsWriteMessage } from '../types/records-types.js';
@@ -13,7 +13,7 @@ import { Encoder } from '../utils/encoder.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { ModuleAuthorization } from '../core/module-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -70,9 +70,9 @@ export class RecordsWriteHandler implements MethodHandler {
       return messageReplyFromError(e, 400);
     }
 
-    let protocolRuleSet: ProtocolRuleSet;
+    let moduleRuleSet: ModuleRuleSet;
     try {
-      protocolRuleSet = await ProtocolAuthorization.validateReferentialIntegrity(
+      moduleRuleSet = await ModuleAuthorization.validateReferentialIntegrity(
         tenant,
         recordsWrite,
         this.deps.validationStateReader,
@@ -94,11 +94,11 @@ export class RecordsWriteHandler implements MethodHandler {
       return immutablePropertyReply;
     }
 
-    // Squash backstop: if the protocol path has $squash: true, reject any write whose
+    // Squash backstop: if the module path has $squash: true, reject any write whose
     // messageTimestamp is <= the most recent squash record at the same path and parent context.
     // The squash record acts as a temporal floor — no record older than the latest squash can exist.
     try {
-      await this.enforceSquashBackstop(tenant, message, protocolRuleSet);
+      await this.enforceSquashBackstop(tenant, message, moduleRuleSet);
     } catch (e) {
       return messageReplyFromError(e, 409);
     }
@@ -114,14 +114,14 @@ export class RecordsWriteHandler implements MethodHandler {
       };
     }
 
-    // Look up the core protocol (if any) for the incoming message so that lifecycle hooks
-    // can be dispatched generically rather than checking for specific protocol URIs.
-    const coreProtocol = this.getCoreProtocolForWrite(message);
+    // Look up the core module (if any) for the incoming message so that lifecycle hooks
+    // can be dispatched generically rather than checking for specific module URIs.
+    const coreModule = this.getCoreModuleForWrite(message);
     let position: ProgressToken | undefined;
 
     try {
       const commitResult = await this.commitRecordsWrite({
-        coreProtocol,
+        coreModule,
         dataStream,
         existingMessages,
         message,
@@ -146,7 +146,7 @@ export class RecordsWriteHandler implements MethodHandler {
     };
 
     // Squash processing: if the incoming write is a squash, delete all older sibling records
-    // at the same protocol path and parent context. Uses the resumable task system for crash safety.
+    // at the same module path and parent context. Uses the resumable task system for crash safety.
     if (message.descriptor.squash === true) {
       await this.deps.resumableTaskManager!.run({
         name : ResumableTaskName.RecordsSquash,
@@ -154,11 +154,11 @@ export class RecordsWriteHandler implements MethodHandler {
       });
     }
 
-    // Dispatch post-processing hooks to the core protocol, if applicable.
-    // This allows core protocols to perform cascading side effects after a successful write
+    // Dispatch post-processing hooks to the core module, if applicable.
+    // This allows core modules to perform cascading side effects after a successful write
     // (e.g. deleting messages authorized by a revoked grant).
-    if (coreProtocol?.postProcessWrite !== undefined) {
-      await coreProtocol.postProcessWrite(tenant, recordsWrite, {
+    if (coreModule?.postProcessWrite !== undefined) {
+      await coreModule.postProcessWrite(tenant, recordsWrite, {
         messageStore : this.deps.messageStore,
         dataStore    : this.deps.dataStore!,
       });
@@ -247,15 +247,15 @@ export class RecordsWriteHandler implements MethodHandler {
   }
 
   /**
-   * Looks up the core protocol (if any) for the incoming message so that lifecycle hooks
-   * can be dispatched generically rather than checking for specific protocol URIs.
+   * Looks up the core module (if any) for the incoming message so that lifecycle hooks
+   * can be dispatched generically rather than checking for specific module URIs.
    */
-  private getCoreProtocolForWrite(message: RecordsWriteMessage): CoreProtocol | undefined {
-    if (message.descriptor.protocol === undefined) {
+  private getCoreModuleForWrite(message: RecordsWriteMessage): CoreModule | undefined {
+    if (message.descriptor.module === undefined) {
       return undefined;
     }
 
-    return this.deps.coreProtocols?.get(message.descriptor.protocol);
+    return this.deps.coreModules?.get(message.descriptor.module);
   }
 
   /**
@@ -263,7 +263,7 @@ export class RecordsWriteHandler implements MethodHandler {
    * and commits the new message and its indexes as the latest state transition for the record.
    */
   private async commitRecordsWrite(input: {
-    coreProtocol: CoreProtocol | undefined;
+    coreModule: CoreModule | undefined;
     dataStream?: ReadableStream<Uint8Array>;
     existingMessages: GenericMessage[];
     message: RecordsWriteMessage;
@@ -272,7 +272,7 @@ export class RecordsWriteHandler implements MethodHandler {
     recordsWrite: RecordsWrite;
     tenant: string;
   }): Promise<{ position?: ProgressToken }> {
-    const { coreProtocol, dataStream, existingMessages, message, newestExistingMessage, newMessageIsInitialWrite, recordsWrite, tenant } = input;
+    const { coreModule, dataStream, existingMessages, message, newestExistingMessage, newMessageIsInitialWrite, recordsWrite, tenant } = input;
 
     if (newestExistingMessage?.descriptor.method === DwnMethodName.Delete) {
       throw new DwnError(
@@ -281,11 +281,11 @@ export class RecordsWriteHandler implements MethodHandler {
       );
     }
 
-    // Dispatch pre-processing hooks to the core protocol, if applicable.
-    // This allows core protocols to perform cross-record validation before storage
-    // (e.g. ensuring revocation tag consistency with the parent grant's scoped protocol).
-    if (coreProtocol?.preProcessWrite !== undefined) {
-      await coreProtocol.preProcessWrite(tenant, message, this.deps.validationStateReader);
+    // Dispatch pre-processing hooks to the core module, if applicable.
+    // This allows core modules to perform cross-record validation before storage
+    // (e.g. ensuring revocation tag consistency with the parent grant's scoped module).
+    if (coreModule?.preProcessWrite !== undefined) {
+      await coreModule.preProcessWrite(tenant, message, this.deps.validationStateReader);
     }
     if (EncryptionControl.isControlMessage(message)) {
       await EncryptionControl.preProcessWrite(tenant, message, this.deps.validationStateReader);
@@ -350,7 +350,7 @@ export class RecordsWriteHandler implements MethodHandler {
         error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
         error.code.startsWith('SchemaValidator') ||
         EncryptionControl.mapErrorToStatusCode(error.code) !== undefined ||
-        this.deps.coreProtocols?.mapErrorToStatusCode(error.code) !== undefined) {
+        this.deps.coreModules?.mapErrorToStatusCode(error.code) !== undefined) {
         return messageReplyFromError(error, 400);
       }
     }
@@ -382,12 +382,12 @@ export class RecordsWriteHandler implements MethodHandler {
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
       RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
-      // Dispatch schema validation to the core protocol, if applicable.
-      const coreProtocol = message.descriptor.protocol === undefined
+      // Dispatch schema validation to the core module, if applicable.
+      const coreModule = message.descriptor.module === undefined
         ? undefined
-        : this.deps.coreProtocols?.get(message.descriptor.protocol);
-      if (coreProtocol?.validateRecord !== undefined) {
-        await coreProtocol.validateRecord(message, dataBytes);
+        : this.deps.coreModules?.get(message.descriptor.module);
+      if (coreModule?.validateRecord !== undefined) {
+        await coreModule.validateRecord(message, dataBytes);
       }
       if (EncryptionControl.isControlMessage(message)) {
         await EncryptionControl.validateRecord({ tenant, message, dataBytes, validationStateReader: this.deps.validationStateReader });
@@ -488,19 +488,19 @@ export class RecordsWriteHandler implements MethodHandler {
   }
 
   /**
-   * Enforces the squash backstop: if the incoming message is at a protocol path with `$squash: true`,
-   * and there exists a squash record at the same protocol path and parent context whose
+   * Enforces the squash backstop: if the incoming message is at a module path with `$squash: true`,
+   * and there exists a squash record at the same module path and parent context whose
    * `messageTimestamp` is >= the incoming message's `messageTimestamp`, reject with 409.
    *
    * The rule set is the exact policy already resolved by referential-integrity validation. Reusing
    * it prevents a second store lookup from observing different state or failing open.
    *
-   * This check only applies to protocol-based records at `$squash: true` paths.
+   * This check only applies to module-based records at `$squash: true` paths.
    */
   private async enforceSquashBackstop(
     tenant: string,
     message: RecordsWriteMessage,
-    ruleSet: ProtocolRuleSet,
+    ruleSet: ModuleRuleSet,
   ): Promise<void> {
     if (ruleSet.$squash !== true) {
       return;
@@ -510,8 +510,8 @@ export class RecordsWriteHandler implements MethodHandler {
     const contextIdPrefix = parentContextId !== undefined && parentContextId !== '' ? parentContextId : undefined;
     const newestSquash = await this.deps.validationStateReader.fetchLatestSquashRecordAtScope({
       tenant,
-      protocol     : message.descriptor.protocol,
-      protocolPath : message.descriptor.protocolPath,
+      module     : message.descriptor.module,
+      modulePath : message.descriptor.modulePath,
       contextIdPrefix,
     });
 
@@ -522,10 +522,10 @@ export class RecordsWriteHandler implements MethodHandler {
     // Reject if the incoming message's timestamp is <= the squash record's timestamp
     if (message.descriptor.messageTimestamp <= newestSquash.descriptor.messageTimestamp) {
       throw new DwnError(
-        DwnErrorCode.ProtocolAuthorizationSquashBackstop,
+        DwnErrorCode.ModuleAuthorizationSquashBackstop,
         `incoming message timestamp '${message.descriptor.messageTimestamp}' is not newer than ` +
         `the most recent squash record timestamp '${newestSquash.descriptor.messageTimestamp}' ` +
-        `at protocol path '${message.descriptor.protocolPath}'.`,
+        `at module path '${message.descriptor.modulePath}'.`,
         { info: { squashFloorTimestamp: newestSquash.descriptor.messageTimestamp } }
       );
     }
@@ -571,7 +571,7 @@ export class RecordsWriteHandler implements MethodHandler {
         validationStateReader : this.deps.validationStateReader
       });
     } else {
-      await ProtocolAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader);
+      await ModuleAuthorization.authorizeWrite(tenant, recordsWrite, this.deps.validationStateReader);
     }
   }
 }

@@ -1,4 +1,4 @@
-import type { CoreProtocol } from './core/core-protocol.js';
+import type { CoreModule } from './core/core-module.js';
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './types/message-store.js';
@@ -18,7 +18,7 @@ import type {
   MessagesSubscribeMessageOptions,
   MessagesSubscribeReply,
 } from './types/messages-types.js';
-import type { ProtocolDefinition, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply } from './types/protocols-types.js';
+import type { ModuleDefinition, ModulesConfigureMessage, ModulesQueryMessage, ModulesQueryReply } from './types/modules-types.js';
 import type {
   RecordsCountMessage,
   RecordsCountReply,
@@ -38,18 +38,18 @@ import type { ReplicationApplyOptions, ReplicationApplyResult } from './core/rep
 
 import { AllowAllTenantGate } from './core/tenant-gate.js';
 import { Cid } from './utils/cid.js';
-import { CoreProtocolRegistry } from './core/core-protocol.js';
+import { CoreModuleRegistry } from './core/core-module.js';
 import { DataStream } from './utils/data-stream.js';
 import { DwnConstant } from './core/dwn-constant.js';
-import { EncryptionProtocol } from './protocols/encryption.js';
+import { EncryptionModule } from './modules/encryption.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesQueryHandler } from './handlers/messages-query.js';
 import { MessagesReadHandler } from './handlers/messages-read.js';
 import { MessagesSubscribeHandler } from './handlers/messages-subscribe.js';
-import { PermissionsProtocol } from './protocols/permissions.js';
-import { ProtocolsConfigureHandler } from './handlers/protocols-configure.js';
-import { ProtocolsQueryHandler } from './handlers/protocols-query.js';
+import { ModulesConfigureHandler } from './handlers/modules-configure.js';
+import { ModulesQueryHandler } from './handlers/modules-query.js';
+import { PermissionsModule } from './modules/permissions.js';
 import { Records } from './utils/records.js';
 import { RecordsCountHandler } from './handlers/records-count.js';
 import { RecordsDelete } from './interfaces/records-delete.js';
@@ -79,8 +79,8 @@ type LifecycleResolver = {
   close: () => Promise<void>;
 };
 
-type ReplicationApplyProtocolDefinitionLookup = {
-  protocol: string;
+type ReplicationApplyModuleDefinitionLookup = {
+  module: string;
   messageTimestamp?: string;
 };
 
@@ -107,7 +107,7 @@ export class Dwn {
   private readonly eventLog?: EventLog;
   private readonly storageController: StorageController;
   private readonly resumableTaskManager: ResumableTaskManager;
-  private readonly _coreProtocols: CoreProtocolRegistry;
+  private readonly _coreModules: CoreModuleRegistry;
   private readonly validationStateReader: ValidationStateReader;
 
   /** Whether the DWN owns the resolver's lifecycle (i.e., created it via defaults). */
@@ -121,16 +121,16 @@ export class Dwn {
     this.dataStore = config.dataStore;
     this.resumableTaskStore = config.resumableTaskStore;
 
-    // Initialize the core protocol registry with built-in system protocols.
-    this._coreProtocols = new CoreProtocolRegistry();
-    this._coreProtocols.register(new EncryptionProtocol());
-    this._coreProtocols.register(new PermissionsProtocol());
+    // Initialize the core module registry with built-in system modules.
+    this._coreModules = new CoreModuleRegistry();
+    this._coreModules.register(new EncryptionModule());
+    this._coreModules.register(new PermissionsModule());
 
     // The single narrow surface through which validation logic reads state (replay-basis closure).
     const validationStateReader = new StoreValidationStateReader({
-      messageStore  : this.messageStore,
-      dataStore     : this.dataStore,
-      coreProtocols : this._coreProtocols,
+      messageStore : this.messageStore,
+      dataStore    : this.dataStore,
+      coreModules  : this._coreModules,
     });
     this.validationStateReader = config.instrumentValidationStateReader?.(validationStateReader) ?? validationStateReader;
 
@@ -153,22 +153,22 @@ export class Dwn {
       validationStateReader : this.validationStateReader,
       dataStore             : this.dataStore,
       resumableTaskManager  : this.resumableTaskManager,
-      coreProtocols         : this._coreProtocols,
+      coreModules           : this._coreModules,
       eventLog              : this.eventLog,
     };
 
     this.methodHandlers = {
-      [DwnInterfaceName.Messages + DwnMethodName.Read]       : new MessagesReadHandler(deps),
-      [DwnInterfaceName.Messages + DwnMethodName.Query]      : new MessagesQueryHandler(deps),
-      [DwnInterfaceName.Messages + DwnMethodName.Subscribe]  : new MessagesSubscribeHandler(deps),
-      [DwnInterfaceName.Protocols + DwnMethodName.Configure] : new ProtocolsConfigureHandler(deps),
-      [DwnInterfaceName.Protocols + DwnMethodName.Query]     : new ProtocolsQueryHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Count]       : new RecordsCountHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Delete]      : new RecordsDeleteHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Query]       : new RecordsQueryHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Read]        : new RecordsReadHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Subscribe]   : new RecordsSubscribeHandler(deps),
-      [DwnInterfaceName.Records + DwnMethodName.Write]       : new RecordsWriteHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Read]      : new MessagesReadHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Query]     : new MessagesQueryHandler(deps),
+      [DwnInterfaceName.Messages + DwnMethodName.Subscribe] : new MessagesSubscribeHandler(deps),
+      [DwnInterfaceName.Modules + DwnMethodName.Configure]  : new ModulesConfigureHandler(deps),
+      [DwnInterfaceName.Modules + DwnMethodName.Query]      : new ModulesQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Count]      : new RecordsCountHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Delete]     : new RecordsDeleteHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Query]      : new RecordsQueryHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Read]       : new RecordsReadHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Subscribe]  : new RecordsSubscribeHandler(deps),
+      [DwnInterfaceName.Records + DwnMethodName.Write]      : new RecordsWriteHandler(deps),
     };
   }
 
@@ -225,12 +225,12 @@ export class Dwn {
   }
 
   /**
-   * The registry of core protocols (hardcoded, immutable, always-installed).
-   * Used by handlers and utilities that need to check whether a protocol URI
-   * belongs to a core protocol or to dispatch lifecycle hooks.
+   * The registry of core modules (hardcoded, immutable, always-installed).
+   * Used by handlers and utilities that need to check whether a module URI
+   * belongs to a core module or to dispatch lifecycle hooks.
    */
-  public get coreProtocols(): CoreProtocolRegistry {
-    return this._coreProtocols;
+  public get coreModules(): CoreModuleRegistry {
+    return this._coreModules;
   }
 
   /**
@@ -255,8 +255,8 @@ export class Dwn {
     tenant: string, rawMessage: MessagesSubscribeMessage, options?: MessagesSubscribeMessageOptions): Promise<MessagesSubscribeReply>;
   public async processMessage(tenant: string, rawMessage: MessagesReadMessage): Promise<MessagesReadReply>;
   public async processMessage(tenant: string, rawMessage: MessagesQueryMessage): Promise<MessagesQueryReply>;
-  public async processMessage(tenant: string, rawMessage: ProtocolsConfigureMessage): Promise<GenericMessageReply>;
-  public async processMessage(tenant: string, rawMessage: ProtocolsQueryMessage): Promise<ProtocolsQueryReply>;
+  public async processMessage(tenant: string, rawMessage: ModulesConfigureMessage): Promise<GenericMessageReply>;
+  public async processMessage(tenant: string, rawMessage: ModulesQueryMessage): Promise<ModulesQueryReply>;
   public async processMessage(tenant: string, rawMessage: RecordsCountMessage): Promise<RecordsCountReply>;
   public async processMessage(tenant: string, rawMessage: RecordsDeleteMessage): Promise<GenericMessageReply>;
   public async processMessage(tenant: string, rawMessage: RecordsQueryMessage): Promise<RecordsQueryReply>;
@@ -351,11 +351,11 @@ export class Dwn {
     }
     let result = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (result === undefined) {
-      const protocolDefinition = await this.getReplicationApplyProtocolDefinition(tenant, rawMessage, reply);
+      const moduleDefinition = await this.getReplicationApplyModuleDefinition(tenant, rawMessage, reply);
       const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
       const parentRecordPruned = await this.getReplicationApplyParentPruned(tenant, rawMessage, reply);
       result = replicationApplyResultFromReply(rawMessage, reply, {
-        protocolDefinition,
+        moduleDefinition,
         missingAncestorRecordIds,
         parentRecordPruned,
       });
@@ -519,7 +519,7 @@ export class Dwn {
       return undefined;
     } catch (error) {
       const statusCode = error instanceof DwnError
-        ? this._coreProtocols.mapErrorToStatusCode(error.code) ?? 400
+        ? this._coreModules.mapErrorToStatusCode(error.code) ?? 400
         : 400;
       return messageReplyFromError(error, statusCode);
     }
@@ -531,16 +531,16 @@ export class Dwn {
     existingMessages: GenericMessage[],
     options: ReplicationApplyOptions,
   ): Promise<void> {
-    const coreProtocol = message.descriptor.protocol === undefined
+    const coreModule = message.descriptor.module === undefined
       ? undefined
-      : this._coreProtocols.get(message.descriptor.protocol);
+      : this._coreModules.get(message.descriptor.module);
 
-    if (coreProtocol?.preProcessWrite !== undefined) {
-      await coreProtocol.preProcessWrite(tenant, message, this.validationStateReader);
+    if (coreModule?.preProcessWrite !== undefined) {
+      await coreModule.preProcessWrite(tenant, message, this.validationStateReader);
     }
 
     if (options.dataStream !== undefined) {
-      await Dwn.validateReplicatedWriteBeatenByDeleteDataStream(message, options.dataStream, coreProtocol);
+      await Dwn.validateReplicatedWriteBeatenByDeleteDataStream(message, options.dataStream, coreModule);
       return;
     }
 
@@ -554,15 +554,15 @@ export class Dwn {
   private static async validateReplicatedWriteBeatenByDeleteDataStream(
     message: RecordsWriteMessage,
     dataStream: ReadableStream<Uint8Array>,
-    coreProtocol: CoreProtocol | undefined,
+    coreModule: CoreModule | undefined,
   ): Promise<void> {
     if (message.descriptor.dataSize <= DwnConstant.maxDataSizeAllowedToBeEncoded) {
       const dataBytes = await DataStream.toBytes(dataStream);
       const dataCid = await Cid.computeDagPbCidFromBytes(dataBytes);
       RecordsWrite.validateDataIntegrity(message.descriptor.dataCid, message.descriptor.dataSize, dataCid, dataBytes.length);
 
-      if (coreProtocol?.validateRecord !== undefined) {
-        await coreProtocol.validateRecord(message, dataBytes);
+      if (coreModule?.validateRecord !== undefined) {
+        await coreModule.validateRecord(message, dataBytes);
       }
 
       return;
@@ -622,27 +622,27 @@ export class Dwn {
     return byteLength;
   }
 
-  private async getReplicationApplyProtocolDefinition(
+  private async getReplicationApplyModuleDefinition(
     tenant: string,
     message: GenericMessage,
     reply: { status: { detail?: string } },
-  ): Promise<ProtocolDefinition | undefined> {
+  ): Promise<ModuleDefinition | undefined> {
     const detail = reply.status.detail ?? '';
     if (
-      !detail.startsWith(`${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}:`)
+      !detail.startsWith(`${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}:`)
     ) {
       return undefined;
     }
 
-    const lookup = Dwn.getReplicationApplyProtocolDefinitionLookup(message);
+    const lookup = Dwn.getReplicationApplyModuleDefinitionLookup(message);
     if (lookup === undefined) {
       return undefined;
     }
 
     try {
-      return await this.validationStateReader.fetchProtocolDefinition(
+      return await this.validationStateReader.fetchModuleDefinition(
         tenant,
-        lookup.protocol,
+        lookup.module,
         lookup.messageTimestamp,
       );
     } catch {
@@ -650,44 +650,44 @@ export class Dwn {
     }
   }
 
-  private static getReplicationApplyProtocolDefinitionLookup(
+  private static getReplicationApplyModuleDefinitionLookup(
     message: GenericMessage,
-  ): ReplicationApplyProtocolDefinitionLookup | undefined {
+  ): ReplicationApplyModuleDefinitionLookup | undefined {
     if (Dwn.isRecordsWriteMessage(message)) {
-      const taggedProtocol = Dwn.getEncryptionRecordTaggedProtocol(message);
-      if (taggedProtocol !== undefined) {
+      const taggedModule = Dwn.getEncryptionRecordTaggedModule(message);
+      if (taggedModule !== undefined) {
         return {
-          protocol         : taggedProtocol,
+          module           : taggedModule,
           messageTimestamp : message.descriptor.messageTimestamp,
         };
       }
 
       return {
-        protocol         : message.descriptor.protocol,
+        module           : message.descriptor.module,
         messageTimestamp : message.descriptor.messageTimestamp,
       };
     }
 
-    const protocol = Dwn.getMessageProtocolForReplicationApply(message);
-    return protocol === undefined ? undefined : { protocol };
+    const module = Dwn.getMessageModuleForReplicationApply(message);
+    return module === undefined ? undefined : { module };
   }
 
-  private static getEncryptionRecordTaggedProtocol(message: RecordsWriteMessage): string | undefined {
-    if (message.descriptor.protocol !== EncryptionProtocol.uri) {
+  private static getEncryptionRecordTaggedModule(message: RecordsWriteMessage): string | undefined {
+    if (message.descriptor.module !== EncryptionModule.uri) {
       return undefined;
     }
 
-    const protocol = message.descriptor.tags?.protocol;
-    return typeof protocol === 'string' ? protocol : undefined;
+    const module = message.descriptor.tags?.module;
+    return typeof module === 'string' ? module : undefined;
   }
 
-  private static getMessageProtocolForReplicationApply(message: GenericMessage): string | undefined {
-    const descriptor = message.descriptor as { protocol?: unknown; filter?: { protocol?: unknown } };
-    if (typeof descriptor.protocol === 'string') {
-      return descriptor.protocol;
+  private static getMessageModuleForReplicationApply(message: GenericMessage): string | undefined {
+    const descriptor = message.descriptor as { module?: unknown; filter?: { module?: unknown } };
+    if (typeof descriptor.module === 'string') {
+      return descriptor.module;
     }
-    if (typeof descriptor.filter?.protocol === 'string') {
-      return descriptor.filter.protocol;
+    if (typeof descriptor.filter?.module === 'string') {
+      return descriptor.filter.module;
     }
   }
 

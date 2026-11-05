@@ -1,4 +1,4 @@
-import type { Dwn, GenericMessage, ProtocolDefinition, RecordsWriteMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition, RecordsWriteMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
 import type { RemoteSyncStatus, SyncEvent } from '../src/types/sync.js';
 
@@ -39,9 +39,9 @@ import { pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed } from '../
 const remoteEndpoint = 'http://localhost:9999/dwn';
 const secondaryRemoteEndpoint = 'http://localhost:9998/dwn';
 
-const notesProtocol: ProtocolDefinition = {
+const notesModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://sync-feed-convergence.example/notes',
+  module    : 'https://sync-feed-convergence.example/notes',
   types     : {
     note: {
       schema      : 'https://sync-feed-convergence.example/schemas/note',
@@ -53,9 +53,9 @@ const notesProtocol: ProtocolDefinition = {
   },
 };
 
-const feedHarnessProtocolV1: ProtocolDefinition = {
+const feedHarnessModuleV1: ModuleDefinition = {
   published : true,
-  protocol  : 'https://sync-feed-convergence.example/harness',
+  module    : 'https://sync-feed-convergence.example/harness',
   types     : {
     note: {
       schema      : 'https://sync-feed-convergence.example/schemas/harness-note',
@@ -78,17 +78,17 @@ const feedHarnessProtocolV1: ProtocolDefinition = {
   },
 };
 
-const feedHarnessProtocolV2: ProtocolDefinition = {
-  ...feedHarnessProtocolV1,
+const feedHarnessModuleV2: ModuleDefinition = {
+  ...feedHarnessModuleV1,
   types: {
-    ...feedHarnessProtocolV1.types,
+    ...feedHarnessModuleV1.types,
     bookmark: {
       schema      : 'https://sync-feed-convergence.example/schemas/harness-bookmark',
       dataFormats : ['text/plain'],
     },
   },
   structure: {
-    ...feedHarnessProtocolV1.structure,
+    ...feedHarnessModuleV1.structure,
     bookmark: {},
   },
 };
@@ -182,8 +182,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const remoteConfig = await testHarness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: notesProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: notesModule },
     });
     expect(remoteConfig.reply.status.code).toBe(202);
 
@@ -193,10 +193,10 @@ describe('SyncEngineLevel durable feed convergence', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([remoteText]),
     });
@@ -204,7 +204,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const recordId = remoteWrite.message!.recordId;
 
     await expectLocalRecordCount(recordId, 0);
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [notesModule.module] } });
 
     await syncEngine.sync('pull');
 
@@ -216,8 +216,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const config = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: notesProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: notesModule },
     });
     expect(config.reply.status.code).toBe(202);
     expect((await remoteStores.dwn.processMessage(tenantDid, config.message!)).status.code).toBe(202);
@@ -228,10 +228,10 @@ describe('SyncEngineLevel durable feed convergence', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([smallText]),
     });
@@ -243,16 +243,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([largeText]),
     });
     expect(largeWrite.reply.status.code).toBe(202);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [notesModule.module] } });
     const rpc = testHarness.agent.rpc;
     const sendDwnRequest = rpc.sendDwnRequest.bind(rpc);
     let failNextRead = true;
@@ -284,8 +284,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const localConfig = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: notesProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: notesModule },
     });
     expect(localConfig.reply.status.code).toBe(202);
 
@@ -295,10 +295,10 @@ describe('SyncEngineLevel durable feed convergence', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([localText]),
     });
@@ -306,7 +306,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const recordId = localWrite.message!.recordId;
 
     await expectRemoteRecordCount(recordId, 0);
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [notesProtocol.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [notesModule.module] } });
 
     await syncEngine.sync('push');
 
@@ -331,8 +331,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
       const config = await testHarness.agent.dwn.processRequest({
         author        : tenantDid,
         target        : tenantDid,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: notesProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: notesModule },
       });
       expect(config.reply.status.code).toBe(202);
       for (const stores of [remoteStores, secondaryStores]) {
@@ -350,7 +350,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
           author      : tenantDid,
           dateExpires : Time.createOffsetTimestamp({ seconds: 3600 }),
           grantedTo   : delegateDid,
-          scope       : { interface: 'Messages', method: 'Read', protocol: notesProtocol.protocol },
+          scope       : { interface: 'Messages', method: 'Read', module: notesModule.module },
           store       : true,
         });
         const { encodedData, ...message } = grant.message;
@@ -372,7 +372,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
       // A nonempty local inventory, more than one feed page, retained history,
       // and a streaming attachment exercise a freshly connected wallet whose
-      // protocol or delegate grant is already installed.
+      // module or delegate grant is already installed.
       const signer = await (testHarness.agent.dwn as any).getSigner(tenantDid);
       const writes: RecordsWriteMessage[] = [];
       const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -380,10 +380,10 @@ describe('SyncEngineLevel durable feed convergence', () => {
         const data = new TextEncoder().encode(index === 104 ? largeText : `record-${index}`);
         const write = await RecordsWrite.create({
           data,
-          dataFormat   : 'text/plain',
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
-          schema       : notesProtocol.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : notesModule.module,
+          modulePath : 'note',
+          schema     : notesModule.types.note.schema,
           signer,
         });
         writes.push(write.message);
@@ -410,7 +410,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
           : sendPrimary(request);
       testHarness.agent.rpc = primaryRpc;
       const requests = sinon.spy(primaryRpc, 'sendDwnRequest');
-      await syncEngine.setIdentityOptions({ did: tenantDid, options: { delegateDid, protocols: [notesProtocol.protocol] } });
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { delegateDid, modules: [notesModule.module] } });
 
       await syncEngine.sync('pull');
 
@@ -444,19 +444,19 @@ describe('SyncEngineLevel durable feed convergence', () => {
   it.each(['incremental', 'inventory-diff'] as const)(
     'pushes the captured inline feed snapshot through the %s path when its record is updated behind an earlier apply',
     async (pushPath) => {
-      await configureLocalProtocol(feedHarnessProtocolV1);
-      await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+      await configureLocalModule(feedHarnessModuleV1);
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
       await syncEngine.sync('push');
 
       const first = await writeLocalRecord({
-        data         : 'first record gates the captured page',
-        protocolPath : 'note',
-        schema       : feedHarnessProtocolV1.types.note.schema,
+        data       : 'first record gates the captured page',
+        modulePath : 'note',
+        schema     : feedHarnessModuleV1.types.note.schema,
       });
       const captured = await writeLocalRecord({
-        data         : 'captured value before concurrent update',
-        protocolPath : 'note',
-        schema       : feedHarnessProtocolV1.types.note.schema,
+        data       : 'captured value before concurrent update',
+        modulePath : 'note',
+        schema     : feedHarnessModuleV1.types.note.schema,
       });
       const firstCid = await Message.getCid(first.message);
       const capturedCid = await Message.getCid(captured.message);
@@ -510,15 +510,15 @@ describe('SyncEngineLevel durable feed convergence', () => {
   );
 
   it('holds the push checkpoint when a current feed payload read fails, then resumes with data', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const payload = 'x'.repeat(1_048_577);
     const write = await writeLocalRecord({
-      data         : payload,
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : payload,
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const messageCid = await Message.getCid(write.message);
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
 
     const originalProcessRequest = testHarness.agent.dwn.processRequest.bind(testHarness.agent.dwn);
     const processRequest = sinon.stub(testHarness.agent.dwn, 'processRequest').callsFake(async (request: any) => {
@@ -544,7 +544,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     const localFeed = await queryLocalMessageFeed({
       did      : tenantDid,
-      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      filters  : [{ module: feedHarnessModuleV1.module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,
@@ -567,14 +567,14 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('persists the settled prefix when a shared-parent payload read rejects, then delivers it once', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await configureLocalModule(feedHarnessModuleV1);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
 
     const parent = await writeLocalRecord({
-      data         : 'parent before remote quota recovery',
-      protocolPath : 'thread',
-      schema       : feedHarnessProtocolV1.types.thread.schema,
+      data       : 'parent before remote quota recovery',
+      modulePath : 'thread',
+      schema     : feedHarnessModuleV1.types.thread.schema,
     });
     const parentCid = await Message.getCid(parent.message);
     const gate = installRemoteApplyGate(parentCid);
@@ -582,20 +582,20 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(gate.attempts()).toBe(1);
 
     const firstSettled = await writeLocalRecord({
-      data         : 'settled before dependency read failure A',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'settled before dependency read failure A',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const secondSettled = await writeLocalRecord({
-      data         : 'settled before dependency read failure B',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'settled before dependency read failure B',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const child = await writeLocalRecord({
       data            : 'child that discovers the shared parent',
       parentContextId : parent.message.contextId,
-      protocolPath    : 'thread/reply',
-      schema          : feedHarnessProtocolV1.types.reply.schema,
+      modulePath      : 'thread/reply',
+      schema          : feedHarnessModuleV1.types.reply.schema,
     });
     const updatedParentData = 'p'.repeat(900_001);
     const updatedParent = await updateLocalRecord(parent.message, updatedParentData);
@@ -605,7 +605,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
     const localFeed = await queryLocalMessageFeed({
       did      : tenantDid,
-      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      filters  : [{ module: feedHarnessModuleV1.module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,
@@ -676,12 +676,12 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(await readRemoteRecordText(child.message.recordId)).toBe('child that discovers the shared parent');
   });
 
-  it('executes real local queries when an update push must discover its protocol and initial-write dependencies', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+  it('executes real local queries when an update push must discover its module and initial-write dependencies', async () => {
+    await configureLocalModule(feedHarnessModuleV1);
     const initial = await writeLocalRecord({
-      data         : 'initial local value',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial local value',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const update = await updateLocalRecord(initial.message, 'updated local value');
     const updateCid = await Message.getCid(update.message);
@@ -699,16 +699,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('advances past one quota-blocked record without pausing and retryRemoteNow re-probes only that record', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'record rejected while remote quota is exhausted',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'record rejected while remote quota is exhausted',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync(undefined, { verifyConvergence: true });
 
     expect(gate.attempts()).toBe(1);
@@ -729,9 +729,9 @@ describe('SyncEngineLevel durable feed convergence', () => {
     // A later unrelated entry must progress through the same per-link feed
     // checkpoint even though the older record remains omitted remotely.
     const laterWrite = await writeLocalRecord({
-      data         : 'smaller unrelated record still progresses',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'smaller unrelated record still progresses',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     await syncEngine.sync(undefined, { verifyConvergence: true });
 
@@ -757,16 +757,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('does not clear a data quota block from an ancestry-only remote CID', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'current data must not be confused with remote ancestry metadata',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'current data must not be confused with remote ancestry metadata',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
 
@@ -800,16 +800,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('supersedes an active quota block when pull admits a newer state for the same record', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'local state rejected while the remote is over quota',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'local state rejected while the remote is over quota',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
 
     expect(gate.attempts()).toBe(1);
@@ -844,16 +844,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('keeps a reachable quota-blocked drain online and completes after an explicit retry', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'drain target is reachable but over quota',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'drain target is reachable but over quota',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     const blockedDrain = await syncEngine.drainTo(remoteEndpoint);
 
     expect(blockedDrain.completed).toBe(false);
@@ -878,16 +878,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('recovers a blocked initial write when an ordinary delete replays its retained dependency without data', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'initial data that exceeds the simulated remote quota'.repeat(32),
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial data that exceeds the simulated remote quota'.repeat(32),
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installDataAwareRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
 
     expect(gate.dataBearingAttempts()).toBe(1);
@@ -919,16 +919,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('recovers a tombstone after quota advanced the feed cursor past both it and its initial ancestry', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'initial data rejected in both full and ancestry-only form',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial data rejected in both full and ancestry-only form',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
 
@@ -957,16 +957,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('recovers a blocked-then-deleted record through the complete-entry diff push path after a checkpoint reset', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'initial data rejected while over quota, then deleted before recovery',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial data rejected while over quota, then deleted before recovery',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -994,17 +994,17 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('uses a blocked dependency CID to recover a tombstone when only the update root was persisted', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const initial = await writeLocalRecord({
-      data         : 'initial payload later superseded by an update',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial payload later superseded by an update',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const initialCid = await Message.getCid(initial.message);
     const update = await updateLocalRecord(initial.message, 'updated payload');
     const updateCid = await Message.getCid(update.message);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     const internal = syncEngine as unknown as {
       getSyncTargets(): Promise<any[]>;
       getOrCreateReplicationLink(target: any): Promise<any>;
@@ -1013,7 +1013,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const [target] = await internal.getSyncTargets();
     const localHead = await queryLocalMessageFeed({
       did      : tenantDid,
-      filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+      filters  : [{ module: feedHarnessModuleV1.module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,
@@ -1025,7 +1025,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await (syncEngine as any)._quotaManager.recordBlock(
       target,
       updateCid,
-      feedHarnessProtocolV1.protocol,
+      feedHarnessModuleV1.module,
       'update was blocked because its initial dependency exceeded quota',
       'feed',
       initialCid,
@@ -1044,7 +1044,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const [localFeed, remoteFeed] = await Promise.all([
       queryLocalMessageFeed({
         did      : tenantDid,
-        filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+        filters  : [{ module: feedHarnessModuleV1.module }],
         cidsOnly : true,
         limit    : 100,
         agent    : testHarness.agent,
@@ -1052,7 +1052,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
       queryRemoteMessageFeed({
         did      : tenantDid,
         dwnUrl   : remoteEndpoint,
-        filters  : [{ protocol: feedHarnessProtocolV1.protocol }],
+        filters  : [{ module: feedHarnessModuleV1.module }],
         cidsOnly : true,
         limit    : 100,
         agent    : testHarness.agent,
@@ -1102,16 +1102,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('recovers a blocked initial write when a smaller update replays its retained dependency without data', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'initial data that exceeds the simulated remote quota'.repeat(32),
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'initial data that exceeds the simulated remote quota'.repeat(32),
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installDataAwareRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
 
     expect(gate.dataBearingAttempts()).toBe(1);
@@ -1150,16 +1150,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await clearRemoteDwnStores(secondaryStores);
 
     try {
-      await configureLocalProtocol(feedHarnessProtocolV1);
+      await configureLocalModule(feedHarnessModuleV1);
       const blockedWrite = await writeLocalRecord({
-        data         : 'record blocked only by the primary remote',
-        protocolPath : 'note',
-        schema       : feedHarnessProtocolV1.types.note.schema,
+        data       : 'record blocked only by the primary remote',
+        modulePath : 'note',
+        schema     : feedHarnessModuleV1.types.note.schema,
       });
       const blockedCid = await Message.getCid(blockedWrite.message);
       const gate = installRoutedRemoteApplyGate(blockedCid, secondaryStores.dwn);
 
-      await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+      await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
       const drain = await syncEngine.drainTo(secondaryRemoteEndpoint);
       expect(drain.completed).toBe(true);
       expect(gate.primaryAttempts()).toBe(0);
@@ -1182,9 +1182,9 @@ describe('SyncEngineLevel durable feed convergence', () => {
       });
 
       const laterWrite = await writeLocalRecord({
-        data         : 'later record reaches both remotes',
-        protocolPath : 'note',
-        schema       : feedHarnessProtocolV1.types.note.schema,
+        data       : 'later record reaches both remotes',
+        modulePath : 'note',
+        schema     : feedHarnessModuleV1.types.note.schema,
       });
       await syncEngine.sync('push');
 
@@ -1206,16 +1206,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('clears a quota block as superseded when local storage has definitively retired the blocked root', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'record retired before remote quota recovers',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'record retired before remote quota recovers',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -1250,16 +1250,16 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('retires a quota block when its targeted retry becomes terminal', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
+    await configureLocalModule(feedHarnessModuleV1);
     const blockedWrite = await writeLocalRecord({
-      data         : 'record whose retry becomes terminal',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'record whose retry becomes terminal',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const blockedCid = await Message.getCid(blockedWrite.message);
     const gate = installRemoteApplyGate(blockedCid);
 
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
     expect(gate.attempts()).toBe(1);
     expect((await expectQuotaBlockedStatus()).quotaBlockedMessageCount).toBe(1);
@@ -1299,48 +1299,48 @@ describe('SyncEngineLevel durable feed convergence', () => {
   });
 
   it('converges updates, deletes, prune cascades, config churn, and data bytes after a resumed feed cycle', async () => {
-    await configureLocalProtocol(feedHarnessProtocolV1);
-    await syncEngine.setIdentityOptions({ did: tenantDid, options: { protocols: [feedHarnessProtocolV1.protocol] } });
+    await configureLocalModule(feedHarnessModuleV1);
+    await syncEngine.setIdentityOptions({ did: tenantDid, options: { modules: [feedHarnessModuleV1.module] } });
     await syncEngine.sync('push');
 
     const noteToUpdate = await writeLocalRecord({
-      data         : 'note before remote update',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'note before remote update',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const noteToDelete = await writeLocalRecord({
-      data         : 'note before local delete',
-      protocolPath : 'note',
-      schema       : feedHarnessProtocolV1.types.note.schema,
+      data       : 'note before local delete',
+      modulePath : 'note',
+      schema     : feedHarnessModuleV1.types.note.schema,
     });
     const thread = await writeLocalRecord({
-      data         : 'thread before prune',
-      protocolPath : 'thread',
-      schema       : feedHarnessProtocolV1.types.thread.schema,
+      data       : 'thread before prune',
+      modulePath : 'thread',
+      schema     : feedHarnessModuleV1.types.thread.schema,
     });
     const reply = await writeLocalRecord({
       data            : 'reply before prune',
       parentContextId : thread.message!.contextId,
-      protocolPath    : 'thread/reply',
-      schema          : feedHarnessProtocolV1.types.reply.schema,
+      modulePath      : 'thread/reply',
+      schema          : feedHarnessModuleV1.types.reply.schema,
     });
 
     await syncEngine.sync();
     await expectRecordSnapshotsEqual([
-      { data: 'note before remote update', protocolPath: 'note', recordId: noteToUpdate.message!.recordId },
-      { data: 'note before local delete', protocolPath: 'note', recordId: noteToDelete.message!.recordId },
-      { data: 'thread before prune', protocolPath: 'thread', recordId: thread.message!.recordId },
-      { data: 'reply before prune', protocolPath: 'thread/reply', recordId: reply.message!.recordId },
+      { data: 'note before remote update', modulePath: 'note', recordId: noteToUpdate.message!.recordId },
+      { data: 'note before local delete', modulePath: 'note', recordId: noteToDelete.message!.recordId },
+      { data: 'thread before prune', modulePath: 'thread', recordId: thread.message!.recordId },
+      { data: 'reply before prune', modulePath: 'thread/reply', recordId: reply.message!.recordId },
     ]);
 
     await updateRemoteRecord(noteToUpdate.message!, 'note after remote update');
     await deleteRemoteRecord(thread.message!.recordId, true);
     await deleteLocalRecord(noteToDelete.message!.recordId);
-    await configureLocalProtocol(feedHarnessProtocolV2);
+    await configureLocalModule(feedHarnessModuleV2);
     const bookmark = await writeLocalRecord({
-      data         : 'bookmark after config churn',
-      protocolPath : 'bookmark',
-      schema       : feedHarnessProtocolV2.types.bookmark.schema,
+      data       : 'bookmark after config churn',
+      modulePath : 'bookmark',
+      schema     : feedHarnessModuleV2.types.bookmark.schema,
     });
 
     await syncEngine.sync('pull');
@@ -1356,8 +1356,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
     await restartedSyncEngine.sync();
 
     await expectRecordSnapshotsEqual([
-      { data: 'bookmark after config churn', protocolPath: 'bookmark', recordId: bookmark.message!.recordId },
-      { data: 'note after remote update', protocolPath: 'note', recordId: noteToUpdate.message!.recordId },
+      { data: 'bookmark after config churn', modulePath: 'bookmark', recordId: bookmark.message!.recordId },
+      { data: 'note after remote update', modulePath: 'note', recordId: noteToUpdate.message!.recordId },
     ]);
     expect(await harnessFingerprint()).toBe(await remoteHarnessFingerprint());
     expect(await syncEngine.getDeadLetters(tenantDid)).toHaveLength(0);
@@ -1417,11 +1417,11 @@ describe('SyncEngineLevel durable feed convergence', () => {
     return textFromDataStream(reply.entry!.data!);
   }
 
-  async function configureLocalProtocol(definition: ProtocolDefinition): Promise<void> {
+  async function configureLocalModule(definition: ModuleDefinition): Promise<void> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition },
     });
     expect(reply.status.code).toBe(202);
@@ -1545,7 +1545,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
   async function writeLocalRecord(params: {
     data: string;
     parentContextId?: string;
-    protocolPath: string;
+    modulePath: string;
     schema?: string;
   }): Promise<{ message: RecordsWriteMessage }> {
     const { reply, message } = await testHarness.agent.dwn.processRequest({
@@ -1553,8 +1553,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : feedHarnessProtocolV1.protocol,
-        protocolPath    : params.protocolPath,
+        module          : feedHarnessModuleV1.module,
+        modulePath      : params.modulePath,
         schema          : params.schema,
         parentContextId : params.parentContextId,
         dataFormat      : 'text/plain',
@@ -1614,22 +1614,22 @@ describe('SyncEngineLevel durable feed convergence', () => {
     expect(reply.status.code).toBe(202);
   }
 
-  async function expectRecordSnapshotsEqual(expected: { data: string; protocolPath: string; recordId: string }[]): Promise<void> {
+  async function expectRecordSnapshotsEqual(expected: { data: string; modulePath: string; recordId: string }[]): Promise<void> {
     const [local, remote] = await Promise.all([
-      readProtocolRecordSnapshot('local'),
-      readProtocolRecordSnapshot('remote'),
+      readModuleRecordSnapshot('local'),
+      readModuleRecordSnapshot('remote'),
     ]);
     const expectedSorted = [...expected].sort((a, b) => a.recordId.localeCompare(b.recordId));
     expect(local).toEqual(expectedSorted);
     expect(remote).toEqual(expectedSorted);
   }
 
-  async function readProtocolRecordSnapshot(location: 'local' | 'remote'): Promise<{ data: string; protocolPath: string; recordId: string }[]> {
+  async function readModuleRecordSnapshot(location: 'local' | 'remote'): Promise<{ data: string; modulePath: string; recordId: string }[]> {
     const request = {
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: feedHarnessProtocolV1.protocol } },
+      messageParams : { filter: { module: feedHarnessModuleV1.module } },
     } as const;
     const { reply } = location === 'local'
       ? await testHarness.agent.dwn.processRequest(request)
@@ -1643,8 +1643,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
         : await readRemoteRecordText(entry.recordId);
       snapshot.push({
         data,
-        protocolPath : entry.descriptor.protocolPath,
-        recordId     : entry.recordId,
+        modulePath : entry.descriptor.modulePath,
+        recordId   : entry.recordId,
       });
     }
 
@@ -1654,7 +1654,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
   async function localFingerprint(): Promise<string | undefined> {
     const reply = await queryLocalMessageFeed({
       did      : tenantDid,
-      filters  : [{ protocol: notesProtocol.protocol }],
+      filters  : [{ module: notesModule.module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,
@@ -1669,7 +1669,7 @@ describe('SyncEngineLevel durable feed convergence', () => {
     const reply = await queryRemoteMessageFeed({
       did      : tenantDid,
       dwnUrl   : remoteEndpoint,
-      filters  : [{ protocol: notesProtocol.protocol }],
+      filters  : [{ module: notesModule.module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,
@@ -1681,21 +1681,21 @@ describe('SyncEngineLevel durable feed convergence', () => {
   }
 
   async function harnessFingerprint(): Promise<string | undefined> {
-    return feedFingerprint('local', feedHarnessProtocolV1.protocol);
+    return feedFingerprint('local', feedHarnessModuleV1.module);
   }
 
   async function remoteHarnessFingerprint(dwnUrl = remoteEndpoint): Promise<string | undefined> {
-    return feedFingerprint('remote', feedHarnessProtocolV1.protocol, dwnUrl);
+    return feedFingerprint('remote', feedHarnessModuleV1.module, dwnUrl);
   }
 
   async function feedFingerprint(
     location: 'local' | 'remote',
-    protocol: string,
+    module: string,
     dwnUrl = remoteEndpoint,
   ): Promise<string | undefined> {
     const params = {
       did      : tenantDid,
-      filters  : [{ protocol }],
+      filters  : [{ module }],
       cidsOnly : true,
       limit    : 100,
       agent    : testHarness.agent,

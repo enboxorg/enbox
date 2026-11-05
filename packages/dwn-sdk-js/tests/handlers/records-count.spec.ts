@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ModuleRuleSet, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -9,17 +9,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAll from '../vectors/module-definitions/free-for-all.json' with { type: 'json' };
 import { Jws } from '../../src/utils/jws.js';
-import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { PermissionsModule } from '../../src/modules/permissions.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
-import { createAudienceControlWrite, createDeliveryControlWrite, grantProtocolPathWriteAccess, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
+import { createAudienceControlWrite, createDeliveryControlWrite, grantModulePathWriteAccess, installEncryptedModule, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { defaultTestModuleDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Time } from '../../src/index.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from '../../src/core/constants.js';
@@ -78,7 +78,7 @@ export function testRecordsCountHandler(): void {
       it('should count records owned by the tenant', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // write 3 records with the same schema
         const schema = 'http://test-schema.example';
@@ -102,10 +102,10 @@ export function testRecordsCountHandler(): void {
         expect(reply.count).toBe(3);
       });
 
-      it('should keep broad protocol counts on the indexed count path when no audience records exist', async () => {
+      it('should keep broad module counts on the indexed count path when no audience records exist', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-indexed-broad.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-indexed-broad.xyz',
           published : false,
           types     : {
             message: { schema: 'http://message-schema', dataFormats: ['application/json'] },
@@ -116,24 +116,24 @@ export function testRecordsCountHandler(): void {
             },
           },
         };
-        const protocolConfigure = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfigure = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, moduleConfigure.message)).status.code).toBe(202);
 
         const write = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'message',
-          schema       : 'http://message-schema',
+          author     : alice,
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'message',
+          schema     : 'http://message-schema',
         });
         expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
 
         const querySpy = sinon.spy(messageStore, 'query');
         const count = await RecordsCount.create({
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
           signer : Jws.createSigner(alice),
         });
         const reply = await dwn.processMessage(alice.did, count.message);
@@ -146,7 +146,7 @@ export function testRecordsCountHandler(): void {
       it('should allow anonymous count of published records', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const schema = 'http://published-schema.example';
 
@@ -183,7 +183,7 @@ export function testRecordsCountHandler(): void {
       it('should match Query visibility for anonymous and owner-delegated reads', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const delegate = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
         const unpublishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
@@ -201,14 +201,14 @@ export function testRecordsCountHandler(): void {
           scope     : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : defaultTestProtocolDefinition.protocol,
+            module    : defaultTestModuleDefinition.module,
           },
         });
         expect((await dwn.processMessage(
           alice.did, delegatedGrant.message, { dataStream: delegatedGrant.dataStream }
         )).status.code).toBe(202);
 
-        const filter = { protocol: defaultTestProtocolDefinition.protocol };
+        const filter = { module: defaultTestModuleDefinition.module };
         const anonymousCount = await RecordsCount.create({ filter });
         const anonymousQuery = await RecordsQuery.create({ filter });
         const delegatedCount = await RecordsCount.create({
@@ -245,7 +245,7 @@ export function testRecordsCountHandler(): void {
       it('should return 0 for anonymous count when no published records exist', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // write an unpublished record
         const schema = 'http://unpublished.example';
@@ -271,7 +271,7 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const schema = 'http://recipient-schema.example';
 
@@ -307,8 +307,8 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -317,21 +317,21 @@ export function testRecordsCountHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
-          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+          roleRuleSet : encryptedDefinition.structure.member as ModuleRuleSet,
         });
         await processControlWrite(dwn, alice.did, audience);
 
         const exactCount = await RecordsCount.create({
           filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
-              protocol  : protocolDefinition.protocol,
+            module     : moduleDefinition.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
+              module    : moduleDefinition.module,
               rolePath  : 'member',
               contextId : '',
             },
@@ -343,7 +343,7 @@ export function testRecordsCountHandler(): void {
         expect(exactReply.count).toBe(1);
 
         const broadCount = await RecordsCount.create({
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
           signer : Jws.createSigner(bob),
         });
         const broadReply = await dwn.processMessage(alice.did, broadCount.message);
@@ -356,8 +356,8 @@ export function testRecordsCountHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-current-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-current-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -368,27 +368,27 @@ export function testRecordsCountHandler(): void {
             },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
-        const bobGrantId = await grantProtocolPathWriteAccess({
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
+        const bobGrantId = await grantModulePathWriteAccess({
           dwn,
-          grantee      : bob,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          tenant       : alice,
+          grantee    : bob,
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          tenant     : alice,
         });
-        const carolGrantId = await grantProtocolPathWriteAccess({
+        const carolGrantId = await grantModulePathWriteAccess({
           dwn,
-          grantee      : carol,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          tenant       : alice,
+          grantee    : carol,
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          tenant     : alice,
         });
         const nonTenantAudience = await createAudienceControlWrite({
           author            : bob,
           dateCreated       : Time.createOffsetTimestamp({ seconds: 1 }),
           permissionGrantId : bobGrantId,
-          protocol          : protocolDefinition.protocol,
+          module            : moduleDefinition.module,
           rolePath          : 'member',
           roleRuleSet,
         });
@@ -398,7 +398,7 @@ export function testRecordsCountHandler(): void {
           author            : carol,
           dateCreated       : Time.createOffsetTimestamp({ seconds: 2 }),
           permissionGrantId : carolGrantId,
-          protocol          : protocolDefinition.protocol,
+          module            : moduleDefinition.module,
           rolePath          : 'member',
           roleRuleSet,
         });
@@ -407,7 +407,7 @@ export function testRecordsCountHandler(): void {
         const tenantAudience = await createAudienceControlWrite({
           author      : alice,
           dateCreated : Time.createOffsetTimestamp({ seconds: 3 }),
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet,
         });
@@ -415,10 +415,10 @@ export function testRecordsCountHandler(): void {
 
         const tupleCount = await RecordsCount.create({
           filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
-              protocol  : protocolDefinition.protocol,
+            module     : moduleDefinition.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
+              module    : moduleDefinition.module,
               rolePath  : 'member',
               contextId : '',
             },
@@ -431,10 +431,10 @@ export function testRecordsCountHandler(): void {
 
         const exactLoserCount = await RecordsCount.create({
           filter: {
-            protocol     : protocolDefinition.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
-              protocol  : protocolDefinition.protocol,
+            module     : moduleDefinition.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
+              module    : moduleDefinition.module,
               rolePath  : 'member',
               contextId : '',
               keyId     : nonTenantAudience.keyId,
@@ -446,34 +446,34 @@ export function testRecordsCountHandler(): void {
         expect(exactLoserReply.status.code).toBe(200);
         expect(exactLoserReply.count).toBe(1);
 
-        const protocolReadGrant = await TestDataGenerator.generateGrantCreate({
+        const moduleReadGrant = await TestDataGenerator.generateGrantCreate({
           author    : alice,
           grantedTo : bob,
           delegated : true,
           scope     : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
         });
-        expect((await dwn.processMessage(alice.did, protocolReadGrant.message, { dataStream: protocolReadGrant.dataStream })).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, moduleReadGrant.message, { dataStream: moduleReadGrant.dataStream })).status.code).toBe(202);
 
-        const delegatedProtocolCount = await RecordsCount.create({
-          delegatedGrant : protocolReadGrant.dataEncodedMessage,
-          filter         : { protocol: protocolDefinition.protocol },
+        const delegatedModuleCount = await RecordsCount.create({
+          delegatedGrant : moduleReadGrant.dataEncodedMessage,
+          filter         : { module: moduleDefinition.module },
           signer         : Jws.createSigner(bob),
         });
-        const delegatedProtocolReply = await dwn.processMessage(alice.did, delegatedProtocolCount.message);
-        expect(delegatedProtocolReply.status.code).toBe(200);
-        expect(delegatedProtocolReply.count).toBe(1);
+        const delegatedModuleReply = await dwn.processMessage(alice.did, delegatedModuleCount.message);
+        expect(delegatedModuleReply.status.code).toBe(200);
+        expect(delegatedModuleReply.count).toBe(1);
       });
 
       it('should not count a current audience record that does not match an enumeration filter', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-current-range-filter.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-current-range-filter.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -484,20 +484,20 @@ export function testRecordsCountHandler(): void {
             },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
-        const bobGrantId = await grantProtocolPathWriteAccess({
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
+        const bobGrantId = await grantModulePathWriteAccess({
           dwn,
-          grantee      : bob,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          tenant       : alice,
+          grantee    : bob,
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          tenant     : alice,
         });
         const loserDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
         const currentAudience = await createAudienceControlWrite({
           author      : alice,
           dateCreated : Time.createOffsetTimestamp({ seconds: 1 }),
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet,
         });
@@ -507,18 +507,18 @@ export function testRecordsCountHandler(): void {
           author            : bob,
           dateCreated       : loserDateCreated,
           permissionGrantId : bobGrantId,
-          protocol          : protocolDefinition.protocol,
+          module            : moduleDefinition.module,
           rolePath          : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, loserAudience);
 
         const rangeFilter = {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          dateCreated  : { from: loserDateCreated },
-          tags         : {
-            protocol  : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
+          modulePath  : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          dateCreated : { from: loserDateCreated },
+          tags        : {
+            module    : moduleDefinition.module,
             rolePath  : 'member',
             contextId : '',
           },
@@ -550,8 +550,8 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-stale-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-stale-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -560,17 +560,17 @@ export function testRecordsCountHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
-          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+          roleRuleSet : encryptedDefinition.structure.member as ModuleRuleSet,
         });
         await processControlWrite(dwn, alice.did, audience);
 
-        await installEncryptedProtocol(dwn, alice, {
-          ...protocolDefinition,
+        await installEncryptedModule(dwn, alice, {
+          ...moduleDefinition,
           structure: {
             member: {},
           },
@@ -583,14 +583,14 @@ export function testRecordsCountHandler(): void {
           scope     : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
         });
         expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
         const count = await RecordsCount.create({
           delegatedGrant : grant.dataEncodedMessage,
-          filter         : { protocol: protocolDefinition.protocol },
+          filter         : { module: moduleDefinition.module },
           signer         : Jws.createSigner(bob),
         });
         const reply = await dwn.processMessage(alice.did, count.message);
@@ -603,8 +603,8 @@ export function testRecordsCountHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-count-delivery.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-count-delivery.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -613,31 +613,31 @@ export function testRecordsCountHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author   : alice,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
           rolePath : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, audience);
 
         const roleRecord = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is a member'),
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          recipient    : bob.did,
-          schema       : 'http://member-schema',
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is a member'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          recipient  : bob.did,
+          schema     : 'http://member-schema',
         });
         expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
 
         const delivery = await createDeliveryControlWrite({
           author             : alice,
           keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
+          module             : moduleDefinition.module,
           recipient          : bob.did,
           recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
           rolePath           : 'member',
@@ -646,7 +646,7 @@ export function testRecordsCountHandler(): void {
         await processControlWrite(dwn, alice.did, delivery);
 
         const bobCount = await RecordsCount.create({
-          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          filter : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_DELIVERY_PATH },
           signer : Jws.createSigner(bob),
         });
         const bobReply = await dwn.processMessage(alice.did, bobCount.message);
@@ -654,7 +654,7 @@ export function testRecordsCountHandler(): void {
         expect(bobReply.count).toBe(1);
 
         const carolCount = await RecordsCount.create({
-          filter : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          filter : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_DELIVERY_PATH },
           signer : Jws.createSigner(carol),
         });
         const carolReply = await dwn.processMessage(alice.did, carolCount.message);
@@ -668,14 +668,14 @@ export function testRecordsCountHandler(): void {
           scope     : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
         });
         expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
 
         const delegatedCarolCount = await RecordsCount.create({
           delegatedGrant : carolGrant.dataEncodedMessage,
-          filter         : { protocol: protocolDefinition.protocol, protocolPath: ENCRYPTION_CONTROL_DELIVERY_PATH },
+          filter         : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_DELIVERY_PATH },
           signer         : Jws.createSigner(carol),
         });
         const delegatedCarolReply = await dwn.processMessage(alice.did, delegatedCarolCount.message);
@@ -687,21 +687,21 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const { message: unpublished, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const writeReply = await dwn.processMessage(alice.did, unpublished, { dataStream });
         expect(writeReply.status.code).toBe(202);
 
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : 'http://test-protocol.xyz',
-            protocolPath : 'testRecord',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : 'http://test-module.xyz',
+            modulePath : 'testRecord',
           }
         });
         const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
@@ -712,9 +712,9 @@ export function testRecordsCountHandler(): void {
         const { message } = await TestDataGenerator.generateRecordsCount({
           author : bob,
           filter : {
-            protocol     : 'http://test-protocol.xyz',
-            protocolPath : 'testRecord',
-            published    : false,
+            module     : 'http://test-module.xyz',
+            modulePath : 'testRecord',
+            published  : false,
           },
           permissionGrantId: permissionGrant.recordsWrite.message.recordId,
         });
@@ -728,17 +728,17 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : 'http://test-protocol.xyz',
-            protocolPath : 'testRecord',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : 'http://test-module.xyz',
+            modulePath : 'testRecord',
           }
         });
         const grantReply = await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, {
@@ -748,7 +748,7 @@ export function testRecordsCountHandler(): void {
 
         for (const filter of [
           { published: false },
-          { protocol: 'http://other-protocol.xyz', protocolPath: 'testRecord', published: false },
+          { module: 'http://other-module.xyz', modulePath: 'testRecord', published: false },
         ]) {
           const { message } = await TestDataGenerator.generateRecordsCount({
             author            : bob,
@@ -757,7 +757,7 @@ export function testRecordsCountHandler(): void {
           });
           const reply = await dwn.processMessage(alice.did, message);
           expect(reply.status.code).toBe(401);
-          expect(reply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+          expect(reply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch);
         }
       });
 
@@ -765,7 +765,7 @@ export function testRecordsCountHandler(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const schema = 'http://published-filter.example';
 
@@ -799,29 +799,29 @@ export function testRecordsCountHandler(): void {
         expect(reply.count).toBe(2);
       });
 
-      it('should count protocol records with role-based authorization', async () => {
-        // Scenario: Alice installs a thread protocol, Bob is a thread participant,
+      it('should count module records with role-based authorization', async () => {
+        // Scenario: Alice installs a thread module, Bob is a thread participant,
         // Bob uses his role to count chat messages.
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-        const protocolDefinition = threadRoleProtocolDefinition as ProtocolDefinition;
-        const protocol = protocolDefinition.protocol;
+        const moduleDefinition = threadRoleModuleDefinition as ModuleDefinition;
+        const module = moduleDefinition.module;
 
-        // alice installs protocol
-        const { message: protocolConfig } = await TestDataGenerator.generateProtocolsConfigure({
+        // alice installs module
+        const { message: moduleConfig } = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig);
         expect(configReply.status.code).toBe(202);
 
         // alice creates a thread
         const { message: threadWrite, dataStream: threadStream } = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol,
-          protocolPath : 'thread',
+          author     : alice,
+          module,
+          modulePath : 'thread',
         });
         const threadReply = await dwn.processMessage(alice.did, threadWrite, { dataStream: threadStream });
         expect(threadReply.status.code).toBe(202);
@@ -830,8 +830,8 @@ export function testRecordsCountHandler(): void {
         const { message: participantWrite, dataStream: participantStream } = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           recipient       : bob.did,
-          protocol,
-          protocolPath    : 'thread/participant',
+          module,
+          modulePath      : 'thread/participant',
           parentContextId : threadWrite.contextId,
         });
         const participantReply = await dwn.processMessage(alice.did, participantWrite, { dataStream: participantStream });
@@ -841,8 +841,8 @@ export function testRecordsCountHandler(): void {
         for (let i = 0; i < 3; i++) {
           const { message: chatWrite, dataStream: chatStream } = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol,
-            protocolPath    : 'thread/chat',
+            module,
+            modulePath      : 'thread/chat',
             parentContextId : threadWrite.contextId,
           });
           const chatReply = await dwn.processMessage(alice.did, chatWrite, { dataStream: chatStream });
@@ -851,9 +851,9 @@ export function testRecordsCountHandler(): void {
 
         // bob counts chat messages using his participant role
         const { message: countMessage } = await TestDataGenerator.generateRecordsCount({
-          author       : bob,
-          filter       : { protocol, protocolPath: 'thread/chat', contextId: threadWrite.contextId },
-          protocolRole : 'thread/participant',
+          author     : bob,
+          filter     : { module, modulePath: 'thread/chat', contextId: threadWrite.contextId },
+          moduleRole : 'thread/participant',
         });
         const reply = await dwn.processMessage(alice.did, countMessage);
 
@@ -878,15 +878,15 @@ export function testRecordsCountHandler(): void {
         expect(reply.status.code).toBe(400);
       });
 
-      it('should reject role-authorized count without protocolPath in filter', async () => {
+      it('should reject role-authorized count without modulePath in filter', async () => {
         const alice = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-        // create a count message with protocolRole but no protocolPath in the filter
+        // create a count message with moduleRole but no modulePath in the filter
         const { message } = await TestDataGenerator.generateRecordsCount({
-          author       : alice,
-          filter       : { protocol: 'http://example.com/protocol' },
-          protocolRole : 'thread/participant',
+          author     : alice,
+          filter     : { module: 'http://example.com/module' },
+          moduleRole : 'thread/participant',
         });
 
         // the handler calls parse() which should reject this
@@ -894,39 +894,39 @@ export function testRecordsCountHandler(): void {
         expect(reply.status.code).toBe(400);
       });
 
-      it('should count all records with a free-for-all protocol', async () => {
+      it('should count all records with a free-for-all module', async () => {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-        const protocolDefinition = freeForAll as ProtocolDefinition;
-        const protocol = protocolDefinition.protocol;
+        const moduleDefinition = freeForAll as ModuleDefinition;
+        const module = moduleDefinition.module;
 
-        // alice installs protocol
-        const { message: protocolConfig } = await TestDataGenerator.generateProtocolsConfigure({
+        // alice installs module
+        const { message: moduleConfig } = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig);
         expect(configReply.status.code).toBe(202);
 
         // bob writes 2 posts
         for (let i = 0; i < 2; i++) {
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
-            protocol,
-            protocolPath : 'post',
-            schema       : protocolDefinition.types.post.schema,
-            dataFormat   : protocolDefinition.types.post.dataFormats![0],
+            author     : bob,
+            module,
+            modulePath : 'post',
+            schema     : moduleDefinition.types.post.schema,
+            dataFormat : moduleDefinition.types.post.dataFormats![0],
           });
           const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
           expect(writeReply.status.code).toBe(202);
         }
 
-        // alice (owner) counts all protocol posts
+        // alice (owner) counts all module posts
         const { message: countMessage } = await TestDataGenerator.generateRecordsCount({
           author : alice,
-          filter : { protocol, protocolPath: 'post' }
+          filter : { module, modulePath: 'post' }
         });
         const reply = await dwn.processMessage(alice.did, countMessage);
 

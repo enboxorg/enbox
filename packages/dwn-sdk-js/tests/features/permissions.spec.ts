@@ -3,14 +3,14 @@ import type { EventLog } from '../../src/types/subscriptions.js';
 import type { PermissionScope } from '../../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { Jws } from '../../src/utils/jws.js';
-import { PermissionGrant } from '../../src/protocols/permission-grant.js';
-import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { PermissionGrant } from '../../src/modules/permission-grant.js';
+import { PermissionsModule } from '../../src/modules/permissions.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -61,23 +61,23 @@ export function testPermissions(): void {
     it('should include record tags using the createRequest, createGrant and createRevocation if provided', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const testProtocol = 'https://example.com/protocol/test';
+      const testModule = 'https://example.com/module/test';
 
-      // createRequest with a protocol
-      const requestWrite = await PermissionsProtocol.createRequest({
+      // createRequest with a module
+      const requestWrite = await PermissionsModule.createRequest({
         signer      : Jws.createSigner(alice),
         description : 'Requesting to write',
         delegated   : false,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : testProtocol,
+          module    : testModule,
         }
       });
-      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
+      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ module: testModule });
 
-      // createGrant with a protocol
-      const grantWrite = await PermissionsProtocol.createGrant({
+      // createGrant with a module
+      const grantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -85,52 +85,52 @@ export function testPermissions(): void {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : testProtocol,
+          module    : testModule,
         }
       });
-      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
+      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ module: testModule });
 
-      // createRevocation with a protocol derived from the grant
-      const revokeWrite = await PermissionsProtocol.createRevocation({
+      // createRevocation with a module derived from the grant
+      const revokeWrite = await PermissionsModule.createRevocation({
         signer      : Jws.createSigner(alice),
         grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp()
       });
-      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: testProtocol });
+      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ module: testModule });
     });
 
-    it('should normalize the protocol URL in the scope of a Request, Grant, and Revocation', async () => {
+    it('should normalize the module URL in the scope of a Request, Grant, and Revocation', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      // createRequest with a protocol that will be normalized to `http://any-protocol`
-      const requestWrite = await PermissionsProtocol.createRequest({
+      // createRequest with a module that will be normalized to `http://any-module`
+      const requestWrite = await PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : 'Requesting to write',
         delegated   : false,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'any-protocol' // URL will normalize to `http://any-protocol`
+          module    : 'any-module' // URL will normalize to `http://any-module`
         }
       });
-      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'http://any-protocol' });
+      expect(requestWrite.recordsWrite.message.descriptor.tags).toEqual({ module: 'http://any-module' });
 
-      // createRequest with a protocol that is already normalized to `https://any-protocol`
-      const requestWrite2 = await PermissionsProtocol.createRequest({
+      // createRequest with a module that is already normalized to `https://any-module`
+      const requestWrite2 = await PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : 'Requesting to write',
         delegated   : false,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://any-protocol'
+          module    : 'https://any-module'
         }
       });
-      expect(requestWrite2.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'https://any-protocol' });
+      expect(requestWrite2.recordsWrite.message.descriptor.tags).toEqual({ module: 'https://any-module' });
 
-      // createGrant with a protocol that will be normalized to `http://any-protocol`
-      const grantWrite = await PermissionsProtocol.createGrant({
+      // createGrant with a module that will be normalized to `http://any-module`
+      const grantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -138,13 +138,13 @@ export function testPermissions(): void {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'any-protocol' // URL will normalize to `http://any-protocol`
+          module    : 'any-module' // URL will normalize to `http://any-module`
         }
       });
-      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'http://any-protocol' });
+      expect(grantWrite.recordsWrite.message.descriptor.tags).toEqual({ module: 'http://any-module' });
 
-      // createGrant with a protocol that is already normalized to `https://any-protocol`
-      const grantWrite2 = await PermissionsProtocol.createGrant({
+      // createGrant with a module that is already normalized to `https://any-module`
+      const grantWrite2 = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -152,20 +152,20 @@ export function testPermissions(): void {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://any-protocol'
+          module    : 'https://any-module'
         }
       });
-      expect(grantWrite2.recordsWrite.message.descriptor.tags).toEqual({ protocol: 'https://any-protocol' });
+      expect(grantWrite2.recordsWrite.message.descriptor.tags).toEqual({ module: 'https://any-module' });
     });
 
-    it('should derive the grantId and protocol from the grant record when creating a revocation', async () => {
+    it('should derive the grantId and module from the grant record when creating a revocation', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const grantProtocol = 'https://example.com/protocol/test';
+      const grantModule = 'https://example.com/module/test';
 
       // alice creates a grant for bob
-      const grantWrite = await PermissionsProtocol.createGrant({
+      const grantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -173,7 +173,7 @@ export function testPermissions(): void {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : grantProtocol,
+          module    : grantModule,
         }
       });
       const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.recordsWrite.message, {
@@ -181,15 +181,15 @@ export function testPermissions(): void {
       });
       expect(grantWriteReply.status.code).toBe(202);
 
-      // derive the grantId and protocol from the grant record
-      const revokeWrite = await PermissionsProtocol.createRevocation({
+      // derive the grantId and module from the grant record
+      const revokeWrite = await PermissionsModule.createRevocation({
         signer      : Jws.createSigner(alice),
         grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp()
       });
 
-      // check that the protocol is in the revocation record's tags
-      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ protocol: grantProtocol });
+      // check that the module is in the revocation record's tags
+      expect(revokeWrite.recordsWrite.message.descriptor.tags).toEqual({ module: grantModule });
 
       // check that the revocation's parentId is the grant's recordId
       expect(revokeWrite.recordsWrite.message.descriptor.parentId).toBe(grantWrite.recordsWrite.message.recordId);
@@ -214,10 +214,10 @@ export function testPermissions(): void {
       const permissionScope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : `any-protocol`
+        module    : `any-module`
       };
 
-      const requestToAlice = await PermissionsProtocol.createRequest({
+      const requestToAlice = await PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : `Requesting to write to Alice's DWN`,
         delegated   : false,
@@ -235,9 +235,9 @@ export function testPermissions(): void {
       const requestQuery = await RecordsQuery.create({
         signer : Jws.createSigner(alice),
         filter : {
-          protocolPath : PermissionsProtocol.requestPath,
-          protocol     : PermissionsProtocol.uri,
-          dateUpdated  : { from: Time.createOffsetTimestamp({ seconds: -1 * 60 * 60 * 24 }) }// last 24 hours
+          modulePath  : PermissionsModule.requestPath,
+          module      : PermissionsModule.uri,
+          dateUpdated : { from: Time.createOffsetTimestamp({ seconds: -1 * 60 * 60 * 24 }) }// last 24 hours
         }
       });
 
@@ -248,8 +248,8 @@ export function testPermissions(): void {
       expect(requestFromBob.recordId).toBe(requestToAlice.recordsWrite.message.recordId);
 
       // 3. Verify a non-owner cannot create a grant for Bob in Alice's DWN
-      const decodedRequest = PermissionsProtocol.parseRequest(requestFromBob.encodedData!);
-      const unauthorizedGrantWrite = await PermissionsProtocol.createGrant({
+      const decodedRequest = PermissionsModule.parseRequest(requestFromBob.encodedData!);
+      const unauthorizedGrantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(bob),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -263,10 +263,10 @@ export function testPermissions(): void {
         { dataStream: DataStream.fromBytes(unauthorizedGrantWrite.permissionGrantBytes) }
       );
       expect(unauthorizedGrantWriteReply.status.code).toBe(401);
-      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
       // 4. Alice creates a permission grant for Bob in her DWN
-      const grantWrite = await PermissionsProtocol.createGrant({
+      const grantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -285,9 +285,9 @@ export function testPermissions(): void {
       const grantQuery = await RecordsQuery.create({
         signer : Jws.createSigner(bob),
         filter : {
-          protocolPath : PermissionsProtocol.grantPath,
-          protocol     : PermissionsProtocol.uri,
-          dateUpdated  : { from: Time.createOffsetTimestamp({ seconds: -1 * 60 * 60 * 24 }) }// last 24 hours
+          modulePath  : PermissionsModule.grantPath,
+          module      : PermissionsModule.uri,
+          dateUpdated : { from: Time.createOffsetTimestamp({ seconds: -1 * 60 * 60 * 24 }) }// last 24 hours
         }
       });
 
@@ -301,8 +301,8 @@ export function testPermissions(): void {
       const revocationRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
-          contextId    : grantWrite.recordsWrite.message.contextId,
-          protocolPath : PermissionsProtocol.revocationPath
+          contextId  : grantWrite.recordsWrite.message.contextId,
+          modulePath : PermissionsModule.revocationPath
         }
       });
 
@@ -310,7 +310,7 @@ export function testPermissions(): void {
       expect(revocationReadReply.status.code).toBe(404);
 
       // 7. Verify that non-owner cannot revoke the grant
-      const unauthorizedRevokeWrite = await PermissionsProtocol.createRevocation({
+      const unauthorizedRevokeWrite = await PermissionsModule.createRevocation({
         signer      : Jws.createSigner(bob),
         grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp(),
@@ -322,10 +322,10 @@ export function testPermissions(): void {
         { dataStream: DataStream.fromBytes(unauthorizedRevokeWrite.permissionRevocationBytes) }
       );
       expect(unauthorizedRevokeWriteReply.status.code).toBe(401);
-      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(unauthorizedGrantWriteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
       // 8. Alice revokes the permission grant for Bob
-      const revokeWrite = await PermissionsProtocol.createRevocation({
+      const revokeWrite = await PermissionsModule.createRevocation({
         signer      : Jws.createSigner(alice),
         grant       : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         dateRevoked : Time.getCurrentTimestamp(),
@@ -344,7 +344,7 @@ export function testPermissions(): void {
       expect(revocationReadReply2.entry!.recordsWrite?.recordId).toBe(revokeWrite.recordsWrite.message.recordId);
     });
 
-    it('should fail if a RecordsPermissionScope in a Request or Grant record is created without a protocol', async () => {
+    it('should fail if a RecordsPermissionScope in a Request or Grant record is created without a module', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -353,135 +353,130 @@ export function testPermissions(): void {
         method    : DwnMethodName.Write
       };
 
-      const requestWrite = PermissionsProtocol.createRequest({
+      const requestWrite = PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : `Requesting to write to Alice's DWN`,
         delegated   : false,
         scope       : permissionScope as any // explicity as any to test the validation
       });
-      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestRecordsScopeMissingProtocol);
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateRequestRecordsScopeMissingModule);
 
 
-      const grantWrite = PermissionsProtocol.createGrant({
+      const grantWrite = PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
         grantedTo   : bob.did,
         scope       : permissionScope as any // explicity as any to test the validation
       });
-      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantRecordsScopeMissingProtocol);
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateGrantRecordsScopeMissingModule);
     });
 
-    it('should fail if a subtree permission scope is created without a protocol', async () => {
+    it('should fail if a subtree permission scope is created without a module', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
       const permissionScope = {
-        interface    : DwnInterfaceName.Messages,
-        method       : DwnMethodName.Read,
-        protocolPath : 'post'
+        interface  : DwnInterfaceName.Messages,
+        method     : DwnMethodName.Read,
+        modulePath : 'post'
       };
 
-      const requestWrite = PermissionsProtocol.createRequest({
+      const requestWrite = PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : `Requesting to read Alice's DWN`,
         delegated   : false,
         scope       : permissionScope as any
       });
-      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestSubtreeScopeMissingProtocol);
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateRequestSubtreeScopeMissingModule);
 
-      const grantWrite = PermissionsProtocol.createGrant({
+      const grantWrite = PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to read',
         grantedTo   : bob.did,
         scope       : permissionScope as any
       });
-      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantSubtreeScopeMissingProtocol);
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateGrantSubtreeScopeMissingModule);
     });
 
-    it('should fail if a permission scope is created with both protocolPath and contextId', async () => {
+    it('should fail if a permission scope is created with both modulePath and contextId', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
       const permissionScope = {
-        interface    : DwnInterfaceName.Messages,
-        method       : DwnMethodName.Read,
-        protocol     : 'https://example.com/protocol/test',
-        protocolPath : 'post',
-        contextId    : 'root'
+        interface  : DwnInterfaceName.Messages,
+        method     : DwnMethodName.Read,
+        module     : 'https://example.com/module/test',
+        modulePath : 'post',
+        contextId  : 'root'
       };
 
-      const requestWrite = PermissionsProtocol.createRequest({
+      const requestWrite = PermissionsModule.createRequest({
         signer      : Jws.createSigner(bob),
         description : `Requesting to read Alice's DWN`,
         delegated   : false,
         scope       : permissionScope as any
       });
-      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateRequestScopeContextIdProtocolPathConflict);
+      await expect(requestWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateRequestScopeContextIdModulePathConflict);
 
-      const grantWrite = PermissionsProtocol.createGrant({
+      const grantWrite = PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to read',
         grantedTo   : bob.did,
         scope       : permissionScope as any
       });
-      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsProtocolCreateGrantScopeContextIdProtocolPathConflict);
+      await expect(grantWrite).rejects.toThrow(DwnErrorCode.PermissionsModuleCreateGrantScopeContextIdModulePathConflict);
     });
 
-    it('should fail if an invalid protocolPath is used during Permissions schema validation', async () => {
+    it('should fail if an invalid modulePath is used during Permissions schema validation', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : PermissionsProtocol.uri,
-        protocolPath : 'invalid/path',
-        data         : Encoder.stringToBytes(JSON.stringify({}))
+        author     : alice,
+        module     : PermissionsModule.uri,
+        modulePath : 'invalid/path',
+        data       : Encoder.stringToBytes(JSON.stringify({}))
       });
 
       expect(
-        () => PermissionsProtocol.validateSchema(message, dataBytes!)
-      ).toThrow(DwnErrorCode.PermissionsProtocolValidateSchemaUnexpectedRecord);
+        () => PermissionsModule.validateSchema(message, dataBytes!)
+      ).toThrow(DwnErrorCode.PermissionsModuleValidateSchemaUnexpectedRecord);
     });
 
-    it('should fail if a permission scope protocolPath exceeds the maximum length', async () => {
+    it('should fail if a permission scope modulePath exceeds the maximum length', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const grant = await PermissionsProtocol.createGrant({
+      await expect(PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         grantedTo   : bob.did,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         scope       : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol     : 'https://example.com/protocol/test',
-          protocolPath : 'a'.repeat(601)
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module     : 'https://example.com/module/test',
+          modulePath : 'a'.repeat(601)
         }
-      });
-
-      const reply = await dwn.processMessage(alice.did, grant.recordsWrite.message, {
-        dataStream: DataStream.fromBytes(grant.permissionGrantBytes)
-      });
-      expect(reply.status.code).toBe(400);
+      })).rejects.toThrow('must NOT have more than 600 characters');
     });
 
-    it('performs additional validation to the tagged protocol in a Revocation message ensuring it matches the Grant it is revoking', async () => {
+    it('performs additional validation to the tagged module in a Revocation message ensuring it matches the Grant it is revoking', async () => {
       // scenario:
-      //  Alice creates a grant scoped to a protocol.
-      //  Alice then tries to revoke the grant without a protocol set, it should fail.
-      //  Alice then tries to revoke the grant with an invalid protocol, it should fail.
-      //  Alice finally tries to revoke the grant with a valid protocol, it should succeed.
+      //  Alice creates a grant scoped to a module.
+      //  Alice then tries to revoke the grant without a module set, it should fail.
+      //  Alice then tries to revoke the grant with an invalid module, it should fail.
+      //  Alice finally tries to revoke the grant with a valid module, it should succeed.
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const grantProtocol = 'https://example.com/protocol/test';
-      const invalidProtocol = 'https://example.com/protocol/invalid';
+      const grantModule = 'https://example.com/module/test';
+      const invalidModule = 'https://example.com/module/invalid';
 
       // alice creates a grant for bob
-      const grantWrite = await PermissionsProtocol.createGrant({
+      const grantWrite = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         description : 'Allow Bob to write',
@@ -489,7 +484,7 @@ export function testPermissions(): void {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : grantProtocol,
+          module    : grantModule,
         }
       });
       const grantWriteReply = await dwn.processMessage(alice.did, grantWrite.recordsWrite.message, {
@@ -497,55 +492,55 @@ export function testPermissions(): void {
       });
       expect(grantWriteReply.status.code).toBe(202);
 
-      // attempt to revoke the grant without a protocol set
+      // attempt to revoke the grant without a module set
       const permissionRevocationBytes = Encoder.objectToBytes({ description: 'Revoking the grant' });
-      const revokeWithoutProtocolRecordsWrite = await RecordsWrite.create({
+      const revokeWithoutModuleRecordsWrite = await RecordsWrite.create({
         signer          : Jws.createSigner(alice),
         parentContextId : grantWrite.dataEncodedMessage.recordId,
-        protocol        : PermissionsProtocol.uri,
-        protocolPath    : PermissionsProtocol.revocationPath,
+        module          : PermissionsModule.uri,
+        modulePath      : PermissionsModule.revocationPath,
         dataFormat      : 'application/json',
         data            : permissionRevocationBytes,
       });
 
-      const revokeWriteWithoutProtocolReply = await dwn.processMessage(alice.did, revokeWithoutProtocolRecordsWrite.message, {
+      const revokeWriteWithoutModuleReply = await dwn.processMessage(alice.did, revokeWithoutModuleRecordsWrite.message, {
         dataStream: DataStream.fromBytes(permissionRevocationBytes)
       });
-      expect(revokeWriteWithoutProtocolReply.status.code).toBe(400);
-      expect(revokeWriteWithoutProtocolReply.status.detail).toContain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
-      expect(revokeWriteWithoutProtocolReply.status.detail).toContain(
-        `Revocation protocol undefined does not match grant protocol ${grantProtocol}`
+      expect(revokeWriteWithoutModuleReply.status.code).toBe(400);
+      expect(revokeWriteWithoutModuleReply.status.detail).toContain(DwnErrorCode.PermissionsModuleValidateRevocationModuleTagMismatch);
+      expect(revokeWriteWithoutModuleReply.status.detail).toContain(
+        `Revocation module undefined does not match grant module ${grantModule}`
       );
 
-      // revoke the grant with an invalid protocol
-      const revokeWriteWithMissMatchedProtocol = await RecordsWrite.create({
+      // revoke the grant with an invalid module
+      const revokeWriteWithMissMatchedModule = await RecordsWrite.create({
         signer          : Jws.createSigner(alice),
         parentContextId : grantWrite.dataEncodedMessage.recordId,
-        protocol        : PermissionsProtocol.uri,
-        protocolPath    : PermissionsProtocol.revocationPath,
+        module          : PermissionsModule.uri,
+        modulePath      : PermissionsModule.revocationPath,
         dataFormat      : 'application/json',
         data            : permissionRevocationBytes,
-        tags            : { protocol: invalidProtocol }
+        tags            : { module: invalidModule }
       });
 
-      const revokeWriteWithMissMatchedProtocolReply = await dwn.processMessage(alice.did, revokeWriteWithMissMatchedProtocol.message, {
+      const revokeWriteWithMissMatchedModuleReply = await dwn.processMessage(alice.did, revokeWriteWithMissMatchedModule.message, {
         dataStream: DataStream.fromBytes(permissionRevocationBytes)
       });
-      expect(revokeWriteWithMissMatchedProtocolReply.status.code).toBe(400);
-      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).toContain(DwnErrorCode.PermissionsProtocolValidateRevocationProtocolTagMismatch);
-      expect(revokeWriteWithMissMatchedProtocolReply.status.detail).toContain(
-        `Revocation protocol ${invalidProtocol} does not match grant protocol ${grantProtocol}`
+      expect(revokeWriteWithMissMatchedModuleReply.status.code).toBe(400);
+      expect(revokeWriteWithMissMatchedModuleReply.status.detail).toContain(DwnErrorCode.PermissionsModuleValidateRevocationModuleTagMismatch);
+      expect(revokeWriteWithMissMatchedModuleReply.status.detail).toContain(
+        `Revocation module ${invalidModule} does not match grant module ${grantModule}`
       );
 
-      // revoke the grant with a valid protocol
+      // revoke the grant with a valid module
       const revokeWrite = await RecordsWrite.create({
         signer          : Jws.createSigner(alice),
         parentContextId : grantWrite.dataEncodedMessage.recordId,
-        protocol        : PermissionsProtocol.uri,
-        protocolPath    : PermissionsProtocol.revocationPath,
+        module          : PermissionsModule.uri,
+        modulePath      : PermissionsModule.revocationPath,
         dataFormat      : 'application/json',
         data            : permissionRevocationBytes,
-        tags            : { protocol: grantProtocol }
+        tags            : { module: grantModule }
       });
 
       const revokeWriteReply = await dwn.processMessage(alice.did, revokeWrite.message, {
@@ -560,8 +555,8 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol
-        const messagesReadPermissions = await PermissionsProtocol.createGrant({
+        // create a permission grant with module
+        const messagesReadPermissions = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -569,7 +564,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
           }
         });
 
@@ -583,8 +578,8 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol
-        const messagesSubscribePermissions = await PermissionsProtocol.createGrant({
+        // create a permission grant with module
+        const messagesSubscribePermissions = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -592,7 +587,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
           }
         });
 
@@ -602,35 +597,35 @@ export function testPermissions(): void {
         expect(messagesSubscribePermissionsReply.status.code).toBe(202);
       });
 
-      it('MessagesRead with protocolPath and contextId scopes', async () => {
+      it('MessagesRead with modulePath and contextId scopes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const withProtocolPath = await PermissionsProtocol.createGrant({
+        const withModulePath = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           scope       : {
-            interface    : DwnInterfaceName.Messages,
-            method       : DwnMethodName.Read,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Messages,
+            method     : DwnMethodName.Read,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        const withModulePathReply = await dwn.processMessage(alice.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
 
-        const withContextId = await PermissionsProtocol.createGrant({
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -645,8 +640,8 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol and contextId
-        const withContextId = await PermissionsProtocol.createGrant({
+        // create a permission grant with module and contextId
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -654,7 +649,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Delete,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -664,32 +659,32 @@ export function testPermissions(): void {
         });
         expect(withContextIdReply.status.code).toBe(202);
 
-        // create a permission request with protocol and protocolPath
-        const withProtocolPath = await PermissionsProtocol.createGrant({
+        // create a permission request with module and modulePath
+        const withModulePath = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Requesting to delete from Alice foo/bar',
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Delete,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Delete,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        const withModulePathReply = await dwn.processMessage(alice.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
       });
 
       it('RecordsRead authorizes read-like access', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol and contextId scope
-        const withContextId = await PermissionsProtocol.createGrant({
+        // create a permission grant with module and contextId scope
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -698,7 +693,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -708,31 +703,31 @@ export function testPermissions(): void {
         });
         expect(withContextIdReply.status.code).toBe(202);
 
-        // create a permission request with protocol and protocolPath scope
-        const withProtocolPath = await PermissionsProtocol.createRequest({
+        // create a permission request with module and modulePath scope
+        const withModulePath = await PermissionsModule.createRequest({
           signer      : Jws.createSigner(bob),
           description : 'Requesting to query from Alice foo/bar',
           delegated   : true,
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(bob.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionRequestBytes)
+        const withModulePathReply = await dwn.processMessage(bob.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionRequestBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
       });
 
       it('RecordsRead', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol and contextId scope
-        const withContextId = await PermissionsProtocol.createGrant({
+        // create a permission grant with module and contextId scope
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -741,7 +736,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -751,33 +746,33 @@ export function testPermissions(): void {
         });
         expect(withContextIdReply.status.code).toBe(202);
 
-        // create a permission request with protocol and protocolPath scope
-        const withProtocolPath = await PermissionsProtocol.createGrant({
+        // create a permission request with module and modulePath scope
+        const withModulePath = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Requesting to read to Alice foo/bar',
           delegated   : true,
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        const withModulePathReply = await dwn.processMessage(alice.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
       });
 
       it('RecordsRead supports subscribe-style scopes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol and contextId scope
-        const withContextId = await PermissionsProtocol.createGrant({
+        // create a permission grant with module and contextId scope
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -786,7 +781,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -796,33 +791,33 @@ export function testPermissions(): void {
         });
         expect(withContextIdReply.status.code).toBe(202);
 
-        // create a permission request with protocol and protocolPath scope
-        const withProtocolPath = await PermissionsProtocol.createGrant({
+        // create a permission request with module and modulePath scope
+        const withModulePath = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Requesting to subscribe to Alice foo/bar',
           delegated   : true,
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        const withModulePathReply = await dwn.processMessage(alice.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
       });
 
       it('RecordsWrite', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol and contextId scope
-        const withContextId = await PermissionsProtocol.createGrant({
+        // create a permission grant with module and contextId scope
+        const withContextId = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -831,7 +826,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test',
+            module    : 'https://example.com/module/test',
             contextId : 'test-context'
           }
         });
@@ -841,54 +836,54 @@ export function testPermissions(): void {
         });
         expect(withContextIdReply.status.code).toBe(202);
 
-        // create a permission request with protocol and protocolPath scope
-        const withProtocolPath = await PermissionsProtocol.createGrant({
+        // create a permission request with module and modulePath scope
+        const withModulePath = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Requesting to write to Alice foo/bar',
           delegated   : true,
           scope       : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : 'https://example.com/protocol/test',
-            protocolPath : 'foo/bar'
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : 'https://example.com/module/test',
+            modulePath : 'foo/bar'
           }
         });
 
-        const withProtocolPathReply = await dwn.processMessage(alice.did, withProtocolPath.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(withProtocolPath.permissionGrantBytes)
+        const withModulePathReply = await dwn.processMessage(alice.did, withModulePath.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(withModulePath.permissionGrantBytes)
         });
-        expect(withProtocolPathReply.status.code).toBe(202);
+        expect(withModulePathReply.status.code).toBe(202);
       });
 
-      it('ProtocolsQuery', async () => {
+      it('ModulesQuery', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // create a permission grant with protocol query that is unrestricted
-        const protocolQueryPermissions = await PermissionsProtocol.createGrant({
+        // create a permission grant with module query that is unrestricted
+        const moduleQueryPermissions = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Requesting to query from Alice test-context',
           scope       : {
-            interface : DwnInterfaceName.Protocols,
+            interface : DwnInterfaceName.Modules,
             method    : DwnMethodName.Query,
           }
         });
 
-        const protocolQueryPermissionsReply = await dwn.processMessage(alice.did, protocolQueryPermissions.recordsWrite.message, {
-          dataStream: DataStream.fromBytes(protocolQueryPermissions.permissionGrantBytes)
+        const moduleQueryPermissionsReply = await dwn.processMessage(alice.did, moduleQueryPermissions.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(moduleQueryPermissions.permissionGrantBytes)
         });
-        expect(protocolQueryPermissionsReply.status.code).toBe(202);
+        expect(moduleQueryPermissionsReply.status.code).toBe(202);
       });
     });
 
     describe('validateScopeAndTags', () => {
       it('should be called for a Request or Grant record', async () => {
         // spy on `validateScope`
-        const validateScopeSpy = sinon.spy(PermissionsProtocol as any, 'validateScopeAndTags');
+        const validateScopeSpy = sinon.spy(PermissionsModule as any, 'validateScopeAndTags');
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
@@ -896,11 +891,11 @@ export function testPermissions(): void {
         const permissionScope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://example.com/protocol/test'
+          module    : 'https://example.com/module/test'
         };
 
         // create a request
-        const requestToAlice = await PermissionsProtocol.createRequest({
+        const requestToAlice = await PermissionsModule.createRequest({
           signer      : Jws.createSigner(bob),
           description : `Requesting to write to Alice's DWN`,
           delegated   : false,
@@ -915,7 +910,7 @@ export function testPermissions(): void {
         expect(validateScopeSpy.calledOnce).toBe(true);
 
         // create a grant
-        const grantedToBob = await PermissionsProtocol.createGrant({
+        const grantedToBob = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Allow Bob to write',
@@ -932,40 +927,40 @@ export function testPermissions(): void {
         expect(validateScopeSpy.calledTwice).toBe(true); // called twice, once for the request and once for the grant
       });
 
-      it('should throw if the scope is a RecordsPermissionScope and a protocol tag is not defined on the Request and Grant record', async () => {
+      it('should throw if the scope is a RecordsPermissionScope and a module tag is not defined on the Request and Grant record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const permissionScope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://example.com/protocol/test'
+          module    : 'https://example.com/module/test'
         };
 
-        // create a permission request without a protocol tag
+        // create a permission request without a module tag
         const requestWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
-          data         : Encoder.stringToBytes(JSON.stringify({})),
-          tags         : { someTag: 'someValue' } // not a protocol tag
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
+          data       : Encoder.stringToBytes(JSON.stringify({})),
+          tags       : { someTag: 'someValue' } // not a module tag
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, requestWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeMissingModuleTag);
 
-        // create a permission grant without a protocol tag
+        // create a permission grant without a module tag
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
-          data         : Encoder.stringToBytes(JSON.stringify({})),
-          tags         : { someTag: 'someValue' } // not a protocol tag
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
+          data       : Encoder.stringToBytes(JSON.stringify({})),
+          tags       : { someTag: 'someValue' } // not a module tag
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeMissingModuleTag);
       });
 
       it('should throw if the scope is a RecordsPermissionScope and the Request and Grant record has no tags', async () => {
@@ -974,147 +969,147 @@ export function testPermissions(): void {
         const permissionScope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://example.com/protocol/test'
+          module    : 'https://example.com/module/test'
         };
 
-        // create a permission request without a protocol tag
+        // create a permission request without a module tag
         const requestWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
-          data         : Encoder.stringToBytes(JSON.stringify({}))
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
+          data       : Encoder.stringToBytes(JSON.stringify({}))
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, requestWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeMissingModuleTag);
 
-        // create a permission grant without a protocol tag
+        // create a permission grant without a module tag
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
-          data         : Encoder.stringToBytes(JSON.stringify({})),
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
+          data       : Encoder.stringToBytes(JSON.stringify({})),
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeMissingProtocolTag);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeMissingModuleTag);
       });
 
-      it('should throw if the protocol tag in the Request and Grant record does not match the protocol defined in the scope', async () => {
+      it('should throw if the module tag in the Request and Grant record does not match the module defined in the scope', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         // create a permission scope to test against
         const permissionScope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'https://example.com/protocol/test'
+          module    : 'https://example.com/module/test'
         };
 
-        // create a permission request with a protocol tag that does not match the scope
+        // create a permission request with a module tag that does not match the scope
         const requestWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
-          data         : Encoder.stringToBytes(JSON.stringify({ })),
-          tags         : { protocol: 'https://example.com/protocol/invalid' }
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
+          data       : Encoder.stringToBytes(JSON.stringify({ })),
+          tags       : { module: 'https://example.com/module/invalid' }
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, requestWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeModuleMismatch);
 
-        // create a permission grant with a protocol tag that does not match the scope
+        // create a permission grant with a module tag that does not match the scope
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
-          data         : Encoder.stringToBytes(JSON.stringify({ })),
-          tags         : { protocol: 'https://example.com/protocol/invalid' }
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
+          data       : Encoder.stringToBytes(JSON.stringify({ })),
+          tags       : { module: 'https://example.com/module/invalid' }
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeModuleMismatch);
       });
 
-      it('should throw if protocolPath and contextId are both defined in the scope for a Request and Grant record', async () => {
+      it('should throw if modulePath and contextId are both defined in the scope for a Request and Grant record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const permissionScope: PermissionScope = {
-          interface    : DwnInterfaceName.Records,
-          method       : DwnMethodName.Write,
-          protocol     : 'https://example.com/protocol/test',
-          protocolPath : 'test/path',
-          contextId    : 'test-context'
+          interface  : DwnInterfaceName.Records,
+          method     : DwnMethodName.Write,
+          module     : 'https://example.com/module/test',
+          modulePath : 'test/path',
+          contextId  : 'test-context'
         };
 
-        // create a permission request with a scope that has both protocolPath and contextId
+        // create a permission request with a scope that has both modulePath and contextId
         const requestRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
-          data         : Encoder.stringToBytes(JSON.stringify({ })),
-          tags         : { protocol: 'https://example.com/protocol/test' }
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
+          data       : Encoder.stringToBytes(JSON.stringify({ })),
+          tags       : { module: 'https://example.com/module/test' }
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeContextIdProhibitedProperties);
 
-        // create a permission grant with a scope that has both protocolPath and contextId
+        // create a permission grant with a scope that has both modulePath and contextId
         const grantRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
-          data         : Encoder.stringToBytes(JSON.stringify({ })),
-          tags         : { protocol: 'https://example.com/protocol/test' }
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
+          data       : Encoder.stringToBytes(JSON.stringify({ })),
+          tags       : { module: 'https://example.com/module/test' }
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, grantRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeContextIdProhibitedProperties);
 
         const messagesPermissionScope: PermissionScope = {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol     : 'https://example.com/protocol/test',
-          protocolPath : 'test/path',
-          contextId    : 'test-context'
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module     : 'https://example.com/module/test',
+          modulePath : 'test/path',
+          contextId  : 'test-context'
         };
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](messagesPermissionScope, requestRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeContextIdProhibitedProperties);
+          () => PermissionsModule['validateScopeAndTags'](messagesPermissionScope, requestRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeContextIdProhibitedProperties);
       });
 
-      it('should throw if a subtree permission scope is missing protocol during validation', async () => {
+      it('should throw if a subtree permission scope is missing module during validation', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const permissionScope: PermissionScope = {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocolPath : 'test/path'
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          modulePath : 'test/path'
         };
 
         const requestRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
-          data         : Encoder.stringToBytes(JSON.stringify({ })),
+          author     : alice,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
+          data       : Encoder.stringToBytes(JSON.stringify({ })),
         });
 
         expect(
-          () => PermissionsProtocol['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
-        ).toThrow(DwnErrorCode.PermissionsProtocolValidateScopeSubtreeScopeMissingProtocol);
+          () => PermissionsModule['validateScopeAndTags'](permissionScope, requestRecordsWrite.message)
+        ).toThrow(DwnErrorCode.PermissionsModuleValidateScopeSubtreeScopeMissingModule);
       });
     });
 
     describe('revocation cleanup', () => {
       it('should delete grant-authorized messages created at or after the revocation timestamp', async () => {
         // scenario:
-        // 1. Alice installs a protocol and grants Bob write access
+        // 1. Alice installs a module and grants Bob write access
         // 2. Bob writes a record using the grant with a future timestamp
         // 3. Alice revokes the grant (the revocation's messageTimestamp is auto-set to "now")
         // 4. The record Bob wrote with a future dateCreated (>= revocation messageTimestamp) should be deleted
@@ -1122,25 +1117,25 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = minimalProtocolDefinition;
+        const moduleDefinition = minimalModuleDefinition;
 
-        // Alice installs the protocol
-        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        // Alice installs the module
+        const modulesConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // Alice grants Bob write permission
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           }
         });
         const grantWriteReply = await dwn.processMessage(
@@ -1154,8 +1149,8 @@ export function testPermissions(): void {
         const futureTimestamp = Time.createOffsetTimestamp({ seconds: 60 });
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           dateCreated       : futureTimestamp,
           messageTimestamp  : futureTimestamp,
@@ -1166,14 +1161,14 @@ export function testPermissions(): void {
         // Verify the record exists before revocation
         const queryBefore = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
         expect(queryBeforeReply.status.code).toBe(200);
         expect(queryBeforeReply.entries!).toHaveLength(1);
 
         // Alice revokes the grant (messageTimestamp is auto-set to current time, which is before futureTimestamp)
-        const revokeWrite = await PermissionsProtocol.createRevocation({
+        const revokeWrite = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
           grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
@@ -1187,7 +1182,7 @@ export function testPermissions(): void {
         // The grant-authorized record should have been deleted by revocation cleanup
         const queryAfter = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
@@ -1196,7 +1191,7 @@ export function testPermissions(): void {
 
       it('should not delete grant-authorized messages created before the revocation timestamp', async () => {
         // scenario:
-        // 1. Alice installs a protocol and grants Bob write access
+        // 1. Alice installs a module and grants Bob write access
         // 2. Bob writes a record using the grant (dateCreated is "now")
         // 3. Alice revokes the grant (messageTimestamp is auto-set to a slightly later "now")
         // 4. The record Bob wrote before the revocation should NOT be deleted
@@ -1204,25 +1199,25 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = minimalProtocolDefinition;
+        const moduleDefinition = minimalModuleDefinition;
 
-        // Alice installs the protocol
-        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        // Alice installs the module
+        const modulesConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // Alice grants Bob write permission
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           }
         });
         const grantWriteReply = await dwn.processMessage(
@@ -1235,15 +1230,15 @@ export function testPermissions(): void {
         // Bob writes a record using the grant (dateCreated defaults to current time)
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
         });
         const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
         expect(writeReply.status.code).toBe(202);
 
         // Alice revokes the grant (messageTimestamp is auto-set slightly after the record's dateCreated)
-        const revokeWrite = await PermissionsProtocol.createRevocation({
+        const revokeWrite = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
           grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
@@ -1257,7 +1252,7 @@ export function testPermissions(): void {
         // The record Bob wrote before the revocation should still exist
         const queryAfter = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
@@ -1266,7 +1261,7 @@ export function testPermissions(): void {
 
       it('should delete data from the data store for large records when revoking a grant', async () => {
         // scenario:
-        // 1. Alice installs a protocol and grants Bob write access
+        // 1. Alice installs a module and grants Bob write access
         // 2. Bob writes a record with data larger than maxDataSizeAllowedToBeEncoded (30KB)
         // 3. Alice revokes the grant
         // 4. Both the message and the data blob should be deleted
@@ -1274,25 +1269,25 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = minimalProtocolDefinition;
+        const moduleDefinition = minimalModuleDefinition;
 
-        // Alice installs the protocol
-        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        // Alice installs the module
+        const modulesConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // Alice grants Bob write permission
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           }
         });
         const grantWriteReply = await dwn.processMessage(
@@ -1307,8 +1302,8 @@ export function testPermissions(): void {
         const largeData = TestDataGenerator.randomBytes(40_000);
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           data              : largeData,
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           dateCreated       : futureTimestamp,
@@ -1322,7 +1317,7 @@ export function testPermissions(): void {
         expect(dataResult).toBeDefined();
 
         // Alice revokes the grant
-        const revokeWrite = await PermissionsProtocol.createRevocation({
+        const revokeWrite = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
           grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
@@ -1336,7 +1331,7 @@ export function testPermissions(): void {
         // The record should be deleted from the message store
         const queryAfter = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
@@ -1349,7 +1344,7 @@ export function testPermissions(): void {
 
       it('should delete multiple grant-authorized messages when revoking a grant', async () => {
         // scenario:
-        // 1. Alice installs a protocol and grants Bob write access
+        // 1. Alice installs a module and grants Bob write access
         // 2. Bob writes three records: one at current time, two with future timestamps
         // 3. Alice revokes the grant (at current time, between the first and future records)
         // 4. The current-time record survives; the two future records are deleted
@@ -1357,25 +1352,25 @@ export function testPermissions(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = minimalProtocolDefinition;
+        const moduleDefinition = minimalModuleDefinition;
 
-        // Alice installs the protocol
-        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        // Alice installs the module
+        const modulesConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // Alice grants Bob write permission
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           }
         });
         const grantWriteReply = await dwn.processMessage(
@@ -1392,8 +1387,8 @@ export function testPermissions(): void {
         // Bob writes record 1 (current time — should survive)
         const write1 = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
         });
         const write1Reply = await dwn.processMessage(alice.did, write1.recordsWrite.message, { dataStream: write1.dataStream });
@@ -1402,8 +1397,8 @@ export function testPermissions(): void {
         // Bob writes record 2 (future — should be deleted)
         const write2 = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           dateCreated       : futureTimestamp,
           messageTimestamp  : futureTimestamp,
@@ -1414,8 +1409,8 @@ export function testPermissions(): void {
         // Bob writes record 3 (far future — should be deleted)
         const write3 = await TestDataGenerator.generateRecordsWrite({
           author            : bob,
-          protocol          : protocolDefinition.protocol,
-          protocolPath      : 'foo',
+          module            : moduleDefinition.module,
+          modulePath        : 'foo',
           permissionGrantId : permissionGrant.recordsWrite.message.recordId,
           dateCreated       : farFutureTimestamp,
           messageTimestamp  : farFutureTimestamp,
@@ -1426,14 +1421,14 @@ export function testPermissions(): void {
         // Verify all 3 records exist before revocation
         const queryBefore = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryBeforeReply = await dwn.processMessage(alice.did, queryBefore.message);
         expect(queryBeforeReply.status.code).toBe(200);
         expect(queryBeforeReply.entries!).toHaveLength(3);
 
         // Alice revokes the grant (messageTimestamp is "now", between record 1 and records 2/3)
-        const revokeWrite = await PermissionsProtocol.createRevocation({
+        const revokeWrite = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
           grant  : PermissionGrant.parse(permissionGrant.dataEncodedMessage),
         });
@@ -1447,7 +1442,7 @@ export function testPermissions(): void {
         // Only the record written at current time should remain
         const queryAfter = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol },
+          filter : { module: moduleDefinition.module },
         });
         const queryAfterReply = await dwn.processMessage(alice.did, queryAfter.message);
         expect(queryAfterReply.status.code).toBe(200);
@@ -1459,15 +1454,15 @@ export function testPermissions(): void {
     describe('permission record immutability', () => {
       // Permission records (requests, grants, and revocations) are `$immutable`: a grant is
       // never amended — it is revoked and re-issued. Immutability also locks each record's
-      // initial-write facts (notably the `protocol` tag), which replication fingerprint
-      // domains and protocol-scoped shadow filters are computed from.
+      // initial-write facts (notably the `module` tag), which replication fingerprint
+      // domains and module-scoped shadow filters are computed from.
 
       it('should reject an update to an existing permission grant record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // Alice creates a permission grant for Bob — the initial write is allowed.
-        const grantWrite = await PermissionsProtocol.createGrant({
+        const grantWrite = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Allow Bob to write',
@@ -1475,7 +1470,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test'
+            module    : 'https://example.com/module/test'
           }
         });
 
@@ -1499,15 +1494,15 @@ export function testPermissions(): void {
           { dataStream: DataStream.fromBytes(grantWrite.permissionGrantBytes) }
         );
         expect(grantUpdateReply.status.code).toBe(400);
-        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
       it('should reject a tags-only mutation of an existing permission grant record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Alice creates a protocol-scoped grant; the scoped protocol is carried in `tags.protocol`.
-        const grantWrite = await PermissionsProtocol.createGrant({
+        // Alice creates a module-scoped grant; the scoped module is carried in `tags.module`.
+        const grantWrite = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Allow Bob to write',
@@ -1515,7 +1510,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test'
+            module    : 'https://example.com/module/test'
           }
         });
 
@@ -1527,17 +1522,17 @@ export function testPermissions(): void {
         expect(grantWriteReply.status.code).toBe(202);
 
         // A tags-only mutation (no data change) is still a non-initial RecordsWrite and must be
-        // rejected — a retagged grant would drift between the protocol shadow-filter stream
+        // rejected — a retagged grant would drift between the module shadow-filter stream
         // (current tags) and its replication fingerprint domain (initial-write tags).
         const grantUpdate = await RecordsWrite.createFrom({
           recordsWriteMessage : grantWrite.recordsWrite.message,
-          tags                : { protocol: 'https://example.com/protocol/other' },
+          tags                : { module: 'https://example.com/module/other' },
           signer              : Jws.createSigner(alice),
         });
 
         const grantUpdateReply = await dwn.processMessage(alice.did, grantUpdate.message);
         expect(grantUpdateReply.status.code).toBe(400);
-        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(grantUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
       it('should reject an update to an existing permission request record', async () => {
@@ -1545,14 +1540,14 @@ export function testPermissions(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // Bob creates a permission request in Alice's DWN — the initial write is allowed.
-        const requestWrite = await PermissionsProtocol.createRequest({
+        const requestWrite = await PermissionsModule.createRequest({
           signer      : Jws.createSigner(bob),
           description : 'Requesting to write',
           delegated   : false,
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test'
+            module    : 'https://example.com/module/test'
           }
         });
 
@@ -1576,7 +1571,7 @@ export function testPermissions(): void {
           { dataStream: DataStream.fromBytes(requestWrite.permissionRequestBytes) }
         );
         expect(requestUpdateReply.status.code).toBe(400);
-        expect(requestUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(requestUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
       it('should still allow revoking a grant but reject updates to the revocation record', async () => {
@@ -1584,7 +1579,7 @@ export function testPermissions(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // Alice creates a permission grant for Bob.
-        const grantWrite = await PermissionsProtocol.createGrant({
+        const grantWrite = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Allow Bob to write',
@@ -1592,7 +1587,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test'
+            module    : 'https://example.com/module/test'
           }
         });
 
@@ -1605,7 +1600,7 @@ export function testPermissions(): void {
 
         // Revoking the grant still works: the revocation is a new record (an initial write
         // under the grant), so `$immutable` on the grant path does not block it.
-        const revocationWrite = await PermissionsProtocol.createRevocation({
+        const revocationWrite = await PermissionsModule.createRevocation({
           signer : Jws.createSigner(alice),
           grant  : PermissionGrant.parse(grantWrite.dataEncodedMessage),
         });
@@ -1630,7 +1625,7 @@ export function testPermissions(): void {
           { dataStream: DataStream.fromBytes(revocationWrite.permissionRevocationBytes) }
         );
         expect(revocationUpdateReply.status.code).toBe(400);
-        expect(revocationUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(revocationUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
       it('should reject replicated updates to permission records in applyReplicatedMessage', async () => {
@@ -1638,7 +1633,7 @@ export function testPermissions(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
         // An initial grant write is admitted through replication apply.
-        const grantWrite = await PermissionsProtocol.createGrant({
+        const grantWrite = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           description : 'Allow Bob to write',
@@ -1646,7 +1641,7 @@ export function testPermissions(): void {
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'https://example.com/protocol/test'
+            module    : 'https://example.com/module/test'
           }
         });
 
@@ -1672,20 +1667,20 @@ export function testPermissions(): void {
         );
         expect(applyUpdateResult.kind).toBe('Invalid');
         if (applyUpdateResult.kind === 'Invalid') {
-          expect(applyUpdateResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+          expect(applyUpdateResult.reason).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
         }
 
         // A replicated tags-only mutation is rejected the same way.
         const grantTagsUpdate = await RecordsWrite.createFrom({
           recordsWriteMessage : grantWrite.recordsWrite.message,
-          tags                : { protocol: 'https://example.com/protocol/other' },
+          tags                : { module: 'https://example.com/module/other' },
           signer              : Jws.createSigner(alice),
         });
 
         const applyTagsUpdateResult = await dwn.applyReplicatedMessage(alice.did, grantTagsUpdate.message);
         expect(applyTagsUpdateResult.kind).toBe('Invalid');
         if (applyTagsUpdateResult.kind === 'Invalid') {
-          expect(applyTagsUpdateResult.reason).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+          expect(applyTagsUpdateResult.reason).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
         }
       });
     });

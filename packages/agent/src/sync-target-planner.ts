@@ -4,14 +4,14 @@ import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-syn
 import type { SyncTarget, SyncTargetResolution } from './sync-target-resolver.js';
 
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
-import { syncScopeFromProtocols } from './types/sync.js';
+import { syncScopeFromModules } from './types/sync.js';
 
 /** Target-resolution surface required to plan registered sync targets. */
 export interface SyncTargetPlanningResolver {
   getEndpointUrls(did: string): Promise<string[]>;
   buildTargetResolutions(
     did: string,
-    scope: ReturnType<typeof syncScopeFromProtocols>,
+    scope: ReturnType<typeof syncScopeFromModules>,
     options: SyncIdentityOptions,
   ): Promise<SyncTargetResolution[]>;
   buildTargetsForEndpoint(
@@ -172,7 +172,7 @@ export class SyncTargetPlanner {
       return undefined;
     }
     try {
-      return await this._getTargetResolver().buildTargetResolutions(did, syncScopeFromProtocols(options.protocols), options);
+      return await this._getTargetResolver().buildTargetResolutions(did, syncScopeFromModules(options.modules), options);
     } catch (error: unknown) {
       if (await this._handleAuthorizationFailure(did, options, error)) {
         return undefined;

@@ -23,8 +23,8 @@ type AgentStub = {
 
 const connectedDid = 'did:example:member';
 const tenantDid = 'did:example:host';
-const protocol = 'https://example.com/shared';
-const protocolRole = 'note/member';
+const module = 'https://example.com/shared';
+const moduleRole = 'note/member';
 const recordId = 'shared-record';
 
 function createAuthorization(did: string): DwnMessage[DwnInterface.RecordsWrite]['authorization'] {
@@ -53,9 +53,9 @@ function createRecordsWrite(dataCid: string = 'data-cid'): DwnMessage[DwnInterfa
       dataSize         : 17,
       dateCreated      : '2026-01-01T00:00:00.000000Z',
       messageTimestamp : '2026-01-01T00:00:00.000000Z',
-      protocol,
-      protocolPath     : 'note',
-      schema           : `${protocol}/note`,
+      module,
+      modulePath       : 'note',
+      schema           : `${module}/note`,
     },
   } as DwnMessage[DwnInterface.RecordsWrite];
 }
@@ -95,7 +95,7 @@ function createApi(
     contextId         : 'workspace',
     followedSourceId  : 'role-record',
     invalidateReplica : options.invalidateReplica,
-    protocolRole,
+    moduleRole,
     tenantDid,
   });
 }
@@ -137,8 +137,8 @@ describe('context record execution', () => {
     await expect(dwn.records.read({ from: tenantDid, filter: { recordId } })).rejects.toThrow(
       'Context-bound operations cannot target another tenant.',
     );
-    await expect(dwn.records.read({ filter: { recordId }, protocolRole })).rejects.toThrow(
-      'Context-bound operations cannot invoke another protocol role.',
+    await expect(dwn.records.read({ filter: { recordId }, moduleRole })).rejects.toThrow(
+      'Context-bound operations cannot invoke another module role.',
     );
     expect(agent.sendDwnRequest.notCalled).toBe(true);
   });
@@ -162,7 +162,7 @@ describe('context record execution', () => {
       }
     });
     const dwn = createApi(agent);
-    const filter = { protocol, protocolPath: 'note' };
+    const filter = { module, modulePath: 'note' };
     const subscriptionHandler = (_message: DwnSubscriptionMessage): void => {};
 
     await dwn.records.count({ from: tenantDid, filter });
@@ -171,7 +171,7 @@ describe('context record execution', () => {
     await dwn.records.subscribe({ from: tenantDid, filter, subscriptionHandler });
     await dwn.subscribeRecordFrames({
       paths: ['note'],
-      protocol,
+      module,
     }, subscriptionHandler);
 
     expect(agent.sendDwnRequest.notCalled).toBe(true);
@@ -179,7 +179,7 @@ describe('context record execution', () => {
     expect(agent.processDwnRequest.getCall(3).args[0].subscriptionHandler).toBe(subscriptionHandler);
     for (const call of agent.processDwnRequest.getCalls()) {
       expect(call.args[0].target).toBe(tenantDid);
-      expect(call.args[0].messageParams.protocolRole).toBe(protocolRole);
+      expect(call.args[0].messageParams.moduleRole).toBe(moduleRole);
     }
   });
 
@@ -202,7 +202,7 @@ describe('context record execution', () => {
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
-      messageParams : { filter: { recordId }, protocolRole },
+      messageParams : { filter: { recordId }, moduleRole },
       target        : tenantDid,
     });
 
@@ -233,7 +233,7 @@ describe('context record execution', () => {
     const dwn = createApi(agent);
 
     const result = await dwn.queryRecordsWithRequiredGrant({
-      filter: { protocol, protocolPath: 'note' },
+      filter: { module, modulePath: 'note' },
     });
 
     expect(result.records).toHaveLength(1);
@@ -241,8 +241,8 @@ describe('context record execution', () => {
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.sendDwnRequest.firstCall.args[0]).toMatchObject({
       messageParams: {
-        filter: { protocol, protocolPath: 'note' },
-        protocolRole,
+        filter: { module, modulePath: 'note' },
+        moduleRole,
       },
       messageType : DwnInterface.RecordsQuery,
       target      : tenantDid,
@@ -270,13 +270,13 @@ describe('context record execution', () => {
 
     const { record } = await dwn.records.write({
       data            : { title: 'created' },
-      protocol,
-      protocolPath    : 'note',
+      module,
+      modulePath      : 'note',
       parentContextId : 'workspace',
     });
     await expect(record!.update({ data: { title: 'updated' } })).resolves.toBe(record);
     await expect(record!.delete()).resolves.toBeUndefined();
-    await expect(dwn.records.delete({ protocol, protocolPath: 'note', recordId }))
+    await expect(dwn.records.delete({ module, modulePath: 'note', recordId }))
       .resolves.toEqual({ status: { code: 202, detail: 'Accepted' } });
 
     expect(invalidateReplica.callCount).toBe(4);
@@ -401,7 +401,7 @@ describe('context record execution', () => {
 
     const error = await dwn.subscribeRecordFrames({
       paths: ['note'],
-      protocol,
+      module,
     }, leakedFrame).then(() => undefined, reason => reason as Error);
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message).toContain('active context role changed');
@@ -427,7 +427,7 @@ describe('context record execution', () => {
     const positions: string[] = [];
     const dwn = createApi(agent);
 
-    await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, async (message): Promise<void> => {
+    await dwn.subscribeRecordFrames({ paths: ['note'], module }, async (message): Promise<void> => {
       if (message.type !== 'eose') { return; }
       if (message.cursor.position === '1') {
         await deliver(eose('3'));
@@ -445,8 +445,8 @@ describe('context record execution', () => {
       ...baseWrite,
       descriptor: {
         ...baseWrite.descriptor,
-        protocol     : 'https://example.com/permissions',
-        protocolPath : 'grant',
+        module     : 'https://example.com/permissions',
+        modulePath : 'grant',
       },
     } as DwnMessage[DwnInterface.RecordsWrite];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
@@ -454,8 +454,8 @@ describe('context record execution', () => {
         cursor : { epoch: 'epoch', position: '1', streamId: 'stream' },
         event  : {
           message: {
-            descriptor: { interface: 'Protocols', method: 'Configure' },
-          } as DwnMessage[DwnInterface.ProtocolsConfigure],
+            descriptor: { interface: 'Modules', method: 'Configure' },
+          } as DwnMessage[DwnInterface.ModulesConfigure],
         },
         type: 'event',
       });
@@ -475,7 +475,7 @@ describe('context record execution', () => {
     const listener = sinon.stub();
     const dwn = createOwnerApi(agent);
 
-    await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, listener);
+    await dwn.subscribeRecordFrames({ paths: ['note'], module }, listener);
 
     expect(listener.calledOnce).toBe(true);
     expect(listener.firstCall.args[1].id).toBe(recordId);
@@ -489,7 +489,7 @@ describe('context record execution', () => {
     const listener = sinon.stub();
     const dwn = createApi(agent);
 
-    const reply = await dwn.subscribeRecordFrames({ paths: ['note'], protocol }, listener);
+    const reply = await dwn.subscribeRecordFrames({ paths: ['note'], module }, listener);
 
     expect(reply.status.code).toBe(401);
     expect(listener.notCalled).toBe(true);
@@ -508,18 +508,18 @@ describe('context record execution', () => {
 
     const dwn = createApi(agent);
     await dwn.records.write({
-      data         : {},
-      dataFormat   : 'application/json',
-      protocol,
-      protocolPath : 'note',
+      data       : {},
+      dataFormat : 'application/json',
+      module,
+      modulePath : 'note',
     });
-    await dwn.records.delete({ protocol, protocolPath: 'note', recordId });
+    await dwn.records.delete({ module, modulePath: 'note', recordId });
 
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(agent.sendDwnRequest.callCount).toBe(2);
     for (const call of agent.sendDwnRequest.getCalls()) {
       expect(call.args[0].target).toBe(tenantDid);
-      expect(call.args[0].messageParams.protocolRole).toBe(protocolRole);
+      expect(call.args[0].messageParams.moduleRole).toBe(moduleRole);
     }
   });
 
@@ -544,10 +544,10 @@ describe('context record execution', () => {
 
     const dwn = createApi(agent);
     const { record } = await dwn.records.write({
-      data         : value,
-      dataFormat   : 'application/json',
-      protocol,
-      protocolPath : 'note',
+      data       : value,
+      dataFormat : 'application/json',
+      module,
+      modulePath : 'note',
     });
 
     expect(await record!.data.json()).toEqual(value);
@@ -555,7 +555,7 @@ describe('context record execution', () => {
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.processDwnRequest.calledOnce).toBe(true);
     expect(agent.processDwnRequest.firstCall.args[0]).toMatchObject({
-      messageParams : { filter: { recordId }, protocolRole },
+      messageParams : { filter: { recordId }, moduleRole },
       target        : tenantDid,
     });
   });
@@ -657,13 +657,13 @@ describe('context record execution', () => {
 
     expect(await record!.data.json()).toEqual({ title: 'before' });
     await record!.update({ from: tenantDid, tags: { pinned: true } });
-    expect(record!.protocolRole).toBe(protocolRole);
+    expect(record!.moduleRole).toBe(moduleRole);
     expect(await record!.data.json()).toEqual({ title: 'before' });
     await record!.update({ data: { title: 'after' } });
-    await expect(record!.delete({ protocolRole: 'note/owner' }))
-      .rejects.toThrow('Context-bound records cannot invoke another protocol role.');
+    await expect(record!.delete({ moduleRole: 'note/owner' }))
+      .rejects.toThrow('Context-bound records cannot invoke another module role.');
     await record!.delete();
-    expect(record!.protocolRole).toBe(protocolRole);
+    expect(record!.moduleRole).toBe(moduleRole);
 
     const localTypes = agent.processDwnRequest.getCalls().map(call => call.args[0].messageType);
     expect(localTypes.every(type => type === DwnInterface.RecordsRead)).toBe(true);
@@ -676,6 +676,6 @@ describe('context record execution', () => {
       DwnInterface.RecordsDelete,
     ]);
     expect(remoteRequests.every(request => request.target === tenantDid)).toBe(true);
-    expect(remoteRequests.every(request => request.messageParams?.protocolRole === protocolRole)).toBe(true);
+    expect(remoteRequests.every(request => request.messageParams?.moduleRole === moduleRole)).toBe(true);
   });
 });

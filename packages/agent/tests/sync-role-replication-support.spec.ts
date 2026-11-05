@@ -32,7 +32,7 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   KeyAgreementAlgorithm,
   Message,
-  ProtocolsConfigure,
+  ModulesConfigure,
   RecordsDelete,
   RecordsRead,
   RecordsWrite,
@@ -48,7 +48,7 @@ import {
   RoleReplicationSupportError,
 } from '../src/sync-role-replication-support.js';
 
-const PROTOCOL = 'https://example.com/notebooks';
+const MODULE = 'https://example.com/notebooks';
 const ROLE_PATH = 'notebook/viewer';
 
 describe('readRoleReplicationSupport', () => {
@@ -75,7 +75,7 @@ describe('readRoleReplicationSupport', () => {
     const result = await readFixture(fixture);
 
     expect(result.roleRecordId).toBe(fixture.role.message.recordId);
-    expect(result.protocolDefinition).toEqual(fixture.configure.message.descriptor.definition);
+    expect(result.moduleDefinition).toEqual(fixture.configure.message.descriptor.definition);
     expect(result.root.message).toEqual(fixture.root.message);
     expect(result.dependencies.map(entry => entry.message)).toEqual([
       fixture.configure.message,
@@ -129,7 +129,7 @@ describe('readRoleReplicationSupport', () => {
           : { kind: 'Superseded' };
       }
       if (cid === currentCid && (!appliedCids.has(configureCid) || !appliedCids.has(roleCid))) {
-        return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: PROTOCOL }] };
+        return { kind: 'Incomplete', missing: [{ type: 'Module', module: MODULE }] };
       }
       appliedCids.add(cid);
       if (cid === currentCid) {
@@ -166,9 +166,9 @@ describe('readRoleReplicationSupport', () => {
 
   it('replays real DWN role admission after settlement fails without local confirmation', async () => {
     const fixture = await createFixture();
-    fixture.configure = await ProtocolsConfigure.create({
+    fixture.configure = await ModulesConfigure.create({
       definition: {
-        protocol  : PROTOCOL,
+        module    : MODULE,
         published : true,
         types     : {
           notebook : { dataFormats: ['text/plain'] },
@@ -267,7 +267,7 @@ describe('readRoleReplicationSupport', () => {
         return { kind: 'Superseded' };
       }
       return await Message.getCid(message) === rootCid
-        ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: PROTOCOL }] }
+        ? { kind: 'Incomplete', missing: [{ type: 'Module', module: MODULE }] }
         : { kind: 'Invalid', reason: 'injected dependency rejection' };
     });
     const target = roleRetryTarget(fixture.root.message, fixture.role.message.recordId);
@@ -351,18 +351,18 @@ describe('readRoleReplicationSupport', () => {
       },
     });
     const audience = await controlRecord({
-      contextId    : fixture.root.message.contextId,
+      contextId  : fixture.root.message.contextId,
       keyId,
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      rolePath     : ROLE_PATH,
+      modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath   : ROLE_PATH,
     });
     fixture.support.push(await supportEntry(audience, true));
     const deleterRole = await RecordsWrite.create({
       data            : new TextEncoder().encode('peer viewer'),
       dataFormat      : 'text/plain',
       parentContextId : fixture.root.message.contextId,
-      protocol        : PROTOCOL,
-      protocolPath    : ROLE_PATH,
+      module          : MODULE,
+      modulePath      : ROLE_PATH,
       recipient       : peer.uri,
       signer          : ownerSigner,
     });
@@ -372,9 +372,9 @@ describe('readRoleReplicationSupport', () => {
     const deletedInitialWrite = structuredClone(fixture.root.message);
     delete deletedInitialWrite.encodedData;
     const recordsDelete = await RecordsDelete.create({
-      protocolRole : ROLE_PATH,
-      recordId     : fixture.root.message.recordId,
-      signer       : peerSigner,
+      moduleRole : ROLE_PATH,
+      recordId   : fixture.root.message.recordId,
+      signer     : peerSigner,
     });
     const agent = responseAgent(fixture) as any;
     agent.rpc.sendDwnRequest.callsFake(() => Promise.resolve({
@@ -541,7 +541,7 @@ describe('readRoleReplicationSupport', () => {
     agent.rpc.sendDwnRequest.resolves({
       status: {
         code   : 401,
-        detail : 'ProtocolAuthorizationMatchingRoleRecordNotFound: no matching role record',
+        detail : 'ModuleAuthorizationMatchingRoleRecordNotFound: no matching role record',
       },
     });
 
@@ -551,16 +551,16 @@ describe('readRoleReplicationSupport', () => {
       contextId      : fixture.root.message.contextId,
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
-      protocol       : PROTOCOL,
-      protocolPath   : 'notebook',
-      protocolRole   : ROLE_PATH,
+      module         : MODULE,
+      modulePath     : 'notebook',
+      moduleRole     : ROLE_PATH,
       sourceDid      : owner.uri,
     })).rejects.toBeInstanceOf(FollowedSourceRoleAbsentError);
 
     agent.rpc.sendDwnRequest.resolves({
       status: {
         code   : 500,
-        detail : 'ProtocolAuthorizationMatchingRoleRecordNotFound: misleading server failure',
+        detail : 'ModuleAuthorizationMatchingRoleRecordNotFound: misleading server failure',
       },
     });
     await expect(readRoleReplicationSupport({
@@ -569,9 +569,9 @@ describe('readRoleReplicationSupport', () => {
       contextId      : fixture.root.message.contextId,
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
-      protocol       : PROTOCOL,
-      protocolPath   : 'notebook',
-      protocolRole   : ROLE_PATH,
+      module         : MODULE,
+      modulePath     : 'notebook',
+      moduleRole     : ROLE_PATH,
       sourceDid      : owner.uri,
     })).rejects.not.toBeInstanceOf(FollowedSourceRoleAbsentError);
   });
@@ -593,10 +593,10 @@ describe('readRoleReplicationSupport', () => {
     await expect(read()).rejects.not.toBeInstanceOf(RoleReplicationSupportError);
   });
 
-  it('accepts historical protocol configurations alongside exactly one current version', async () => {
+  it('accepts historical module configurations alongside exactly one current version', async () => {
     const fixture = await createFixture();
-    const current = await ProtocolsConfigure.create({
-      definition : { protocol: PROTOCOL, published: false, structure: {}, types: {} },
+    const current = await ModulesConfigure.create({
+      definition : { module: MODULE, published: false, structure: {}, types: {} },
       signer     : ownerSigner,
     });
     fixture.support[0].isLatestBaseState = false;
@@ -614,10 +614,10 @@ describe('readRoleReplicationSupport', () => {
     ]);
   });
 
-  it('rejects a support response that identifies multiple current protocol configurations', async () => {
+  it('rejects a support response that identifies multiple current module configurations', async () => {
     const fixture = await createFixture();
-    const extra = await ProtocolsConfigure.create({
-      definition : { protocol: PROTOCOL, published: true, structure: {}, types: {} },
+    const extra = await ModulesConfigure.create({
+      definition : { module: MODULE, published: true, structure: {}, types: {} },
       signer     : ownerSigner,
     });
     fixture.support.splice(1, 0, {
@@ -625,7 +625,7 @@ describe('readRoleReplicationSupport', () => {
       message           : extra.message,
     });
 
-    await expect(readFixture(fixture)).rejects.toThrow('exactly one current protocol configuration');
+    await expect(readFixture(fixture)).rejects.toThrow('exactly one current module configuration');
   });
 
   it('accepts exact compound-context ancestry while binding the role at its parent context', async () => {
@@ -636,21 +636,21 @@ describe('readRoleReplicationSupport', () => {
       data            : pageData,
       dataFormat      : 'text/plain',
       parentContextId : contextRoot.message.contextId,
-      protocol        : PROTOCOL,
-      protocolPath    : 'notebook/page',
+      module          : MODULE,
+      modulePath      : 'notebook/page',
       signer          : ownerSigner,
     });
     fixture.root = page;
     fixture.rootData = pageData;
     fixture.read = await RecordsRead.create({
       filter: {
-        contextId    : page.message.contextId,
-        protocol     : PROTOCOL,
-        protocolPath : 'notebook/page',
-        recordId     : page.message.recordId,
+        contextId  : page.message.contextId,
+        module     : MODULE,
+        modulePath : 'notebook/page',
+        recordId   : page.message.recordId,
       },
       includeReplicationSupport : true,
-      protocolRole              : ROLE_PATH,
+      moduleRole                : ROLE_PATH,
       signer                    : actorSigner,
     });
     fixture.support.splice(1, 0, {
@@ -664,9 +664,9 @@ describe('readRoleReplicationSupport', () => {
       contextId      : page.message.contextId,
       dwnUrl         : 'https://owner.example.com',
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
-      protocol       : PROTOCOL,
-      protocolPath   : fixture.root.message.descriptor.protocolPath!,
-      protocolRole   : ROLE_PATH,
+      module         : MODULE,
+      modulePath     : fixture.root.message.descriptor.modulePath!,
+      moduleRole     : ROLE_PATH,
       sourceDid      : owner.uri,
     });
 
@@ -680,11 +680,11 @@ describe('readRoleReplicationSupport', () => {
   it('rejects an unrelated support record before local admission', async () => {
     const fixture = await createFixture();
     const unrelated = await RecordsWrite.create({
-      data         : new TextEncoder().encode('unrelated'),
-      dataFormat   : 'text/plain',
-      protocol     : PROTOCOL,
-      protocolPath : 'other',
-      signer       : ownerSigner,
+      data       : new TextEncoder().encode('unrelated'),
+      dataFormat : 'text/plain',
+      module     : MODULE,
+      modulePath : 'other',
+      signer     : ownerSigner,
     });
     fixture.support.push(await supportEntry(unrelated, true));
 
@@ -701,15 +701,15 @@ describe('readRoleReplicationSupport', () => {
   it('reports a valid role as not ready when its current audience key has no delivery', async () => {
     const fixture = await createFixture();
     const audience = await RecordsWrite.create({
-      data         : new TextEncoder().encode('audience'),
-      dataFormat   : 'application/json',
-      protocol     : PROTOCOL,
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      signer       : ownerSigner,
-      tags         : {
+      data       : new TextEncoder().encode('audience'),
+      dataFormat : 'application/json',
+      module     : MODULE,
+      modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      signer     : ownerSigner,
+      tags       : {
         contextId : fixture.root.message.contextId,
         keyId     : 'audience-key',
-        protocol  : PROTOCOL,
+        module    : MODULE,
         rolePath  : ROLE_PATH,
       },
     });
@@ -732,23 +732,23 @@ describe('readRoleReplicationSupport', () => {
       },
     });
     const viewerAudience = await controlRecord({
-      contextId    : fixture.root.message.contextId,
-      keyId        : viewerKeyId,
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      rolePath     : ROLE_PATH,
+      contextId  : fixture.root.message.contextId,
+      keyId      : viewerKeyId,
+      modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath   : ROLE_PATH,
     });
     const editorAudience = await controlRecord({
-      contextId    : fixture.root.message.contextId,
-      keyId        : editorKeyId,
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      rolePath     : 'notebook/editor',
+      contextId  : fixture.root.message.contextId,
+      keyId      : editorKeyId,
+      modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      rolePath   : 'notebook/editor',
     });
     const viewerDelivery = await controlRecord({
-      contextId    : fixture.root.message.contextId,
-      keyId        : viewerKeyId,
-      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-      recipient    : actor.uri,
-      rolePath     : ROLE_PATH,
+      contextId  : fixture.root.message.contextId,
+      keyId      : viewerKeyId,
+      modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      recipient  : actor.uri,
+      rolePath   : ROLE_PATH,
     });
     fixture.support.push(
       await supportEntry(viewerAudience, true),
@@ -774,10 +774,10 @@ describe('readRoleReplicationSupport', () => {
       kty : 'OKP',
       x   : 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     } as const;
-    const configure = await ProtocolsConfigure.create({
+    const configure = await ModulesConfigure.create({
       definition: {
         $keyAgreement : { publicKeyJwk },
-        protocol      : PROTOCOL,
+        module        : MODULE,
         published     : true,
         structure     : {
           notebook: {
@@ -812,8 +812,8 @@ describe('readRoleReplicationSupport', () => {
       data            : new TextEncoder().encode('peer viewer'),
       dataFormat      : 'text/plain',
       parentContextId : contextRoot.message.contextId,
-      protocol        : PROTOCOL,
-      protocolPath    : ROLE_PATH,
+      module          : MODULE,
+      modulePath      : ROLE_PATH,
       recipient       : peer.uri,
       signer          : ownerSigner,
     });
@@ -822,20 +822,20 @@ describe('readRoleReplicationSupport', () => {
       data            : fixture.rootData,
       dataFormat      : 'text/plain',
       parentContextId : contextRoot.message.contextId,
-      protocol        : PROTOCOL,
-      protocolPath    : 'notebook/page',
-      protocolRole    : ROLE_PATH,
+      module          : MODULE,
+      modulePath      : 'notebook/page',
+      moduleRole      : ROLE_PATH,
       signer          : peerSigner,
     });
     fixture.read = await RecordsRead.create({
       filter: {
-        contextId    : fixture.root.message.contextId,
-        protocol     : PROTOCOL,
-        protocolPath : 'notebook/page',
-        recordId     : fixture.root.message.recordId,
+        contextId  : fixture.root.message.contextId,
+        module     : MODULE,
+        modulePath : 'notebook/page',
+        recordId   : fixture.root.message.recordId,
       },
       includeReplicationSupport : true,
-      protocolRole              : ROLE_PATH,
+      moduleRole                : ROLE_PATH,
       signer                    : actorSigner,
     });
     fixture.support.splice(1, 0, { isLatestBaseState: false, message: contextRoot.message });
@@ -845,7 +845,7 @@ describe('readRoleReplicationSupport', () => {
   async function createFixture(options: {
     encryption?: DwnEncryption;
   } = {}): Promise<{
-    configure: ProtocolsConfigure;
+    configure: ModulesConfigure;
     read: RecordsRead;
     role: RecordsWrite;
     roleData: Uint8Array;
@@ -856,36 +856,36 @@ describe('readRoleReplicationSupport', () => {
   }> {
     const rootData = new TextEncoder().encode('notebook');
     const root = await RecordsWrite.create({
-      data         : rootData,
-      dataFormat   : 'text/plain',
-      encryption   : options.encryption,
-      protocol     : PROTOCOL,
-      protocolPath : 'notebook',
-      signer       : ownerSigner,
+      data       : rootData,
+      dataFormat : 'text/plain',
+      encryption : options.encryption,
+      module     : MODULE,
+      modulePath : 'notebook',
+      signer     : ownerSigner,
     });
     const roleData = new TextEncoder().encode('viewer');
     const role = await RecordsWrite.create({
       data            : roleData,
       dataFormat      : 'text/plain',
       parentContextId : root.message.contextId,
-      protocol        : PROTOCOL,
-      protocolPath    : ROLE_PATH,
+      module          : MODULE,
+      modulePath      : ROLE_PATH,
       recipient       : actor.uri,
       signer          : ownerSigner,
     });
-    const configure = await ProtocolsConfigure.create({
-      definition : { protocol: PROTOCOL, published: true, structure: {}, types: {} },
+    const configure = await ModulesConfigure.create({
+      definition : { module: MODULE, published: true, structure: {}, types: {} },
       signer     : ownerSigner,
     });
     const read = await RecordsRead.create({
       filter: {
-        contextId    : root.message.contextId,
-        protocol     : PROTOCOL,
-        protocolPath : 'notebook',
-        recordId     : root.message.recordId,
+        contextId  : root.message.contextId,
+        module     : MODULE,
+        modulePath : 'notebook',
+        recordId   : root.message.recordId,
       },
       includeReplicationSupport : true,
-      protocolRole              : ROLE_PATH,
+      moduleRole                : ROLE_PATH,
       signer                    : actorSigner,
     });
     return {
@@ -918,9 +918,9 @@ describe('readRoleReplicationSupport', () => {
       dwnUrl         : 'https://owner.example.com',
       expectedRoot,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
-      protocol       : PROTOCOL,
-      protocolPath   : fixture.root.message.descriptor.protocolPath!,
-      protocolRole   : ROLE_PATH,
+      module         : MODULE,
+      modulePath     : fixture.root.message.descriptor.modulePath!,
+      moduleRole     : ROLE_PATH,
       runRemoteRequest,
       sourceDid      : owner.uri,
     });
@@ -957,9 +957,9 @@ describe('readRoleReplicationSupport', () => {
   function roleRetryTarget(root: RecordsWriteMessage, roleRecordId: string): SyncTarget {
     return {
       authorization: {
-        actorDid     : actor.uri,
-        kind         : 'role',
-        protocolRole : ROLE_PATH,
+        actorDid   : actor.uri,
+        kind       : 'role',
+        moduleRole : ROLE_PATH,
         roleRecordId,
       },
       authorizationEpoch : 'role-epoch',
@@ -967,10 +967,10 @@ describe('readRoleReplicationSupport', () => {
       dwnUrl             : 'https://owner.example.com',
       projectionId       : 'role-projection',
       scope              : {
-        contextId     : root.contextId!,
-        kind          : 'context',
-        protocol      : PROTOCOL,
-        protocolPaths : ['notebook'],
+        contextId   : root.contextId!,
+        kind        : 'context',
+        module      : MODULE,
+        modulePaths : ['notebook'],
       },
     };
   }
@@ -999,21 +999,21 @@ describe('readRoleReplicationSupport', () => {
   async function controlRecord(input: {
     contextId: string;
     keyId: string;
-    protocolPath: string;
+    modulePath: string;
     recipient?: string;
     rolePath: string;
   }): Promise<RecordsWrite> {
     return RecordsWrite.create({
-      data         : new TextEncoder().encode('audience'),
-      dataFormat   : 'application/json',
-      protocol     : PROTOCOL,
-      protocolPath : input.protocolPath,
-      recipient    : input.recipient,
-      signer       : ownerSigner,
-      tags         : {
+      data       : new TextEncoder().encode('audience'),
+      dataFormat : 'application/json',
+      module     : MODULE,
+      modulePath : input.modulePath,
+      recipient  : input.recipient,
+      signer     : ownerSigner,
+      tags       : {
         contextId : input.contextId,
         keyId     : input.keyId,
-        protocol  : PROTOCOL,
+        module    : MODULE,
         rolePath  : input.rolePath,
       },
     });
@@ -1034,7 +1034,7 @@ function roleAudienceEncryption(
       x   : 'A'.repeat(43),
     },
     keyId,
-    protocol: PROTOCOL,
+    module: MODULE,
     rolePath,
   };
 }

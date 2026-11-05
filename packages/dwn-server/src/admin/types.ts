@@ -40,9 +40,9 @@ export type AdminTenantDetail = {
   storage : {
     messageCount : number;
     dataStorageBytes : number;
-    protocolCount : number;
+    moduleCount : number;
   };
-  protocols : string[];
+  modules : string[];
   quota? : {
     maxMessages : number;
     maxStorageBytes : number;
@@ -56,8 +56,8 @@ export type AdminTenantDetail = {
 export type TenantStats = {
   messageCount : number;
   dataStorageBytes : number;
-  protocolCount : number;
-  protocols : string[];
+  moduleCount : number;
+  modules : string[];
 };
 
 /**
@@ -67,7 +67,7 @@ export type GlobalStats = {
   tenantCount : number;
   totalMessages : number;
   totalDataBytes : number;
-  totalProtocols : number;
+  totalModules : number;
 };
 
 /**
@@ -100,7 +100,7 @@ export type AdminServerStats = {
   storage : {
     totalMessages : number;
     totalDataBytes : number;
-    totalProtocols : number;
+    totalModules : number;
   };
   connections : {
     websocket : {
@@ -133,7 +133,7 @@ export type AdminActivityEvent = {
   timestamp : string;
   /** The tenant DID the request targeted. */
   tenant : string;
-  /** DWN interface (e.g. `Records`, `Protocols`, `Events`). */
+  /** DWN interface (e.g. `Records`, `Modules`, `Events`). */
   interface : string;
   /** DWN method (e.g. `Write`, `Query`, `Read`, `Subscribe`). */
   method : string;
@@ -283,8 +283,8 @@ export type AdminMessageSummary = {
   messageCid : string;
   interface : string | null;
   method : string | null;
-  protocol : string | null;
-  protocolPath : string | null;
+  module : string | null;
+  modulePath : string | null;
   schema : string | null;
   dataFormat : string | null;
   dataSize : number | null;
@@ -293,10 +293,10 @@ export type AdminMessageSummary = {
 };
 
 /**
- * Protocol summary with record count per protocol.
+ * Module summary with record count per module.
  */
-export type AdminProtocolSummary = {
-  protocol : string;
+export type AdminModuleSummary = {
+  module : string;
   messageCount : number;
 };
 

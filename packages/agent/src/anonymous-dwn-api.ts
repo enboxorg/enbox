@@ -4,9 +4,9 @@ import type { DwnRpcRequest, EnboxRpc } from '@enbox/dwn-clients';
 import type {
   DateSort,
   GenericMessage,
+  ModulesQueryFilter,
+  ModulesQueryReply,
   Pagination,
-  ProtocolsQueryFilter,
-  ProtocolsQueryReply,
   RecordsCountMessage,
   RecordsCountReply,
   RecordsFilter,
@@ -16,7 +16,7 @@ import type {
   SubscriptionListener,
 } from '@enbox/dwn-sdk-js';
 
-import { ProtocolsQuery, RecordsCount, RecordsQuery, RecordsRead, RecordsSubscribe } from '@enbox/dwn-sdk-js';
+import { ModulesQuery, RecordsCount, RecordsQuery, RecordsRead, RecordsSubscribe } from '@enbox/dwn-sdk-js';
 
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { getDwnServiceEndpointUrls, resolveDwnSubscriptionUrl } from './utils.js';
@@ -69,10 +69,10 @@ export type AnonymousRecordsCountParams = {
 };
 
 /**
- * Parameters for an anonymous protocols query.
+ * Parameters for an anonymous modules query.
  */
-export type AnonymousProtocolsQueryParams = {
-  filter?: ProtocolsQueryFilter;
+export type AnonymousModulesQueryParams = {
+  filter?: ModulesQueryFilter;
   messageTimestamp?: string;
 };
 
@@ -83,10 +83,10 @@ export type AnonymousProtocolsQueryParams = {
  * This class does not require a vault, agent DID, signing keys, or any identity
  * infrastructure. It leverages the DWN SDK's native support for optional
  * `signer` on read-path operations (RecordsQuery, RecordsRead, RecordsSubscribe,
- * RecordsCount, ProtocolsQuery).
+ * RecordsCount, ModulesQuery).
  *
  * Anonymous queries return only published records. Anonymous reads succeed for
- * published records and for protocol records with `{ who: 'anyone', can: ['read'] }`.
+ * published records and for module records with `{ who: 'anyone', can: ['read'] }`.
  *
  * @example
  * ```ts
@@ -95,7 +95,7 @@ export type AnonymousProtocolsQueryParams = {
  * const anonymousDwn = new AnonymousDwnApi({ didResolver: resolver, rpcClient });
  *
  * const reply = await anonymousDwn.recordsQuery('did:dht:alice...', {
- *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
+ *   filter: { module: 'https://blog.example/posts', modulePath: 'post' },
  * });
  * ```
  */
@@ -132,7 +132,7 @@ export class AnonymousDwnApi {
   /**
    * Send an anonymous (unsigned) `RecordsRead` to a remote DWN.
    *
-   * Succeeds for published records and for protocol records with
+   * Succeeds for published records and for module records with
    * `{ who: 'anyone', can: ['read'] }` rules.
    *
    * @param target - The DID whose DWN will be read from.
@@ -195,22 +195,22 @@ export class AnonymousDwnApi {
   }
 
   /**
-   * Send an anonymous (unsigned) `ProtocolsQuery` to a remote DWN.
+   * Send an anonymous (unsigned) `ModulesQuery` to a remote DWN.
    *
-   * Only published protocol definitions are returned.
+   * Only published module definitions are returned.
    *
-   * @param target - The DID whose DWN to query protocols from.
-   * @param params - Optional query parameters (protocol filter).
-   * @returns The raw `ProtocolsQueryReply` from the remote DWN.
+   * @param target - The DID whose DWN to query modules from.
+   * @param params - Optional query parameters (module filter).
+   * @returns The raw `ModulesQueryReply` from the remote DWN.
    */
-  public async protocolsQuery(target: string, params?: AnonymousProtocolsQueryParams): Promise<ProtocolsQueryReply> {
-    const protocolsQuery = await ProtocolsQuery.create({
+  public async modulesQuery(target: string, params?: AnonymousModulesQueryParams): Promise<ModulesQueryReply> {
+    const modulesQuery = await ModulesQuery.create({
       filter           : params?.filter,
       messageTimestamp : params?.messageTimestamp,
       // No signer — creates an unsigned message.
     });
 
-    return await this.sendRequest<ProtocolsQueryReply>(target, protocolsQuery.message);
+    return await this.sendRequest<ModulesQueryReply>(target, modulesQuery.message);
   }
 
   /**

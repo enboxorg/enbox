@@ -4,7 +4,7 @@ import {
   getPaginationCursor,
   getRecordAuthor,
   getRecordMessageCid,
-  getRecordProtocolRole,
+  getRecordModuleRole,
   isRecordsWrite,
   mapConcurrent,
   mapConcurrentSettled,
@@ -135,33 +135,33 @@ describe('Utils', () => {
     });
   });
 
-  describe('getRecordProtocolRole', () => {
-    it('gets a protocol role from a RecordsWrite', async () => {
-      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ protocolRole: 'some-role' });
-      const role = getRecordProtocolRole(recordsWrite.message);
+  describe('getRecordModuleRole', () => {
+    it('gets a module role from a RecordsWrite', async () => {
+      const recordsWrite = await TestDataGenerator.generateRecordsWrite({ moduleRole: 'some-role' });
+      const role = getRecordModuleRole(recordsWrite.message);
       expect(role).toBe('some-role');
     });
 
-    it('gets a protocol role from a RecordsDelete', async () => {
-      const recordsDelete = await TestDataGenerator.generateRecordsDelete({ protocolRole: 'some-role' });
-      const role = getRecordProtocolRole(recordsDelete.message);
+    it('gets a module role from a RecordsDelete', async () => {
+      const recordsDelete = await TestDataGenerator.generateRecordsDelete({ moduleRole: 'some-role' });
+      const role = getRecordModuleRole(recordsDelete.message);
       expect(role).toBe('some-role');
     });
 
     it('returns undefined if no role is defined', async () => {
       const recordsWrite = await TestDataGenerator.generateRecordsWrite();
-      const writeRole = getRecordProtocolRole(recordsWrite.message);
+      const writeRole = getRecordModuleRole(recordsWrite.message);
       expect(writeRole).toBeUndefined();
 
       const recordsDelete = await TestDataGenerator.generateRecordsDelete();
-      const deleteRole = getRecordProtocolRole(recordsDelete.message);
+      const deleteRole = getRecordModuleRole(recordsDelete.message);
       expect(deleteRole).toBeUndefined();
     });
 
     it('returns undefined if decodedObject is undefined', async () => {
       spyOn(Jws, 'decodePlainObjectPayload').mockReturnValue(undefined);
       const recordsWrite = await TestDataGenerator.generateRecordsWrite();
-      const writeRole = getRecordProtocolRole(recordsWrite.message);
+      const writeRole = getRecordModuleRole(recordsWrite.message);
       expect(writeRole).toBeUndefined();
     });
   });
@@ -212,11 +212,11 @@ describe('Utils', () => {
       expect(isRecordsWrite(obj)).toBe(false);
     });
 
-    it('should return false for ProtocolsConfigure', () => {
+    it('should return false for ModulesConfigure', () => {
       const obj = {
         message: {
           descriptor: {
-            interface : DwnInterfaceName.Protocols,
+            interface : DwnInterfaceName.Modules,
             method    : DwnMethodName.Configure,
           },
         },

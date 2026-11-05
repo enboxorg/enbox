@@ -327,7 +327,7 @@ describe('SyncDurableFeedReconciler', () => {
       authorization: {
         kind         : 'role',
         actorDid     : 'did:example:member',
-        protocolRole : 'notebook/viewer',
+        moduleRole   : 'notebook/viewer',
         roleRecordId : 'role-a',
       },
       authorizationEpoch : 'role-epoch',
@@ -335,10 +335,10 @@ describe('SyncDurableFeedReconciler', () => {
       dwnUrl             : 'https://owner.example',
       projectionId       : 'notebook-projection',
       scope              : {
-        kind          : 'context',
-        protocol      : 'https://example.com/notebooks',
-        contextId     : 'notebook-a',
-        protocolPaths : ['notebook/page'],
+        kind        : 'context',
+        module      : 'https://example.com/notebooks',
+        contextId   : 'notebook-a',
+        modulePaths : ['notebook/page'],
       },
     };
     const fixture = createReconciler(roleTarget);

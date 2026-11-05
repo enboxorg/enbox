@@ -1,0 +1,680 @@
+import type { DidResolver } from '@enbox/dids';
+import type { EventLog } from '../../src/types/subscriptions.js';
+import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
+import type { ModuleDefinition, ModulesConfigureDescriptor } from '../../src/types/modules-types.js';
+
+import sinon from 'sinon';
+
+import { DataStream } from '../../src/utils/data-stream.js';
+import { Dwn } from '../../src/dwn.js';
+import { Jws } from '../../src/utils/jws.js';
+import { ModuleAction } from '../../src/types/modules-types.js';
+import { RecordsRead } from '../../src/interfaces/records-read.js';
+import { RecordsWrite } from '../../src/interfaces/records-write.js';
+import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { TestEventLog } from '../test-event-stream.js';
+import { TestStores } from '../test-stores.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { DidKey, UniversalResolver } from '@enbox/dids';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Message, ModulesConfigure, Time } from '../../src/index.js';
+
+
+export function testModuleUpdateAction(): void {
+  describe('Module `update` action', () => {
+    let didResolver: DidResolver;
+    let messageStore: MessageStore;
+    let dataStore: DataStore;
+    let resumableTaskStore: ResumableTaskStore;
+    let eventLog: EventLog;
+    let dwn: Dwn;
+
+    // important to follow the `before` and `after` pattern to initialize and clean the stores in tests
+    // so that different test suites can reuse the same backend store for testing
+    beforeAll(async () => {
+      didResolver = new UniversalResolver({ didResolvers: [DidKey] });
+
+      const stores = TestStores.get();
+      messageStore = stores.messageStore;
+      dataStore = stores.dataStore;
+      resumableTaskStore = stores.resumableTaskStore;
+      eventLog = TestEventLog.get();
+
+      dwn = await Dwn.create({ didResolver, messageStore, dataStore, eventLog, resumableTaskStore });
+    });
+
+    beforeEach(async () => {
+      sinon.restore(); // wipe all previous stubs/spies/mocks/fakes
+
+      // clean up before each test rather than after so that a test does not depend on other tests to do the clean up
+      await messageStore.clear();
+      await dataStore.clear();
+      await resumableTaskStore.clear();
+    });
+
+    afterAll(async () => {
+      await dwn.close();
+    });
+
+    it('should only allow author of a role-authorized create to update', async () => {
+      // Scenario:
+      // 1. Alice installs a module with a "author of a role-authorized create can update" rule.
+      // 2. Alice gives Bob and Carol the "user" role to be able to write `foo` records.
+      // 3. Bob creates a `foo` by invoking the user role.
+      // 4. Verify that Bob can update his `foo`
+      //   4a. Sanity verify that the update took effect by reading the record back
+      // 5. Carol creates a `foo` by invoking the user role.
+      // 6. Verify that Carol can update her `foo`
+      // 7. Verify that Bob cannot update Carol's `foo`
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const carol = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Alice installs a module with a "author of a role-authorized create can update" rule.
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'foo',
+        published : true,
+        types     : {
+          user : {},
+          foo  : {}
+        },
+        structure: {
+          user: {
+            $role: true
+          },
+          foo: {
+            $actions: [
+              {
+                role : 'user',
+                can  : [ModuleAction.Create, ModuleAction.Update]
+              }
+            ]
+          }
+        }
+      };
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
+        signer     : Jws.createSigner(alice)
+      });
+
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
+
+      // 2. Alice gives Bob and Carol the "user" role to be able to write `foo` records.
+      const userBobRecordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author     : alice,
+        recipient  : bob.did,
+        module     : moduleDefinition.module,
+        modulePath : 'user'
+      });
+      const userBobRecordsWriteReply
+        = await dwn.processMessage(alice.did, userBobRecordsWrite.message, { dataStream: userBobRecordsWrite.dataStream });
+      expect(userBobRecordsWriteReply.status.code).toBe(202);
+
+      const userCarolRecordsWrite = await TestDataGenerator.generateRecordsWrite({
+        author     : alice,
+        recipient  : carol.did,
+        module     : moduleDefinition.module,
+        modulePath : 'user'
+      });
+      const userCarolRecordsWriteReply
+        = await dwn.processMessage(alice.did, userCarolRecordsWrite.message, { dataStream: userCarolRecordsWrite.dataStream });
+      expect(userCarolRecordsWriteReply.status.code).toBe(202);
+
+      // 3. Bob creates a `foo` by invoking the user role.
+      const bobFooBytes = TestDataGenerator.randomBytes(100);
+      const bobRoleAuthorizedFoo = await RecordsWrite.create(
+        {
+          signer     : Jws.createSigner(bob),
+          moduleRole : 'user',
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : 'any-schema',
+          dataFormat : 'any-format',
+          data       : bobFooBytes
+        }
+      );
+      const bobRoleAuthorizedCreateReply
+        = await dwn.processMessage(alice.did, bobRoleAuthorizedFoo.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
+      expect(bobRoleAuthorizedCreateReply.status.code).toBe(202);
+
+      // 4. Verify that Bob can update his `foo`
+      const bobFooNewBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorizedFooUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : bobRoleAuthorizedFoo.message,
+          data                : bobFooNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobAuthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, bobAuthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
+      expect(bobAuthorizedFooUpdateReply.status.code).toBe(202);
+
+      //   4a. Sanity verify that the update took effect by reading the record back
+      const recordsRead = await RecordsRead.create({
+        filter: {
+          recordId: bobRoleAuthorizedFoo.message.recordId
+        },
+        signer: Jws.createSigner(alice)
+      });
+      const recordsReadReply = await dwn.processMessage(alice.did, recordsRead.message);
+      expect(recordsReadReply.status.code).toBe(200);
+      expect(recordsReadReply.entry!.data).toBeDefined();
+      const dataFromReply = await DataStream.toBytes(recordsReadReply.entry!.data!);
+      expect(dataFromReply).toEqual(bobFooNewBytes);
+
+      // 5. Carol creates a `foo` by invoking the user role.
+      const carolFooBytes = TestDataGenerator.randomBytes(100);
+      const carolRoleAuthorizedFoo = await RecordsWrite.create(
+        {
+          signer     : Jws.createSigner(carol),
+          moduleRole : 'user',
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : 'any-schema',
+          dataFormat : 'any-format',
+          data       : carolFooBytes
+        }
+      );
+      const carolRoleAuthorizedCreateReply
+        = await dwn.processMessage(alice.did, carolRoleAuthorizedFoo.message, { dataStream: DataStream.fromBytes(carolFooBytes) });
+      expect(carolRoleAuthorizedCreateReply.status.code).toBe(202);
+
+      // 6. Verify that carol can update her `foo`
+      const carolFooNewBytes = TestDataGenerator.randomBytes(100);
+      const carolAuthorizedFooUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : carolRoleAuthorizedFoo.message,
+          data                : carolFooNewBytes,
+          signer              : Jws.createSigner(carol)
+        }
+      );
+      const carolAuthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, carolAuthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(carolFooNewBytes) });
+      expect(carolAuthorizedFooUpdateReply.status.code).toBe(202);
+
+
+      // 7. Verify that Bob cannot update Carol's `foo`
+      const bobUnauthorizedFooUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : carolRoleAuthorizedFoo.message,
+          data                : bobFooNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobUnauthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, bobUnauthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
+      expect(bobUnauthorizedFooUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
+    });
+
+    it('should only allow author of an author/recipient-authorized create to update', async () => {
+      // Scenario:
+      // 1. Alice installs a module with "author of an author/recipient-authorized create can update" rules.
+      // 2. Alice creates a `foo` with Bob being the recipient, so that Bob can create `bar`.
+      // 3. Alice creates a `foo` with Carol being the recipient, so that Carol can create `bar`.
+      // 4. Bob creates a recipient-authorized `bar`.
+      // 5. Carol creates a recipient-authorized `bar`.
+      // 6. Verify that Bob can update his `bar`.
+      //   6a. Sanity verify that the update took effect by reading the record back.
+      // 7. Verify that Bob cannot update Carol's `bar`.
+      // 8. Bob creates a author-authorized `baz` after his `bar`.
+      // 9. Carol creates a author-authorized `baz` after her `bar`.
+      // 10. Verify that Bob can update his `baz`
+      //   10a. Sanity verify that the update took effect by reading the record back.
+      // 11. Verify that Bob cannot update Carol's `baz`
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const carol = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Alice installs a module with "author of an author/recipient-authorized create can update" rules.
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'foo-bar-baz',
+        published : true,
+        types     : {
+          foo : {},
+          bar : {},
+          baz : {}
+        },
+        structure: {
+          foo: {
+            bar: {
+              $actions: [
+                {
+                  who : 'recipient',
+                  of  : 'foo',
+                  can : [ModuleAction.Create, ModuleAction.Update]
+                }
+              ],
+              baz: {
+                $actions: [
+                  {
+                    who : 'author',
+                    of  : 'foo/bar',
+                    can : [ModuleAction.Create, ModuleAction.Update]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      };
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
+        signer     : Jws.createSigner(alice)
+      });
+
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
+
+      // 2. Alice creates a `foo` with Bob being the recipient, so that Bob can create `bar`.
+      const fooForBob = await TestDataGenerator.generateRecordsWrite({
+        author     : alice,
+        recipient  : bob.did,
+        module     : moduleDefinition.module,
+        modulePath : 'foo'
+      });
+      const fooForBobReply = await dwn.processMessage(alice.did, fooForBob.message, { dataStream: fooForBob.dataStream });
+      expect(fooForBobReply.status.code).toBe(202);
+
+      // 3. Alice creates a `foo` with Carol being the recipient, so that Carol can create `bar`.
+      const fooForCarol = await TestDataGenerator.generateRecordsWrite({
+        author     : alice,
+        recipient  : carol.did,
+        module     : moduleDefinition.module,
+        modulePath : 'foo'
+      });
+      const fooForCarolReply = await dwn.processMessage(alice.did, fooForCarol.message, { dataStream: fooForCarol.dataStream });
+      expect(fooForCarolReply.status.code).toBe(202);
+
+      // 4. Bob creates a recipient-authorized `bar`.
+      const bobBarBytes = TestDataGenerator.randomBytes(100);
+      const bobRecipientAuthorizedBar = await RecordsWrite.create(
+        {
+          signer          : Jws.createSigner(bob),
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar',
+          parentContextId : fooForBob.message.contextId,
+          schema          : 'any-schema',
+          dataFormat      : 'any-format',
+          data            : bobBarBytes
+        }
+      );
+      const bobRecipientAuthorizedBarReply
+        = await dwn.processMessage(alice.did, bobRecipientAuthorizedBar.message, { dataStream: DataStream.fromBytes(bobBarBytes) });
+      expect(bobRecipientAuthorizedBarReply.status.code).toBe(202);
+
+      // 5. Carol creates a recipient-authorized `bar`.
+      const carolBarBytes = TestDataGenerator.randomBytes(100);
+      const carolRecipientAuthorizedBar = await RecordsWrite.create(
+        {
+          signer          : Jws.createSigner(carol),
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar',
+          parentContextId : fooForCarol.message.contextId,
+          schema          : 'any-schema',
+          dataFormat      : 'any-format',
+          data            : carolBarBytes
+        }
+      );
+      const carolRecipientAuthorizedBarReply
+        = await dwn.processMessage(alice.did, carolRecipientAuthorizedBar.message, { dataStream: DataStream.fromBytes(carolBarBytes) });
+      expect(carolRecipientAuthorizedBarReply.status.code).toBe(202);
+
+      // 6. Verify that Bob can update his `bar`.
+      const bobBarNewBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorizedBarUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : bobRecipientAuthorizedBar.message,
+          data                : bobBarNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobAuthorizedBarUpdateReply
+        = await dwn.processMessage(alice.did, bobAuthorizedBarUpdate.message, { dataStream: DataStream.fromBytes(bobBarNewBytes) });
+      expect(bobAuthorizedBarUpdateReply.status.code).toBe(202);
+
+      //   6a. Sanity verify that the update took effect by reading the record back.
+      const bobBarRead = await RecordsRead.create({
+        filter: {
+          recordId: bobRecipientAuthorizedBar.message.recordId
+        },
+        signer: Jws.createSigner(alice)
+      });
+      const bobBarReadReply = await dwn.processMessage(alice.did, bobBarRead.message);
+      expect(bobBarReadReply.status.code).toBe(200);
+      expect(bobBarReadReply.entry!.data).toBeDefined();
+      const dataFromBobBarRead = await DataStream.toBytes(bobBarReadReply.entry!.data!);
+      expect(dataFromBobBarRead).toEqual(bobBarNewBytes);
+
+      // 7. Verify that Bob cannot update Carol's `bar`.
+      const bobUnauthorizedBarUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : carolRecipientAuthorizedBar.message,
+          data                : bobBarNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobUnauthorizedBarUpdateReply
+        = await dwn.processMessage(alice.did, bobUnauthorizedBarUpdate.message, { dataStream: DataStream.fromBytes(bobBarNewBytes) });
+      expect(bobUnauthorizedBarUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedBarUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
+
+      // 8. Bob creates a author-authorized `baz` after his `bar`.
+      const bobBazBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorAuthorizedBaz = await RecordsWrite.create(
+        {
+          signer          : Jws.createSigner(bob),
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar/baz',
+          parentContextId : bobRecipientAuthorizedBar.message.contextId,
+          schema          : 'any-schema',
+          dataFormat      : 'any-format',
+          data            : bobBazBytes
+        }
+      );
+      const bobAuthorAuthorizedBazReply
+        = await dwn.processMessage(alice.did, bobAuthorAuthorizedBaz.message, { dataStream: DataStream.fromBytes(bobBazBytes) });
+      expect(bobAuthorAuthorizedBazReply.status.code).toBe(202);
+
+      // 9. Carol creates a author-authorized `baz` after her `bar`.
+      const carolBazBytes = TestDataGenerator.randomBytes(100);
+      const carolAuthorAuthorizedBaz = await RecordsWrite.create(
+        {
+          signer          : Jws.createSigner(carol),
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar/baz',
+          parentContextId : carolRecipientAuthorizedBar.message.contextId,
+          schema          : 'any-schema',
+          dataFormat      : 'any-format',
+          data            : carolBazBytes
+        }
+      );
+      const carolAuthorAuthorizedBazReply
+        = await dwn.processMessage(alice.did, carolAuthorAuthorizedBaz.message, { dataStream: DataStream.fromBytes(carolBazBytes) });
+      expect(carolAuthorAuthorizedBazReply.status.code).toBe(202);
+
+      // 10. Verify that Bob can update his `baz`
+      const bobBazNewBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorizedBazUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : bobAuthorAuthorizedBaz.message,
+          data                : bobBazNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobAuthorizedBazUpdateReply
+        = await dwn.processMessage(alice.did, bobAuthorizedBazUpdate.message, { dataStream: DataStream.fromBytes(bobBazNewBytes) });
+      expect(bobAuthorizedBazUpdateReply.status.code).toBe(202);
+
+      //   10a. Sanity verify that the update took effect by reading the record back.
+      const bobBazRead = await RecordsRead.create({
+        filter: {
+          recordId: bobAuthorAuthorizedBaz.message.recordId
+        },
+        signer: Jws.createSigner(alice)
+      });
+      const bobBazReadReply = await dwn.processMessage(alice.did, bobBazRead.message);
+      expect(bobBazReadReply.status.code).toBe(200);
+      expect(bobBazReadReply.entry!.data).toBeDefined();
+      const dataFromBobBazRead = await DataStream.toBytes(bobBazReadReply.entry!.data!);
+      expect(dataFromBobBazRead).toEqual(bobBazNewBytes);
+
+      // 11. Verify that Bob cannot update Carol's `baz`
+      const bobUnauthorizedBazUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : carolRecipientAuthorizedBar.message,
+          data                : bobBazNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobUnauthorizedBazUpdateReply
+        = await dwn.processMessage(alice.did, bobUnauthorizedBazUpdate.message, { dataStream: DataStream.fromBytes(bobBazNewBytes) });
+      expect(bobUnauthorizedBazUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedBazUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
+    });
+
+    it('should only allow author of an anyone-authorized create to update', async () => {
+      // Scenario:
+      // 1. Alice installs a module with "author of an anyone-authorized create can update" rules.
+      // 2. Bob creates an anyone-authorized `foo`.
+      // 3. Carol creates a anyone-authorized `foo`.
+      // 4. Verify that Bob can update his `foo`.
+      //   4a. Sanity verify that the update took effect by reading the record back.
+      // 5. Verify that Bob cannot update Carol's `foo`.
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+      const carol = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Alice installs a module with "author of an anyone-authorized create can update" rule.
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'foo',
+        published : true,
+        types     : {
+          foo: {},
+        },
+        structure: {
+          foo: {
+            $actions: [
+              {
+                who : 'anyone',
+                can : [ModuleAction.Create, ModuleAction.Update]
+              }
+            ]
+          }
+        }
+      };
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
+        signer     : Jws.createSigner(alice)
+      });
+
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
+
+      // 2. Bob creates an anyone-authorized `foo`.
+      const bobFooBytes = TestDataGenerator.randomBytes(100);
+      const bobAnyoneAuthorizedFoo = await RecordsWrite.create(
+        {
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : 'any-schema',
+          dataFormat : 'any-format',
+          data       : bobFooBytes
+        }
+      );
+      const bobAnyoneAuthorizedFooReply
+        = await dwn.processMessage(alice.did, bobAnyoneAuthorizedFoo.message, { dataStream: DataStream.fromBytes(bobFooBytes) });
+      expect(bobAnyoneAuthorizedFooReply.status.code).toBe(202);
+
+      // 3. Carol creates a anyone-authorized `foo`.
+      const carolFooBytes = TestDataGenerator.randomBytes(100);
+      const carolAnyoneAuthorizedFoo = await RecordsWrite.create(
+        {
+          signer     : Jws.createSigner(carol),
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : 'any-schema',
+          dataFormat : 'any-format',
+          data       : carolFooBytes
+        }
+      );
+      const carolAnyoneAuthorizedFooReply
+        = await dwn.processMessage(alice.did, carolAnyoneAuthorizedFoo.message, { dataStream: DataStream.fromBytes(carolFooBytes) });
+      expect(carolAnyoneAuthorizedFooReply.status.code).toBe(202);
+
+      // 4. Verify that Bob can update his `foo`.
+      const bobFooNewBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorizedFooUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : bobAnyoneAuthorizedFoo.message,
+          data                : bobFooNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobAuthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, bobAuthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
+      expect(bobAuthorizedFooUpdateReply.status.code).toBe(202);
+
+      //   4a. Sanity verify that the update took effect by reading the record back.
+      const bobBarRead = await RecordsRead.create({
+        filter: {
+          recordId: bobAnyoneAuthorizedFoo.message.recordId
+        },
+        signer: Jws.createSigner(alice)
+      });
+      const bobFooReadReply = await dwn.processMessage(alice.did, bobBarRead.message);
+      expect(bobFooReadReply.status.code).toBe(200);
+      expect(bobFooReadReply.entry!.data).toBeDefined();
+      const dataFromBobFooRead = await DataStream.toBytes(bobFooReadReply.entry!.data!);
+      expect(dataFromBobFooRead).toEqual(bobFooNewBytes);
+
+      // 5. Verify that Bob cannot update Carol's `foo`.
+      const bobUnauthorizedBarUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : carolAnyoneAuthorizedFoo.message,
+          data                : bobFooNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobUnauthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, bobUnauthorizedBarUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
+      expect(bobUnauthorizedFooUpdateReply.status.code).toBe(401);
+      expect(bobUnauthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
+    });
+
+    it('should fail an update to an non-existent record', async () => {
+      // Scenario:
+      // 1. Alice installs a module with "author of an anyone-authorized create can update" rules.
+      // 2. Bob constructs an anyone-authorized `foo` but never sent it to the DWN.
+      // 3. Verify that Bob cannot update a `foo` that does not exist in the DWN.
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const bob = await TestDataGenerator.generateDidKeyPersona();
+
+      // 1. Alice installs a module with "author of an anyone-authorized create can update" rule.
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'foo',
+        published : true,
+        types     : {
+          foo: {},
+        },
+        structure: {
+          foo: {
+            $actions: [
+              {
+                who : 'anyone',
+                can : [ModuleAction.Create, ModuleAction.Update]
+              }
+            ]
+          }
+        }
+      };
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
+        signer     : Jws.createSigner(alice)
+      });
+
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
+
+      // 2. Bob constructs an anyone-authorized `foo` but never sent it to the DWN.
+      const bobFooBytes = TestDataGenerator.randomBytes(100);
+      const bobAnyoneAuthorizedFoo = await RecordsWrite.create(
+        {
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : 'any-schema',
+          dataFormat : 'any-format',
+          data       : bobFooBytes
+        }
+      );
+
+      // 3. Verify that Bob cannot update a `foo` that does not exist in the DWN.
+      const bobFooNewBytes = TestDataGenerator.randomBytes(100);
+      const bobAuthorizedFooUpdate = await RecordsWrite.createFrom(
+        {
+          recordsWriteMessage : bobAnyoneAuthorizedFoo.message,
+          data                : bobFooNewBytes,
+          signer              : Jws.createSigner(bob)
+        }
+      );
+      const bobAuthorizedFooUpdateReply
+        = await dwn.processMessage(alice.did, bobAuthorizedFooUpdate.message, { dataStream: DataStream.fromBytes(bobFooNewBytes) });
+      expect(bobAuthorizedFooUpdateReply.status.code).toBe(400);
+      expect(bobAuthorizedFooUpdateReply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
+    });
+
+    it('should not allow creation of a module definition with action rule containing `update` without `create`', async () => {
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'foo',
+        published : true,
+        types     : {
+          foo: {},
+        },
+        structure: {
+          foo: {
+            $actions: [
+              {
+                who : 'anyone',
+                can : [ModuleAction.Update] // intentionally missing `create` action
+              }
+            ]
+          }
+        }
+      };
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const modulesConfigureCreatePromise = ModulesConfigure.create({
+        definition : moduleDefinition,
+        signer     : Jws.createSigner(alice)
+      });
+
+      await expect(modulesConfigureCreatePromise).rejects.toThrow(DwnErrorCode.ModulesConfigureInvalidActionUpdateWithoutCreate);
+    });
+
+    it('should reject ModulesConfigure with action rule containing `update` action without `create` during processing', async () => {
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'http://foo',
+        published : true,
+        types     : {
+          foo: {},
+        },
+        structure: {
+          foo: {
+            $actions: [
+              {
+                who : 'anyone',
+                can : [ModuleAction.Update] // intentionally missing `create` action
+              }
+            ]
+          }
+        }
+      };
+
+      // manually craft the invalid ModulesConfigure message because our library will not let you create an invalid definition
+      const descriptor: ModulesConfigureDescriptor = {
+        interface        : DwnInterfaceName.Modules,
+        method           : DwnMethodName.Configure,
+        messageTimestamp : Time.getCurrentTimestamp(),
+        definition       : moduleDefinition
+      };
+
+      const alice = await TestDataGenerator.generateDidKeyPersona();
+      const authorization = await Message.createAuthorization({
+        descriptor,
+        signer: Jws.createSigner(alice)
+      });
+      const modulesConfigureMessage = { descriptor, authorization };
+
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfigureMessage);
+      expect(modulesConfigureReply.status.code).toBe(400);
+      expect(modulesConfigureReply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidActionUpdateWithoutCreate);
+    });
+  });
+}

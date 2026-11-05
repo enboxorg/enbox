@@ -11,8 +11,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -30,8 +30,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -53,8 +53,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -75,8 +75,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -99,8 +99,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -116,16 +116,16 @@ describe('RecordsWrite schema definition', () => {
     }).toThrow('must NOT have additional properties');
   });
 
-  it('should pass if `protocol` exists and its related properties are all present', () => {
+  it('should pass if `module` exists and its related properties are all present', () => {
     const validMessage = {
       recordId   : 'anyRecordId',
-      contextId  : 'someContext', // must exist because `protocol` exists
+      contextId  : 'someContext', // must exist because `module` exists
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'someProtocolId',
-        protocolPath     : 'foo/bar', // must exist because `protocol` exists
-        schema           : 'http://foo.bar/schema', // must exist because `protocol` exists
+        module           : 'someModuleId',
+        modulePath       : 'foo/bar', // must exist because `module` exists
+        schema           : 'http://foo.bar/schema', // must exist because `module` exists
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -138,15 +138,15 @@ describe('RecordsWrite schema definition', () => {
     expect(() => Message.validateJsonSchema(validMessage)).not.toThrow();
   });
 
-  it('should throw if `protocolPath` contains invalid characters', () => {
+  it('should throw if `modulePath` contains invalid characters', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'someContext',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://foo.bar',
-        protocolPath     : 'invalid:path', // `:` is not a valid char in `protocolPath`
+        module           : 'http://foo.bar',
+        modulePath       : 'invalid:path', // `:` is not a valid char in `modulePath`
         schema           : 'http://foo.bar/schema',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -159,19 +159,19 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('protocolPath: must match pattern');
+    }).toThrow('modulePath: must match pattern');
   });
 
-  it('should allow exact reserved encryption control protocol paths', () => {
-    for (const protocolPath of [ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
+  it('should allow exact reserved encryption control module paths', () => {
+    for (const modulePath of [ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH]) {
       const message = {
         recordId   : 'anyRecordId',
         contextId  : 'someContext',
         descriptor : {
           interface        : 'Records',
           method           : 'Write',
-          protocol         : 'http://foo.bar',
-          protocolPath,
+          module           : 'http://foo.bar',
+          modulePath,
           schema           : 'http://foo.bar/schema',
           dataCid          : 'anyCid',
           dataFormat       : 'application/json',
@@ -186,16 +186,16 @@ describe('RecordsWrite schema definition', () => {
     }
   });
 
-  it('should reject root-only and lookalike encryption control protocol paths', () => {
-    for (const protocolPath of [ENCRYPTION_CONTROL_ROOT_PATH, '$encryptionx/audience', '$encryption/audience/child']) {
+  it('should reject root-only and lookalike encryption control module paths', () => {
+    for (const modulePath of [ENCRYPTION_CONTROL_ROOT_PATH, '$encryptionx/audience', '$encryption/audience/child']) {
       const message = {
         recordId   : 'anyRecordId',
         contextId  : 'someContext',
         descriptor : {
           interface        : 'Records',
           method           : 'Write',
-          protocol         : 'http://foo.bar',
-          protocolPath,
+          module           : 'http://foo.bar',
+          modulePath,
           schema           : 'http://foo.bar/schema',
           dataCid          : 'anyCid',
           dataFormat       : 'application/json',
@@ -206,7 +206,7 @@ describe('RecordsWrite schema definition', () => {
         authorization: TestDataGenerator.generateAuthorization()
       };
 
-      expect(() => Message.validateJsonSchema(message)).toThrow('protocolPath: must match pattern');
+      expect(() => Message.validateJsonSchema(message)).toThrow('modulePath: must match pattern');
     }
   });
 
@@ -217,8 +217,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://foo.bar',
-        protocolPath     : 'A/B/C',
+        module           : 'http://foo.bar',
+        modulePath       : 'A/B/C',
         schema           : 'http://foo.bar/schema',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -258,8 +258,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -274,10 +274,10 @@ describe('RecordsWrite schema definition', () => {
     }).toThrow('must have required property \'contextId\'');
   });
 
-  it('should throw if `contextId` is defined but `protocol` is missing', () => {
+  it('should throw if `contextId` is defined but `module` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
-      contextId  : 'invalid', // must have `protocol` to exist
+      contextId  : 'invalid', // must have `module` to exist
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
@@ -292,17 +292,17 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('must have required property \'protocol\'');
+    }).toThrow('must have required property \'module\'');
   });
 
-  it('should throw if `protocol` is defined but `contextId` is missing', () => {
+  it('should throw if `module` is defined but `contextId` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'invalid',
-        protocolPath     : 'foo',
+        module           : 'invalid',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -317,15 +317,15 @@ describe('RecordsWrite schema definition', () => {
     }).toThrow('must have required property \'contextId\'');
   });
 
-  it('#434 - should throw if `protocol` is missing from descriptor', () => {
+  it('#434 - should throw if `module` is missing from descriptor', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        // protocol     : 'http://foo.bar', // intentionally missing
-        protocolPath     : 'foo/bar',
+        // module     : 'http://foo.bar', // intentionally missing
+        modulePath       : 'foo/bar',
         parentId         : 'anyParentId',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -338,18 +338,18 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('descriptor: must have required property \'protocol\'');
+    }).toThrow('descriptor: must have required property \'module\'');
   });
 
-  it('should throw if `protocol` is defined but `protocolPath` is missing', () => {
+  it('should throw if `module` is defined but `modulePath` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
-      contextId  : 'anyContextId', // required by protocol-based message
+      contextId  : 'anyContextId', // required by module-based message
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://foo.bar',
-        // protocolPath : 'foo/bar', // intentionally missing
+        module           : 'http://foo.bar',
+        // modulePath : 'foo/bar', // intentionally missing
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -361,18 +361,18 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('descriptor: must have required property \'protocolPath\'');
+    }).toThrow('descriptor: must have required property \'modulePath\'');
   });
 
-  it('should throw if `protocolPath` is defined but `protocol` is missing', () => {
+  it('should throw if `modulePath` is defined but `module` is missing', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        // protocol     : 'http://foo.bar', // intentionally missing
-        protocolPath     : 'foo/bar',
+        // module     : 'http://foo.bar', // intentionally missing
+        modulePath       : 'foo/bar',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -384,19 +384,19 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('descriptor: must have required property \'protocol\'');
+    }).toThrow('descriptor: must have required property \'module\'');
   });
 
-  it('should throw if `protocol` is undefined but `recipient` is defined', () => {
+  it('should throw if `module` is undefined but `recipient` is defined', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        // protocol     : 'http://foo.bar', // intentionally missing
+        // module     : 'http://foo.bar', // intentionally missing
         recipient        : 'did:example:anyone',
-        // protocolPath : 'foo/bar', // intentionally missing
+        // modulePath : 'foo/bar', // intentionally missing
         schema           : 'http://foo.bar/schema',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -409,19 +409,19 @@ describe('RecordsWrite schema definition', () => {
 
     expect(() => {
       Message.validateJsonSchema(invalidMessage);
-    }).toThrow('descriptor: must have required property \'protocol\'');
+    }).toThrow('descriptor: must have required property \'module\'');
   });
 
-  it('should pass if `protocol` is defined but `recipient` undefined', () => {
+  it('should pass if `module` is defined but `recipient` undefined', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://foo.bar',
+        module           : 'http://foo.bar',
         // recipient    : 'did:example:anyone', // intentionally missing
-        protocolPath     : 'foo/bar',
+        modulePath       : 'foo/bar',
         schema           : 'http://foo.bar/schema',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -435,16 +435,16 @@ describe('RecordsWrite schema definition', () => {
     expect(() => Message.validateJsonSchema(invalidMessage)).not.toThrow();
   });
 
-  it('should pass if `protocol` and `recipient` are both defined', () => {
+  it('should pass if `module` and `recipient` are both defined', () => {
     const invalidMessage = {
       recordId   : 'anyRecordId',
       contextId  : 'anyContextId',
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://foo.bar',
+        module           : 'http://foo.bar',
         recipient        : 'did:example:anyone',
-        protocolPath     : 'foo/bar',
+        modulePath       : 'foo/bar',
         schema           : 'http://foo.bar/schema',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
@@ -465,8 +465,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -490,8 +490,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,
@@ -514,8 +514,8 @@ describe('RecordsWrite schema definition', () => {
       descriptor : {
         interface        : 'Records',
         method           : 'Write',
-        protocol         : 'http://example.com/protocol',
-        protocolPath     : 'foo',
+        module           : 'http://example.com/module',
+        modulePath       : 'foo',
         dataCid          : 'anyCid',
         dataFormat       : 'application/json',
         dataSize         : 123,

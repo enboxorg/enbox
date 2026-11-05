@@ -7,7 +7,7 @@ guide so developers have one implementation recipe.
 
 ## Package boundary
 
-The published Enbox SDKs are framework-independent. `@enbox/api` owns protocol
+The published Enbox SDKs are framework-independent. `@enbox/api` owns module
 operations, sessions, observations, and commands. `@enbox/browser` adds browser
 facilities such as wallet popups, service workers, and URL handling. Neither
 package contains React hooks, components, React types, or React dependencies.

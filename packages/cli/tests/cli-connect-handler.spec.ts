@@ -27,12 +27,12 @@ const connectedDid = 'did:dht:owner';
 const requestedScope: DwnPermissionScope = {
   interface : DwnInterfaceName.Records,
   method    : DwnMethodName.Write,
-  protocol  : 'https://example.com/protocols/notes',
+  module    : 'https://example.com/modules/notes',
 };
 const permissionRequests: ConnectPermissionRequest[] = [{
-  protocolDefinition: {
+  moduleDefinition: {
     published : true,
-    protocol  : 'https://example.com/protocols/notes',
+    module    : 'https://example.com/modules/notes',
     types     : {},
     structure : {},
   },
@@ -900,15 +900,15 @@ function createGrant({
       scope,
     }).toBase64Url(),
     descriptor: {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : grantee,
-      dateCreated  : '2026-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : DwnInterfaceName.Records,
+      method      : DwnMethodName.Write,
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : grantee,
+      dateCreated : '2026-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {

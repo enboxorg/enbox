@@ -1,5 +1,5 @@
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
-import type { MessageSubscription, ProgressToken, ProtocolDefinition, SubscriptionError } from '@enbox/dwn-sdk-js';
+import type { MessageSubscription, ModuleDefinition, ProgressToken, SubscriptionError } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
@@ -9,7 +9,7 @@ import type { JsonRpcSocket } from '../../../dwn-clients/src/json-rpc-socket.js'
 import { WebSocketDwnRpcClient } from '../../../dwn-clients/src/web-socket-clients.js';
 import { createGate, startSocketServer } from './socket-test-utils.js';
 import { DEFAULT_MAX_IN_FLIGHT, MAX_BUFFER_SIZE, MAX_BUFFER_WAIT_MS } from '../../src/connection/flow-controller.js';
-import { executeUnlessAborted, MessagesQuery, MessagesSubscribe, ProtocolsConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { executeUnlessAborted, MessagesQuery, MessagesSubscribe, ModulesConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 type ClientConnection = { socket: JsonRpcSocket; subscriptions: Map<string, { lastCursor?: ProgressToken; closed: boolean }> };
 
@@ -140,16 +140,16 @@ describe('Bundled client replay lifecycle', () => {
     const { dwn } = await getTestDwn({ withEvents: true });
     const server = startSocketServer(dwn);
     const { client, alice } = await warmConnection(server.url);
-    const protocol = 'https://example.com/close-reconnect-replay';
-    const definition: ProtocolDefinition = {
-      protocol,
+    const module = 'https://example.com/close-reconnect-replay';
+    const definition: ModuleDefinition = {
+      module,
       published : true,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: { $recordLimit: { max: 1 } } },
     };
-    const configure = await ProtocolsConfigure.create({ definition, signer: alice.signer });
+    const configure = await ModulesConfigure.create({ definition, signer: alice.signer });
     expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
-    const first = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'note', dataFormat: 'application/json' });
+    const first = await TestDataGenerator.generateRecordsWrite({ author: alice, module, modulePath: 'note', dataFormat: 'application/json' });
     expect((await dwn.processMessage(alice.did, first.message, { dataStream: first.dataStream })).status.code).toBe(202);
     const store = dwn.storage.messageStore;
     const cursor = (await store.logBounds(alice.did))!.oldest;
@@ -176,7 +176,7 @@ describe('Bundled client replay lifecycle', () => {
     const sent = sinon.spy(connection.socket, 'send');
     let handle: MessageSubscription | undefined;
     try {
-      const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor });
+      const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { module }, cursor });
       const reply = await client.sendDwnRequest({
         dwnUrl       : server.url,
         targetDid    : alice.did,
@@ -187,7 +187,7 @@ describe('Bundled client replay lifecycle', () => {
           },
           resubscribeFactory: async (cursor): Promise<typeof subscribe.message> => {
             replaying = true;
-            return (await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor })).message;
+            return (await RecordsSubscribe.create({ signer: alice.signer, filter: { module }, cursor })).message;
           },
         },
       });
@@ -226,16 +226,16 @@ describe('Bundled client replay lifecycle', () => {
     const { dwn } = await getTestDwn({ withEvents: true });
     const server = startSocketServer(dwn);
     const { client, alice } = await warmConnection(server.url);
-    const protocol = 'https://example.com/slow-opening';
-    const definition: ProtocolDefinition = {
-      protocol,
+    const module = 'https://example.com/slow-opening';
+    const definition: ModuleDefinition = {
+      module,
       published : true,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: { $recordLimit: { max: 1 } } },
     };
-    const configure = await ProtocolsConfigure.create({ definition, signer: alice.signer });
+    const configure = await ModulesConfigure.create({ definition, signer: alice.signer });
     expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
-    const record = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'note', dataFormat: 'application/json' });
+    const record = await TestDataGenerator.generateRecordsWrite({ author: alice, module, modulePath: 'note', dataFormat: 'application/json' });
     expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
     const store = dwn.storage.messageStore;
     const cursor = (await store.logBounds(alice.did))!.oldest;
@@ -256,7 +256,7 @@ describe('Bundled client replay lifecycle', () => {
     const sent = sinon.spy(connection.socket, 'send');
     const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     const received: string[] = [];
-    const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor });
+    const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { module }, cursor });
     const opening = client.sendDwnRequest({ dwnUrl       : server.url, targetDid    : alice.did, message      : subscribe.message,
       subscription : { handler: (message): void => {
         received.push(message.type);

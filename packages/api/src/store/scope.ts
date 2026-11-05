@@ -28,7 +28,7 @@ export function withStoreSignal(scope: StoreScope, ownerSignal?: AbortSignal): S
   };
 }
 
-/** An inactive application cannot issue protocol operations. */
+/** An inactive application cannot issue module operations. */
 export class StoreNotConnectedError extends Error {
   public constructor() {
     super('The application has no usable Enbox session.');

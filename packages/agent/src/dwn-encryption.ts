@@ -7,11 +7,11 @@ import type {
   EncryptionInput,
   EncryptionKeyDeriver,
   GrantKeyEligibleRecordsScope,
-  GrantKeyProtocolPathScope,
+  GrantKeyModulePathScope,
   KeyDecrypter,
   KeyDecrypterDerivationScheme,
+  ModuleDefinition,
   PermissionGrant,
-  ProtocolDefinition,
   RecordsWriteMessage,
   RoleAudienceKeyMaterial,
   WrappedGrantKeyEnvelope,
@@ -41,13 +41,13 @@ import {
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
   EncryptionControlDeliveryRecipientAuthority,
-  EncryptionProtocol,
+  EncryptionModule,
   getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
   getRoleContextPrefix,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
-  isCrossProtocolRef,
+  isCrossModuleRef,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
@@ -70,9 +70,9 @@ import {
 } from './dwn-read-through.js';
 
 const GRANT_KEY_DERIVATION_PATH = [
-  KeyDerivationScheme.ProtocolPath,
-  EncryptionProtocol.uri,
-  EncryptionProtocol.grantKeyPath,
+  KeyDerivationScheme.ModulePath,
+  EncryptionModule.uri,
+  EncryptionModule.grantKeyPath,
 ];
 
 type DelegateDecryptionKeyCache = {
@@ -89,7 +89,7 @@ type ResolveKeyDecrypterParams = {
   granteeDid?: string;
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
-  protocolRole?: string;
+  moduleRole?: string;
   failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
@@ -106,22 +106,22 @@ type X25519KeyMaterialBase = {
   privateKeyJwk: PrivateKeyJwk;
 };
 
-type X25519ProtocolPathKeyMaterial = X25519KeyMaterialBase & {
-  derivationScheme: typeof KeyDerivationScheme.ProtocolPath;
+type X25519ModulePathKeyMaterial = X25519KeyMaterialBase & {
+  derivationScheme: typeof KeyDerivationScheme.ModulePath;
   derivationPath: string[];
 };
 
 type GrantKeyPayload = {
   grantId: string;
-  scope: GrantKeyProtocolPathScope;
-  keyMaterial: X25519ProtocolPathKeyMaterial;
+  scope: GrantKeyModulePathScope;
+  keyMaterial: X25519ModulePathKeyMaterial;
 };
 
 type HydrateAudienceKeyParams = {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -152,7 +152,7 @@ export type AudienceKeyPayload = EncryptionControlDeliveryPayload;
 export type AudienceDecryptionKeyEntry = {
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyMaterial: RoleAudienceKeyMaterial;
@@ -162,7 +162,7 @@ export type AudienceDecryptionKeyEntry = {
  * Machine-readable cause of a recipient-side role-audience decrypt failure.
  *
  * - `'not-wrapped-for-role'` — the record's `keyEncryption` carries no role-audience entry: it was
- *   written under a protocol revision without the role's read rule, so no key delivery can ever make
+ *   written under a module revision without the role's read rule, so no key delivery can ever make
  *   it role-readable — the record must be re-written to heal.
  * - `'delivery-missing'` — the record's role-audience entry resolved (the audience record exists),
  *   but no `$encryption/delivery` record wraps that key to this recipient. Only asserted from an
@@ -210,14 +210,14 @@ export type AudienceDecryptFailureCause =
 export class AudienceDecryptError extends Error {
   public readonly cause: AudienceDecryptFailureCause;
   public readonly detail: string;
-  public readonly protocol?: string;
+  public readonly module?: string;
   public readonly recipientDid?: string;
   public readonly recordId: string;
 
   public constructor(init: {
     cause: AudienceDecryptFailureCause;
     detail: string;
-    protocol?: string;
+    module?: string;
     recipientDid?: string;
     recordId: string;
   }) {
@@ -225,7 +225,7 @@ export class AudienceDecryptError extends Error {
     this.name = 'AudienceDecryptError';
     this.cause = init.cause;
     this.detail = init.detail;
-    this.protocol = init.protocol;
+    this.module = init.module;
     this.recipientDid = init.recipientDid;
     this.recordId = init.recordId;
   }
@@ -302,7 +302,7 @@ class AudienceDecryptFailureAccumulator {
   public toError(params: {
     recordId: string;
     fallbackDetail: string;
-    protocol?: string;
+    module?: string;
     recipientDid?: string;
   }): AudienceDecryptError {
     this.endRoute();
@@ -318,7 +318,7 @@ class AudienceDecryptFailureAccumulator {
     return new AudienceDecryptError({
       cause        : outcome.cause,
       detail       : detailParts.join(' '),
-      protocol     : params.protocol,
+      module       : params.module,
       recipientDid : params.recipientDid,
       recordId     : params.recordId,
     });
@@ -382,7 +382,7 @@ export function buildEncryptionInput(
   iv: Uint8Array,
   keyId: string,
   publicKey: PublicKeyJwk,
-  derivationScheme: typeof KeyDerivationScheme.ProtocolPath,
+  derivationScheme: typeof KeyDerivationScheme.ModulePath,
 ): EncryptionInput {
   return {
     initializationVector : iv,
@@ -448,7 +448,7 @@ export async function getEncryptionKeyInfo(
     throw new Error(
       `AgentDwnApi: DID '${didUri}' does not have a keyAgreement ` +
       `verification method. Create the identity with an X25519 key ` +
-      `with keyAgreement purpose to use protocol encryption.`
+      `with keyAgreement purpose to use module encryption.`
     );
   }
 
@@ -515,7 +515,7 @@ export function buildKmsDecryptCallback(
   agent: EnboxPlatformAgent,
   keyId: string,
   keyUri: string,
-  derivationScheme: typeof KeyDerivationScheme.ProtocolPath,
+  derivationScheme: typeof KeyDerivationScheme.ModulePath,
 ): KeyDecrypter {
   const keyManager = agent.keyManager;
   return {
@@ -558,7 +558,7 @@ export async function getEncryptionKeyDeriver(
 
   return {
     rootKeyId        : keyId,
-    derivationScheme : KeyDerivationScheme.ProtocolPath,
+    derivationScheme : KeyDerivationScheme.ModulePath,
     derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
       return keyManager.derivePublicKey({
         keyUri,
@@ -569,7 +569,7 @@ export async function getEncryptionKeyDeriver(
 }
 
 /**
- * Constructs a ProtocolPath KeyDecrypter.
+ * Constructs a ModulePath KeyDecrypter.
  *
  * @param agent - The platform agent
  * @param didUri - The DID URI to create the key decrypter for
@@ -580,15 +580,15 @@ export async function getKeyDecrypter(
   didUri: string,
 ): Promise<KeyDecrypter> {
   const { keyId, keyUri } = await getEncryptionKeyInfo(agent, didUri);
-  return buildKmsDecryptCallback(agent, keyId, keyUri, KeyDerivationScheme.ProtocolPath);
+  return buildKmsDecryptCallback(agent, keyId, keyUri, KeyDerivationScheme.ModulePath);
 }
 
 /**
- * Builds a KeyDecrypter from a delivered protocol/path-derived private key.
+ * Builds a KeyDecrypter from a delivered module/path-derived private key.
  *
  * @param key - The delivered derived private key
  */
-export function buildProtocolPathSubtreeDecrypter(
+export function buildModulePathSubtreeDecrypter(
   key: DerivedPrivateJwk,
 ): KeyDecrypter {
   return {
@@ -630,8 +630,8 @@ export function buildFixedPrivateKeyDecrypter(params: {
 /** Cache entry shape for scope-aware delegate decryption keys. */
 export type DelegateDecryptionKeyEntry = {
   grantorDid: string;
-  protocol: string;
-  scope: { kind: 'protocol' } | { kind: 'protocolPath'; protocolPath: string };
+  module: string;
+  scope: { kind: 'module' } | { kind: 'modulePath'; modulePath: string };
   derivedPrivateKey: DerivedPrivateJwk;
 };
 
@@ -666,9 +666,9 @@ class WrappedGrantKeyTargetMismatchError extends Error {
 }
 
 /**
- * Creates durable grantKey records for read grants that carry encrypted protocol access.
+ * Creates durable grantKey records for read grants that carry encrypted module access.
  *
- * The record payload delivers the owner-derived ProtocolPath private key. Wallet-minted
+ * The record payload delivers the owner-derived ModulePath private key. Wallet-minted
  * delegates receive an encrypted `grantKey` record, while supplied delegates receive a
  * plaintext record carrying a wrapped envelope encrypted to their root X25519 key.
  */
@@ -679,11 +679,11 @@ export async function createGrantKeyRecordsForGrants(params: {
   granteeRootPrivateKey?: PrivateKeyJwk;
   granteeRootPublicKey?: PublicKeyJwk;
   grantMessages: DataEncodedRecordsWriteMessage[];
-  protocolDefinitions?: ProtocolDefinition[];
+  moduleDefinitions?: ModuleDefinition[];
 }): Promise<DataEncodedRecordsWriteMessage[]> {
   const grantKeyRecords: DataEncodedRecordsWriteMessage[] = [];
-  const protocolDefinitions = new Map(
-    (params.protocolDefinitions ?? []).map((definition) => [definition.protocol, definition])
+  const moduleDefinitions = new Map(
+    (params.moduleDefinitions ?? []).map((definition) => [definition.module, definition])
   );
   const deliveryKey = await resolveGrantKeyDeliveryKey(params);
 
@@ -693,7 +693,7 @@ export async function createGrantKeyRecordsForGrants(params: {
       continue;
     }
 
-    const payloads = await buildGrantKeyPayloads(params.agent, params.ownerDid, grant, protocolDefinitions);
+    const payloads = await buildGrantKeyPayloads(params.agent, params.ownerDid, grant, moduleDefinitions);
     for (const payload of payloads) {
       grantKeyRecords.push(await createGrantKeyRecordForPayload({
         agent      : params.agent,
@@ -766,14 +766,14 @@ async function createGrantKeyRecordForPayload(params: {
     target        : params.ownerDid,
     messageType   : DwnInterface.RecordsWrite,
     messageParams : {
-      recipient    : params.granteeDid,
-      protocol     : EncryptionProtocol.uri,
-      protocolPath : recordData.encryptionInput === undefined
-        ? EncryptionProtocol.wrappedGrantKeyPath
-        : EncryptionProtocol.grantKeyPath,
+      recipient  : params.granteeDid,
+      module     : EncryptionModule.uri,
+      modulePath : recordData.encryptionInput === undefined
+        ? EncryptionModule.wrappedGrantKeyPath
+        : EncryptionModule.grantKeyPath,
       schema: recordData.encryptionInput === undefined
-        ? EncryptionProtocol.definition.types.wrappedGrantKey.schema
-        : EncryptionProtocol.definition.types.grantKey.schema,
+        ? EncryptionModule.definition.types.wrappedGrantKey.schema
+        : EncryptionModule.definition.types.grantKey.schema,
       dataFormat : 'application/json',
       dataCid    : recordData.dataCid,
       dataSize   : recordData.dataSize,
@@ -795,10 +795,10 @@ async function createGrantKeyRecordForPayload(params: {
 
 function buildGrantKeyRecordTags(grant: PermissionGrant, payload: GrantKeyPayload): Record<string, string> {
   return {
-    grantId  : grant.id,
-    protocol : payload.scope.protocol,
-    ...(payload.scope.protocolPath !== undefined ? { protocolPath: payload.scope.protocolPath } : {}),
-    keyId    : payload.keyMaterial.keyId,
+    grantId : grant.id,
+    module  : payload.scope.module,
+    ...(payload.scope.modulePath !== undefined ? { modulePath: payload.scope.modulePath } : {}),
+    keyId   : payload.keyMaterial.keyId,
   };
 }
 
@@ -843,7 +843,7 @@ async function buildEncryptedGrantKeyRecordData(params: {
     params.dataEncryptionIV,
     params.granteeGrantKeyKeyId,
     params.granteeGrantKeyPublicKey,
-    KeyDerivationScheme.ProtocolPath,
+    KeyDerivationScheme.ModulePath,
   );
   const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
     params.payloadBytes,
@@ -880,7 +880,7 @@ async function buildWrappedGrantKeyRecordData(params: {
     key                  : params.dataEncryptionKey,
     keyEncryptionInputs  : [{
       algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivationScheme : KeyDerivationScheme.ModulePath,
       keyId            : params.granteeRootKeyId,
       publicKey        : params.granteeRootPublicKey,
     }],
@@ -912,7 +912,7 @@ export async function createAudienceRecord(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   authorDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   sealingPublicKey: PublicKeyJwk;
@@ -920,7 +920,7 @@ export async function createAudienceRecord(params: {
   granteeDid?: string;
   permissionGrantId?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
-  protocolRole?: string;
+  moduleRole?: string;
 }): Promise<{
   audienceKey: AudienceKeyPayload;
   message: DataEncodedRecordsWriteMessage;
@@ -928,7 +928,7 @@ export async function createAudienceRecord(params: {
 }> {
   const audienceKey = params.audienceKey ?? await generateAudienceKey({
     contextId : params.contextId,
-    protocol  : params.protocol,
+    module    : params.module,
     rolePath  : params.rolePath,
   });
   const { keyMaterial } = audienceKey;
@@ -937,12 +937,12 @@ export async function createAudienceRecord(params: {
     audienceKeyId    : keyId,
     contextId        : params.contextId,
     privateKeyJwk,
-    protocol         : params.protocol,
+    module           : params.module,
     rolePath         : params.rolePath,
     sealingPublicKey : params.sealingPublicKey,
   });
   const payload: EncryptionControlAudiencePayload = {
-    protocol  : params.protocol,
+    module    : params.module,
     rolePath  : params.rolePath,
     contextId : params.contextId,
     keyId,
@@ -959,14 +959,14 @@ export async function createAudienceRecord(params: {
     messageParams : {
       delegatedGrant    : params.delegatedGrant,
       permissionGrantId : params.permissionGrantId,
-      protocol          : params.protocol,
-      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      protocolRole      : params.protocolRole,
+      module            : params.module,
+      modulePath        : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      moduleRole        : params.moduleRole,
       schema            : ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI,
       dataFormat        : 'application/json',
       dataSize          : payloadBytes.length,
       tags              : {
-        protocol  : params.protocol,
+        module    : params.module,
         rolePath  : params.rolePath,
         contextId : params.contextId,
         keyId,
@@ -990,10 +990,10 @@ export async function createAudienceRecord(params: {
 }
 
 /**
- * Generates fresh random role-audience key material for one source-protocol audience tuple.
+ * Generates fresh random role-audience key material for one source-module audience tuple.
  */
 export async function generateAudienceKey(params: {
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
 }): Promise<AudienceKeyPayload> {
@@ -1009,7 +1009,7 @@ export async function generateAudienceKey(params: {
   };
 
   return {
-    protocol  : params.protocol,
+    module    : params.module,
     rolePath  : params.rolePath,
     contextId : params.contextId,
     keyId,
@@ -1031,10 +1031,10 @@ export async function createAudienceDeliveryRecord(params: {
   granteeDid?: string;
   permissionGrantId?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
-  protocolRole?: string;
+  moduleRole?: string;
 }): Promise<DataEncodedRecordsWriteMessage> {
   const payload: EncryptionControlDeliveryPayload = {
-    protocol    : params.audienceKey.protocol,
+    module      : params.audienceKey.module,
     rolePath    : params.audienceKey.rolePath,
     contextId   : params.audienceKey.contextId,
     keyId       : params.audienceKey.keyId,
@@ -1050,7 +1050,7 @@ export async function createAudienceDeliveryRecord(params: {
     dataEncryptionIV,
     recipientRoleKeyId,
     params.recipientRolePublicKey,
-    KeyDerivationScheme.ProtocolPath,
+    KeyDerivationScheme.ModulePath,
   );
   const { encryptedBytes, dataCid, dataSize } = await encryptAndComputeCid(
     payloadBytes,
@@ -1068,16 +1068,16 @@ export async function createAudienceDeliveryRecord(params: {
       delegatedGrant    : params.delegatedGrant,
       permissionGrantId : params.permissionGrantId,
       recipient         : params.recipientDid,
-      protocol          : params.audienceKey.protocol,
-      protocolPath      : ENCRYPTION_CONTROL_DELIVERY_PATH,
-      protocolRole      : params.protocolRole,
+      module            : params.audienceKey.module,
+      modulePath        : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      moduleRole        : params.moduleRole,
       schema            : ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
       dataFormat        : 'application/json',
       dataCid,
       dataSize,
       encryptionInput,
       tags              : {
-        protocol           : params.audienceKey.protocol,
+        module             : params.audienceKey.module,
         rolePath           : params.audienceKey.rolePath,
         contextId          : params.audienceKey.contextId,
         keyId              : params.audienceKey.keyId,
@@ -1107,7 +1107,7 @@ export async function unsealAudienceKey(params: {
   const privateKeyBytes = await unwrapAudienceSeal({
     audienceKeyId     : params.payload.keyId,
     contextId         : params.payload.contextId,
-    protocol          : params.payload.protocol,
+    module            : params.payload.module,
     rolePath          : params.payload.rolePath,
     seal              : params.payload.sealedPrivateKey,
     sealingPrivateKey : params.sealingPrivateKey,
@@ -1126,7 +1126,7 @@ export async function unsealAudienceKey(params: {
     payload: {
       contextId : params.payload.contextId,
       keyId     : params.payload.keyId,
-      protocol  : params.payload.protocol,
+      module    : params.payload.module,
       rolePath  : params.payload.rolePath,
     },
     publicKeyJwk: params.payload.publicKeyJwk,
@@ -1141,7 +1141,7 @@ export async function unsealAudienceKey(params: {
 export async function verifyAudienceKeyMaterial(params: {
   keyMaterial: RoleAudienceKeyMaterial;
   payload: {
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId: string;
@@ -1167,7 +1167,7 @@ async function sealAudiencePrivateKey(params: {
   audienceKeyId: string;
   contextId: string;
   privateKeyJwk: PrivateKeyJwk;
-  protocol: string;
+  module: string;
   rolePath: string;
   sealingPublicKey: PublicKeyJwk;
 }): Promise<EncryptionControlSeal> {
@@ -1179,7 +1179,7 @@ async function sealAudiencePrivateKey(params: {
       contextId        : params.contextId,
       derivationScheme : SEAL_DERIVATION_SCHEME,
       keyId            : await Encryption.getKeyId(params.sealingPublicKey),
-      protocol         : params.protocol,
+      module           : params.module,
       publicKey        : params.sealingPublicKey,
       rolePath         : params.rolePath,
     },
@@ -1189,7 +1189,7 @@ async function sealAudiencePrivateKey(params: {
 async function unwrapAudienceSeal(params: {
   audienceKeyId: string;
   contextId: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   seal: EncryptionControlSeal;
   sealingPrivateKey: PrivateKeyJwk;
@@ -1197,7 +1197,7 @@ async function unwrapAudienceSeal(params: {
   return Encryption.unwrapSeal({
     audienceKeyId       : params.audienceKeyId,
     contextId           : params.contextId,
-    protocol            : params.protocol,
+    module              : params.module,
     recipientPrivateKey : params.sealingPrivateKey,
     rolePath            : params.rolePath,
     seal                : params.seal,
@@ -1215,16 +1215,16 @@ async function resolveCachedDelegateDecryptionKey(params: {
   agent: EnboxPlatformAgent;
   targetDid: string;
   granteeDid: string;
-  protocol: string;
-  protocolPath: string | undefined;
+  module: string;
+  modulePath: string | undefined;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
   failureAccumulator?: AudienceDecryptFailureAccumulator;
 }): Promise<KeyDecrypter | undefined> {
-  const { agent, targetDid, granteeDid, protocol, protocolPath, delegateDecryptionKeyCache } = params;
+  const { agent, targetDid, granteeDid, module, modulePath, delegateDecryptionKeyCache } = params;
   const cacheKey = `ddk~${granteeDid}`;
-  const cachedKey = findCoveringDelegateKey(delegateDecryptionKeyCache?.get(cacheKey), targetDid, protocol, protocolPath);
+  const cachedKey = findCoveringDelegateKey(delegateDecryptionKeyCache?.get(cacheKey), targetDid, module, modulePath);
   if (cachedKey !== undefined) {
-    return buildProtocolPathSubtreeDecrypter(cachedKey.derivedPrivateKey);
+    return buildModulePathSubtreeDecrypter(cachedKey.derivedPrivateKey);
   }
 
   if (delegateDecryptionKeyCache?.set === undefined) {
@@ -1235,8 +1235,8 @@ async function resolveCachedDelegateDecryptionKey(params: {
     agent,
     grantorDid         : targetDid,
     granteeDid,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     failureAccumulator : params.failureAccumulator,
   });
 
@@ -1250,15 +1250,15 @@ async function resolveCachedDelegateDecryptionKey(params: {
   );
   delegateDecryptionKeyCache.set(cacheKey, mergedKeys);
 
-  const hydratedKey = findCoveringDelegateKey(mergedKeys, targetDid, protocol, protocolPath);
-  return hydratedKey !== undefined ? buildProtocolPathSubtreeDecrypter(hydratedKey.derivedPrivateKey) : undefined;
+  const hydratedKey = findCoveringDelegateKey(mergedKeys, targetDid, module, modulePath);
+  return hydratedKey !== undefined ? buildModulePathSubtreeDecrypter(hydratedKey.derivedPrivateKey) : undefined;
 }
 
 /**
  * Resolves the appropriate KeyDecrypter for a record's encryption scheme.
  *
- * Owners derive protocol-path keys directly from KMS. Delegates use delivered
- * protocol-wide or path-subtree decryption keys when available.
+ * Owners derive module-path keys directly from KMS. Delegates use delivered
+ * module-wide or path-subtree decryption keys when available.
  *
  * @param params - Decryption resolution inputs.
  */
@@ -1270,7 +1270,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     delegatedGrant,
     delegateDecryptionKeyCache,
     granteeDid,
-    protocolRole,
+    moduleRole,
     recordsWrite,
     targetDid,
   } = params;
@@ -1280,8 +1280,8 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     // An exact invoked role selects its audience route; its delivery or source seal supplies the key.
     const invokedRolePath = targetDid !== undefined &&
       targetDid !== authorDid &&
-      protocolRole !== undefined
-      ? getLocalRoleAudiencePath(recordsWrite, protocolRole)
+      moduleRole !== undefined
+      ? getLocalRoleAudiencePath(recordsWrite, moduleRole)
       : undefined;
     if (invokedRolePath !== undefined) {
       // The delegate's owner key opens the role-holder delivery, not the foreign tenant's record.
@@ -1304,21 +1304,21 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
 
       throw failureAccumulator.toError({
         fallbackDetail : `no audience key for invoked role '${invokedRolePath}' opens encrypted record '${recordsWrite.recordId}'.`,
-        protocol       : recordsWrite.descriptor.protocol,
+        module         : recordsWrite.descriptor.module,
         recipientDid   : authorDid,
         recordId       : recordsWrite.recordId,
       });
     }
 
-    const protocol = recordsWrite.descriptor.protocol;
-    const protocolPath = recordsWrite.descriptor.protocolPath;
-    if (protocol && targetDid !== undefined) {
+    const module = recordsWrite.descriptor.module;
+    const modulePath = recordsWrite.descriptor.modulePath;
+    if (module && targetDid !== undefined) {
       const cachedDecrypter = await resolveCachedDelegateDecryptionKey({
         agent,
         targetDid,
         granteeDid,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         delegateDecryptionKeyCache,
         failureAccumulator,
       });
@@ -1344,7 +1344,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
 
     throw failureAccumulator.toError({
       fallbackDetail : `no delivered decryption key covers encrypted record '${recordsWrite.recordId}' for delegate '${granteeDid}'.`,
-      protocol       : recordsWrite.descriptor.protocol,
+      module         : recordsWrite.descriptor.module,
       recipientDid   : authorDid,
       recordId       : recordsWrite.recordId,
     });
@@ -1366,7 +1366,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
     if (!recordHasRoleAudienceKeyEncryption(recordsWrite)) {
       failureAccumulator.record(
         'not-wrapped-for-role',
-        `the record carries no role-audience key-encryption entry: it was written under a protocol revision ` +
+        `the record carries no role-audience key-encryption entry: it was written under a module revision ` +
         `without the role's read rule, so no key delivery can make it role-readable — the record must be re-written to heal.`
       );
     }
@@ -1376,19 +1376,19 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
 }
 
 /** Returns a local invoked role only when the encryption envelope contains its exact audience route. */
-function getLocalRoleAudiencePath(recordsWrite: RecordsWriteMessage, protocolRole: string): string | undefined {
-  const protocol = recordsWrite.descriptor.protocol;
-  if (protocol === undefined || isCrossProtocolRef(protocolRole)) {
+function getLocalRoleAudiencePath(recordsWrite: RecordsWriteMessage, moduleRole: string): string | undefined {
+  const module = recordsWrite.descriptor.module;
+  if (module === undefined || isCrossModuleRef(moduleRole)) {
     return undefined;
   }
 
   return recordsWrite.encryption?.keyEncryption.some(
     (entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
       'rolePath' in entry &&
-      entry.protocol === protocol &&
-      entry.rolePath === protocolRole,
+      entry.module === module &&
+      entry.rolePath === moduleRole,
   ) === true
-    ? protocolRole
+    ? moduleRole
     : undefined;
 }
 
@@ -1419,7 +1419,7 @@ export async function decryptRecordData(
     delegatedGrant,
     delegateDecryptionKeyCache,
     granteeDid,
-    protocolRole,
+    moduleRole,
     recordsWrite,
     target,
   } = params;
@@ -1438,7 +1438,7 @@ export async function decryptRecordData(
       delegateDecryptionKeyCache,
       failureAccumulator,
       granteeDid,
-      protocolRole,
+      moduleRole,
       recordsWrite,
       targetDid : target,
     });
@@ -1450,7 +1450,7 @@ export async function decryptRecordData(
     }
     throw failureAccumulator.toError({
       fallbackDetail : `Original error: ${error.message}`,
-      protocol       : recordsWrite.descriptor.protocol,
+      module         : recordsWrite.descriptor.module,
       recipientDid   : author,
       recordId       : recordsWrite.recordId,
     });
@@ -1476,12 +1476,12 @@ async function resolveRoleAudienceDecrypter(params: {
 
   const roleAudienceEntries = params.recordsWrite.encryption.keyEncryption.filter((entry): entry is typeof entry & {
     derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-    protocol: string;
+    module: string;
     rolePath: string;
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     'rolePath' in entry &&
     (params.rolePath === undefined || (
-      entry.protocol === params.recordsWrite.descriptor.protocol &&
+      entry.module === params.recordsWrite.descriptor.module &&
       entry.rolePath === params.rolePath
     )));
 
@@ -1495,7 +1495,7 @@ async function resolveRoleAudienceDecrypter(params: {
       audienceDecryptionKeyCache : params.audienceDecryptionKeyCache,
       sourceDid                  : params.sourceDid,
       recipientDid               : params.recipientDid,
-      protocol                   : entry.protocol,
+      module                     : entry.module,
       contextId,
       rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
@@ -1514,7 +1514,7 @@ async function resolveRoleAudienceDecrypter(params: {
       delegatedGrant             : params.delegatedGrant,
       delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
       failureAccumulator         : params.failureAccumulator,
-      protocol                   : entry.protocol,
+      module                     : entry.module,
       contextId,
       rolePath                   : entry.rolePath,
       keyId                      : entry.keyId,
@@ -1546,7 +1546,7 @@ export async function resolveAudienceDecryptionKey(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -1580,7 +1580,7 @@ async function hydrateAudienceKey(params: HydrateAudienceKeyParams): Promise<Aud
       authorDid : params.granteeDid ?? params.recipientDid,
       contextId : params.contextId,
       keyId     : params.keyId,
-      protocol  : params.protocol,
+      module    : params.module,
       rolePath  : params.rolePath,
       sourceDid : params.sourceDid,
     });
@@ -1634,7 +1634,7 @@ async function hydrateAudienceKeyFromDeliveryMessages(
     recipientDid               : params.recipientDid,
     granteeDid                 : params.granteeDid,
     delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
-    protocol                   : params.protocol,
+    module                     : params.module,
     rolePath                   : params.rolePath,
   });
   if (deliveryDecrypters.length === 0) {
@@ -1770,7 +1770,7 @@ async function classifyMissingDeliveries(
   accumulator.record(
     'delivery-missing',
     `no $encryption/delivery record wraps role-audience key '${params.keyId}' of ` +
-    `(${params.protocol}, ${params.rolePath}, '${params.contextId}') to '${params.recipientDid}'.`
+    `(${params.module}, ${params.rolePath}, '${params.contextId}') to '${params.recipientDid}'.`
   );
   await recordSupersededAudienceIfCurrentDiffers(params, accumulator);
 }
@@ -1803,7 +1803,7 @@ async function recordSupersededAudienceIfCurrentDiffers(
     logger.log(`AgentDwnApi: current-audience probe for role-audience key '${params.keyId}' failed: ${message}`);
     accumulator.record(
       'remote-unverifiable',
-      `the current-audience probe for (${params.protocol}, ${params.rolePath}, '${params.contextId}') failed ` +
+      `the current-audience probe for (${params.module}, ${params.rolePath}, '${params.contextId}') failed ` +
       `(${message}); superseded-ness cannot be asserted.`
     );
     return;
@@ -1819,7 +1819,7 @@ async function recordSupersededAudienceIfCurrentDiffers(
 }
 
 /**
- * Queries the source tenant for the CURRENT audience record of one (protocol, rolePath, contextId)
+ * Queries the source tenant for the CURRENT audience record of one (module, rolePath, contextId)
  * tuple. Omitting the `keyId` tag keeps the query inside the DWN's current-audience projection, so
  * at most the tuple's current record is returned. Visibility still applies: an actor who cannot
  * enumerate the tuple's audience records observes nothing and no cause is recorded.
@@ -1831,10 +1831,10 @@ async function probeCurrentAudienceKeyId(params: HydrateAudienceKeyParams): Prom
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
       filter: {
-        protocol     : params.protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-        tags         : {
-          protocol  : params.protocol,
+        module     : params.module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags       : {
+          module    : params.module,
           rolePath  : params.rolePath,
           contextId : params.contextId,
         },
@@ -1870,12 +1870,12 @@ async function hydrateAudienceKeyFromSeal(
   return undefined;
 }
 
-/** One exact audience tuple (protocol, rolePath, contextId, keyId) and the recipient whose deliveries are queried. */
+/** One exact audience tuple (module, rolePath, contextId, keyId) and the recipient whose deliveries are queried. */
 export type QueryAudienceDeliveryMessagesParams = {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   keyId: string;
@@ -1901,11 +1901,11 @@ export async function queryAudienceDeliveryMessagesDetailed(
     messageParams : {
       delegatedGrant : deliveryReadActor.delegatedGrant,
       filter         : {
-        recipient    : params.recipientDid,
-        protocol     : params.protocol,
-        protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-        tags         : {
-          protocol  : params.protocol,
+        recipient  : params.recipientDid,
+        module     : params.module,
+        modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+        tags       : {
+          module    : params.module,
           rolePath  : params.rolePath,
           contextId : params.contextId,
           keyId     : params.keyId,
@@ -1923,7 +1923,7 @@ export async function queryAudienceDeliveryMessagesDetailed(
 
 /**
  * Queries the source tenant for `$encryption/delivery` records wrapping ONE exact audience tuple
- * (protocol, rolePath, contextId, keyId) to `recipientDid` — matching on `keyId` distinguishes a
+ * (module, rolePath, contextId, keyId) to `recipientDid` — matching on `keyId` distinguishes a
  * current-key delivery from a stale one. Results are visibility-filtered for non-tenant actors:
  * an empty result under a delegate actor is structural, not evidence of non-delivery.
  */
@@ -1943,19 +1943,19 @@ export function audienceDeliveryWrapsKeyId(message: RecordsWriteMessage, keyId: 
 }
 
 /**
- * Whether a record is the encryption-control record at `protocolPath` tagged for the given
+ * Whether a record is the encryption-control record at `modulePath` tagged for the given
  * audience context — the read-side projection of the tag shape written when audience and
  * delivery records are created.
  */
 export function isEncryptionControlRecordFor(
   message: RecordsWriteMessage,
-  protocolPath: string,
-  audience: { protocol: string; rolePath: string; contextId: string },
+  modulePath: string,
+  audience: { module: string; rolePath: string; contextId: string },
 ): boolean {
   const tags = message.descriptor.tags;
-  return message.descriptor.protocol === audience.protocol
-    && message.descriptor.protocolPath === protocolPath
-    && tags?.protocol === audience.protocol
+  return message.descriptor.module === audience.module
+    && message.descriptor.modulePath === modulePath
+    && tags?.module === audience.module
     && tags.rolePath === audience.rolePath
     && tags.contextId === audience.contextId
     && typeof tags.keyId === 'string';
@@ -2050,7 +2050,7 @@ async function decryptAudienceDelivery(input: {
     payload,
     sourceDid         : params.sourceDid,
     recipientDid      : params.recipientDid,
-    protocol          : params.protocol,
+    module            : params.module,
     contextId         : params.contextId,
     rolePath          : params.rolePath,
     keyId             : params.keyId,
@@ -2059,7 +2059,7 @@ async function decryptAudienceDelivery(input: {
   return {
     contextId    : payload.contextId,
     keyMaterial  : payload.keyMaterial,
-    protocol     : payload.protocol,
+    module       : payload.module,
     recipientDid : params.recipientDid,
     rolePath     : payload.rolePath,
     sourceDid    : params.sourceDid,
@@ -2104,15 +2104,15 @@ async function getAudienceDeliveryEncryptedData(
 async function buildAudienceDeliveryDecrypters(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter[]> {
   const decrypters: KeyDecrypter[] = [];
-  const decrypter = await buildRecipientProtocolPathDecrypter({
+  const decrypter = await buildRecipientModulePathDecrypter({
     ...params,
-    protocolPath: params.rolePath,
+    modulePath: params.rolePath,
   });
   if (decrypter !== undefined) {
     decrypters.push(decrypter);
@@ -2127,19 +2127,19 @@ async function buildAudienceDeliveryDecrypters(params: {
 export async function hasAudienceSealCoverage(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<boolean> {
   try {
-    const sealingPrivateKey = await getRecipientProtocolPathPrivateKey({
+    const sealingPrivateKey = await getRecipientModulePathPrivateKey({
       agent                      : params.agent,
       delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
-      derivationPath             : getScopeDerivationPath(params.protocol, params.rolePath),
+      derivationPath             : getScopeDerivationPath(params.module, params.rolePath),
       granteeDid                 : params.granteeDid,
-      protocol                   : params.protocol,
-      protocolPath               : params.rolePath,
+      module                     : params.module,
+      modulePath                 : params.rolePath,
       recipientDid               : params.sourceDid,
     });
     return sealingPrivateKey !== undefined;
@@ -2148,16 +2148,16 @@ export async function hasAudienceSealCoverage(params: {
   }
 }
 
-async function buildRecipientProtocolPathDecrypter(params: {
+async function buildRecipientModulePathDecrypter(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
 }): Promise<KeyDecrypter | undefined> {
-  const derivationPath = getScopeDerivationPath(params.protocol, params.protocolPath);
-  const privateKeyJwk = await getRecipientProtocolPathPrivateKey({
+  const derivationPath = getScopeDerivationPath(params.module, params.modulePath);
+  const privateKeyJwk = await getRecipientModulePathPrivateKey({
     ...params,
     derivationPath,
   });
@@ -2167,18 +2167,18 @@ async function buildRecipientProtocolPathDecrypter(params: {
 
   const publicKeyJwk = await X25519.getPublicKey({ key: privateKeyJwk }) as PublicKeyJwk;
   return buildFixedPrivateKeyDecrypter({
-    derivationScheme : KeyDerivationScheme.ProtocolPath,
+    derivationScheme : KeyDerivationScheme.ModulePath,
     keyId            : await Encryption.getKeyId(publicKeyJwk),
     privateKeyJwk,
     publicKeyJwk,
   });
 }
 
-async function getRecipientProtocolPathPrivateKey(params: {
+async function getRecipientModulePathPrivateKey(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   derivationPath: string[];
   granteeDid?: string;
   delegateDecryptionKeyCache?: DelegateDecryptionKeyCache;
@@ -2194,19 +2194,19 @@ async function getRecipientProtocolPathPrivateKey(params: {
 
   const cacheKey = `ddk~${params.granteeDid}`;
   let delegateKeys = params.delegateDecryptionKeyCache?.get(cacheKey) ?? [];
-  let coveringKey = findCoveringDelegateKey(delegateKeys, params.recipientDid, params.protocol, params.protocolPath);
+  let coveringKey = findCoveringDelegateKey(delegateKeys, params.recipientDid, params.module, params.modulePath);
 
   if (coveringKey === undefined && params.delegateDecryptionKeyCache?.set !== undefined) {
     const hydratedKeys = await resolveGrantKeyRecords({
-      agent        : params.agent,
-      grantorDid   : params.recipientDid,
-      granteeDid   : params.granteeDid,
-      protocol     : params.protocol,
-      protocolPath : params.protocolPath,
+      agent      : params.agent,
+      grantorDid : params.recipientDid,
+      granteeDid : params.granteeDid,
+      module     : params.module,
+      modulePath : params.modulePath,
     });
     delegateKeys = mergeDelegateDecryptionKeys(delegateKeys, hydratedKeys);
     params.delegateDecryptionKeyCache.set(cacheKey, delegateKeys);
-    coveringKey = findCoveringDelegateKey(delegateKeys, params.recipientDid, params.protocol, params.protocolPath);
+    coveringKey = findCoveringDelegateKey(delegateKeys, params.recipientDid, params.module, params.modulePath);
   }
 
   if (coveringKey === undefined) {
@@ -2221,7 +2221,7 @@ async function tryUnsealAudienceKey(params: {
   agent: EnboxPlatformAgent;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   keyId: string;
@@ -2233,13 +2233,13 @@ async function tryUnsealAudienceKey(params: {
     return undefined;
   }
 
-  const sealingPrivateKey = await getRecipientProtocolPathPrivateKey({
+  const sealingPrivateKey = await getRecipientModulePathPrivateKey({
     agent                      : params.agent,
     delegateDecryptionKeyCache : params.delegateDecryptionKeyCache,
-    derivationPath             : getScopeDerivationPath(params.protocol, params.rolePath),
+    derivationPath             : getScopeDerivationPath(params.module, params.rolePath),
     granteeDid                 : params.granteeDid,
-    protocol                   : params.protocol,
-    protocolPath               : params.rolePath,
+    module                     : params.module,
+    modulePath                 : params.rolePath,
     recipientDid               : params.sourceDid,
   });
   if (sealingPrivateKey === undefined) {
@@ -2254,7 +2254,7 @@ async function tryUnsealAudienceKey(params: {
   return {
     contextId    : params.contextId,
     keyMaterial,
-    protocol     : params.protocol,
+    module       : params.module,
     recipientDid : params.recipientDid,
     rolePath     : params.rolePath,
     sourceDid    : params.sourceDid,
@@ -2265,7 +2265,7 @@ async function fetchAudienceRecord(params: {
   agent: EnboxPlatformAgent;
   authorDid: string;
   sourceDid: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   keyId: string;
@@ -2279,10 +2279,10 @@ async function fetchAudienceRecord(params: {
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
       filter: {
-        protocol     : params.protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-        tags         : {
-          protocol  : params.protocol,
+        module     : params.module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags       : {
+          module    : params.module,
           rolePath  : params.rolePath,
           contextId : params.contextId,
           keyId     : params.keyId,
@@ -2334,17 +2334,17 @@ async function getAudienceRecordData(
 }
 
 function audiencePayloadMatches(payload: EncryptionControlAudiencePayload, audienceMessage: RecordsWriteMessage, expected: {
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   keyId: string;
 }): boolean {
   const tags = audienceMessage.descriptor.tags ?? {};
-  return payload.protocol === expected.protocol &&
+  return payload.module === expected.module &&
     payload.rolePath === expected.rolePath &&
     payload.contextId === expected.contextId &&
     payload.keyId === expected.keyId &&
-    payload.protocol === tags.protocol &&
+    payload.module === tags.module &&
     payload.rolePath === tags.rolePath &&
     payload.contextId === tags.contextId &&
     payload.keyId === tags.keyId &&
@@ -2360,7 +2360,7 @@ async function verifyAudienceKeyPayload(params: {
   deliveryReadActor: AudienceDeliveryReadActor;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -2372,11 +2372,11 @@ async function verifyAudienceKeyPayload(params: {
   const keyMaterial = payload.keyMaterial;
 
   if (deliveryMessage.descriptor.recipient !== params.recipientDid ||
-      payload.protocol !== tags.protocol ||
+      payload.module !== tags.module ||
       payload.rolePath !== tags.rolePath ||
       payload.contextId !== tags.contextId ||
       keyMaterial.keyId !== tags.keyId ||
-      payload.protocol !== params.protocol ||
+      payload.module !== params.module ||
       payload.contextId !== params.contextId ||
       payload.rolePath !== params.rolePath ||
       keyMaterial.keyId !== params.keyId) {
@@ -2388,7 +2388,7 @@ async function verifyAudienceKeyPayload(params: {
     payload: {
       contextId : params.contextId,
       keyId     : params.keyId,
-      protocol  : params.protocol,
+      module    : params.module,
       rolePath  : params.rolePath,
     },
     publicKeyJwk: params.audiencePayload.publicKeyJwk,
@@ -2398,7 +2398,7 @@ async function verifyAudienceKeyPayload(params: {
 
 function assertAudienceKeyPayload(payload: unknown): asserts payload is EncryptionControlDeliveryPayload {
   if (!isObject(payload) ||
-      typeof payload.protocol !== 'string' ||
+      typeof payload.module !== 'string' ||
       typeof payload.contextId !== 'string' ||
       typeof payload.rolePath !== 'string' ||
       typeof payload.keyId !== 'string' ||
@@ -2411,16 +2411,16 @@ function assertGrantKeyPayload(payload: unknown): asserts payload is GrantKeyPay
   if (!isObject(payload) ||
       typeof payload.grantId !== 'string' ||
       !isObject(payload.scope) ||
-      payload.scope.scheme !== KeyDerivationScheme.ProtocolPath ||
-      typeof payload.scope.protocol !== 'string' ||
-      (payload.scope.protocolPath !== undefined && typeof payload.scope.protocolPath !== 'string') ||
-      !isProtocolPathKeyMaterial(payload.keyMaterial)) {
+      payload.scope.scheme !== KeyDerivationScheme.ModulePath ||
+      typeof payload.scope.module !== 'string' ||
+      (payload.scope.modulePath !== undefined && typeof payload.scope.modulePath !== 'string') ||
+      !isModulePathKeyMaterial(payload.keyMaterial)) {
     throw new Error('grantKey payload is malformed.');
   }
 }
 
-function isProtocolPathKeyMaterial(value: unknown): value is X25519ProtocolPathKeyMaterial {
-  if (!isX25519KeyMaterial(value) || value.derivationScheme !== KeyDerivationScheme.ProtocolPath) {
+function isModulePathKeyMaterial(value: unknown): value is X25519ModulePathKeyMaterial {
+  if (!isX25519KeyMaterial(value) || value.derivationScheme !== KeyDerivationScheme.ModulePath) {
     return false;
   }
 
@@ -2447,7 +2447,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
   deliveryReadActor: AudienceDeliveryReadActor;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
 }): Promise<void> {
@@ -2470,9 +2470,9 @@ async function verifyAudienceKeyRoleAssignment(params: {
         delegatedGrant : params.deliveryReadActor.delegatedGrant,
         filter         : {
           ...(contextIdPrefix === undefined ? {} : { contextId: contextIdPrefix }),
-          recipient    : params.recipientDid,
-          protocol     : params.protocol,
-          protocolPath : params.rolePath,
+          recipient  : params.recipientDid,
+          module     : params.module,
+          modulePath : params.rolePath,
         },
       },
     }, hasRecordsQueryEntries);
@@ -2494,8 +2494,8 @@ async function verifyAudienceKeyRoleAssignment(params: {
   const hasRoleRecord = entries.some((entry): boolean => {
     const roleRecord = entry as RecordsWriteMessage;
     return roleRecord.descriptor.recipient === params.recipientDid &&
-      roleRecord.descriptor.protocol === params.protocol &&
-      roleRecord.descriptor.protocolPath === params.rolePath &&
+      roleRecord.descriptor.module === params.module &&
+      roleRecord.descriptor.modulePath === params.rolePath &&
       matchesContextIdPrefix(roleRecord.contextId, contextIdPrefix);
   });
 
@@ -2521,7 +2521,7 @@ async function verifyAudienceKeyRecipientAuthority(params: {
   deliveryMessage: RecordsWriteMessage;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
 }): Promise<void> {
@@ -2585,7 +2585,7 @@ async function readRecordDataWithRemoteFallback(params: {
   return DataStream.toBytes(reply.entry.data);
 }
 
-function hasProtocolsQueryDefinition(reply: DwnMessageReply[DwnInterface.ProtocolsQuery]): boolean {
+function hasModulesQueryDefinition(reply: DwnMessageReply[DwnInterface.ModulesQuery]): boolean {
   return reply.status.code === 200 && reply.entries?.[0]?.descriptor.definition !== undefined;
 }
 
@@ -2616,7 +2616,7 @@ function getAudienceKeyFromMemoryCache(params: {
   audienceDecryptionKeyCache?: AudienceDecryptionKeyCache;
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -2639,7 +2639,7 @@ function putAudienceKeyInMemoryCache(params: {
 export function getAudienceDecryptionKeyCacheKey(input: {
   sourceDid: string;
   recipientDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -2647,7 +2647,7 @@ export function getAudienceDecryptionKeyCacheKey(input: {
   return `audience-key~${Encoder.stringToBase64Url(JSON.stringify([
     input.sourceDid,
     input.recipientDid,
-    input.protocol,
+    input.module,
     input.contextId,
     input.rolePath,
     input.keyId,
@@ -2667,18 +2667,18 @@ async function buildGrantKeyPayloads(
   grant: PermissionGrant & {
     scope: GrantKeyEligibleRecordsScope;
   },
-  protocolDefinitions: Map<string, ProtocolDefinition>,
+  moduleDefinitions: Map<string, ModuleDefinition>,
 ): Promise<GrantKeyPayload[]> {
   const grantScope = grant.scope;
-  let scopes: GrantKeyProtocolPathScope[];
+  let scopes: GrantKeyModulePathScope[];
   if (grantScope.method === DwnMethodName.Read) {
-    const protocolDefinition = grantScope.protocolPath === undefined
+    const moduleDefinition = grantScope.modulePath === undefined
       ? undefined
-      : await readProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions, 'grantKey coverage');
-    scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
+      : await readModuleDefinition(agent, ownerDid, ownerDid, grantScope.module, moduleDefinitions, 'grantKey coverage');
+    scopes = getGrantKeyDeliveryScopes(grantScope, moduleDefinition);
   } else {
-    const protocolDefinition = await readProtocolDefinition(agent, ownerDid, ownerDid, grantScope.protocol, protocolDefinitions, 'grantKey coverage');
-    scopes = getGrantKeyDeliveryScopes(grantScope, protocolDefinition);
+    const moduleDefinition = await readModuleDefinition(agent, ownerDid, ownerDid, grantScope.module, moduleDefinitions, 'grantKey coverage');
+    scopes = getGrantKeyDeliveryScopes(grantScope, moduleDefinition);
   }
 
   if (scopes.length === 0) {
@@ -2698,9 +2698,9 @@ async function buildGrantKeyPayload(
   agent: EnboxPlatformAgent,
   keyUri: string,
   grantId: string,
-  scope: GrantKeyProtocolPathScope,
+  scope: GrantKeyModulePathScope,
 ): Promise<GrantKeyPayload> {
-  const derivationPath = getScopeDerivationPath(scope.protocol, scope.protocolPath);
+  const derivationPath = getScopeDerivationPath(scope.module, scope.modulePath);
   const privateKeyBytes = await agent.keyManager.derivePrivateKeyBytes({
     keyUri,
     derivationPath,
@@ -2712,14 +2712,14 @@ async function buildGrantKeyPayload(
   return {
     grantId,
     scope: {
-      scheme   : KeyDerivationScheme.ProtocolPath,
-      protocol : scope.protocol,
-      ...(scope.protocolPath ? { protocolPath: scope.protocolPath } : {}),
+      scheme : KeyDerivationScheme.ModulePath,
+      module : scope.module,
+      ...(scope.modulePath ? { modulePath: scope.modulePath } : {}),
     },
     keyMaterial: {
       algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
       derivationPath,
-      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivationScheme : KeyDerivationScheme.ModulePath,
       keyId,
       privateKeyJwk,
       publicKeyJwk,
@@ -2727,15 +2727,15 @@ async function buildGrantKeyPayload(
   };
 }
 
-async function readProtocolDefinition(
+async function readModuleDefinition(
   agent: EnboxPlatformAgent,
   authorDid: string,
   targetDid: string,
-  protocol: string,
-  protocolDefinitions: Map<string, ProtocolDefinition>,
+  module: string,
+  moduleDefinitions: Map<string, ModuleDefinition>,
   purpose: string,
-): Promise<ProtocolDefinition> {
-  const cachedDefinition = protocolDefinitions.get(protocol);
+): Promise<ModuleDefinition> {
+  const cachedDefinition = moduleDefinitions.get(module);
   if (cachedDefinition !== undefined) {
     return cachedDefinition;
   }
@@ -2743,15 +2743,15 @@ async function readProtocolDefinition(
   const { reply } = await processDwnRequestWithRemoteFallback(agent, {
     author        : authorDid,
     target        : targetDid,
-    messageType   : DwnInterface.ProtocolsQuery,
-    messageParams : { filter: { protocol } },
-  }, hasProtocolsQueryDefinition);
+    messageType   : DwnInterface.ModulesQuery,
+    messageParams : { filter: { module } },
+  }, hasModulesQueryDefinition);
   const definition = reply.entries?.[0]?.descriptor.definition;
   if (reply.status.code !== 200 || definition === undefined) {
-    throw new Error(`AgentDwnApi: unable to resolve protocol definition '${protocol}' for ${purpose}.`);
+    throw new Error(`AgentDwnApi: unable to resolve module definition '${module}' for ${purpose}.`);
   }
 
-  protocolDefinitions.set(protocol, definition);
+  moduleDefinitions.set(module, definition);
   return definition;
 }
 
@@ -2765,48 +2765,48 @@ async function derivePublicKeyFromPrivateKey(
   return X25519.getPublicKey({ key: derivedPrivateKeyJwk }) as Promise<PublicKeyJwk>;
 }
 
-function getScopeDerivationPath(protocol: string, protocolPath?: string): string[] {
+function getScopeDerivationPath(module: string, modulePath?: string): string[] {
   return [
-    KeyDerivationScheme.ProtocolPath,
-    protocol,
-    ...(protocolPath ? protocolPath.split('/') : []),
+    KeyDerivationScheme.ModulePath,
+    module,
+    ...(modulePath ? modulePath.split('/') : []),
   ];
 }
 
 function findCoveringDelegateKey(
   allKeys: DelegateDecryptionKeyEntry[] | undefined,
   grantorDid: string,
-  protocol: string,
-  protocolPath: string | undefined,
+  module: string,
+  modulePath: string | undefined,
 ): DelegateDecryptionKeyEntry | undefined {
   if (allKeys === undefined) {
     return undefined;
   }
 
-  const keysForProtocol = allKeys.filter((key) => key.grantorDid === grantorDid && key.protocol === protocol);
+  const keysForModule = allKeys.filter((key) => key.grantorDid === grantorDid && key.module === module);
 
-  if (protocolPath !== undefined) {
-    const exactKey = keysForProtocol.find(
-      (key) => key.scope.kind === 'protocolPath' && key.scope.protocolPath === protocolPath
+  if (modulePath !== undefined) {
+    const exactKey = keysForModule.find(
+      (key) => key.scope.kind === 'modulePath' && key.scope.modulePath === modulePath
     );
     if (exactKey !== undefined) {
       return exactKey;
     }
 
-    const ancestorKey = keysForProtocol
+    const ancestorKey = keysForModule
       .filter((key): key is DelegateDecryptionKeyEntry & {
-        scope: { kind: 'protocolPath'; protocolPath: string }
+        scope: { kind: 'modulePath'; modulePath: string }
       } =>
-        key.scope.kind === 'protocolPath' &&
-        protocolPath.startsWith(key.scope.protocolPath + '/')
+        key.scope.kind === 'modulePath' &&
+        modulePath.startsWith(key.scope.modulePath + '/')
       )
-      .sort((a, b): number => b.scope.protocolPath.length - a.scope.protocolPath.length)[0];
+      .sort((a, b): number => b.scope.modulePath.length - a.scope.modulePath.length)[0];
     if (ancestorKey !== undefined) {
       return ancestorKey;
     }
   }
 
-  return keysForProtocol.find((key) => key.scope.kind === 'protocol');
+  return keysForModule.find((key) => key.scope.kind === 'module');
 }
 
 function mergeDelegateDecryptionKeys(
@@ -2824,17 +2824,17 @@ function mergeDelegateDecryptionKeys(
 }
 
 function getDelegateDecryptionKeyCacheKey(key: DelegateDecryptionKeyEntry): string {
-  return key.scope.kind === 'protocol'
-    ? `${key.grantorDid}~${key.protocol}~protocol`
-    : `${key.grantorDid}~${key.protocol}~protocolPath~${key.scope.protocolPath}`;
+  return key.scope.kind === 'module'
+    ? `${key.grantorDid}~${key.module}~module`
+    : `${key.grantorDid}~${key.module}~modulePath~${key.scope.modulePath}`;
 }
 
 type ResolveGrantKeyRecordsParams = {
   agent: EnboxPlatformAgent;
   grantorDid: string;
   granteeDid: string;
-  protocol: string;
-  protocolPath?: string;
+  module: string;
+  modulePath?: string;
   failureAccumulator?: AudienceDecryptFailureAccumulator;
 };
 
@@ -2852,8 +2852,8 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
     messageParams : {
       filter: {
         recipient : params.granteeDid,
-        protocol  : EncryptionProtocol.uri,
-        tags      : { protocol: params.protocol },
+        module    : EncryptionModule.uri,
+        tags      : { module: params.module },
       },
     },
   }, hasRecordsQueryEntries);
@@ -2871,7 +2871,7 @@ async function resolveGrantKeyRecords(params: ResolveGrantKeyRecordsParams): Pro
     params.agent,
     granteeKeyInfo.keyId,
     granteeKeyInfo.keyUri,
-    KeyDerivationScheme.ProtocolPath,
+    KeyDerivationScheme.ModulePath,
   );
   const resolvedKeys: DelegateDecryptionKeyEntry[] = [];
   const targetMismatches: WrappedGrantKeyTargetMismatchError[] = [];
@@ -2906,8 +2906,8 @@ async function resolveGrantKeyRecord(params: ResolveGrantKeyRecordParams): Promi
     return undefined;
   }
 
-  if (grantKeyMessage.descriptor.protocolPath !== EncryptionProtocol.grantKeyPath &&
-      grantKeyMessage.descriptor.protocolPath !== EncryptionProtocol.wrappedGrantKeyPath) {
+  if (grantKeyMessage.descriptor.modulePath !== EncryptionModule.grantKeyPath &&
+      grantKeyMessage.descriptor.modulePath !== EncryptionModule.wrappedGrantKeyPath) {
     return undefined;
   }
 
@@ -2921,14 +2921,14 @@ async function resolveGrantKeyRecord(params: ResolveGrantKeyRecordParams): Promi
   await verifyPermissionGrantActive(params.agent, params.granteeDid, params.grantorDid, grant);
 
   await verifyGrantKeyPayload({
-    agent        : params.agent,
+    agent      : params.agent,
     payload,
     grant,
     grantKeyMessage,
-    grantorDid   : params.grantorDid,
-    granteeDid   : params.granteeDid,
-    protocol     : params.protocol,
-    protocolPath : params.protocolPath,
+    grantorDid : params.grantorDid,
+    granteeDid : params.granteeDid,
+    module     : params.module,
+    modulePath : params.modulePath,
   });
 
   return buildDelegateDecryptionKeyEntry(params.grantorDid, payload);
@@ -2939,7 +2939,7 @@ async function readGrantKeyPayload(
   encryptedData: Uint8Array,
 ): Promise<GrantKeyPayload> {
   const { grantKeyMessage } = params;
-  if (grantKeyMessage.descriptor.protocolPath === EncryptionProtocol.grantKeyPath) {
+  if (grantKeyMessage.descriptor.modulePath === EncryptionModule.grantKeyPath) {
     if (grantKeyMessage.encryption === undefined) {
       throw new Error('AgentDwnApi: encrypted grantKey record is missing its encryption envelope.');
     }
@@ -2955,14 +2955,14 @@ async function readGrantKeyPayload(
 function buildDelegateDecryptionKeyEntry(grantorDid: string, payload: GrantKeyPayload): DelegateDecryptionKeyEntry {
   return {
     grantorDid,
-    protocol : payload.scope.protocol,
-    scope    : payload.scope.protocolPath === undefined
-      ? { kind: 'protocol' }
-      : { kind: 'protocolPath', protocolPath: payload.scope.protocolPath },
+    module : payload.scope.module,
+    scope  : payload.scope.modulePath === undefined
+      ? { kind: 'module' }
+      : { kind: 'modulePath', modulePath: payload.scope.modulePath },
     derivedPrivateKey: {
       rootKeyId         : payload.keyMaterial.keyId,
       keyId             : payload.keyMaterial.keyId,
-      derivationScheme  : KeyDerivationScheme.ProtocolPath,
+      derivationScheme  : KeyDerivationScheme.ModulePath,
       derivationPath    : payload.keyMaterial.derivationPath,
       derivedPrivateKey : payload.keyMaterial.privateKeyJwk,
     },
@@ -3094,8 +3094,8 @@ async function verifyGrantKeyPayload(params: {
   grantKeyMessage: RecordsWriteMessage;
   grantorDid: string;
   granteeDid: string;
-  protocol: string;
-  protocolPath?: string;
+  module: string;
+  modulePath?: string;
 }): Promise<void> {
   const { payload, grant, grantKeyMessage } = params;
   const tags = grantKeyMessage.descriptor.tags ?? {};
@@ -3103,9 +3103,9 @@ async function verifyGrantKeyPayload(params: {
   assertGrantKeyPayload(payload);
 
   if (payload.grantId !== tags.grantId ||
-      payload.scope.protocol !== tags.protocol ||
+      payload.scope.module !== tags.module ||
       payload.keyMaterial.keyId !== tags.keyId ||
-      payload.scope.protocolPath !== tags.protocolPath) {
+      payload.scope.modulePath !== tags.modulePath) {
     throw new Error('grantKey payload does not match record tags.');
   }
 
@@ -3116,13 +3116,13 @@ async function verifyGrantKeyPayload(params: {
     throw new Error('grantKey payload is not covered by the referenced grant.');
   }
 
-  if (payload.scope.scheme !== KeyDerivationScheme.ProtocolPath ||
-      payload.scope.protocol !== params.protocol ||
-      !scopeCoversRecord(payload.scope, params.protocol, params.protocolPath)) {
+  if (payload.scope.scheme !== KeyDerivationScheme.ModulePath ||
+      payload.scope.module !== params.module ||
+      !scopeCoversRecord(payload.scope, params.module, params.modulePath)) {
     throw new Error('grantKey scope does not cover encrypted record.');
   }
 
-  const expectedDerivationPath = getScopeDerivationPath(payload.scope.protocol, payload.scope.protocolPath);
+  const expectedDerivationPath = getScopeDerivationPath(payload.scope.module, payload.scope.modulePath);
   if (!arrayEquals(payload.keyMaterial.derivationPath, expectedDerivationPath)) {
     throw new Error('grantKey derivationPath does not match scope.');
   }
@@ -3153,28 +3153,28 @@ async function grantScopeCoversPayload(
     return true;
   }
 
-  if (payload.scope.protocolPath === undefined) {
+  if (payload.scope.modulePath === undefined) {
     return false;
   }
 
-  const protocolDefinition = await readProtocolDefinition(agent, requesterDid, ownerDid, grant.scope.protocol, new Map(), 'grantKey coverage');
+  const moduleDefinition = await readModuleDefinition(agent, requesterDid, ownerDid, grant.scope.module, new Map(), 'grantKey coverage');
   return grantKeyScopeCoversDeliveredScope({
     grantScope     : grant.scope,
     deliveredScope : payload.scope,
-    protocolDefinition,
+    moduleDefinition,
   });
 }
 
-function scopeCoversRecord(scope: GrantKeyProtocolPathScope, protocol: string, protocolPath: string | undefined): boolean {
-  if (scope.protocol !== protocol) {
+function scopeCoversRecord(scope: GrantKeyModulePathScope, module: string, modulePath: string | undefined): boolean {
+  if (scope.module !== module) {
     return false;
   }
 
-  if (scope.protocolPath === undefined) {
+  if (scope.modulePath === undefined) {
     return true;
   }
 
-  return protocolPath !== undefined && isBoundaryAwareSubtree(scope.protocolPath, protocolPath);
+  return modulePath !== undefined && isBoundaryAwareSubtree(scope.modulePath, modulePath);
 }
 
 function isBoundaryAwareSubtree(scopePath: string, candidatePath: string): boolean {

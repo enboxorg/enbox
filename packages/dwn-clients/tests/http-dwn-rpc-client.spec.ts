@@ -1,6 +1,6 @@
 import type { DwnRpcResponse } from '../src/dwn-rpc-types.js';
 import type { ServerInfo } from '../src/server-info-types.js';
-import type { Persona, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, Persona } from '@enbox/dwn-sdk-js';
 
 import { DwnRpcError } from '../src/dwn-rpc-error.js';
 import { DwnServerInfoCacheMemory } from '../src/dwn-server-info-cache-memory.js';
@@ -10,7 +10,7 @@ import { normalizeReadableStream } from '../src/readable-stream.js';
 import sinon from 'sinon';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnErrorCode, Jws, ProtocolsConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnErrorCode, Jws, ModulesConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import {
   HTTP_DWN_RPC_BODY_V1,
   HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
@@ -20,8 +20,8 @@ import {
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
  */
-const defaultTestProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'http://test-protocol.xyz',
+const defaultTestModuleDefinition: ModuleDefinition = {
+  module    : 'http://test-module.xyz',
   published : false,
   types     : {
     testRecord: {}
@@ -33,19 +33,19 @@ const defaultTestProtocolDefinition: ProtocolDefinition = {
 
 const testDwnUrl = process.env.TEST_DWN_URL || 'http://localhost:3000';
 
-/** Installs the default test protocol on the remote DWN for the given persona. */
-async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
-  const protocolsConfigure = await ProtocolsConfigure.create({
-    definition : defaultTestProtocolDefinition,
+/** Installs the default test module on the remote DWN for the given persona. */
+async function installDefaultTestModuleViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
+  const modulesConfigure = await ModulesConfigure.create({
+    definition : defaultTestModuleDefinition,
     signer     : Jws.createSigner(persona),
   });
   const reply = await httpClient.sendDwnRequest({
     dwnUrl,
     targetDid : persona.did,
-    message   : protocolsConfigure.message,
+    message   : modulesConfigure.message,
   });
   if (reply.status.code !== 202) {
-    throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+    throw new Error(`Failed to install default test module: ${reply.status.code} ${reply.status.detail}`);
   }
 }
 
@@ -88,8 +88,8 @@ describe('HttpDwnRpcClient', () => {
     });
 
     it('send RecordsWrite message', async () => {
-      // install the default test protocol so the DWN accepts the record
-      await installDefaultTestProtocolViaHttp(client, testDwnUrl, alice);
+      // install the default test module so the DWN accepts the record
+      await installDefaultTestModuleViaHttp(client, testDwnUrl, alice);
 
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -126,9 +126,9 @@ describe('HttpDwnRpcClient', () => {
     });
 
     it('surfaces machine-readable errorCode and info on a rejected RecordsWrite', async () => {
-      // install a protocol with a $squash-enabled root path
-      const squashProtocolDefinition: ProtocolDefinition = {
-        protocol  : 'http://squash-structured-errors.xyz',
+      // install a module with a $squash-enabled root path
+      const squashModuleDefinition: ModuleDefinition = {
+        module    : 'http://squash-structured-errors.xyz',
         published : true,
         types     : { note: {} },
         structure : {
@@ -138,14 +138,14 @@ describe('HttpDwnRpcClient', () => {
           }
         }
       };
-      const protocolsConfigure = await ProtocolsConfigure.create({
-        definition : squashProtocolDefinition,
+      const modulesConfigure = await ModulesConfigure.create({
+        definition : squashModuleDefinition,
         signer     : Jws.createSigner(alice),
       });
       const configureReply = await client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
-        message   : protocolsConfigure.message,
+        message   : modulesConfigure.message,
       });
       expect(configureReply.status.code).toBe(202);
 
@@ -153,8 +153,8 @@ describe('HttpDwnRpcClient', () => {
       const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
       const { message: squashMessage, dataBytes: squashDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : squashProtocolDefinition.protocol,
-        protocolPath     : 'note',
+        module           : squashModuleDefinition.module,
+        modulePath       : 'note',
         messageTimestamp : squashTimestamp,
         dateCreated      : squashTimestamp,
         squash           : true,
@@ -171,8 +171,8 @@ describe('HttpDwnRpcClient', () => {
       const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
       const { message: olderMessage, dataBytes: olderDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : squashProtocolDefinition.protocol,
-        protocolPath     : 'note',
+        module           : squashModuleDefinition.module,
+        modulePath       : 'note',
         messageTimestamp : olderTimestamp,
         dateCreated      : olderTimestamp,
       });
@@ -184,7 +184,7 @@ describe('HttpDwnRpcClient', () => {
       });
 
       expect(rejectedReply.status.code).toBe(409);
-      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      expect(rejectedReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
 
       // the squash floor is readable as data — no parsing of the `detail` prose required
       expect(rejectedReply.status.info?.squashFloorTimestamp).toBe(squashTimestamp);

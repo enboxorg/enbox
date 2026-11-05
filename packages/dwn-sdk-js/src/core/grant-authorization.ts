@@ -1,5 +1,5 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { DwnError, DwnErrorCode } from './dwn-error.js';

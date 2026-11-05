@@ -27,7 +27,7 @@ export class RecordSquashBackstopError extends DwnResponseError {
   }
 }
 
-/** A record write rejected because its same-protocol parent does not exist. */
+/** A record write rejected because its same-module parent does not exist. */
 export class RecordParentNotFoundError extends DwnResponseError {
   public constructor(operation: string, status: DwnResponseStatus['status']) {
     super(operation, status);
@@ -44,12 +44,12 @@ export function isCanonicalConflictStatus(status: DwnResponseStatus['status']): 
 export function requireDwnSuccess(operation: string, response: DwnResponseStatus): void {
   const { code, errorCode } = response.status;
   if (code < 200 || code > 299) {
-    if (code === 409 && errorCode === DwnErrorCode.ProtocolAuthorizationSquashBackstop) {
+    if (code === 409 && errorCode === DwnErrorCode.ModuleAuthorizationSquashBackstop) {
       throw new RecordSquashBackstopError(operation, response.status);
     }
     if (code === 400 && (
-      errorCode === DwnErrorCode.ProtocolAuthorizationParentRecordNotFound ||
-      errorCode === DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain
+      errorCode === DwnErrorCode.ModuleAuthorizationParentRecordNotFound ||
+      errorCode === DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain
     )) {
       throw new RecordParentNotFoundError(operation, response.status);
     }

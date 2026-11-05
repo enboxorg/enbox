@@ -31,7 +31,7 @@ API facade:
 ```ts
 import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 
-const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
+const application = defineApplicationManifest({ modules: [AppModule] } as const);
 const store = createConnectionStore({
   application,
   password: userPassword,
@@ -70,7 +70,7 @@ If an identity already exists in the vault, `connectVault()` unlocks the vault a
 ### 3. Wallet connect
 
 For cross-device identity sharing, configure an `AuthManager` with a
-`connectHandler` and request the protocols you need. The handler drives the
+`connectHandler` and request the modules you need. The handler drives the
 permission-scope UX (e.g. via a browser overlay) and returns a delegate
 session bound to the connecting wallet.
 
@@ -85,7 +85,7 @@ const walletAuth = await AuthManager.create({
 
 // Bind this function directly to the connection button in browser UIs.
 function connectFromUserAction(): Promise<AgentSession> {
-  return walletAuth.connect({ protocols: [NotesProtocol] });
+  return walletAuth.connect({ modules: [NotesModule] });
 }
 ```
 
@@ -101,14 +101,14 @@ import { isSessionInvalidError } from '@enbox/browser';
 const status = await walletAuth.getConnectionStatus();
 
 if (status.state === 'expiring-soon' || status.state === 'expired') {
-  await walletAuth.refresh({ protocols: [NotesProtocol] });
+  await walletAuth.refresh({ modules: [NotesModule] });
 }
 
 try {
   await writeNote();
 } catch (error) {
   if (isSessionInvalidError(error)) {
-    await walletAuth.refresh({ protocols: [NotesProtocol] });
+    await walletAuth.refresh({ modules: [NotesModule] });
   } else {
     throw error;
   }
@@ -117,7 +117,7 @@ try {
 
 `refresh()` opens the configured connect handler for fresh consent and grants
 to the same delegate DID; it does not replace the delegate's local keys. Pass
-the protocols your app still needs. Revocation status is best-effort and
+the modules your app still needs. Revocation status is best-effort and
 reflects revocations that have reached the local agent.
 
 Most applications should configure
@@ -131,7 +131,7 @@ when a session is expiring or expired, but never for a revoked session:
 ```ts
 const stopMonitoring = walletAuth.startConnectionMonitor({
   intervalMs: 5 * 60 * 1000,
-  autoRefresh: { protocols: [NotesProtocol] },
+  autoRefresh: { modules: [NotesModule] },
   onError: error => reportConnectionError(error),
 });
 

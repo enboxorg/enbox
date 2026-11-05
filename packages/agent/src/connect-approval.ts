@@ -3,9 +3,9 @@
  *
  * The single wallet-side approval ceremony shared by every connect transport
  * (relay/QR/deep-link, popup postMessage): delegate minting or pre-supplied
- * delegate validation, per-protocol preparation (install or encryption
+ * delegate validation, per-module preparation (install or encryption
  * upgrade with fail-closed remote verification — see
- * `./connect-protocol-preparation.ts`), permission grant creation with scope
+ * `./connect-module-preparation.ts`), permission grant creation with scope
  * guards and session metadata, durable grantKey delivery for encrypted read
  * scopes, and per-grant contextId-scoped revocation grants.
  *
@@ -33,12 +33,12 @@ import { Ed25519 } from '@enbox/crypto';
 import { assertExpectedProviderDid, randomToken } from '@enbox/connect';
 import { Convert, logger, nowMs, timed } from '@enbox/common';
 import { Did, DidJwk } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { createGrantKeyRecordsForGrants } from './dwn-encryption.js';
 import { assertVerifiedConnectRequesterOrigin, prepareConnectAuthenticationProof } from './connect-authentication.js';
-import { hasEncryptedProtocolTypes, prepareProtocol } from './connect-protocol-preparation.js';
+import { hasEncryptedModuleTypes, prepareModule } from './connect-module-preparation.js';
 import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 import { resolveConnectDelegateEncryptionKeyInfo, resolveConnectDwnEndpointUrls } from './connect-network.js';
@@ -141,7 +141,7 @@ export type ConnectApprovalRequest = (Pick<
 /** A user-visible phase of the connect approval ceremony. */
 export type ConnectApprovalProgressPhase =
   | 'delegate'
-  | 'protocols'
+  | 'modules'
   | 'permission-grants'
   | 'grant-keys'
   | 'revocations';
@@ -178,11 +178,11 @@ export type ExecuteConnectApprovalParams = {
   approvedSessionTtlSeconds?: number;
 
   /**
-   * Requested protocol URIs whose authored definitions the owner explicitly
+   * Requested module URIs whose authored definitions the owner explicitly
    * approved replacing. Unsafe URI, requester-key, and owner-key conflicts
    * remain fail-closed.
    */
-  approvedProtocolOverrides?: readonly string[];
+  approvedModuleOverrides?: readonly string[];
 
   /**
    * Synchronous observer notified as the ceremony enters each major phase.
@@ -310,9 +310,9 @@ function assertConnectGrantScope(scope: DwnPermissionScope): void {
     return;
   }
 
-  if (scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure) {
+  if (scope.interface === DwnInterfaceName.Modules && scope.method === DwnMethodName.Configure) {
     throw new Error(
-      'Protocols.Configure cannot be delegated through connect; the wallet configures protocols during approval.'
+      'Modules.Configure cannot be delegated through connect; the wallet configures modules during approval.'
     );
   }
 }
@@ -322,30 +322,30 @@ function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermi
 }
 
 function permissionRequestHasEncryptedReadScopes(permissionRequest: ConnectPermissionRequest): boolean {
-  return hasEncryptedProtocolTypes(permissionRequest.protocolDefinition) &&
+  return hasEncryptedModuleTypes(permissionRequest.moduleDefinition) &&
     permissionRequest.permissionScopes.some(isConnectReadScope);
 }
 
-function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermissionRequest[]): void {
-  for (const { protocolDefinition, permissionScopes } of permissionRequests) {
-    const grantsMatchProtocolUri = permissionScopes.every(
-      scope => 'protocol' in scope && scope.protocol === protocolDefinition.protocol
+function validatePermissionRequestModuleUris(permissionRequests: ConnectPermissionRequest[]): void {
+  for (const { moduleDefinition, permissionScopes } of permissionRequests) {
+    const grantsMatchModuleUri = permissionScopes.every(
+      scope => 'module' in scope && scope.module === moduleDefinition.module
     );
-    if (!grantsMatchProtocolUri) {
-      throw new Error('All permission scopes must match the protocol URI they are provided with.');
+    if (!grantsMatchModuleUri) {
+      throw new Error('All permission scopes must match the module URI they are provided with.');
     }
   }
 }
 
 /**
- * Orders protocol preparation so that a protocol's in-batch composition
+ * Orders module preparation so that a module's in-batch composition
  * dependencies are prepared before it.
  *
- * A composing protocol declares its dependencies via `uses` (e.g. a board
- * protocol uses a membership protocol for a `membership:participant` role). The DWN `ProtocolsConfigure`
+ * A composing module declares its dependencies via `uses` (e.g. a board
+ * module uses a membership module for a `membership:participant` role). The DWN `ModulesConfigure`
  * handler rejects a configure whose `uses` targets are not yet installed for
- * the tenant, so preparing every requested protocol in a single flat
- * concurrent fan-out races a composing protocol against its dependency: on a
+ * the tenant, so preparing every requested module in a single flat
+ * concurrent fan-out races a composing module against its dependency: on a
  * fresh identity the dependent's configure can land before its `uses` target
  * is installed, get rejected, and fail the fail-closed remote convergence
  * check — aborting the whole connect.
@@ -364,27 +364,27 @@ function validatePermissionRequestProtocolUris(permissionRequests: ConnectPermis
 export function orderPermissionRequestsByUsesDependencies(
   permissionRequests: ConnectPermissionRequest[],
 ): ConnectPermissionRequest[][] {
-  const inBatchProtocolUris = new Set(
-    permissionRequests.map((request) => request.protocolDefinition.protocol),
+  const inBatchModuleUris = new Set(
+    permissionRequests.map((request) => request.moduleDefinition.module),
   );
 
   const inBatchDependenciesOf = (request: ConnectPermissionRequest): string[] => {
-    const uses = request.protocolDefinition.uses ?? {};
+    const uses = request.moduleDefinition.uses ?? {};
     return Object.values(uses).filter(
       (targetUri): targetUri is string =>
         typeof targetUri === 'string'
-        && targetUri !== request.protocolDefinition.protocol
-        && inBatchProtocolUris.has(targetUri),
+        && targetUri !== request.moduleDefinition.module
+        && inBatchModuleUris.has(targetUri),
     );
   };
 
   const remaining = new Set(permissionRequests);
-  const preparedProtocolUris = new Set<string>();
+  const preparedModuleUris = new Set<string>();
   const levels: ConnectPermissionRequest[][] = [];
 
   while (remaining.size > 0) {
     const level = [...remaining].filter((request) =>
-      inBatchDependenciesOf(request).every((targetUri) => preparedProtocolUris.has(targetUri)),
+      inBatchDependenciesOf(request).every((targetUri) => preparedModuleUris.has(targetUri)),
     );
 
     if (level.length === 0) {
@@ -396,7 +396,7 @@ export function orderPermissionRequestsByUsesDependencies(
 
     for (const request of level) {
       remaining.delete(request);
-      preparedProtocolUris.add(request.protocolDefinition.protocol);
+      preparedModuleUris.add(request.moduleDefinition.module);
     }
     levels.push(level);
   }
@@ -630,12 +630,12 @@ function appendSkippedGrantOutcomes(
 }
 
 function describePermissionScope(scope: DwnPermissionScope): string {
-  const protocol = 'protocol' in scope ? scope.protocol : undefined;
-  const protocolPath = 'protocolPath' in scope ? scope.protocolPath : undefined;
+  const module = 'module' in scope ? scope.module : undefined;
+  const modulePath = 'modulePath' in scope ? scope.modulePath : undefined;
   return [
     `${scope.interface}.${scope.method}`,
-    typeof protocol === 'string' ? `protocol ${protocol}` : undefined,
-    typeof protocolPath === 'string' ? `path ${protocolPath}` : undefined,
+    typeof module === 'string' ? `module ${module}` : undefined,
+    typeof modulePath === 'string' ? `path ${modulePath}` : undefined,
   ].filter((part): part is string => part !== undefined).join(', ');
 }
 
@@ -753,7 +753,7 @@ async function prepareConnectApprovalAuthentication(
  * 2. Uses a requester-supplied delegate DID, or mints one (did:jwk with the
  *    derived X25519 private key appended) when omitted.
  * 3. Applies the provider-approved session TTL and builds the session metadata.
- * 4. Prepares each requested protocol on the owner's DWNs: install,
+ * 4. Prepares each requested module on the owner's DWNs: install,
  *    encryption upgrade, or explicit owner-approved definition replacement,
  *    with fail-closed key validation and remote convergence verification.
  * 5. Creates permission grants (scope guards enforced) and delivers them to
@@ -776,16 +776,16 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
     ...input,
     request: approvedRequest.authentication === undefined
       ? JSON.parse(JSON.stringify(approvedRequest)) as ConnectApprovalRequest : structuredClone(approvedRequest),
-    approvedProtocolOverrides: input.approvedProtocolOverrides === undefined ? undefined : [...input.approvedProtocolOverrides],
+    approvedModuleOverrides: input.approvedModuleOverrides === undefined ? undefined : [...input.approvedModuleOverrides],
   };
   const { agent, providerDid, request } = params;
   // Validate and snapshot before any delegate creation or DWN mutation. Sign
-  // only at completion so protocol setup cannot consume the proof's lifetime.
+  // only at completion so module setup cannot consume the proof's lifetime.
   const authentication = await prepareConnectApprovalAuthentication(params);
-  const approvedProtocolOverrides = new Set(params.approvedProtocolOverrides);
+  const approvedModuleOverrides = new Set(params.approvedModuleOverrides);
 
   const approvalStart = nowMs();
-  const numProtocols = request.permissionRequests.length;
+  const numModules = request.permissionRequests.length;
   const numScopes = request.permissionRequests.reduce(
     (sum, permissionRequest) => sum + permissionRequest.permissionScopes.length,
     0,
@@ -797,7 +797,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
   let outcome: 'ok' | 'fail' = 'ok';
   logger.log(
     `${CONNECT_PERF_LOG_PREFIX} executeConnectApproval.start `
-    + `(protocols=${numProtocols}, scopes=${numScopes})`,
+    + `(modules=${numModules}, scopes=${numScopes})`,
   );
 
   try {
@@ -831,7 +831,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       grantedDelegateDid = delegateBearerDid.uri;
     }
 
-    validatePermissionRequestProtocolUris(request.permissionRequests);
+    validatePermissionRequestModuleUris(request.permissionRequests);
 
     const preSuppliedDelegateRootPublicKey = preSuppliedDelegateDid !== undefined &&
       request.permissionRequests.some(permissionRequestHasEncryptedReadScopes)
@@ -852,27 +852,27 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       transport: params.transport,
     });
 
-    reportConnectApprovalProgress(params.onProgress, 'protocols');
+    reportConnectApprovalProgress(params.onProgress, 'modules');
     const dwnEndpointUrls = await timed(
       `${CONNECT_PERF_LOG_PREFIX} dwnEndpoints.resolve`,
       () => resolveConnectDwnEndpointUrls(agent, providerDid),
     );
     await timed(
-      `${CONNECT_PERF_LOG_PREFIX} protocols.prepare (n=${numProtocols})`,
+      `${CONNECT_PERF_LOG_PREFIX} modules.prepare (n=${numModules})`,
       async () => {
-        // Prepare in `uses`-dependency order: a composing protocol's configure
+        // Prepare in `uses`-dependency order: a composing module's configure
         // is rejected by the DWN unless its `uses` targets are already
         // installed, so dependencies must fully converge (across all endpoints)
-        // before their dependents fan out. Independent protocols within a level
+        // before their dependents fan out. Independent modules within a level
         // are still prepared concurrently.
         for (const level of orderPermissionRequestsByUsesDependencies(request.permissionRequests)) {
           await Promise.all(level.map(
-            ({ protocolDefinition }) => prepareProtocol(
+            ({ moduleDefinition }) => prepareModule(
               providerDid,
               agent,
-              protocolDefinition,
+              moduleDefinition,
               {
-                allowDefinitionOverride : approvedProtocolOverrides.has(protocolDefinition.protocol),
+                allowDefinitionOverride : approvedModuleOverrides.has(moduleDefinition.module),
                 resolvedDwnEndpointUrls : dwnEndpointUrls,
               },
             )
@@ -907,7 +907,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
 
     reportConnectApprovalProgress(params.onProgress, 'grant-keys');
     const durableGrantKeyRecords = await timed(
-      `${CONNECT_PERF_LOG_PREFIX} grantKeys.create (protocols=${numProtocols})`,
+      `${CONNECT_PERF_LOG_PREFIX} grantKeys.create (modules=${numModules})`,
       async () => (await Promise.all(requestsWithGrants.map(
         async ({ grants, permissionRequest }) => {
           if (!permissionRequestHasEncryptedReadScopes(permissionRequest)) {
@@ -921,8 +921,8 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
             ...(delegateRootPrivateKey !== undefined
               ? { granteeRootPrivateKey: delegateRootPrivateKey }
               : { granteeRootPublicKey: preSuppliedDelegateRootPublicKey }),
-            grantMessages       : grants,
-            protocolDefinitions : [permissionRequest.protocolDefinition],
+            grantMessages     : grants,
+            moduleDefinitions : [permissionRequest.moduleDefinition],
           });
         }
       ))).flat(),
@@ -961,7 +961,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
             scope     : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Write,
-              protocol  : PermissionsProtocol.uri,
+              module    : PermissionsModule.uri,
               contextId : grantMessage.recordId,
             },
             dateExpires : connectSession.expiresAt,
@@ -1024,7 +1024,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
     const totalElapsed = nowMs() - approvalStart;
     logger.log(
       `${CONNECT_PERF_LOG_PREFIX} executeConnectApproval.total ${outcome} in ${totalElapsed.toFixed(1)}ms `
-      + `(protocols=${numProtocols}, scopes=${numScopes}, sessionGrants=${sessionGrantCount})`,
+      + `(modules=${numModules}, scopes=${numScopes}, sessionGrants=${sessionGrantCount})`,
     );
   }
 }

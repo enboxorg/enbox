@@ -33,16 +33,16 @@ function linkIdentity(syncTarget = target()): SyncNextLinkIdentity {
   return syncNextLinkIdentity(syncTarget);
 }
 
-function protocolMessage(name: string): GenericMessage {
+function moduleMessage(name: string): GenericMessage {
   return {
     descriptor: {
       definition: {
-        protocol  : `https://example.com/${name}`,
+        module    : `https://example.com/${name}`,
         published : true,
         structure : {},
         types     : {},
       },
-      interface        : 'Protocols',
+      interface        : 'Modules',
       messageTimestamp : `2026-09-20T00:00:${String(name.length).padStart(2, '0')}.000000Z`,
       method           : 'Configure',
     },
@@ -73,8 +73,8 @@ function dependencyRecord(recordId: string, parentId?: string): GenericMessage {
       interface        : 'Records',
       messageTimestamp : timestamp,
       method           : 'Write',
-      protocol         : 'https://example.com/dependencies',
-      protocolPath     : parentId === undefined ? 'parent' : 'parent/child',
+      module           : 'https://example.com/dependencies',
+      modulePath       : parentId === undefined ? 'parent' : 'parent/child',
       ...(parentId === undefined ? {} : { parentId }),
     },
     recordId,
@@ -120,7 +120,7 @@ function fakeAgent(reply: MessagesQueryReply): {
   send: sinon.SinonStub;
 } {
   const apply = sinon.stub().resolves({ kind: 'Applied' });
-  const prepare = sinon.stub().resolves({ message: protocolMessage('query') });
+  const prepare = sinon.stub().resolves({ message: moduleMessage('query') });
   const send = sinon.stub().resolves(reply);
   const agent = {
     dwn: {
@@ -161,7 +161,7 @@ describe('SyncNextPullPage', () => {
 
   it('should quarantine a missing body without a vault and commit every raw receipt', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
-    const independent = await feedEntry(protocolMessage('independent'), 2);
+    const independent = await feedEntry(moduleMessage('independent'), 2);
     const fixture = fakeAgent(page([missingBody, independent]));
     const commit = sinon.spy(progressStore, 'commitPullPage');
     await createLink();
@@ -189,13 +189,13 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should quarantine a missing dependency without issuing a point read', async () => {
-    const blocked = await feedEntry(protocolMessage('blocked'), 1);
-    const independent = await feedEntry(protocolMessage('independent'), 2);
+    const blocked = await feedEntry(moduleMessage('blocked'), 1);
+    const independent = await feedEntry(moduleMessage('independent'), 2);
     const fixture = fakeAgent(page([blocked, independent]));
     fixture.apply
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'Protocol', protocol: 'https://example.com/missing' }],
+        missing : [{ type: 'Module', module: 'https://example.com/missing' }],
       })
       .onSecondCall().resolves({ kind: 'Applied' });
     await createLink();
@@ -240,7 +240,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should process one non-drained page and report trailing work', async () => {
-    const fixture = fakeAgent(page([await feedEntry(protocolMessage('first'), 1)], false));
+    const fixture = fakeAgent(page([await feedEntry(moduleMessage('first'), 1)], false));
     await createLink();
 
     const result = await new SyncNextPullPage(fixture.agent, progressStore).run(target());
@@ -262,8 +262,8 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should validate the whole page before applying any entry', async () => {
-    const valid = await feedEntry(protocolMessage('valid'), 1);
-    const tampered = await feedEntry(protocolMessage('tampered'), 2);
+    const valid = await feedEntry(moduleMessage('valid'), 1);
+    const tampered = await feedEntry(moduleMessage('tampered'), 2);
     tampered.messageCid = 'bafy-invalid';
     const fixture = fakeAgent(page([valid, tampered]));
     await createLink();
@@ -277,10 +277,10 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should reject malformed source accounting before applying any entry', async () => {
-    const first = await feedEntry(protocolMessage('first'), 1);
-    const second = await feedEntry(protocolMessage('second'), 2);
-    const duplicate = await feedEntry(protocolMessage('duplicate'), 1);
-    const future = await feedEntry(protocolMessage('future'), 2);
+    const first = await feedEntry(moduleMessage('first'), 1);
+    const second = await feedEntry(moduleMessage('second'), 2);
+    const duplicate = await feedEntry(moduleMessage('duplicate'), 1);
+    const future = await feedEntry(moduleMessage('future'), 2);
     const missingLatest = { ...first } as Partial<MessagesQueryReplyEntry>;
     delete missingLatest.isLatestBaseState;
     const fixture = fakeAgent(page([]));
@@ -334,7 +334,7 @@ describe('SyncNextPullPage', () => {
     expect(await progressStore.getQuarantineForLink(linkIdentity())).toEqual([]);
     expect((await progressStore.getLink(linkIdentity()))?.pullCheckpoint).toBeUndefined();
 
-    const nonRecord = await feedEntry(protocolMessage('unexpected-data'), 1);
+    const nonRecord = await feedEntry(moduleMessage('unexpected-data'), 1);
     nonRecord.encodedData = Buffer.from('unexpected').toString('base64url');
     fixture.send.resolves(page([nonRecord]));
     await expect(new SyncNextPullPage(fixture.agent, progressStore).run(target()))
@@ -362,7 +362,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should replay local admission if the progress-store batch fails', async () => {
-    const root = await feedEntry(protocolMessage('replay'), 1);
+    const root = await feedEntry(moduleMessage('replay'), 1);
     const fixture = fakeAgent(page([root]));
     await createLink();
     const commit = sinon.stub(progressStore, 'commitPullPage');
@@ -381,7 +381,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should stop after the query when its caller is no longer current', async () => {
-    const root = await feedEntry(protocolMessage('cancelled'), 1);
+    const root = await feedEntry(moduleMessage('cancelled'), 1);
     const fixture = fakeAgent(page([root]));
     await createLink();
     let current = true;
@@ -402,7 +402,7 @@ describe('SyncNextPullPage', () => {
 
   it('should stop after local admission without committing when its caller becomes stale', async () => {
     const missingBody = await feedEntry(missingBodyMessage(), 1);
-    const root = await feedEntry(protocolMessage('cancelled-after-apply'), 2);
+    const root = await feedEntry(moduleMessage('cancelled-after-apply'), 2);
     const fixture = fakeAgent(page([missingBody, root]));
     await createLink();
     let current = true;
@@ -423,7 +423,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should return stale when its exact link is absent or replaced before commit', async () => {
-    const root = await feedEntry(protocolMessage('stale'), 1);
+    const root = await feedEntry(moduleMessage('stale'), 1);
     const fixture = fakeAgent(page([root]));
     const processor = new SyncNextPullPage(fixture.agent, progressStore);
 
@@ -452,7 +452,7 @@ describe('SyncNextPullPage', () => {
       authorization: {
         actorDid     : 'did:example:member',
         kind         : 'role',
-        protocolRole : 'notebook/member',
+        moduleRole   : 'notebook/member',
         roleRecordId : 'expected-role',
       },
     };
@@ -497,7 +497,7 @@ describe('SyncNextPullPage', () => {
 
     const oversized = Array.from({ length: 101 }, (_, index): MessagesQueryReplyEntry => ({
       isLatestBaseState : true,
-      message           : protocolMessage(`oversized-${index}`),
+      message           : moduleMessage(`oversized-${index}`),
       messageCid        : `cid-${index}`,
       seq               : String(index + 1),
     }));
@@ -509,7 +509,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should reject failed queries and invalid cursor movement without changing progress', async () => {
-    const first = await feedEntry(protocolMessage('first'), 1);
+    const first = await feedEntry(moduleMessage('first'), 1);
     const fixture = fakeAgent(page([first]));
     await createLink();
     const processor = new SyncNextPullPage(fixture.agent, progressStore);
@@ -539,7 +539,7 @@ describe('SyncNextPullPage', () => {
   });
 
   it('should accept an empty drained replay of the exact current cursor', async () => {
-    const first = await feedEntry(protocolMessage('first'), 1);
+    const first = await feedEntry(moduleMessage('first'), 1);
     const fixture = fakeAgent(page([first]));
     await createLink();
     const processor = new SyncNextPullPage(fixture.agent, progressStore);
@@ -560,7 +560,7 @@ describe('SyncNextPullPage', () => {
 
   it('should process 579 roots in six page queries without point reads', async () => {
     const entries = await Promise.all(Array.from({ length: 579 }, (_, index) =>
-      feedEntry(protocolMessage(`page-scaled-${index}`), index + 1)
+      feedEntry(moduleMessage(`page-scaled-${index}`), index + 1)
     ));
     const fixture = fakeAgent(page([]));
     for (let offset = 0, query = 0; offset < entries.length; offset += 100, query++) {

@@ -24,7 +24,7 @@ class PermissionsPage extends LitElement {
             <wa-card class="grid-card" appearance="outlined">
               <div class="wa-caption-s">Active Grants</div>
               <div class="metric-value">94</div>
-              <div class="metric-note">Scoped by protocol and method</div>
+              <div class="metric-note">Scoped by module and method</div>
             </wa-card>
 
             <wa-card class="grid-card" appearance="outlined">

@@ -18,8 +18,8 @@ function recordsWriteDescriptor(): fc.Arbitrary<Record<string, unknown>> {
     // Immutable fields
     interface        : fc.constant('Records'),
     method           : fc.constant('Write'),
-    protocol         : fc.string({ minLength: 5, maxLength: 30 }),
-    protocolPath     : fc.string({ minLength: 3, maxLength: 20 }),
+    module           : fc.string({ minLength: 5, maxLength: 30 }),
+    modulePath       : fc.string({ minLength: 3, maxLength: 20 }),
     schema           : fc.string({ minLength: 5, maxLength: 30 }),
     dateCreated      : fc.constant('2024-01-01T00:00:00.000000Z'),
     // Mutable fields
@@ -108,7 +108,7 @@ describe('verifyEqualityOfImmutableProperties — fuzz', () => {
 
   describe('immutable properties are strict', () => {
     it('should throw when any immutable property is changed', () => {
-      const immutableProps = ['interface', 'method', 'protocol', 'protocolPath', 'schema', 'dateCreated'];
+      const immutableProps = ['interface', 'method', 'module', 'modulePath', 'schema', 'dateCreated'];
 
       fc.assert(
         fc.property(

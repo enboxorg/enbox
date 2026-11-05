@@ -1,6 +1,6 @@
 import type { GenericMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
-import { DwnInterfaceName, DwnMethodName, EncryptionProtocol, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, EncryptionModule, PermissionsModule } from '@enbox/dwn-sdk-js';
 
 import type { SyncScope } from './types/sync.js';
 
@@ -13,7 +13,7 @@ type SyncMessageScopeClassificationParams = {
   scope: SyncScope;
 };
 
-type ProtocolSetSyncScope = Extract<SyncScope, { kind: 'protocolSet' }>;
+type ModuleSetSyncScope = Extract<SyncScope, { kind: 'moduleSet' }>;
 type ContextSyncScope = Extract<SyncScope, { kind: 'context' }>;
 
 /**
@@ -29,7 +29,7 @@ export function classifySyncMessageScope({
 }: SyncMessageScopeClassificationParams): SyncScopeClassification {
   if (scope.kind === 'full') { return 'in-scope'; }
   if (scope.kind === 'context') { return classifyContextScope(message, initialWrite, scope); }
-  return classifyProtocolSetScope(message, initialWrite, scope);
+  return classifyModuleSetScope(message, initialWrite, scope);
 }
 
 function classifyContextScope(
@@ -53,19 +53,19 @@ function classifyContextScope(
   }
 
   const contextId = recordsWrite.contextId;
-  return recordsWrite.descriptor.protocol === scope.protocol &&
-    typeof recordsWrite.descriptor.protocolPath === 'string' &&
-    scope.protocolPaths.includes(recordsWrite.descriptor.protocolPath) &&
+  return recordsWrite.descriptor.module === scope.module &&
+    typeof recordsWrite.descriptor.modulePath === 'string' &&
+    scope.modulePaths.includes(recordsWrite.descriptor.modulePath) &&
     typeof contextId === 'string' &&
     (contextId === scope.contextId || contextId.startsWith(`${scope.contextId}/`))
     ? 'in-scope'
     : 'out-of-scope';
 }
 
-function classifyProtocolSetScope(
+function classifyModuleSetScope(
   message: GenericMessage,
   initialWrite: RecordsWriteMessage | undefined,
-  scope: ProtocolSetSyncScope,
+  scope: ModuleSetSyncScope,
 ): SyncScopeClassification {
   const descriptor = message.descriptor as Record<string, unknown>;
   const scopedDescriptor = getScopedMessageDescriptor(message, initialWrite);
@@ -73,51 +73,51 @@ function classifyProtocolSetScope(
     return 'unknown';
   }
 
-  const taggedCoreRecordClassification = classifyTaggedCoreProtocolRecord(scopedDescriptor, scope.protocols);
+  const taggedCoreRecordClassification = classifyTaggedCoreModuleRecord(scopedDescriptor, scope.modules);
   if (taggedCoreRecordClassification !== undefined) { return taggedCoreRecordClassification; }
 
-  const protocolClassification = classifyProtocolField(scopedDescriptor.protocol, scope.protocols);
-  if (protocolClassification !== undefined) { return protocolClassification; }
+  const moduleClassification = classifyModuleField(scopedDescriptor.module, scope.modules);
+  if (moduleClassification !== undefined) { return moduleClassification; }
 
-  return classifyProtocolsConfigureDescriptor(descriptor, scope.protocols);
+  return classifyModulesConfigureDescriptor(descriptor, scope.modules);
 }
 
-function classifyTaggedCoreProtocolRecord(
+function classifyTaggedCoreModuleRecord(
   descriptor: Record<string, unknown>,
-  protocols: readonly string[],
+  modules: readonly string[],
 ): SyncScopeClassification | undefined {
   if (
-    (descriptor.protocol !== PermissionsProtocol.uri && descriptor.protocol !== EncryptionProtocol.uri) ||
+    (descriptor.module !== PermissionsModule.uri && descriptor.module !== EncryptionModule.uri) ||
     !isRecordObject(descriptor.tags)
   ) {
     return undefined;
   }
 
-  const taggedProtocol = descriptor.tags.protocol;
-  return typeof taggedProtocol === 'string' && protocols.includes(taggedProtocol)
+  const taggedModule = descriptor.tags.module;
+  return typeof taggedModule === 'string' && modules.includes(taggedModule)
     ? 'in-scope'
     : 'out-of-scope';
 }
 
-function classifyProtocolField(protocol: unknown, protocols: readonly string[]): SyncScopeClassification | undefined {
-  if (typeof protocol !== 'string') {
+function classifyModuleField(module: unknown, modules: readonly string[]): SyncScopeClassification | undefined {
+  if (typeof module !== 'string') {
     return undefined;
   }
 
-  return protocols.includes(protocol) ? 'in-scope' : 'out-of-scope';
+  return modules.includes(module) ? 'in-scope' : 'out-of-scope';
 }
 
-function classifyProtocolsConfigureDescriptor(
+function classifyModulesConfigureDescriptor(
   descriptor: Record<string, unknown>,
-  protocols: readonly string[],
+  modules: readonly string[],
 ): SyncScopeClassification {
   if (
-    descriptor.interface === DwnInterfaceName.Protocols &&
+    descriptor.interface === DwnInterfaceName.Modules &&
     descriptor.method === DwnMethodName.Configure &&
     isRecordObject(descriptor.definition)
   ) {
-    const definitionProtocol = descriptor.definition.protocol;
-    return typeof definitionProtocol === 'string' && protocols.includes(definitionProtocol)
+    const definitionModule = descriptor.definition.module;
+    return typeof definitionModule === 'string' && modules.includes(definitionModule)
       ? 'in-scope'
       : 'out-of-scope';
   }

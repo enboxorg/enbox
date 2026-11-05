@@ -97,33 +97,33 @@ function isDependencyRef(value: unknown): value is DependencyRef {
   }
 
   switch (value.type) {
-    case 'Protocol':
-      return typeof value.protocol === 'string';
+    case 'Module':
+      return typeof value.module === 'string';
     case 'InitialWrite':
-      return typeof value.recordId === 'string' && isOptionalString(value.protocol);
+      return typeof value.recordId === 'string' && isOptionalString(value.module);
     case 'Parent':
-      return typeof value.recordId === 'string' && typeof value.protocol === 'string';
+      return typeof value.recordId === 'string' && typeof value.module === 'string';
     case 'Ancestor':
-      return typeof value.recordId === 'string' && isOptionalString(value.protocol);
+      return typeof value.recordId === 'string' && isOptionalString(value.module);
     case 'Role':
-      return typeof value.protocol === 'string' &&
-        typeof value.protocolPath === 'string' &&
+      return typeof value.module === 'string' &&
+        typeof value.modulePath === 'string' &&
         typeof value.recipient === 'string' &&
         isOptionalString(value.contextPrefix);
     case 'Grant':
       return typeof value.permissionGrantId === 'string';
     case 'EncryptionControl':
-      return typeof value.protocol === 'string' &&
-        typeof value.protocolPath === 'string' &&
-        isEncryptionControlPath(value.protocolPath) &&
+      return typeof value.module === 'string' &&
+        typeof value.modulePath === 'string' &&
+        isEncryptionControlPath(value.modulePath) &&
         isOptionalObject(value.tags) &&
         isOptionalString(value.recipient);
-    case 'CrossProtocolRef':
-      return typeof value.protocol === 'string' && typeof value.recordId === 'string';
+    case 'CrossModuleRef':
+      return typeof value.module === 'string' && typeof value.recordId === 'string';
     case 'RecordData':
       return typeof value.recordId === 'string' &&
         typeof value.dataCid === 'string' &&
-        isOptionalString(value.protocol);
+        isOptionalString(value.module);
     default:
       return false;
   }

@@ -31,7 +31,7 @@ function roleTarget(): SyncTarget {
     authorization: {
       actorDid     : 'did:example:bob',
       kind         : 'role',
-      protocolRole : 'thread/member',
+      moduleRole   : 'thread/member',
       roleRecordId : 'role-record',
     },
     authorizationEpoch: 'role-epoch',
@@ -53,16 +53,16 @@ function delegateTarget(): SyncTarget {
   };
 }
 
-function protocolMessage(name: string): GenericMessage {
+function moduleMessage(name: string): GenericMessage {
   return {
     descriptor: {
       definition: {
-        protocol  : `https://example.com/${name}`,
+        module    : `https://example.com/${name}`,
         published : true,
         structure : {},
         types     : {},
       },
-      interface        : 'Protocols',
+      interface        : 'Modules',
       messageTimestamp : `2026-09-30T00:00:${String(name.length).padStart(2, '0')}.000000Z`,
       method           : 'Configure',
     },
@@ -153,8 +153,8 @@ describe('SyncNextPushPage', () => {
   }
 
   it('should retain a rejected root while delivering an independent root and committing the page', async () => {
-    const rejected = await feedEntry(protocolMessage('rejected'), 1);
-    const independent = await feedEntry(protocolMessage('delivered'), 2);
+    const rejected = await feedEntry(moduleMessage('rejected'), 1);
+    const independent = await feedEntry(moduleMessage('delivered'), 2);
     const fixture = fakeAgent(page([rejected, independent]));
     fixture.apply.onFirstCall().resolves({ kind: 'Invalid', reason: 'invalid signature' });
     await createLink();
@@ -221,12 +221,12 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should retain a root with an unavailable dependency while delivering the independent tail', async () => {
-    const blocked = await feedEntry(protocolMessage('missing-dependency'), 1);
-    const independent = await feedEntry(protocolMessage('independent'), 2);
+    const blocked = await feedEntry(moduleMessage('missing-dependency'), 1);
+    const independent = await feedEntry(moduleMessage('independent'), 2);
     const fixture = fakeAgent(page([blocked, independent]));
     fixture.apply.onFirstCall().resolves({
       kind    : 'Incomplete',
-      missing : [{ type: 'Protocol', protocol: 'https://example.com/missing' }],
+      missing : [{ type: 'Module', module: 'https://example.com/missing' }],
     }).onSecondCall().resolves({ kind: 'Applied' });
     fixture.query.onSecondCall().resolves({
       reply: { entries: [], status: { code: 200, detail: 'OK' } },
@@ -246,12 +246,12 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should retain a terminal dependency as remotely rejected while delivering the independent tail', async () => {
-    const rejected = await feedEntry(protocolMessage('terminal-dependency'), 1);
-    const independent = await feedEntry(protocolMessage('terminal-tail'), 2);
+    const rejected = await feedEntry(moduleMessage('terminal-dependency'), 1);
+    const independent = await feedEntry(moduleMessage('terminal-tail'), 2);
     const fixture = fakeAgent(page([rejected, independent]));
     fixture.apply.onFirstCall().resolves({
       kind    : 'Incomplete',
-      missing : [{ type: 'Protocol', protocol: 'https://example.com/retired', terminal: true }],
+      missing : [{ type: 'Module', module: 'https://example.com/retired', terminal: true }],
     }).onSecondCall().resolves({ kind: 'Applied' });
     await createLink();
 
@@ -269,9 +269,9 @@ describe('SyncNextPushPage', () => {
 
   it('should stop after one transport failure and retain the remaining page without more requests', async () => {
     const entries = await Promise.all([
-      feedEntry(protocolMessage('first'), 1),
-      feedEntry(protocolMessage('second'), 2),
-      feedEntry(protocolMessage('third'), 3),
+      feedEntry(moduleMessage('first'), 1),
+      feedEntry(moduleMessage('second'), 2),
+      feedEntry(moduleMessage('third'), 3),
     ]);
     const fixture = fakeAgent(page(entries));
     fixture.apply.rejects(new TypeError('offline'));
@@ -292,8 +292,8 @@ describe('SyncNextPushPage', () => {
 
   it('should stop after one quota rejection and retain the remaining link work', async () => {
     const entries = await Promise.all([
-      feedEntry(protocolMessage('quota-one'), 1),
-      feedEntry(protocolMessage('quota-two'), 2),
+      feedEntry(moduleMessage('quota-one'), 1),
+      feedEntry(moduleMessage('quota-two'), 2),
     ]);
     const fixture = fakeAgent(page(entries));
     fixture.apply.rejects(new DwnRpcError(
@@ -318,8 +318,8 @@ describe('SyncNextPushPage', () => {
 
   it('should stop after one general storage deferral and retain the remaining link work', async () => {
     const entries = await Promise.all([
-      feedEntry(protocolMessage('deferred-one'), 1),
-      feedEntry(protocolMessage('deferred-two'), 2),
+      feedEntry(moduleMessage('deferred-one'), 1),
+      feedEntry(moduleMessage('deferred-two'), 2),
     ]);
     const fixture = fakeAgent(page(entries));
     fixture.apply.resolves({ kind: 'Deferred', reason: 'storage' });
@@ -344,7 +344,7 @@ describe('SyncNextPushPage', () => {
       ...await feedEntry(write.message, 1),
       encodedData: Encoder.bytesToBase64Url(write.dataBytes!),
     };
-    const independent = await feedEntry(protocolMessage('remote-data-tail'), 2);
+    const independent = await feedEntry(moduleMessage('remote-data-tail'), 2);
     const fixture = fakeAgent(page([unavailable, independent]));
     fixture.apply.onFirstCall().resolves({
       kind   : 'Deferred',
@@ -448,7 +448,7 @@ describe('SyncNextPushPage', () => {
   it.each(['Applied', 'Duplicate', 'Superseded'] as const)(
     'should settle a root acknowledged as %s',
     async (kind) => {
-      const entry = await feedEntry(protocolMessage(kind), 1);
+      const entry = await feedEntry(moduleMessage(kind), 1);
       const fixture = fakeAgent(page([entry]));
       fixture.apply.resolves({ kind });
       await createLink();
@@ -463,7 +463,7 @@ describe('SyncNextPushPage', () => {
   );
 
   it('should process exactly one non-drained local page', async () => {
-    const entry = await feedEntry(protocolMessage('one-page'), 1);
+    const entry = await feedEntry(moduleMessage('one-page'), 1);
     const fixture = fakeAgent(page([entry], false));
     await createLink();
 
@@ -477,9 +477,9 @@ describe('SyncNextPushPage', () => {
 
   it('should commit a handled prefix when the request budget stops before the page tail', async () => {
     const entries = await Promise.all([
-      feedEntry(protocolMessage('budget-first'), 1),
-      feedEntry(protocolMessage('budget-second'), 2),
-      feedEntry(protocolMessage('budget-third'), 3),
+      feedEntry(moduleMessage('budget-first'), 1),
+      feedEntry(moduleMessage('budget-second'), 2),
+      feedEntry(moduleMessage('budget-third'), 3),
     ]);
     const fixture = fakeAgent(page(entries));
     let remainingRequests = 1;
@@ -529,7 +529,7 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should reject an invalid local page before any remote apply or checkpoint mutation', async () => {
-    const entry = await feedEntry(protocolMessage('invalid-cid'), 1);
+    const entry = await feedEntry(moduleMessage('invalid-cid'), 1);
     entry.messageCid = 'different-cid';
     const fixture = fakeAgent(page([entry]));
     await createLink();
@@ -541,7 +541,7 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should leave progress unchanged when the link is retired after remote delivery', async () => {
-    const entry = await feedEntry(protocolMessage('stale'), 1);
+    const entry = await feedEntry(moduleMessage('stale'), 1);
     const fixture = fakeAgent(page([entry]));
     const link = await createLink();
     fixture.apply.callsFake(async () => {
@@ -555,7 +555,7 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should safely replay remote delivery after the first progress-store commit fails', async () => {
-    const entry = await feedEntry(protocolMessage('crash-replay'), 1);
+    const entry = await feedEntry(moduleMessage('crash-replay'), 1);
     const fixture = fakeAgent(page([entry]));
     fixture.apply.onFirstCall().resolves({ kind: 'Applied' }).onSecondCall().resolves({ kind: 'Duplicate' });
     await createLink();
@@ -573,7 +573,7 @@ describe('SyncNextPushPage', () => {
   });
 
   it('should abort without committing when cancellation follows remote delivery', async () => {
-    const entry = await feedEntry(protocolMessage('cancelled'), 1);
+    const entry = await feedEntry(moduleMessage('cancelled'), 1);
     const fixture = fakeAgent(page([entry]));
     let current = true;
     fixture.apply.callsFake(async () => {

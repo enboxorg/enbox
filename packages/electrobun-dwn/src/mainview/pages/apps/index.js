@@ -4,7 +4,7 @@ import { SignalWatcher } from '@lit-labs/signals';
 import { createRef, ref } from 'lit/directives/ref.js';
 import { appContext } from '../../state/app-context.js';
 import { getAppStore } from '../../state/app-store.js';
-import { getProtocolCatalogEntry, getProtocolInstallPlan, protocolCatalog } from './protocol-catalog.js';
+import { getModuleCatalogEntry, getModuleInstallPlan, moduleCatalog } from './module-catalog.js';
 import './index.css';
 
 const identityRuntimeWindowKey = '__identityRuntime';
@@ -12,47 +12,47 @@ const identityRuntimeWindowKey = '__identityRuntime';
 /**
  * @typedef {{
  *   did: string;
- *   protocols: string[];
- * }} InstalledProtocolsSnapshot
+ *   modules: string[];
+ * }} InstalledModulesSnapshot
  */
 
 /**
  * @typedef {{
- *   protocol: string;
+ *   module: string;
  *   [key: string]: unknown;
- * }} ProtocolDefinitionLike
+ * }} ModuleDefinitionLike
  */
 
 /**
  * @typedef {{
  *   did: string;
- *   protocol: string;
+ *   module: string;
  *   alreadyInstalled: boolean;
  *   status: {
  *     code: number;
  *     detail: string;
  *     [key: string]: unknown;
  *   };
- * }} EnsureProtocolInstalledResult
+ * }} EnsureModuleInstalledResult
  */
 
 /**
  * @typedef {{
  *   did: string;
- *   protocol: string;
- *   listInstalledProtocols: () => Promise<InstalledProtocolsSnapshot>;
- *   ensureProtocolInstalled: (definition: ProtocolDefinitionLike) => Promise<EnsureProtocolInstalledResult>;
+ *   module: string;
+ *   listInstalledModules: () => Promise<InstalledModulesSnapshot>;
+ *   ensureModuleInstalled: (definition: ModuleDefinitionLike) => Promise<EnsureModuleInstalledResult>;
  * }} IdentityRuntime
  */
 
 class AppsPage extends SignalWatcher(LitElement) {
   static properties = {
-    installedProtocols     : { state: true },
-    installingProtocols    : { state: true },
-    isProtocolStateLoading : { state: true },
-    protocolLoadError      : { state: true },
-    protocolSearch         : { state: true },
-    protocolStatusDid      : { state: true },
+    installedModules     : { state: true },
+    installingModules    : { state: true },
+    isModuleStateLoading : { state: true },
+    moduleLoadError      : { state: true },
+    moduleSearch         : { state: true },
+    moduleStatusDid      : { state: true },
   };
 
   createRenderRoot() {
@@ -62,16 +62,16 @@ class AppsPage extends SignalWatcher(LitElement) {
   constructor() {
     super();
     this.appStore = null;
-    this.installedProtocols = new Set();
-    this.installingProtocols = new Set();
-    this.isProtocolStateLoading = false;
-    this.protocolLoadError = '';
-    this.protocolSearch = '';
-    this.protocolStatusDid = '';
-    this._observedProtocolDid = '';
-    this._protocolStatusRequestId = 0;
-    this.protocolDialogRef = createRef();
-    this.protocolSearchInputRef = createRef();
+    this.installedModules = new Set();
+    this.installingModules = new Set();
+    this.isModuleStateLoading = false;
+    this.moduleLoadError = '';
+    this.moduleSearch = '';
+    this.moduleStatusDid = '';
+    this._observedModuleDid = '';
+    this._moduleStatusRequestId = 0;
+    this.moduleDialogRef = createRef();
+    this.moduleSearchInputRef = createRef();
     this.appStoreConsumer = new ContextConsumer(this, {
       context   : appContext,
       subscribe : true,
@@ -83,23 +83,23 @@ class AppsPage extends SignalWatcher(LitElement) {
 
   updated() {
     const currentDid = this.currentDid;
-    if (currentDid === this._observedProtocolDid) {
+    if (currentDid === this._observedModuleDid) {
       return;
     }
 
-    this._observedProtocolDid = currentDid;
-    this.installedProtocols = new Set();
-    this.installingProtocols = new Set();
-    this.isProtocolStateLoading = false;
-    this.protocolLoadError = '';
-    this.protocolSearch = '';
-    this.protocolStatusDid = '';
+    this._observedModuleDid = currentDid;
+    this.installedModules = new Set();
+    this.installingModules = new Set();
+    this.isModuleStateLoading = false;
+    this.moduleLoadError = '';
+    this.moduleSearch = '';
+    this.moduleStatusDid = '';
 
     if (!currentDid) {
       return;
     }
 
-    void this.loadInstalledProtocols(currentDid);
+    void this.loadInstalledModules(currentDid);
   }
 
   get connections() {
@@ -137,14 +137,14 @@ class AppsPage extends SignalWatcher(LitElement) {
     return this.currentDid.length > 0;
   }
 
-  get filteredProtocols() {
-    const normalizedQuery = this.protocolSearch.trim().toLowerCase();
+  get filteredModules() {
+    const normalizedQuery = this.moduleSearch.trim().toLowerCase();
 
-    return [...protocolCatalog]
+    return [...moduleCatalog]
       .filter((entry) => normalizedQuery.length === 0 || entry.searchText.includes(normalizedQuery))
       .sort((left, right) => {
-        const leftInstalled = this.isProtocolInstalled(left.protocol) ? 1 : 0;
-        const rightInstalled = this.isProtocolInstalled(right.protocol) ? 1 : 0;
+        const leftInstalled = this.isModuleInstalled(left.module) ? 1 : 0;
+        const rightInstalled = this.isModuleInstalled(right.module) ? 1 : 0;
 
         if (leftInstalled !== rightInstalled) {
           return rightInstalled - leftInstalled;
@@ -169,10 +169,10 @@ class AppsPage extends SignalWatcher(LitElement) {
               <wa-button
                 appearance="outlined"
                 ?disabled=${!this.hasActiveDid}
-                @click=${this.onOpenInstallProtocolDialog}
+                @click=${this.onOpenInstallModuleDialog}
               >
                 <wa-icon slot="start" name="plus" variant="solid"></wa-icon>
-                Install Protocol
+                Install Module
               </wa-button>
             </div>
           </div>
@@ -192,96 +192,96 @@ class AppsPage extends SignalWatcher(LitElement) {
           .items=${this.accordionItems}
         ></x-accordion>
 
-        ${this.renderProtocolDialog()}
+        ${this.renderModuleDialog()}
       </div>
     `;
   }
 
-  renderProtocolDialog() {
+  renderModuleDialog() {
     return html`
       <wa-dialog
-        ${ref(this.protocolDialogRef)}
-        id="apps-install-protocol-dialog"
+        ${ref(this.moduleDialogRef)}
+        id="apps-install-module-dialog"
         light-dismiss
-        @wa-after-hide=${this.onProtocolDialogAfterHide}
+        @wa-after-hide=${this.onModuleDialogAfterHide}
       >
         <div slot="label" class="wa-cluster wa-gap-xs">
           <wa-icon name="circle-plus" variant="solid"></wa-icon>
-          Install Protocol
+          Install Module
         </div>
 
-        <div class="wa-stack wa-gap-s apps-protocol-dialog-body">
-          <div class="wa-stack wa-gap-s apps-protocol-dialog-controls">
+        <div class="wa-stack wa-gap-s apps-module-dialog-body">
+          <div class="wa-stack wa-gap-s apps-module-dialog-controls">
             <wa-input
-              ${ref(this.protocolSearchInputRef)}
-              class="apps-protocol-search"
-              placeholder="Search protocols"
+              ${ref(this.moduleSearchInputRef)}
+              class="apps-module-search"
+              placeholder="Search modules"
               pill
               autocapitalize="none"
               autocorrect="off"
               autocomplete="off"
               spellcheck="false"
-              .value=${this.protocolSearch}
-              @input=${this.onProtocolSearchInput}
+              .value=${this.moduleSearch}
+              @input=${this.onModuleSearchInput}
             >
               <wa-icon slot="start" name="magnifying-glass"></wa-icon>
             </wa-input>
 
-            ${this.protocolLoadError
-              ? html`<wa-callout variant="danger">${this.protocolLoadError}</wa-callout>`
+            ${this.moduleLoadError
+              ? html`<wa-callout variant="danger">${this.moduleLoadError}</wa-callout>`
               : ''}
           </div>
 
-          <div class="apps-protocol-list" role="list" aria-label="Available protocols">
-            ${this.renderProtocolList()}
+          <div class="apps-module-list" role="list" aria-label="Available modules">
+            ${this.renderModuleList()}
           </div>
         </div>
       </wa-dialog>
     `;
   }
 
-  renderProtocolList() {
+  renderModuleList() {
     if (!this.hasActiveDid) {
       return html`
         <wa-callout variant="warning">
-          Select or unlock a DID before installing protocols.
+          Select or unlock a DID before installing modules.
         </wa-callout>
       `;
     }
 
-    if (this.isProtocolStateLoading && this.protocolStatusDid !== this.currentDid) {
+    if (this.isModuleStateLoading && this.moduleStatusDid !== this.currentDid) {
       return html`
-        <div class="wa-stack wa-align-items-center wa-gap-s apps-protocol-loading">
+        <div class="wa-stack wa-align-items-center wa-gap-s apps-module-loading">
           <wa-spinner style="font-size: 1.75rem"></wa-spinner>
-          <div class="wa-caption-m">Loading installed protocols</div>
+          <div class="wa-caption-m">Loading installed modules</div>
         </div>
       `;
     }
 
-    if (this.filteredProtocols.length === 0) {
+    if (this.filteredModules.length === 0) {
       return html`
-        <div class="wa-caption-m apps-protocol-empty">
-          No protocols match your search.
+        <div class="wa-caption-m apps-module-empty">
+          No modules match your search.
         </div>
       `;
     }
 
-    return this.filteredProtocols.map((entry) => this.renderProtocolListItem(entry));
+    return this.filteredModules.map((entry) => this.renderModuleListItem(entry));
   }
 
   /**
    * @param {{
    *   name: string;
-   *   protocol: string;
-   *   protocolUrl: string;
+   *   module: string;
+   *   moduleUrl: string;
    *   publisher: string;
    * }} entry
    * @returns {import('lit').TemplateResult}
    */
-  renderProtocolListItem(entry) {
-    const isInstalled = this.isProtocolInstalled(entry.protocol);
-    const isInstalling = this.isProtocolInstalling(entry.protocol);
-    const faviconUrl = googleFaviconUrl(entry.protocolUrl);
+  renderModuleListItem(entry) {
+    const isInstalled = this.isModuleInstalled(entry.module);
+    const isInstalling = this.isModuleInstalling(entry.module);
+    const faviconUrl = googleFaviconUrl(entry.moduleUrl);
     const actionLabel = isInstalling
       ? 'Installing'
       : isInstalled
@@ -290,33 +290,33 @@ class AppsPage extends SignalWatcher(LitElement) {
     const actionVariant = isInstalled ? 'brand' : 'success';
 
     return html`
-        <div role="listitem" class="apps-protocol-list-row">
-          <div class="apps-protocol-list-item ${isInstalled ? 'is-installed' : ''}">
+        <div role="listitem" class="apps-module-list-row">
+          <div class="apps-module-list-item ${isInstalled ? 'is-installed' : ''}">
             <wa-avatar
-              class="apps-protocol-avatar"
+              class="apps-module-avatar"
             image=${faviconUrl || ''}
-            initials=${protocolInitials(entry.name)}
+            initials=${moduleInitials(entry.name)}
             label=${`${entry.name} icon`}
             shape="rounded"
           ></wa-avatar>
 
-          <div class="apps-protocol-list-main">
-            <div class="apps-protocol-list-topline">
+          <div class="apps-module-list-main">
+            <div class="apps-module-list-topline">
               <div class="wa-stack wa-gap-3xs">
-                <div class="apps-protocol-list-title">${entry.name}</div>
-                <div class="wa-caption-s apps-protocol-list-publisher">${entry.publisher}</div>
+                <div class="apps-module-list-title">${entry.name}</div>
+                <div class="wa-caption-s apps-module-list-publisher">${entry.publisher}</div>
               </div>
             </div>
           </div>
 
-          <div class="apps-protocol-list-action">
+          <div class="apps-module-list-action">
             <wa-button
               size="small"
               variant=${actionVariant}
               ?loading=${isInstalling}
               ?disabled=${isInstalling || !this.hasActiveDid}
               @click=${() => {
-                void this.onProtocolSelect(entry.protocol);
+                void this.onModuleSelect(entry.module);
               }}
             >
               ${actionLabel}
@@ -327,25 +327,25 @@ class AppsPage extends SignalWatcher(LitElement) {
     `;
   }
 
-  onOpenInstallProtocolDialog = () => {
+  onOpenInstallModuleDialog = () => {
     if (!this.hasActiveDid) {
-      this.notify('warning', 'Select or unlock a DID before installing protocols.');
+      this.notify('warning', 'Select or unlock a DID before installing modules.');
       return;
     }
 
-    this.protocolSearch = '';
+    this.moduleSearch = '';
 
-    if (this.protocolStatusDid !== this.currentDid && !this.isProtocolStateLoading) {
-      void this.loadInstalledProtocols(this.currentDid);
+    if (this.moduleStatusDid !== this.currentDid && !this.isModuleStateLoading) {
+      void this.loadInstalledModules(this.currentDid);
     }
 
-    const dialog = this.protocolDialogRef.value;
+    const dialog = this.moduleDialogRef.value;
     if (!(dialog instanceof HTMLElement)) {
       return;
     }
 
     const focusWhenReady = () => {
-      const input = this.protocolSearchInputRef.value;
+      const input = this.moduleSearchInputRef.value;
       if (input instanceof HTMLElement && typeof input.focus === 'function') {
         input.focus();
       }
@@ -356,62 +356,62 @@ class AppsPage extends SignalWatcher(LitElement) {
     this.openDialog(dialog);
   };
 
-  onProtocolDialogAfterHide = () => {
-    this.protocolSearch = '';
+  onModuleDialogAfterHide = () => {
+    this.moduleSearch = '';
   };
 
   /**
    * @param {Event} event
    */
-  onProtocolSearchInput = (event) => {
-    this.protocolSearch = readFieldValue(event.target);
+  onModuleSearchInput = (event) => {
+    this.moduleSearch = readFieldValue(event.target);
   };
 
   /**
    * @param {string} expectedDid
    * @returns {Promise<void>}
    */
-  async loadInstalledProtocols(expectedDid = this.currentDid) {
+  async loadInstalledModules(expectedDid = this.currentDid) {
     const runtime = getIdentityRuntime();
     if (!runtime || !expectedDid) {
       return;
     }
 
-    const requestId = this._protocolStatusRequestId + 1;
-    this._protocolStatusRequestId = requestId;
-    this.isProtocolStateLoading = true;
-    this.protocolLoadError = '';
+    const requestId = this._moduleStatusRequestId + 1;
+    this._moduleStatusRequestId = requestId;
+    this.isModuleStateLoading = true;
+    this.moduleLoadError = '';
 
     try {
-      const snapshot = await runtime.listInstalledProtocols();
-      if (requestId !== this._protocolStatusRequestId || expectedDid !== this.currentDid) {
+      const snapshot = await runtime.listInstalledModules();
+      if (requestId !== this._moduleStatusRequestId || expectedDid !== this.currentDid) {
         return;
       }
 
-      this.installedProtocols = new Set(snapshot.protocols);
-      this.protocolStatusDid = expectedDid;
+      this.installedModules = new Set(snapshot.modules);
+      this.moduleStatusDid = expectedDid;
     } catch (error) {
-      if (requestId !== this._protocolStatusRequestId || expectedDid !== this.currentDid) {
+      if (requestId !== this._moduleStatusRequestId || expectedDid !== this.currentDid) {
         return;
       }
 
-      this.installedProtocols = new Set();
-      this.protocolStatusDid = '';
-      this.protocolLoadError = error instanceof Error
+      this.installedModules = new Set();
+      this.moduleStatusDid = '';
+      this.moduleLoadError = error instanceof Error
         ? error.message
-        : String(error ?? 'Failed to load installed protocols.');
+        : String(error ?? 'Failed to load installed modules.');
     } finally {
-      if (requestId === this._protocolStatusRequestId && expectedDid === this.currentDid) {
-        this.isProtocolStateLoading = false;
+      if (requestId === this._moduleStatusRequestId && expectedDid === this.currentDid) {
+        this.isModuleStateLoading = false;
       }
     }
   }
 
   /**
-   * @param {string} protocolUri
+   * @param {string} moduleUri
    * @returns {Promise<void>}
    */
-  async onProtocolSelect(protocolUri) {
+  async onModuleSelect(moduleUri) {
     const runtime = getIdentityRuntime();
     if (!runtime) {
       this.notify('danger', 'Identity runtime is unavailable.');
@@ -420,17 +420,17 @@ class AppsPage extends SignalWatcher(LitElement) {
 
     const currentDid = this.currentDid;
     if (!currentDid) {
-      this.notify('warning', 'Select or unlock a DID before installing protocols.');
+      this.notify('warning', 'Select or unlock a DID before installing modules.');
       return;
     }
 
-    const selectedEntry = getProtocolCatalogEntry(protocolUri);
+    const selectedEntry = getModuleCatalogEntry(moduleUri);
     if (!selectedEntry) {
-      this.notify('danger', 'The selected protocol is not available in this build.');
+      this.notify('danger', 'The selected module is not available in this build.');
       return;
     }
 
-    const { plan, missingDependencies } = getProtocolInstallPlan(protocolUri);
+    const { plan, missingDependencies } = getModuleInstallPlan(moduleUri);
     if (missingDependencies.length > 0) {
       this.notify(
         'danger',
@@ -439,14 +439,14 @@ class AppsPage extends SignalWatcher(LitElement) {
       return;
     }
 
-    const planUris = plan.map((entry) => entry.protocol);
-    this.setInstallingProtocols(planUris, true);
+    const planUris = plan.map((entry) => entry.module);
+    this.setInstallingModules(planUris, true);
 
     try {
       const newlyInstalled = [];
 
       for (const entry of plan) {
-        const result = await runtime.ensureProtocolInstalled(entry.definition);
+        const result = await runtime.ensureModuleInstalled(entry.definition);
 
         if (currentDid !== this.currentDid) {
           return;
@@ -456,10 +456,10 @@ class AppsPage extends SignalWatcher(LitElement) {
           newlyInstalled.push(entry.name);
         }
 
-        this.markProtocolsInstalled([entry.protocol]);
+        this.markModulesInstalled([entry.module]);
       }
 
-      this.protocolStatusDid = currentDid;
+      this.moduleStatusDid = currentDid;
 
       if (newlyInstalled.length === 0) {
         this.notify('neutral', `${selectedEntry.name} is already installed on ${currentDid}.`);
@@ -470,12 +470,12 @@ class AppsPage extends SignalWatcher(LitElement) {
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : String(error ?? 'Unknown protocol install error.');
+        : String(error ?? 'Unknown module install error.');
       this.notify('danger', `Failed to install ${selectedEntry.name}: ${message}`);
-      void this.loadInstalledProtocols(currentDid);
+      void this.loadInstalledModules(currentDid);
     } finally {
       if (currentDid === this.currentDid) {
-        this.setInstallingProtocols(planUris, false);
+        this.setInstallingModules(planUris, false);
       }
     }
   }
@@ -495,57 +495,57 @@ class AppsPage extends SignalWatcher(LitElement) {
   }
 
   /**
-   * @param {string[]} protocolUris
+   * @param {string[]} moduleUris
    */
-  markProtocolsInstalled(protocolUris) {
-    const nextInstalledProtocols = new Set(this.installedProtocols);
-    for (const protocolUri of protocolUris) {
-      const normalizedProtocolUri = String(protocolUri ?? '').trim();
-      if (normalizedProtocolUri) {
-        nextInstalledProtocols.add(normalizedProtocolUri);
+  markModulesInstalled(moduleUris) {
+    const nextInstalledModules = new Set(this.installedModules);
+    for (const moduleUri of moduleUris) {
+      const normalizedModuleUri = String(moduleUri ?? '').trim();
+      if (normalizedModuleUri) {
+        nextInstalledModules.add(normalizedModuleUri);
       }
     }
 
-    this.installedProtocols = nextInstalledProtocols;
+    this.installedModules = nextInstalledModules;
   }
 
   /**
-   * @param {string[]} protocolUris
+   * @param {string[]} moduleUris
    * @param {boolean} isInstalling
    */
-  setInstallingProtocols(protocolUris, isInstalling) {
-    const nextInstallingProtocols = new Set(this.installingProtocols);
+  setInstallingModules(moduleUris, isInstalling) {
+    const nextInstallingModules = new Set(this.installingModules);
 
-    for (const protocolUri of protocolUris) {
-      const normalizedProtocolUri = String(protocolUri ?? '').trim();
-      if (!normalizedProtocolUri) {
+    for (const moduleUri of moduleUris) {
+      const normalizedModuleUri = String(moduleUri ?? '').trim();
+      if (!normalizedModuleUri) {
         continue;
       }
 
       if (isInstalling) {
-        nextInstallingProtocols.add(normalizedProtocolUri);
+        nextInstallingModules.add(normalizedModuleUri);
       } else {
-        nextInstallingProtocols.delete(normalizedProtocolUri);
+        nextInstallingModules.delete(normalizedModuleUri);
       }
     }
 
-    this.installingProtocols = nextInstallingProtocols;
+    this.installingModules = nextInstallingModules;
   }
 
   /**
-   * @param {string} protocolUri
+   * @param {string} moduleUri
    * @returns {boolean}
    */
-  isProtocolInstalled(protocolUri) {
-    return this.installedProtocols.has(String(protocolUri ?? '').trim());
+  isModuleInstalled(moduleUri) {
+    return this.installedModules.has(String(moduleUri ?? '').trim());
   }
 
   /**
-   * @param {string} protocolUri
+   * @param {string} moduleUri
    * @returns {boolean}
    */
-  isProtocolInstalling(protocolUri) {
-    return this.installingProtocols.has(String(protocolUri ?? '').trim());
+  isModuleInstalling(moduleUri) {
+    return this.installingModules.has(String(moduleUri ?? '').trim());
   }
 
   /**
@@ -581,8 +581,8 @@ function getIdentityRuntime() {
   }
 
   const requiredMethods = [
-    'listInstalledProtocols',
-    'ensureProtocolInstalled',
+    'listInstalledModules',
+    'ensureModuleInstalled',
   ];
 
   for (const methodName of requiredMethods) {
@@ -598,7 +598,7 @@ function getIdentityRuntime() {
  * @param {string} value
  * @returns {string}
  */
-function protocolInitials(value) {
+function moduleInitials(value) {
   const words = String(value ?? '')
     .split(/\s+/)
     .map((word) => word.trim())

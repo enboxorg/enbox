@@ -158,8 +158,8 @@ describe('Connect owner authentication approval', () => {
       { delegateDid: owner.did.uri },
       { requestedSessionTtlSeconds: 3600 },
       { permissionRequests: [{
-        protocolDefinition : { protocol: 'https://example.com/data', published: false, types: {}, structure: {} },
-        permissionScopes   : [{ interface: 'Protocols', method: 'Query', protocol: 'https://example.com/data' }],
+        moduleDefinition : { module: 'https://example.com/data', published: false, types: {}, structure: {} },
+        permissionScopes : [{ interface: 'Modules', method: 'Query', module: 'https://example.com/data' }],
       }] },
       { requestType: 'connect' },
     ];

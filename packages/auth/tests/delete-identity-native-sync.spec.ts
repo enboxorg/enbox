@@ -88,7 +88,7 @@ async function createFixture(): Promise<Fixture> {
   sinon.stub(agent.vault, 'isInitialized').resolves(true);
   sinon.stub(agent.vault, 'isLocked').returns(false);
   const auth = await AuthManager.create({ agent: agent as unknown as AuthUserAgent, storage: new MemoryStorage() });
-  await engine.setIdentityOptions({ did: owner.did.uri, options: { delegateDid: first.did.uri, protocols: 'all' } });
+  await engine.setIdentityOptions({ did: owner.did.uri, options: { delegateDid: first.did.uri, modules: 'all' } });
   await engine.startSync({ interval: '1h' });
   expect(subscriptions).toHaveLength(1);
   expect([...engine['_linkControllers'].values()][0].link.status).toBe('live');
@@ -156,17 +156,17 @@ async function createRoleSource(fixture: Fixture, stored = true): Promise<Follow
     actorDid       : fixture.owner.did.uri,
     contextId      : 'roleroot',
     id             : 'member-role',
-    protocol       : 'https://example.com/role-removal',
-    protocolPaths  : ['root'],
-    protocolRole   : 'root/member',
+    module         : 'https://example.com/role-removal',
+    modulePaths    : ['root'],
+    moduleRole     : 'root/member',
     remoteEndpoint : 'http://localhost:9999',
     roles          : ['root/member'],
     sourceDid      : foreign.did.uri,
   };
   for (const delegate of [fixture.first, fixture.second]) {
     for (const scope of [
-      { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: source.protocol },
-      { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: source.protocol },
+      { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: source.module },
+      { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: source.module },
     ]) {
       const grant = await fixture.agent.permissions.createGrant({
         author      : source.actorDid,
@@ -190,7 +190,7 @@ async function createRoleSource(fixture: Fixture, stored = true): Promise<Follow
   }
   if (stored) {
     await fixture.engine['_followedSourceStore'].replace(source);
-    fixture.engine['_followedSourceSnapshot'].set(JSON.stringify([source.sourceDid, source.actorDid, source.protocol, source.contextId]), source);
+    fixture.engine['_followedSourceSnapshot'].set(JSON.stringify([source.sourceDid, source.actorDid, source.module, source.contextId]), source);
     const target = await fixture.engine['targetResolver'].buildTargetForSource(source, fixture.first.did.uri);
     const link = await fixture.engine['getOrCreateReplicationLink'](target);
     await fixture.engine['replicationLinkStore'].setStatus(link, 'paused');
@@ -201,7 +201,7 @@ async function createRoleSource(fixture: Fixture, stored = true): Promise<Follow
 async function replaceAndActivate(fixture: Fixture, initializeOwnedOnly = false): Promise<SyncLinkController> {
   await fixture.replacement.setIdentityOptions({
     did     : fixture.owner.did.uri,
-    options : { delegateDid: fixture.second.did.uri, protocols: 'all' },
+    options : { delegateDid: fixture.second.did.uri, modules: 'all' },
   });
   if (initializeOwnedOnly) {
     // A role initializer already owns its stable key until the gated signing
@@ -274,7 +274,7 @@ describe('delegate identity removal with native live subscriptions', () => {
       if (registration === 'sibling unregister') {
         await fixture.replacement.removeIdentity(fixture.owner.did.uri);
       }
-      const options = { delegateDid: fixture.first.did.uri, protocols: 'all' as const };
+      const options = { delegateDid: fixture.first.did.uri, modules: 'all' as const };
       await fixture.engine.setIdentityOptions({ did: fixture.owner.did.uri, options });
       expect(await fixture.engine.getIdentityOptions(fixture.owner.did.uri)).toEqual(options);
 
@@ -321,7 +321,7 @@ describe('delegate identity removal with native live subscriptions', () => {
     expect(oldController.isActive).toBe(false);
     expect(replacement.isActive).toBe(true);
     expect(replacement.hasLiveSubscription).toBe(true);
-    expect(await fixture.engine.getIdentityOptions(fixture.owner.did.uri)).toEqual({ delegateDid: fixture.second.did.uri, protocols: 'all' });
+    expect(await fixture.engine.getIdentityOptions(fixture.owner.did.uri)).toEqual({ delegateDid: fixture.second.did.uri, modules: 'all' });
     expect(await quota.get(block.tenantDid, block.linkKey, block.messageCid)).toEqual(block);
   });
 
@@ -430,7 +430,7 @@ describe('delegate identity removal with native live subscriptions', () => {
       expect(result).toBe(mode === 'pull' ? false : undefined);
     }
     expect(await fixture.agent.identity.get({ didUri: fixture.first.did.uri })).toBeUndefined();
-    expect(await fixture.engine.getIdentityOptions(source.actorDid)).toEqual({ delegateDid: fixture.second.did.uri, protocols: 'all' });
+    expect(await fixture.engine.getIdentityOptions(source.actorDid)).toEqual({ delegateDid: fixture.second.did.uri, modules: 'all' });
     expect(replacement.hasLiveSubscription).toBe(true);
     expect(clearQuota.called).toBe(false);
     if (mode !== 'follow') {

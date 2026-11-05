@@ -3,7 +3,7 @@ import type { EventLog } from '../../src/types/subscriptions.js';
 import type { ResumableTask } from '../../src/core/resumable-task-manager.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -18,7 +18,7 @@ import { TestStores } from '../test-stores.js';
 import { useFakeTimers } from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { ProtocolsConfigure, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { ModulesConfigure, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { ResumableTaskManager, ResumableTaskName } from '../../src/core/resumable-task-manager.js';
 
 
@@ -82,23 +82,23 @@ export function testResumableTasks(): void {
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol to allow records to be written
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : protocolDefinition,
+      // install a module to allow records to be written
+      const moduleDefinition = minimalModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 1. Write a record to DWN (for deletion later).
       const data = TestDataGenerator.randomBytes(100);
       const messageOptions = {
-        signer       : Jws.createSigner(alice),
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        dataFormat   : 'any-data-format',
-        data         : data
+        signer     : Jws.createSigner(alice),
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        dataFormat : 'any-data-format',
+        data       : data
       };
 
       const recordsWrite = await RecordsWrite.create(messageOptions);
@@ -160,14 +160,14 @@ export function testResumableTasks(): void {
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol to allow records to be written
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : protocolDefinition,
+      // install a module to allow records to be written
+      const moduleDefinition = minimalModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 1. Set ResumableTaskManager.resumableTaskBatchSize to 2.
       const originalResumableTaskBatchSize = dwn['resumableTaskManager']['resumableTaskBatchSize'];
@@ -178,11 +178,11 @@ export function testResumableTasks(): void {
       for (let i = 0; i < 4; i++) {
         const data = TestDataGenerator.randomBytes(100);
         const messageOptions = {
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
-          dataFormat   : 'any-data-format',
-          data         : data
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          dataFormat : 'any-data-format',
+          data       : data
         };
 
         const recordsWrite = await RecordsWrite.create(messageOptions);
@@ -240,7 +240,7 @@ export function testResumableTasks(): void {
       // 7. Verify that only 1 record remains in the DWN.
       const recordsQuery = await RecordsQuery.create({
         signer : Jws.createSigner(alice),
-        filter : { protocol: protocolDefinition.protocol }
+        filter : { module: moduleDefinition.module }
       });
       const recordsQueryResponse = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryResponse.status.code).toBe(200);
@@ -307,14 +307,14 @@ export function testResumableTasks(): void {
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol to allow records to be written
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : protocolDefinition,
+      // install a module to allow records to be written
+      const moduleDefinition = minimalModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : moduleDefinition,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 1. Mock code to never complete the `RecordsDelete` until given a signal to complete.
       let signalDeleteComplete: () => void;
@@ -329,11 +329,11 @@ export function testResumableTasks(): void {
       // 2. Write a record to DWN.
       const data = TestDataGenerator.randomBytes(100);
       const messageOptions = {
-        signer       : Jws.createSigner(alice),
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        dataFormat   : 'any-data-format',
-        data         : data
+        signer     : Jws.createSigner(alice),
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        dataFormat : 'any-data-format',
+        data       : data
       };
 
       const recordsWrite = await RecordsWrite.create(messageOptions);

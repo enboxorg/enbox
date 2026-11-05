@@ -22,7 +22,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(
@@ -71,7 +71,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target       : alice.did,
     });
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { jsonRpcResponse } = await handleDwnApplyReplicatedMessage(dwnRequest, {
       dwn,
@@ -161,7 +161,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const missing = await createRecordsWriteMessage(alice);
     const stored = await createRecordsWriteMessage(alice);
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     expect(await dwn.applyReplicatedMessage(alice.did, stored.recordsWrite.message, {
       dataStream: stored.dataStream,
     })).toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -221,7 +221,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const context: RequestContext = { dwn, isLocalNodeAuthenticated: true, transport: 'http' };
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const initial = await handleDwnApplyReplicatedMessage(initialRequest, context);
       expect(initial.jsonRpcResponse.result.result).toEqual(expect.objectContaining({
         ancestryOnly : true,
@@ -610,7 +610,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const quotaContext = {
         dwn,
         transport : 'http' as const,
@@ -667,7 +667,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const quotaContext = {
         dwn,
         transport : 'http' as const,
@@ -728,7 +728,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target  : alice.did,
     });
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const firstApply = await handleDwnApplyReplicatedMessage(
       dwnRequest,
@@ -771,7 +771,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target  : alice.did,
     });
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const firstApply = await handleDwnApplyReplicatedMessage(
       dwnRequest,
@@ -820,7 +820,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
       target  : alice.did,
     });
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     let streamWasCanceled = false;
     let pulls = 0;
@@ -871,7 +871,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const datalessApply = await handleDwnApplyReplicatedMessage(dwnRequest, {
         dwn,
         transport: 'http',
@@ -923,7 +923,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       expect((await handleDwnApplyReplicatedMessage(request, { dwn, transport: 'http' })).jsonRpcResponse.result.result)
         .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
 
@@ -957,7 +957,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const { dwn } = await getTestDwn();
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       expect((await handleDwnApplyReplicatedMessage(request, { dwn, transport: 'http' })).jsonRpcResponse.result.result)
         .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
 
@@ -995,7 +995,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const initial = await handleDwnApplyReplicatedMessage(request, {
         dwn,
         transport  : 'http',
@@ -1045,7 +1045,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const { dwn } = await getTestDwn();
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const ancestryApply = await handleDwnApplyReplicatedMessage(initialRequest, {
         dwn,
         transport: 'http',
@@ -1114,7 +1114,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     };
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const ancestryApply = await handleDwnApplyReplicatedMessage(initialRequest, quotaContext);
       expect((ancestryApply.jsonRpcResponse.result.result as ReplicationApplyResult).kind).toBe('Applied');
 
@@ -1161,7 +1161,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const adminStore = AdminStore.createFromDialect(dialect, 0);
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       for (const [write, data] of [
         [initialWrite, initialData],
         [firstUpdate, firstData],
@@ -1228,7 +1228,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const { dwn } = await getTestDwn();
 
     try {
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const ancestryApply = await handleDwnApplyReplicatedMessage(writeRequest, {
         dwn,
         transport: 'http',
@@ -1259,7 +1259,7 @@ describe('handleDwnApplyReplicatedMessage', () => {
     const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
       message: {
         descriptor: {
-          interface : 'Protocols',
+          interface : 'Modules',
           method    : 'Configure',
         },
       },

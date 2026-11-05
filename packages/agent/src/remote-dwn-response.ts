@@ -2,8 +2,8 @@ import type { DidResolver } from '@enbox/dids';
 import type {
   GenericMessage,
   GenericMessageReply,
-  ProtocolsQueryMessage,
-  ProtocolsQueryReply,
+  ModulesQueryMessage,
+  ModulesQueryReply,
   RecordsDeleteMessage,
   RecordsFilter,
   RecordsQueryMessage,
@@ -25,7 +25,7 @@ import {
   Encoder,
   FilterUtility,
   Message,
-  ProtocolsConfigure,
+  ModulesConfigure,
   Records,
   RecordsDelete,
   RecordsWrite,
@@ -53,11 +53,11 @@ export async function verifyRemoteDwnResponse({
 }): Promise<void> {
   const { interface: messageInterface, method } = message.descriptor;
 
-  if (messageInterface === DwnInterfaceName.Protocols && method === DwnMethodName.Query) {
-    await verifyProtocolsQueryReply({
+  if (messageInterface === DwnInterfaceName.Modules && method === DwnMethodName.Query) {
+    await verifyModulesQueryReply({
       didResolver,
-      message : message as ProtocolsQueryMessage,
-      reply   : reply as ProtocolsQueryReply,
+      message : message as ModulesQueryMessage,
+      reply   : reply as ModulesQueryReply,
       targetDid,
     });
   } else if (messageInterface === DwnInterfaceName.Records && method === DwnMethodName.Query) {
@@ -82,43 +82,43 @@ export async function verifyRemoteDwnResponse({
 
 }
 
-async function verifyProtocolsQueryReply({
+async function verifyModulesQueryReply({
   didResolver,
   message,
   reply,
   targetDid,
 }: {
   didResolver: DidResolver;
-  message: ProtocolsQueryMessage;
-  reply: ProtocolsQueryReply;
+  message: ModulesQueryMessage;
+  reply: ModulesQueryReply;
   targetDid: string;
 }): Promise<void> {
   const entries = reply.entries ?? [];
   if (reply.status.code !== 200 && entries.length > 0) {
-    throw verificationError(`ProtocolsQuery response used status ${reply.status.code} with entries`);
+    throw verificationError(`ModulesQuery response used status ${reply.status.code} with entries`);
   }
 
-  const requestedProtocol = message.descriptor.filter?.protocol;
-  if (requestedProtocol !== undefined && entries.length > 1) {
-    throw verificationError(`remote returned multiple configurations for protocol '${requestedProtocol}'`);
+  const requestedModule = message.descriptor.filter?.module;
+  if (requestedModule !== undefined && entries.length > 1) {
+    throw verificationError(`remote returned multiple configurations for module '${requestedModule}'`);
   }
 
   for (const entry of entries) {
-    const protocol = await ProtocolsConfigure.parse(entry);
+    const module = await ModulesConfigure.parse(entry);
     await authenticate(entry.authorization, didResolver);
 
-    if (protocol.signer !== targetDid) {
+    if (module.signer !== targetDid) {
       throw verificationError(
-        `protocol '${entry.descriptor.definition.protocol}' was signed by '${protocol.signer ?? 'an unknown DID'}' instead of '${targetDid}'`
+        `module '${entry.descriptor.definition.module}' was signed by '${module.signer ?? 'an unknown DID'}' instead of '${targetDid}'`
       );
     }
-    if (requestedProtocol !== undefined && entry.descriptor.definition.protocol !== requestedProtocol) {
+    if (requestedModule !== undefined && entry.descriptor.definition.module !== requestedModule) {
       throw verificationError(
-        `remote returned protocol '${entry.descriptor.definition.protocol}' while '${requestedProtocol}' was requested`
+        `remote returned module '${entry.descriptor.definition.module}' while '${requestedModule}' was requested`
       );
     }
     if (message.authorization === undefined && entry.descriptor.definition.published !== true) {
-      throw verificationError(`anonymous query returned unpublished protocol '${entry.descriptor.definition.protocol}'`);
+      throw verificationError(`anonymous query returned unpublished module '${entry.descriptor.definition.module}'`);
     }
   }
 }

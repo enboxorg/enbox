@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test';
 const audience = {
   contextId    : 'thread-1',
   keyId        : 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
-  protocol     : 'https://example.com/protocol',
+  module       : 'https://example.com/module',
   publicKeyJwk : {
     crv : 'X25519',
     kty : 'OKP',

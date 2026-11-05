@@ -10,7 +10,7 @@ Enbox is a TypeScript SDK for building applications where **users own their data
 The SDK handles:
 
 - **Identity** — Decentralized Identifiers (DIDs) that users own, not your server
-- **Storage** — Protocol-defined records in personal DWN vaults, synced across devices
+- **Storage** — Module-defined records in personal DWN vaults, synced across devices
 - **Authentication** — Passwordless auth with vault encryption, recovery phrases, and multi-identity
 - **Encryption** — End-to-end encrypted records with ECDH key agreement
 
@@ -27,15 +27,15 @@ end-to-end gate. Non-browser runtimes can install `@enbox/api` directly.
 
 ## Quick start
 
-### 1. Define a protocol
+### 1. Define a module
 
-A protocol describes the data your app works with — its schema, structure, and access rules.
+A module describes the data your app works with — its schema, structure, and access rules.
 
 ```ts
-import { defineProtocol, recordCodecs } from '@enbox/browser';
+import { defineModule, recordCodecs } from '@enbox/browser';
 
 const TaskDefinition = {
-  protocol:  'https://example.com/tasks',
+  module:  'https://example.com/tasks',
   published: true,
   types: {
     task: {
@@ -48,7 +48,7 @@ const TaskDefinition = {
   },
 } as const;
 
-const TaskProtocol = defineProtocol(TaskDefinition, {
+const TaskModule = defineModule(TaskDefinition, {
   task: recordCodecs.json<{ title: string; done: boolean }>(),
 });
 ```
@@ -63,7 +63,7 @@ import {
 } from '@enbox/browser';
 
 const application = defineApplicationManifest({
-  protocols: [TaskProtocol],
+  modules: [TaskModule],
 } as const);
 const store = createConnectionStore({
   application,
@@ -79,10 +79,10 @@ if (snapshot.phase !== 'connected') {
   throw new Error('Connect the wallet first.');
 }
 
-const tasks = snapshot.enbox.using(TaskProtocol);
+const tasks = snapshot.enbox.using(TaskModule);
 ```
 
-The connection store owns session restore, connection, protocol readiness, and
+The connection store owns session restore, connection, module readiness, and
 facade replacement for common apps. Read the active API from `snapshot.enbox`.
 Create one store for the application/data path and keep it for the application
 lifetime. If no session is restored, render a connect button and call
@@ -130,17 +130,17 @@ await store.dispose();
 
 | Package | Description |
 |---|---|
-| [`@enbox/api`](/docs/packages/api) | High-level SDK — connection lifecycle, typed protocols, records CRUD |
+| [`@enbox/api`](/docs/packages/api) | High-level SDK — connection lifecycle, typed modules, records CRUD |
 | [`@enbox/browser`](/docs/packages/browser) | Browser entrypoint — app APIs, auth helpers, wallet connect, DWeb utilities |
 | [`@enbox/cli`](/docs/packages/cli) | CLI entrypoint — app APIs, auth helpers, relay/PIN wallet connect |
 | [`@enbox/auth`](/docs/guides/auth) | Authentication — connect, lock, disconnect, multi-identity |
 | [`@enbox/dwn-server`](/docs/packages/dwn-server) | Self-hostable DWN server with PostgreSQL, MySQL, SQLite |
 | [`@enbox/agent`](/docs/packages/agent) | Low-level agent runtime for DID and DWN operations |
-| [`@enbox/protocols`](/docs/packages/protocols) | Protocol definitions and type-safe schema helpers |
+| [`@enbox/modules`](/docs/packages/modules) | Module definitions and type-safe schema helpers |
 | [`@enbox/dids`](/docs/packages/dids) | DID creation, resolution, and key management |
 | [`@enbox/crypto`](/docs/packages/crypto) | Cryptographic primitives (JOSE, key wrapping, ECDH) |
 | [`@enbox/common`](/docs/packages/common) | Shared utilities (TTL cache, LevelStore) |
-| [`@enbox/dwn-sdk-js`](/docs/packages/dwn-sdk-js) | Decentralized Web Node protocol engine |
+| [`@enbox/dwn-sdk-js`](/docs/packages/dwn-sdk-js) | Decentralized Web Node module engine |
 | `@enbox/dwn-sql-store` | SQL storage backends for the DWN |
 | `@enbox/dwn-clients` | HTTP and WebSocket DWN transport clients |
 

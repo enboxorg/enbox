@@ -9,7 +9,7 @@ Enbox is a **Bun** monorepo for **Decentralized Web Nodes (DWN)**, **DIDs** (`di
 - A spec-aligned **DWN engine** (`@enbox/dwn-sdk-js`) and **SQL-backed stores** (`@enbox/dwn-sql-store`).
 - A production-style **DWN server** (`@enbox/dwn-server`) with HTTP/WebSocket APIs, registration, and admin features.
 - **Client libraries**: low-level DWN clients (`@enbox/dwn-clients`), an **agent** with encrypted vault and DWN-backed stores (`@enbox/agent`), a shared **connect handshake kernel** (`@enbox/connect`), **headless auth** (`@enbox/auth`), a **high-level SDK** (`@enbox/api`), **browser helpers** (`@enbox/browser`), and **CLI helpers** (`@enbox/cli`).
-- **Shared protocol definitions** (`@enbox/protocols`) and optional **codegen** (`@enbox/protocol-codegen`).
+- **Shared module definitions** (`@enbox/modules`) and optional **codegen** (`@enbox/module-codegen`).
 - **`apps/docs`**: the public documentation site (Fumadocs + Next.js); it uses its own linter (Biome), not the ESLint graph used by packages.
 
 ## Inviolable Rules
@@ -133,7 +133,7 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/common` | Shared utilities, caches, LevelDB helpers |
 | `@enbox/crypto` | Cryptographic primitives and JWE |
 | `@enbox/dids` | DID creation, resolution, `did:dht` (Pkarr gateway required for tests) |
-| `@enbox/dwn-sdk-js` | DWN protocol implementation (style reference for TS/ESLint) |
+| `@enbox/dwn-sdk-js` | DWN module implementation (style reference for TS/ESLint) |
 | `@enbox/dwn-sql-store` | SQL MessageStore/DataStore + **DWN** Kysely migrations |
 | `@enbox/dwn-clients` | DWN JSON-RPC / client transport |
 | `@enbox/connect` | Connect handshake kernel — JWE envelope, JWT, wallet URI, relay transport, client/provider state machines |
@@ -143,8 +143,8 @@ Published / primary packages live under `packages/`. Root `package.json` lists a
 | `@enbox/api` | App-facing SDK; composes agent + auth |
 | `@enbox/browser` | Browser connect handlers, popup postMessage transports, DWeb wiring (builds on agent, api, auth, connect) |
 | `@enbox/cli` | Terminal connect handlers and CLI entrypoint helpers (builds on agent, api, auth) |
-| `@enbox/protocols` | Reusable protocol definitions for the ecosystem |
-| `@enbox/protocol-codegen` | CLI to generate TS from schemas / protocols |
+| `@enbox/modules` | Reusable module definitions for the ecosystem |
+| `@enbox/module-codegen` | CLI to generate TS from schemas / modules |
 | `@enbox/dwn-server-admin-ui` | Bundled Preact admin UI assets for the server |
 | `@enbox/local-node` | Shell-agnostic local DWN node runtime and headless CLI |
 | `@enbox/electrobun-dwn` | **Private** desktop wrapper embedding the server |
@@ -157,7 +157,7 @@ Core stack (simplified — follow `workspace:*` in each `package.json` for exact
 @enbox/common (TtlCache, LevelStore, shared utilities)
   @enbox/crypto (Ed25519, X25519, secp256k1, AES, JWE)
     @enbox/dids (did:dht, did:jwk, resolution)
-      @enbox/dwn-sdk-js (DWN protocol engine, handlers, in-memory stores, JSON Schemas)
+      @enbox/dwn-sdk-js (DWN module engine, handlers, in-memory stores, JSON Schemas)
         @enbox/dwn-sql-store (Postgres/MySQL/SQLite DWN stores, Kysely migrations)
         @enbox/connect (connect handshake kernel — envelope, JWT, wallet URI, relay transport, client/provider)
         @enbox/dwn-clients (DWN JSON-RPC / transport clients)
@@ -166,7 +166,7 @@ Core stack (simplified — follow `workspace:*` in each `package.json` for exact
             @enbox/local-node (local-profile server runtime — uses agent discovery helpers + dwn-server)
             @enbox/auth (AuthManager, sessions, connect flows — uses agent + connect + dwn-sdk-js + dwn-clients)
               @enbox/api (high-level app SDK — uses agent + auth + dwn-clients)
-                @enbox/protocols (published protocol definitions — uses api + dwn-sdk-js)
+                @enbox/modules (published module definitions — uses api + dwn-sdk-js)
                 @enbox/browser (BrowserConnectHandler, popup postMessage transports — uses agent + api + auth + connect + dids)
                 @enbox/cli (CliConnectHandler, terminal helpers — uses agent + api + auth)
 ```
@@ -192,7 +192,7 @@ Most packages expose a `build:browser` script, but it means different things:
 - **`@enbox/agent`**, **`@enbox/api`**, **`@enbox/auth`**, and **`@enbox/browser`** emit bundled `dist/browser.mjs` artifacts via `build/browser-bundle.js` (esbuild). `agent`, `api`, and `browser` expose those artifacts from their browser-conditioned root exports; `auth` exposes its browser-safe surface from `@enbox/auth/browser` and from the root browser condition.
 - **`@enbox/common`**, **`@enbox/crypto`**, and **`@enbox/dids`** expose `build:browser` for their browser bundle artifacts.
 - **`@enbox/dwn-sdk-js`** emits `dist/browser.mjs` via its `bundle` script, not a `build:browser` script.
-- **`@enbox/cli`**, **`@enbox/connect`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/local-node`**, **`@enbox/protocols`**, and **`@enbox/protocol-codegen`** do not define `build:browser`.
+- **`@enbox/cli`**, **`@enbox/connect`**, **`@enbox/dwn-clients`**, **`@enbox/dwn-server`**, **`@enbox/dwn-sql-store`**, **`@enbox/local-node`**, **`@enbox/modules`**, and **`@enbox/module-codegen`** do not define `build:browser`.
 
 Browser application rules are centralized under [Application architecture](#application-architecture) below. Do not infer a new scaffold from older downstream app configuration.
 
@@ -202,9 +202,9 @@ Browser application rules are centralized under [Application architecture](#appl
 |---|---|
 | `packages/agent/src/` | Agent framework source |
 | `packages/agent/tests/` | Agent tests (bun:test + Sinon) |
-| `packages/agent/src/store-data.ts` | Base `DwnDataStore` class (protocol-backed storage with encryption) |
+| `packages/agent/src/store-data.ts` | Base `DwnDataStore` class (module-backed storage with encryption) |
 | `packages/agent/src/store-key.ts` | `DwnKeyStore` — encrypted private key storage |
-| `packages/agent/src/store-data-protocols.ts` | Protocol definitions (`JwkProtocolDefinition`, `IdentityProtocolDefinition`) |
+| `packages/agent/src/store-data-modules.ts` | Module definitions (`JwkModuleDefinition`, `IdentityModuleDefinition`) |
 | `packages/agent/src/dwn-api.ts` | `AgentDwnApi` — DWN operations, encryption callbacks, participant detection |
 | `packages/agent/src/hd-identity-vault.ts` | `HdIdentityVault` — seed phrase / password vault for agent DID |
 | `packages/agent/src/test-harness.ts` | `PlatformAgentTestHarness` — test infrastructure (exported as public API) |
@@ -216,8 +216,8 @@ Browser application rules are centralized under [Application architecture](#appl
 | `packages/auth/src/` | `AuthManager`, storage adapters, connect and discovery helpers |
 | `packages/cli/src/` | CLI connect handler and terminal wallet approval helpers |
 | `packages/local-node/src/` | Shell-agnostic local DWN node runtime and headless CLI |
-| `packages/protocols/src/` | Shared protocol definitions consumed by apps |
-| `packages/protocol-codegen/src/` | Codegen CLI implementation |
+| `packages/modules/src/` | Shared module definitions consumed by apps |
+| `packages/module-codegen/src/` | Codegen CLI implementation |
 | `packages/dwn-server-admin-ui/` | Admin UI bundle source and build scripts |
 | `packages/electrobun-dwn/` | Electrobun-embedded local DWN (private package) |
 | `apps/docs/` | Documentation site (Fumadocs + Next.js, deployed to Cloudflare Pages) |
@@ -232,7 +232,7 @@ Browser application rules are centralized under [Application architecture](#appl
 
 Downstream repos typically consume **npm releases** of scoped `@enbox/*` packages (not the monorepo path directly).
 
-- **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `protocols`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, browser-conditioned Enbox entrypoints, Vitest/Playwright.
+- **web-wallet** (package `@enbox/dweb-wallet`): Full stack — `agent`, `api`, `auth`, `browser`, `dwn-clients`, `modules`, plus crypto/dids/common. Typical pattern: Vite + React, PWA, browser-conditioned Enbox entrypoints, Vitest/Playwright.
 - **nutsd** (package `@enbox/nutsd`): Narrower surface — e.g. **`@enbox/browser`** (and Cashu) for wallet/DID UX without pulling the full DWN server stack into the app bundle.
 
 When changing public APIs, assume **multiple external apps** pin different semver ranges and follow the changeset workflow below. Enbox is greenfield: every releasable package change uses a `patch` changeset, including new and breaking APIs.
@@ -241,7 +241,7 @@ When changing public APIs, assume **multiple external apps** pin different semve
 
 | Goal | Likely packages / paths |
 |---|---|
-| DWN protocol, message handlers, in-memory stores | `packages/dwn-sdk-js/` |
+| DWN module, message handlers, in-memory stores | `packages/dwn-sdk-js/` |
 | Postgres/MySQL/SQLite persistence, DWN schema migrations | `packages/dwn-sql-store/src/migrations/` |
 | HTTP API, tenant registration, server-only tables | `packages/dwn-server/` (+ server migrations) |
 | Agent vault, DWN-backed stores, sync | `packages/agent/src/` |
@@ -251,7 +251,7 @@ When changing public APIs, assume **multiple external apps** pin different semve
 | Local DWN node runtime, pairing broker, discovery file writer | `packages/local-node/` |
 | Connect handshake (envelope, transports, pairing) | `packages/connect/src/`, `packages/agent/src/connect-approval.ts` |
 | `dwn://` discovery, browser connect | `packages/browser/src/`, `packages/auth/src/discovery.ts` |
-| Shared protocol definitions | `packages/protocols/` |
+| Shared module definitions | `packages/modules/` |
 | Docs site content | `apps/docs/content/docs/` |
 
 ## Pre-Push Requirements
@@ -304,8 +304,8 @@ After `bun run dev:ensure`, just run the suite — the `export DID_DHT_*` lines 
 | `@enbox/local-node` | `bun test` | `bun run test:node` |
 | `@enbox/dwn-clients` | `bun test` | `bun run test:node` |
 | `@enbox/connect` | `bun test` | `bun run test:node` |
-| `@enbox/protocols` | `bun test` | `bun run test:node` |
-| `@enbox/protocol-codegen` | `bun test` | `bun run test:node` |
+| `@enbox/modules` | `bun test` | `bun run test:node` |
+| `@enbox/module-codegen` | `bun test` | `bun run test:node` |
 | `@enbox/browser` | Vitest (browser runner) | `bun run test:browser` — **no `test:node` suite**; browser-only via `@vitest/browser-playwright` |
 
 ### Agent / API / Auth tests (bun:test)
@@ -332,7 +332,7 @@ bun test tests/store-key.spec.ts
 bun run test:node
 
 # DWN SDK tests with name filter:
-GREP="ProtocolsConfigure" bun run test:node-grep
+GREP="ModulesConfigure" bun run test:node-grep
 # Which runs: bun test .spec.ts -t $GREP
 
 # Run all tests across the monorepo (from repo root):
@@ -402,7 +402,7 @@ cat > .changeset/my-changeset.md << 'EOF'
 "@enbox/agent": patch
 ---
 
-feat: add new protocol feature and update agent to use it
+feat: add new module feature and update agent to use it
 EOF
 ```
 
@@ -412,7 +412,7 @@ Use `bunx changeset status` to verify the changeset is valid before committing.
 
 | Change type | Bump | Examples |
 |---|---|---|
-| New feature / new API | `patch` | New protocol directive, new sync engine, new public method |
+| New feature / new API | `patch` | New module directive, new sync engine, new public method |
 | Bug fix / security fix | `patch` | SSRF protection, escape LIKE wildcards, crash fix |
 | Breaking change | `patch` | Removed public API, changed wire format, renamed exports — greenfield project, breaking changes are expected |
 | Test-only changes | No bump needed | Don't include test-only packages in the changeset |
@@ -440,7 +440,7 @@ Type imports first (grouped), then value imports. Both groups alphabetically sor
 
 ```typescript
 import type { Filter } from '../types/query-types.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
 
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -463,11 +463,11 @@ const result = await agent.dwn.processRequest({
 
 | Element | Convention | Example |
 |---|---|---|
-| Classes | PascalCase | `DwnKeyStore`, `AgentDwnApi`, `ProtocolsConfigure` |
+| Classes | PascalCase | `DwnKeyStore`, `AgentDwnApi`, `ModulesConfigure` |
 | Methods/functions | camelCase | `processRequest()`, `getEncryptionKeyDeriver()` |
 | Private fields | `_` prefix | `private _agent`, `private _cache` |
 | Boolean getters | `is` prefix | `get isLocked()`, `get isSignedByAuthorDelegate()` |
-| Enum members | PascalCase | `ProtocolAction.Create`, `DwnInterface.RecordsWrite` |
+| Enum members | PascalCase | `ModuleAction.Create`, `DwnInterface.RecordsWrite` |
 | Files | kebab-case | `store-data.ts`, `dwn-api.ts`, `local-key-manager.ts` |
 | Test files | kebab-case + `.spec.ts` | `store-key.spec.ts`, `dwn-api.spec.ts` |
 
@@ -506,7 +506,7 @@ export enum DwnInterface { RecordsWrite = 'RecordsWrite', RecordsRead = 'Records
 
 In `dwn-sdk-js`: use `DwnError` with typed `DwnErrorCode` enum and lowercase message:
 ```typescript
-throw new DwnError(DwnErrorCode.ProtocolAuthorizationProtocolNotFound, `unable to find protocol definition for ${protocolUri}`);
+throw new DwnError(DwnErrorCode.ModuleAuthorizationModuleNotFound, `unable to find module definition for ${moduleUri}`);
 ```
 
 In `agent`: use standard `Error` with descriptive class-prefixed messages:
@@ -520,11 +520,11 @@ Brief JSDoc on public methods and complex private methods. Use `@param`, `@retur
 
 ```typescript
 /**
- * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
- * When any type in the protocol definition has `encryptionRequired: true`,
- * `$encryption` keys are derived and injected into the protocol definition.
+ * Install the module for the given tenant using a `ModulesConfigure` message.
+ * When any type in the module definition has `encryptionRequired: true`,
+ * `$encryption` keys are derived and injected into the module definition.
  */
-private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
+private async installModule(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
 ```
 
 ### ESLint rules summary
@@ -653,7 +653,7 @@ await expect(asyncOperation()).rejects.toThrow('error message');
 
 1. **Layer 1 — Vault** (`HdIdentityVault`): 12-word BIP-39 seed phrase derives HD keys. Password encrypts the agent's `PortableDid` as CompactJWE (AES-256-GCM via PBKDF2). Stored in `VAULT_STORE` LevelDB. In production, `HdIdentityVault.initialize()` always creates the agent DID as `did:dht` with both Ed25519 (`#sig`) and X25519 (`#enc`).
 
-2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their protocol type definition are encrypted through the DWN message `encryption` envelope: record data is encrypted with a random AES-256-CTR data key, which is wrapped (X25519-HKDF-SHA256+A256KW) to the per-protocol-path X25519 public key — plus role-audience keys where the protocol defines `$role` participants. Those per-path public keys are derived from the tenant's X25519 `#enc` key and injected as `$keyAgreement` blocks into the protocol definition at install time — if the tenant DID lacks an X25519 keyAgreement key, installation fails with no plaintext fallback.
+2. **Layer 2 — DWN record-level** (`DwnKeyStore`): Records with `encryptionRequired: true` in their module type definition are encrypted through the DWN message `encryption` envelope: record data is encrypted with a random AES-256-CTR data key, which is wrapped (X25519-HKDF-SHA256+A256KW) to the per-module-path X25519 public key — plus role-audience keys where the module defines `$role` participants. Those per-path public keys are derived from the tenant's X25519 `#enc` key and injected as `$keyAgreement` blocks into the module definition at install time — if the tenant DID lacks an X25519 keyAgreement key, installation fails with no plaintext fallback.
 
 Recovery path: seed phrase -> agent DID (deterministic) -> `#enc` key -> decrypt DWN key records.
 
@@ -661,17 +661,17 @@ Recovery path: seed phrase -> agent DID (deterministic) -> `#enc` key -> decrypt
 
 ```
 AgentDataStore<T> (interface)
-  DwnDataStore<T>       (base — protocol-backed DWN storage with encryption support)
-    DwnKeyStore         (Jwk, JwkProtocolDefinition, encryptionRequired: true)
-    DwnDidStore         (PortableDid, IdentityProtocolDefinition)
-    DwnIdentityStore    (IdentityMetadata, IdentityProtocolDefinition)
+  DwnDataStore<T>       (base — module-backed DWN storage with encryption support)
+    DwnKeyStore         (Jwk, JwkModuleDefinition, encryptionRequired: true)
+    DwnDidStore         (PortableDid, IdentityModuleDefinition)
+    DwnIdentityStore    (IdentityMetadata, IdentityModuleDefinition)
   InMemoryDataStore<T>  (base — Map-backed)
     InMemoryKeyStore
     InMemoryDidStore
     InMemoryIdentityStore
 ```
 
-Subclasses define `_recordProtocolDefinition`, `_recordProperties`, `getStoredObjectId()`, and `isStoredObject()`;
+Subclasses define `_recordModuleDefinition`, `_recordProperties`, `getStoredObjectId()`, and `isStoredObject()`;
 stores with custom payload loading override `readStoredObject()`.
 
 ### Agent DID vs tenant DID

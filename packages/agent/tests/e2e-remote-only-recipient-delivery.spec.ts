@@ -1,7 +1,7 @@
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { Ed25519 } from '@enbox/crypto';
@@ -21,7 +21,7 @@ const testDwnUrls: string[] = [testDwnUrl];
 // A `$encryption/delivery` record is encrypted to the *recipient's* role-path
 // public key — a hardened derivation of the recipient's own encryption root, so
 // only the recipient can produce it. The agent normally discovers it by resolving
-// the recipient's DID to a DWN and reading its installed protocol definition. A
+// the recipient's DID to a DWN and reading its installed module definition. A
 // bare `did:jwk` node running in "remote-only" mode (its records live only on a
 // shared anchor DWN, it hosts none of its own) advertises no DWN service
 // endpoint, so that resolution fails.
@@ -41,10 +41,10 @@ const testDwnUrls: string[] = [testDwnUrl];
 
 const ROLE_PATH = 'thread/participant';
 
-function chatProtocolDefinition(): ProtocolDefinition {
+function chatModuleDefinition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : `https://protocol.test/remote-only-chat/${crypto.randomUUID()}`,
+    module    : `https://module.test/remote-only-chat/${crypto.randomUUID()}`,
     types     : {
       thread      : { schema: 'https://schemas.test/thread', dataFormats: ['application/json'] },
       participant : { schema: 'https://schemas.test/participant', dataFormats: ['application/json'] },
@@ -63,7 +63,7 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
   let ownerHarness: PlatformAgentTestHarness;
   let recipientHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
-  const chat = chatProtocolDefinition();
+  const chat = chatModuleDefinition();
 
   // Alice authors a thread, grants `recipient` the participant role (optionally
   // with a supplied role-path key), then writes one encrypted chat message and
@@ -77,10 +77,10 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/json',
-        protocol     : chat.protocol,
-        protocolPath : 'thread',
-        schema       : chat.types.thread.schema,
+        dataFormat : 'application/json',
+        module     : chat.module,
+        modulePath : 'thread',
+        schema     : chat.types.thread.schema,
       },
       dataStream: new Blob([JSON.stringify({ title: 'remote-only thread' })]),
     });
@@ -95,8 +95,8 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       messageParams : {
         dataFormat      : 'application/json',
         parentContextId : threadContextId,
-        protocol        : chat.protocol,
-        protocolPath    : ROLE_PATH,
+        module          : chat.module,
+        modulePath      : ROLE_PATH,
         recipient       : recipientDid,
         schema          : chat.types.participant.schema,
       },
@@ -114,8 +114,8 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       messageParams : {
         dataFormat      : 'text/plain',
         parentContextId : threadContextId,
-        protocol        : chat.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chat.module,
+        modulePath      : 'thread/chat',
         schema          : chat.types.chat.schema,
       },
       dataStream: new Blob([chatText]),
@@ -137,10 +137,10 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          recipient    : recipientDid,
-          protocol     : chat.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          tags         : { protocol: chat.protocol, rolePath: ROLE_PATH },
+          recipient  : recipientDid,
+          module     : chat.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags       : { module: chat.module, rolePath: ROLE_PATH },
         },
       },
     });
@@ -150,7 +150,7 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       author        : recipientDid,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { recordId: chatRecordId }, protocolRole: ROLE_PATH },
+      messageParams : { filter: { recordId: chatRecordId }, moduleRole: ROLE_PATH },
     });
     expect(read.reply.status.code).toBe(200);
     const decrypted = await recipientHarness.agent.dwn.decryptRecordData({
@@ -179,22 +179,22 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
   }
 
   // The recipient's role-path PUBLIC key, derived from its own encryption root by
-  // installing the protocol with encryption on its (local) tenant and reading back
+  // installing the module with encryption on its (local) tenant and reading back
   // the injected `$keyAgreement`. This is the value a remote-only node would assert
   // in its enrollment request for the owner to deliver to.
   async function recipientRolePublicKey(recipientDid: string): Promise<PublicKeyJwk> {
     const configure = await recipientHarness.agent.dwn.processRequest({
       author        : recipientDid,
       target        : recipientDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition: chat },
     });
     expect([202, 409]).toContain(configure.reply.status.code);
     const query = await recipientHarness.agent.dwn.processRequest({
       author        : recipientDid,
       target        : recipientDid,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: chat.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: chat.module } },
     });
     const definition = query.reply.entries![0].descriptor.definition;
     return getRuleSetAtPath(ROLE_PATH, definition.structure)!.$keyAgreement!.publicKeyJwk as PublicKeyJwk;
@@ -222,13 +222,13 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
 
     alice = await ownerHarness.createIdentity({ name: 'Alice Owner', testDwnUrls });
 
-    // Alice installs the protocol locally + on the anchor, with encryption (this
+    // Alice installs the module locally + on the anchor, with encryption (this
     // injects Alice's role-path $keyAgreement keys used to SEAL audience keys).
     for (const remote of [false, true]) {
       const req = {
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure as const,
+        messageType   : DwnInterface.ModulesConfigure as const,
         messageParams : { definition: chat },
       };
       const res = remote ? await ownerHarness.agent.dwn.sendRequest(req) : await ownerHarness.agent.dwn.processRequest(req);
@@ -236,7 +236,7 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
     }
 
     // Registered once; each seedThreadFor pushes Alice's new records to the anchor.
-    await ownerHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+    await ownerHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
   });
 
   afterAll(async () => {
@@ -249,13 +249,13 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
   });
 
   it('delivers to a recipient with a resolvable DWN (resolution fallback path)', async () => {
-    // Carol publishes a DWN and installs the protocol there, so the owner can
+    // Carol publishes a DWN and installs the module there, so the owner can
     // resolve her role-path key by DID resolution — no supplied key needed.
     const carol = await recipientHarness.createIdentity({ name: 'Carol Resolvable', testDwnUrls });
     const carolRemoteConfigure = await recipientHarness.agent.dwn.sendRequest({
       author        : carol.did.uri,
       target        : carol.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition: chat },
     });
     expect([202, 409]).toContain(carolRemoteConfigure.reply.status.code);
@@ -289,10 +289,10 @@ describe('AgentDwnApi role-audience delivery to remote-only recipients', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          recipient    : dave.did.uri,
-          protocol     : chat.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          tags         : { protocol: chat.protocol, rolePath: ROLE_PATH },
+          recipient  : dave.did.uri,
+          module     : chat.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags       : { module: chat.module, rolePath: ROLE_PATH },
         },
       },
     });

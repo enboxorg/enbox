@@ -5,7 +5,7 @@
 
 import type { EnboxUserAgent } from '@enbox/agent';
 
-import { PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { PermissionsModule } from '@enbox/dwn-sdk-js';
 import { DwnPermissionGrant, InMemorySecretStore } from '@enbox/agent';
 
 /** Minimal BearerIdentity-like object for testing. */
@@ -121,17 +121,17 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     return { reply: { status: { code: 202, detail: 'Accepted' } } };
   });
   const permissionsFetchGrants = overrides.permissionsFetchGrants ?? (async (params: any): Promise<any[]> => {
-    const tags = params.protocol !== undefined ? { protocol: params.protocol } : undefined;
+    const tags = params.module !== undefined ? { module: params.module } : undefined;
     const { reply } = await processDwnRequest({
       author        : params.author,
       target        : params.target,
       messageType   : 'RecordsQuery',
       messageParams : {
         filter: {
-          author       : params.grantor,
-          recipient    : params.grantee,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
+          author     : params.grantor,
+          recipient  : params.grantee,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
           tags,
         },
       },

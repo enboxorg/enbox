@@ -8,11 +8,11 @@ export type SavedContextFollow = Readonly<{
   key: string;
   id: string;
   ownerDid: string;
-  /** Protocol path of the saved context root. */
+  /** Module path of the saved context root. */
   path: string;
 }>;
 
-/** Immutable state of one protocol's local context catalog. */
+/** Immutable state of one module's local context catalog. */
 export type ContextViewState<Context> = Readonly<{
   contexts: readonly Context[];
   /** Current saved follows in key order; these coordinates alone do not establish access. */
@@ -25,7 +25,7 @@ export type ContextViewState<Context> = Readonly<{
 
 type ReadyContextViewState<Context> = Extract<ContextViewState<Context>, { status: 'ready' }>;
 
-/** Closeable live view of one protocol's local context catalog. */
+/** Closeable live view of one module's local context catalog. */
 export interface ContextView<Context> extends ObservableStore<ContextViewState<Context>> {
   /** Resolve after the catalog's first local materialization. */
   ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<ReadyContextViewState<Context>>;

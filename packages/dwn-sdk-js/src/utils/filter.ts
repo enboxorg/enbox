@@ -1,6 +1,6 @@
 import type { EqualFilter, Filter, FilterValue, KeyValues, OneOfFilter, RangeCriterion, RangeFilter, RangeValue, SubtreeFilter } from '../types/query-types.js';
 
-const SUBTREE_FILTER_PROPERTIES = new Set(['contextId', 'protocolPath']);
+const SUBTREE_FILTER_PROPERTIES = new Set(['contextId', 'modulePath']);
 
 /** Returns whether the value is a well-formed hierarchical subtree filter. */
 export function isSubtreeFilter(filter: FilterValue): filter is SubtreeFilter {
@@ -14,7 +14,7 @@ export function isSubtreeFilter(filter: FilterValue): filter is SubtreeFilter {
 /**
  * Rejects subtree filters for indexes without hierarchical path semantics.
  *
- * @throws {TypeError} If a subtree filter targets an index other than `contextId` or `protocolPath`.
+ * @throws {TypeError} If a subtree filter targets an index other than `contextId` or `modulePath`.
  */
 export function assertValidSubtreeFilters(filters: Filter[]): void {
   for (const filter of filters) {
@@ -234,7 +234,7 @@ export class FilterSelector {
 
     // else there is are least 2 filter properties, since zero property is not allowed
 
-    const { recordId, attester, parentId, recipient, contextId, author, protocolPath, schema, protocol, ...remainingProperties } = filter;
+    const { recordId, attester, parentId, recipient, contextId, author, modulePath, schema, module, ...remainingProperties } = filter;
 
     if (recordId !== undefined) {
       return { recordId };
@@ -256,16 +256,16 @@ export class FilterSelector {
       return { contextId };
     }
 
-    if (protocolPath !== undefined) {
-      return { protocolPath };
+    if (modulePath !== undefined) {
+      return { modulePath };
     }
 
     if (schema !== undefined) {
       return { schema };
     }
 
-    if (protocol !== undefined) {
-      return { protocol };
+    if (module !== undefined) {
+      return { module };
     }
 
     // else just return whatever property, we can optimize further later

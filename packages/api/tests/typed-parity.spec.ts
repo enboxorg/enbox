@@ -1,6 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 import type { DwnMessageParams } from '@enbox/agent';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 
 import sinon from 'sinon';
@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
@@ -25,15 +25,15 @@ const testDwnUrls: string[] = [testDwnUrl];
 // prune, public accessors, typed pagination, and nested-path child-scope filter derivation.
 // ---------------------------------------------------------------------------
 
-/** Depth-3 protocol structure: list → list/task → list/task/comment. */
-function makeNestedDefinition(protocolUri: string): ProtocolDefinition {
+/** Depth-3 module structure: list → list/task → list/task/comment. */
+function makeNestedDefinition(moduleUri: string): ModuleDefinition {
   return {
-    protocol  : protocolUri,
+    module    : moduleUri,
     published : true,
     types     : {
-      list    : { schema: `${protocolUri}/schemas/list`, dataFormats: ['application/json'] },
-      task    : { schema: `${protocolUri}/schemas/task`, dataFormats: ['application/json'] },
-      comment : { schema: `${protocolUri}/schemas/comment`, dataFormats: ['application/json'] },
+      list    : { schema: `${moduleUri}/schemas/list`, dataFormats: ['application/json'] },
+      task    : { schema: `${moduleUri}/schemas/task`, dataFormats: ['application/json'] },
+      comment : { schema: `${moduleUri}/schemas/comment`, dataFormats: ['application/json'] },
     },
     structure: {
       list: {
@@ -62,10 +62,10 @@ describe('typed api parity batch', () => {
   let dwnAlice: DwnApi;
   let testHarness: PlatformAgentTestHarness;
 
-  /** Fresh TypedEnbox over a fresh random protocol URI for the current test. */
-  function makeTyped(): { typed: TypedEnbox<ProtocolDefinition, NestedCodecs>; definition: ProtocolDefinition } {
-    const definition = makeNestedDefinition(`https://example.com/protocols/parity-${TestDataGenerator.randomString(15)}`);
-    const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, nestedCodecs));
+  /** Fresh TypedEnbox over a fresh random module URI for the current test. */
+  function makeTyped(): { typed: TypedEnbox<ModuleDefinition, NestedCodecs>; definition: ModuleDefinition } {
+    const definition = makeNestedDefinition(`https://example.com/modules/parity-${TestDataGenerator.randomString(15)}`);
+    const typed = new TypedEnbox(dwnAlice, defineModule(definition, nestedCodecs));
     return { typed, definition };
   }
 
@@ -285,7 +285,7 @@ describe('typed api parity batch', () => {
 
   describe('nested-path context filters', () => {
     /** Creates list → task → comment and returns all three typed records. */
-    async function createNestedTree(typed: TypedEnbox<ProtocolDefinition, NestedCodecs>): Promise<{
+    async function createNestedTree(typed: TypedEnbox<ModuleDefinition, NestedCodecs>): Promise<{
       list: Record<{ name: string }>;
       task: Record<{ title: string }>;
       comment: Record<{ body: string }>;
@@ -316,9 +316,9 @@ describe('typed api parity batch', () => {
 
       const { records, status } = await dwnAlice.records.query({
         filter: {
-          protocol     : definition.protocol,
-          protocolPath : 'list/task/comment',
-          parentId     : task.id,
+          module     : definition.module,
+          modulePath : 'list/task/comment',
+          parentId   : task.id,
         },
       });
       expect(status.code).toBe(200);

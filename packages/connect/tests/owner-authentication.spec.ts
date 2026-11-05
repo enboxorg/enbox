@@ -374,7 +374,7 @@ describe('owner authentication proofs', () => {
       { ...request, authentication: { version: 1, audience: 'https://identity.example', challenge: randomToken() } },
       { ...request, requestType: 'connect', delegateDid: (await DidJwk.create()).uri },
       { ...request, requestType        : 'connect', permissionRequests : [{
-        protocolDefinition: { protocol: 'https://example/protocol', published: false, types: {}, structure: {} }, permissionScopes: [],
+        moduleDefinition: { module: 'https://example/module', published: false, types: {}, structure: {} }, permissionScopes: [],
       }] },
       { ...request, responseKey: { ...request.responseKey, x: (await X25519.generateKey()).x } },
     ];

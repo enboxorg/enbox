@@ -5,23 +5,23 @@ import type { MessageSigner } from '../../src/types/signer.js';
 import type { MessagesQueryOptions } from '../../src/interfaces/messages-query.js';
 import type { MessagesReadOptions } from '../../src/interfaces/messages-read.js';
 import type { MessagesSubscribeOptions } from '../../src/interfaces/messages-subscribe.js';
-import type { PermissionGrantCreateOptions } from '../../src/protocols/permissions.js';
+import type { ModulesConfigureOptions } from '../../src/interfaces/modules-configure.js';
+import type { ModulesQueryOptions } from '../../src/interfaces/modules-query.js';
+import type { PermissionGrantCreateOptions } from '../../src/modules/permissions.js';
 import type { ProgressToken } from '../../src/types/subscriptions.js';
-import type { ProtocolsConfigureOptions } from '../../src/interfaces/protocols-configure.js';
-import type { ProtocolsQueryOptions } from '../../src/interfaces/protocols-query.js';
 
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { RecordsCountOptions } from '../../src/interfaces/records-count.js';
 import type { RecordsQueryOptions } from '../../src/interfaces/records-query.js';
 import type { RecordsSubscribeOptions } from '../../src/interfaces/records-subscribe.js';
 import type { AuthorizationModel, Pagination } from '../../src/types/message-types.js';
-import type { CreateFromOptions, EncryptionInput, ProtocolPathKeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
+import type { CreateFromOptions, EncryptionInput, ModulePathKeyEncryptionInput, RecordsWriteOptions } from '../../src/interfaces/records-write.js';
 import type { DataEncodedRecordsWriteMessage, DateSort, RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsWriteTags } from '../../src/types/records-types.js';
 import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
 import type { Jwk, PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../../src/types/messages-types.js';
+import type { ModuleDefinition, ModuleRuleSet, ModulesConfigureMessage, ModulesQueryMessage } from '../../src/types/modules-types.js';
 import type { PermissionConditions, PermissionScope } from '../../src/types/permission-types.js';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, ProtocolsQueryMessage } from '../../src/types/protocols-types.js';
 import type { RecordsSubscribeMessage, RecordsWriteMessage } from '../../src/types/records-types.js';
 
 import * as cbor from '@ipld/dag-cbor';
@@ -34,10 +34,10 @@ import { Jws } from '../../src/utils/jws.js';
 import { MessagesQuery } from '../../src/interfaces/messages-query.js';
 import { MessagesRead } from '../../src/interfaces/messages-read.js';
 import { MessagesSubscribe } from '../../src/interfaces/messages-subscribe.js';
-import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { ModulesConfigure } from '../../src/interfaces/modules-configure.js';
+import { ModulesQuery } from '../../src/interfaces/modules-query.js';
+import { PermissionsModule } from '../../src/modules/permissions.js';
 import { PrivateKeySigner } from '../../src/utils/private-key-signer.js';
-import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
-import { ProtocolsQuery } from '../../src/interfaces/protocols-query.js';
 import { Records } from '../../src/utils/records.js';
 import { RecordsCount } from '../../src/interfaces/records-count.js';
 import { RecordsDelete } from '../../src/interfaces/records-delete.js';
@@ -65,42 +65,42 @@ export type Persona = {
   signer: MessageSigner;
 };
 
-export type GenerateProtocolsConfigureInput = {
+export type GenerateModulesConfigureInput = {
   /**
-   * Denotes if the Protocol Definition can be returned by unauthenticated `ProtocolsQuery`.
-   * Only takes effect if `protocolDefinition` is not explicitly set. Defaults to false if not specified.
+   * Denotes if the Module Definition can be returned by unauthenticated `ModulesQuery`.
+   * Only takes effect if `moduleDefinition` is not explicitly set. Defaults to false if not specified.
    */
   published?: boolean;
 
   /**
-   * Author who will be signing the protocol config created.
+   * Author who will be signing the module config created.
    */
   author?: Persona;
   messageTimestamp?: string;
-  protocolDefinition?: ProtocolDefinition;
+  moduleDefinition?: ModuleDefinition;
   permissionGrantId?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 };
 
-export type GenerateProtocolsConfigureOutput = {
+export type GenerateModulesConfigureOutput = {
   author: Persona;
-  message: ProtocolsConfigureMessage;
-  protocolsConfigure: ProtocolsConfigure;
+  message: ModulesConfigureMessage;
+  modulesConfigure: ModulesConfigure;
 };
 
-export type GenerateProtocolsQueryInput = {
+export type GenerateModulesQueryInput = {
   author?: Persona;
   messageTimestamp?: string;
   permissionGrantId?: string;
   filter?: {
-    protocol: string;
+    module: string;
   }
 };
 
-export type GenerateProtocolsQueryOutput = {
+export type GenerateModulesQueryOutput = {
   author: Persona;
-  message: ProtocolsQueryMessage;
-  protocolsQuery: ProtocolsQuery;
+  message: ModulesQueryMessage;
+  modulesQuery: ModulesQuery;
 };
 
 export type GenerateGrantCreateInput = {
@@ -128,9 +128,9 @@ export type GenerateRecordsWriteInput = {
   author?: Persona;
   attesters?: Persona[];
   recipient?: string;
-  protocol?: string;
-  protocolPath?: string;
-  protocolRole?: string;
+  module?: string;
+  modulePath?: string;
+  moduleRole?: string;
   schema?: string;
   tags?: RecordsWriteTags;
   recordId?: string;
@@ -156,7 +156,7 @@ export type GenerateFromRecordsWriteInput = {
   tags?: RecordsWriteTags;
   messageTimestamp?: string;
   datePublished?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 export type GenerateFromRecordsWriteOut = {
@@ -187,7 +187,7 @@ export type GenerateRecordsQueryInput = {
   dateSort?: DateSort;
   pagination?: Pagination;
   permissionGrantId?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 export type GenerateRecordsQueryOutput = {
@@ -206,7 +206,7 @@ export type GenerateRecordsSubscribeInput = {
     dateSort?: DateSort;
     pagination?: Pagination;
     permissionGrantId?: string;
-    protocolRole?: string;
+    moduleRole?: string;
     /** Progress token for catch-up + EOSE subscribe. */
     cursor?: ProgressToken;
 };
@@ -225,7 +225,7 @@ export type GenerateRecordsCountInput = {
   messageTimestamp?: string;
   filter?: RecordsFilter;
   permissionGrantId?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 export type GenerateRecordsCountOutput = {
@@ -236,7 +236,7 @@ export type GenerateRecordsCountOutput = {
 export type GenerateRecordsDeleteInput = {
   author?: Persona;
   recordId?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 export type GenerateRecordsDeleteOutput = {
@@ -251,7 +251,7 @@ export type GenerateMessagesSubscribeInput = {
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantIds?: string[];
-  protocolRole?: string;
+  moduleRole?: string;
   /** Progress token for catch-up + EOSE subscribe. */
   cursor?: ProgressToken;
 };
@@ -268,7 +268,7 @@ export type GenerateMessagesQueryInput = {
   filters?: MessagesFilter[];
   messageTimestamp?: string;
   permissionGrantIds?: string[];
-  protocolRole?: string;
+  moduleRole?: string;
   cursor?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
@@ -293,13 +293,13 @@ export type GenerateMessagesReadOutput = {
 };
 
 /**
- * Protocol definition that matches the defaults used by `TestDataGenerator.generateRecordsWrite()`:
- * `protocol: 'http://test-protocol.xyz'`, `protocolPath: 'testRecord'`.
+ * Module definition that matches the defaults used by `TestDataGenerator.generateRecordsWrite()`:
+ * `module: 'http://test-module.xyz'`, `modulePath: 'testRecord'`.
  *
- * Install via `TestDataGenerator.installDefaultTestProtocol(dwn, persona)`.
+ * Install via `TestDataGenerator.installDefaultTestModule(dwn, persona)`.
  */
-export const defaultTestProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'http://test-protocol.xyz',
+export const defaultTestModuleDefinition: ModuleDefinition = {
+  module    : 'http://test-module.xyz',
   published : false,
   types     : {
     testRecord: {}
@@ -358,38 +358,38 @@ export class TestDataGenerator {
   }
 
   /**
-   * Installs the default test protocol (`http://test-protocol.xyz` with `testRecord` type)
+   * Installs the default test module (`http://test-module.xyz` with `testRecord` type)
    * on the given DWN for the given persona. Call this before processing any RecordsWrite
-   * created with `generateRecordsWrite()` that uses the default protocol.
+   * created with `generateRecordsWrite()` that uses the default module.
    */
-  public static async installDefaultTestProtocol(dwn: Dwn, persona: Persona): Promise<void> {
-    const protocolsConfigure = await ProtocolsConfigure.create({
-      definition : defaultTestProtocolDefinition,
+  public static async installDefaultTestModule(dwn: Dwn, persona: Persona): Promise<void> {
+    const modulesConfigure = await ModulesConfigure.create({
+      definition : defaultTestModuleDefinition,
       signer     : Jws.createSigner(persona),
     });
-    const reply = await dwn.processMessage(persona.did, protocolsConfigure.message);
+    const reply = await dwn.processMessage(persona.did, modulesConfigure.message);
     if (reply.status.code !== 202) {
-      throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+      throw new Error(`Failed to install default test module: ${reply.status.code} ${reply.status.detail}`);
     }
   }
 
   /**
-   * Generates a ProtocolsConfigure message for testing.
+   * Generates a ModulesConfigure message for testing.
    * Optional parameters are generated if not given.
-   * Implementation currently uses `ProtocolsConfigure.create()`.
+   * Implementation currently uses `ModulesConfigure.create()`.
    */
-  public static async generateProtocolsConfigure(
-    input?: GenerateProtocolsConfigureInput
-  ): Promise<GenerateProtocolsConfigureOutput> {
+  public static async generateModulesConfigure(
+    input?: GenerateModulesConfigureInput
+  ): Promise<GenerateModulesConfigureOutput> {
     const author = input?.author ?? await TestDataGenerator.generatePersona();
 
-    // generate protocol types and  definition if not given
-    let definition = input?.protocolDefinition;
+    // generate module types and  definition if not given
+    let definition = input?.moduleDefinition;
     if (!definition) {
       const generatedLabel = 'record' + TestDataGenerator.randomString(10);
 
       definition = {
-        protocol  : TestDataGenerator.randomString(20),
+        module    : TestDataGenerator.randomString(20),
         published : input?.published ?? false,
         types     : {},
         structure : {}
@@ -403,7 +403,7 @@ export class TestDataGenerator {
 
     const signer = Jws.createSigner(author);
 
-    const options: ProtocolsConfigureOptions = {
+    const options: ModulesConfigureOptions = {
       messageTimestamp  : input?.messageTimestamp,
       definition,
       signer,
@@ -411,25 +411,25 @@ export class TestDataGenerator {
       delegatedGrant    : input?.delegatedGrant
     };
 
-    const protocolsConfigure = await ProtocolsConfigure.create(options);
+    const modulesConfigure = await ModulesConfigure.create(options);
 
     return {
       author,
-      message: protocolsConfigure.message,
-      protocolsConfigure
+      message: modulesConfigure.message,
+      modulesConfigure
     };
   };
 
   /**
-   * Generates a ProtocolsQuery message for testing.
+   * Generates a ModulesQuery message for testing.
    */
-  public static async generateProtocolsQuery(input?: GenerateProtocolsQueryInput): Promise<GenerateProtocolsQueryOutput> {
+  public static async generateModulesQuery(input?: GenerateModulesQueryInput): Promise<GenerateModulesQueryOutput> {
     // generate author persona if not given
     const author = input?.author ?? await TestDataGenerator.generatePersona();
 
     const signer = Jws.createSigner(author);
 
-    const options: ProtocolsQueryOptions = {
+    const options: ModulesQueryOptions = {
       messageTimestamp  : input?.messageTimestamp,
       filter            : input?.filter,
       signer,
@@ -437,12 +437,12 @@ export class TestDataGenerator {
     };
     removeUndefinedProperties(options);
 
-    const protocolsQuery = await ProtocolsQuery.create(options);
+    const modulesQuery = await ModulesQuery.create(options);
 
     return {
       author,
-      message: protocolsQuery.message,
-      protocolsQuery
+      message: modulesQuery.message,
+      modulesQuery
     };
   };
 
@@ -469,7 +469,7 @@ export class TestDataGenerator {
       conditions  : input?.conditions,
     };
 
-    const grant = await PermissionsProtocol.createGrant(options);
+    const grant = await PermissionsModule.createGrant(options);
     const dataStream = DataStream.fromBytes(grant.permissionGrantBytes);
 
     return {
@@ -508,9 +508,9 @@ export class TestDataGenerator {
 
     const options: RecordsWriteOptions = {
       recipient         : input?.recipient,
-      protocol          : input?.protocol ?? 'http://test-protocol.xyz',
-      protocolPath      : input?.protocolPath ?? 'testRecord',
-      protocolRole      : input?.protocolRole,
+      module            : input?.module ?? 'http://test-module.xyz',
+      modulePath        : input?.modulePath ?? 'testRecord',
+      moduleRole        : input?.moduleRole,
       schema            : input?.schema ?? `http://${TestDataGenerator.randomString(20)}`,
       tags              : input?.tags,
       recordId          : input?.recordId,
@@ -545,12 +545,12 @@ export class TestDataGenerator {
   };
 
   /**
-   * Creates an `EncryptionKeyDeriver` that derives protocol-path public encryption keys from the
+   * Creates an `EncryptionKeyDeriver` that derives module-path public encryption keys from the
    * given root private key, mirroring how the agent's KMS-backed key deriver behaves.
    */
-  public static createProtocolPathKeyDeriver(rootKeyId: string, rootPrivateJwk: PrivateKeyJwk): EncryptionKeyDeriver {
+  public static createModulePathKeyDeriver(rootKeyId: string, rootPrivateJwk: PrivateKeyJwk): EncryptionKeyDeriver {
     return {
-      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivationScheme : KeyDerivationScheme.ModulePath,
       derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
         const rootPrivateKeyBytes = await X25519.privateKeyToBytes({ privateKey: rootPrivateJwk });
         const leafPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(rootPrivateKeyBytes, fullDerivationPath);
@@ -604,22 +604,22 @@ export class TestDataGenerator {
   /**
    * Generates a encrypted RecordsWrite message for testing.
    *
-   * @param input.protocolDefinition Protocol definition used to generate the RecordsWrite.
-   *        Must be the RECIPIENT's protocol definition if `encryptSymmetricKeyWithProtocolPathDerivedKey` is true,
+   * @param input.moduleDefinition Module definition used to generate the RecordsWrite.
+   *        Must be the RECIPIENT's module definition if `encryptSymmetricKeyWithModulePathDerivedKey` is true,
    *        because the recipient's public keys will be needed to encrypt the symmetric key.
    *
-   * @param input.encryptSymmetricKeyWithProtocolPathDerivedKey
-   *        Set to `true` to attach the symmetric key encrypted by the protocol path derived public key
+   * @param input.encryptSymmetricKeyWithModulePathDerivedKey
+   *        Set to `true` to attach the symmetric key encrypted by the module path derived public key
    *
    */
-  public static async generateProtocolEncryptedRecordsWrite(input: {
+  public static async generateModuleEncryptedRecordsWrite(input: {
     plaintextBytes: Uint8Array,
     author: Persona,
     recipient?: string,
-    protocolDefinition: ProtocolDefinition,
-    protocolPath: string,
-    protocolParentContextId?: string,
-    encryptSymmetricKeyWithProtocolPathDerivedKey: boolean,
+    moduleDefinition: ModuleDefinition,
+    modulePath: string,
+    moduleParentContextId?: string,
+    encryptSymmetricKeyWithModulePathDerivedKey: boolean,
   }): Promise<{
     message: RecordsWriteMessage;
     dataStream: ReadableStream<Uint8Array>;
@@ -631,9 +631,9 @@ export class TestDataGenerator {
       plaintextBytes,
       author,
       recipient,
-      protocolDefinition,
-      protocolPath,
-      protocolParentContextId,
+      moduleDefinition,
+      modulePath,
+      moduleParentContextId,
     } = input;
 
     // encrypt the plaintext data for the target with a randomly generated symmetric key
@@ -644,22 +644,22 @@ export class TestDataGenerator {
     );
 
     // compute the key encryption inputs BEFORE creating the RecordsWrite, mirroring the live agent flow
-    const protocolPathSegments = protocolPath.split('/');
-    const keyEncryptionInputs: ProtocolPathKeyEncryptionInput[] = [];
+    const modulePathSegments = modulePath.split('/');
+    const keyEncryptionInputs: ModulePathKeyEncryptionInput[] = [];
 
-    if (input.encryptSymmetricKeyWithProtocolPathDerivedKey) {
-      // locate the rule set corresponding the protocol path of the message
-      let protocolRuleSetSegment: ProtocolRuleSet = protocolDefinition.structure as ProtocolRuleSet;
-      for (const pathSegment of protocolPathSegments) {
-        protocolRuleSetSegment = protocolRuleSetSegment[pathSegment] as ProtocolRuleSet;
+    if (input.encryptSymmetricKeyWithModulePathDerivedKey) {
+      // locate the rule set corresponding the module path of the message
+      let moduleRuleSetSegment: ModuleRuleSet = moduleDefinition.structure as ModuleRuleSet;
+      for (const pathSegment of modulePathSegments) {
+        moduleRuleSetSegment = moduleRuleSetSegment[pathSegment] as ModuleRuleSet;
       }
 
-      const protocolPathDerivedPublicKeyJwk = protocolRuleSetSegment.$keyAgreement?.publicKeyJwk;
+      const modulePathDerivedPublicKeyJwk = moduleRuleSetSegment.$keyAgreement?.publicKeyJwk;
       keyEncryptionInputs.push({
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-        keyId            : await Encryption.getKeyId(protocolPathDerivedPublicKeyJwk!),
-        publicKey        : protocolPathDerivedPublicKeyJwk!,
-        derivationScheme : KeyDerivationScheme.ProtocolPath
+        keyId            : await Encryption.getKeyId(modulePathDerivedPublicKeyJwk!),
+        publicKey        : modulePathDerivedPublicKeyJwk!,
+        derivationScheme : KeyDerivationScheme.ModulePath
       });
     }
 
@@ -670,16 +670,16 @@ export class TestDataGenerator {
     };
 
     // author generates a RecordsWrite using the encrypted data
-    const recordType = protocolPathSegments[protocolPathSegments.length - 1];
+    const recordType = modulePathSegments[modulePathSegments.length - 1];
     const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite(
       {
         author,
         recipient,
-        protocol        : protocolDefinition.protocol,
-        protocolPath,
-        parentContextId : protocolParentContextId,
-        schema          : protocolDefinition.types[recordType].schema,
-        dataFormat      : protocolDefinition.types[recordType].dataFormats?.[0],
+        module          : moduleDefinition.module,
+        modulePath,
+        parentContextId : moduleParentContextId,
+        schema          : moduleDefinition.types[recordType].schema,
+        dataFormat      : moduleDefinition.types[recordType].dataFormats?.[0],
         data            : encryptedDataBytes,
         encryptionInput
       }
@@ -709,7 +709,7 @@ export class TestDataGenerator {
       published,
       datePublished,
       messageTimestamp    : input.messageTimestamp,
-      protocolRole        : input.protocolRole,
+      moduleRole          : input.moduleRole,
       tags                : input.tags,
       signer              : Jws.createSigner(input.author)
     };
@@ -751,7 +751,7 @@ export class TestDataGenerator {
       dateSort          : input?.dateSort,
       pagination        : input?.pagination,
       permissionGrantId : input?.permissionGrantId,
-      protocolRole      : input?.protocolRole,
+      moduleRole        : input?.moduleRole,
     };
     removeUndefinedProperties(options);
 
@@ -792,7 +792,7 @@ export class TestDataGenerator {
       dateSort          : input?.dateSort,
       pagination        : input?.pagination,
       permissionGrantId : input?.permissionGrantId,
-      protocolRole      : input?.protocolRole,
+      moduleRole        : input?.moduleRole,
       cursor            : input?.cursor,
     };
     removeUndefinedProperties(options);
@@ -832,7 +832,7 @@ export class TestDataGenerator {
       signer,
       filter            : input?.filter ?? { schema: TestDataGenerator.randomString(10) },
       permissionGrantId : input?.permissionGrantId,
-      protocolRole      : input?.protocolRole,
+      moduleRole        : input?.moduleRole,
     };
     removeUndefinedProperties(options);
 
@@ -852,9 +852,9 @@ export class TestDataGenerator {
     const author = input?.author ?? await TestDataGenerator.generateDidKeyPersona();
 
     const recordsDelete = await RecordsDelete.create({
-      recordId     : input?.recordId ?? await TestDataGenerator.randomCborSha256Cid(),
-      protocolRole : input?.protocolRole,
-      signer       : Jws.createSigner(author)
+      recordId   : input?.recordId ?? await TestDataGenerator.randomCborSha256Cid(),
+      moduleRole : input?.moduleRole,
+      signer     : Jws.createSigner(author)
     });
 
     return {
@@ -876,7 +876,7 @@ export class TestDataGenerator {
       filters            : input?.filters,
       messageTimestamp   : input?.messageTimestamp,
       permissionGrantIds : input?.permissionGrantIds,
-      protocolRole       : input?.protocolRole,
+      moduleRole         : input?.moduleRole,
       cursor             : input?.cursor,
       signer,
     };
@@ -904,7 +904,7 @@ export class TestDataGenerator {
       filters            : input?.filters,
       messageTimestamp   : input?.messageTimestamp,
       permissionGrantIds : input?.permissionGrantIds,
-      protocolRole       : input?.protocolRole,
+      moduleRole         : input?.moduleRole,
       cursor             : input?.cursor,
       limit              : input?.limit,
       cidsOnly           : input?.cidsOnly,

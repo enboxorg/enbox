@@ -1,5 +1,5 @@
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   AgentPermissionsApi,
   DwnMessage,
@@ -15,12 +15,12 @@ import type {
 import { ContextFollowing } from '../src/context-following.js';
 import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, protocolContextKey } from '../src/shared-context-protocol.js';
+import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, moduleContextKey } from '../src/shared-context-module.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 import { Poller, Time } from '@enbox/dwn-sdk-js';
@@ -29,12 +29,12 @@ import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 const connectedDid = 'did:example:member';
 const contextId = 'workspaceRecord';
 const sourceDid = 'did:example:host';
-const protocolRole = 'workspace/member';
+const moduleRole = 'workspace/member';
 const viewerRole = 'workspace/viewer';
 const outsideRole = 'outside/outsider';
 
 const SharedDefinition = {
-  protocol  : 'https://example.com/protocols/shared-context',
+  module    : 'https://example.com/modules/shared-context',
   published : true,
   types     : {
     blindMember : { dataFormats: ['application/json'] },
@@ -51,7 +51,7 @@ const SharedDefinition = {
   structure: {
     workspace: {
       $actions: [
-        { role: protocolRole, can: ['read'] },
+        { role: moduleRole, can: ['read'] },
         { role: viewerRole, can: ['read'] },
       ],
       blindMember: {
@@ -62,19 +62,19 @@ const SharedDefinition = {
       },
       note: {
         $actions: [
-          { role: protocolRole, can: ['create', 'read', 'update', 'delete'] },
+          { role: moduleRole, can: ['create', 'read', 'update', 'delete'] },
           { role: viewerRole, can: ['read'] },
         ],
       },
       section: {
-        $actions : [{ role: protocolRole, can: ['create'] }],
+        $actions : [{ role: moduleRole, can: ['create'] }],
         note     : {
-          $actions: [{ role: protocolRole, can: ['create'] }],
+          $actions: [{ role: moduleRole, can: ['create'] }],
         },
       },
       title: {
         $actions: [
-          { role: protocolRole, can: ['create', 'read', 'update'] },
+          { role: moduleRole, can: ['create', 'read', 'update'] },
           { role: viewerRole, can: ['read'] },
         ],
         $recordLimit: { max: 1 },
@@ -83,22 +83,22 @@ const SharedDefinition = {
         $role: true,
       },
       writeOnly: {
-        $actions: [{ role: protocolRole, can: ['create'] }],
+        $actions: [{ role: moduleRole, can: ['create'] }],
       },
     },
     outside: {
       $actions: [
         { who: 'anyone', can: ['read'] },
-        { role: protocolRole, can: ['read'] },
+        { role: moduleRole, can: ['read'] },
       ],
       outsider: {
         $role: true,
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const SharedProtocol = defineProtocol(SharedDefinition, {
+const SharedModule = defineModule(SharedDefinition, {
   blindMember : recordCodecs.json<unknown>(),
   member      : recordCodecs.json<unknown>(),
   note        : recordCodecs.json<{ title: string }>(),
@@ -112,7 +112,7 @@ const SharedProtocol = defineProtocol(SharedDefinition, {
 });
 
 const NestedDefinition = {
-  protocol  : `${SharedDefinition.protocol}/nested`,
+  module    : `${SharedDefinition.module}/nested`,
   published : true,
   types     : {
     member   : { dataFormats: ['application/json'] },
@@ -127,9 +127,9 @@ const NestedDefinition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const NestedProtocol = defineProtocol(NestedDefinition, {
+const NestedModule = defineModule(NestedDefinition, {
   member   : recordCodecs.json<unknown>(),
   notebook : recordCodecs.json<unknown>(),
   page     : recordCodecs.json<unknown>(),
@@ -156,11 +156,11 @@ function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource
     actorDid       : connectedDid,
     contextId,
     id             : 'role-record',
-    protocol       : SharedDefinition.protocol,
-    protocolPaths  : ['workspace', 'workspace/note', 'workspace/title'],
-    protocolRole,
+    module         : SharedDefinition.module,
+    modulePaths    : ['workspace', 'workspace/note', 'workspace/title'],
+    moduleRole,
     remoteEndpoint : 'https://dwn.example',
-    roles          : [protocolRole, viewerRole],
+    roles          : [moduleRole, viewerRole],
     sourceDid,
     ...overrides,
   };
@@ -173,7 +173,7 @@ function followedContextChange(changed: FollowedSyncSource, active = true): Sync
     contextId                  : changed.contextId,
     followedSourceAcceptanceId : changed.acceptanceId,
     followedSourceId           : active ? changed.id : undefined,
-    protocol                   : changed.protocol,
+    module                     : changed.module,
     tenantDid                  : changed.sourceDid,
   };
 }
@@ -196,16 +196,16 @@ function writeFrom(request: ProcessDwnRequest<DwnInterface.RecordsWrite>): DwnMe
   } as DwnMessage[DwnInterface.RecordsWrite];
 }
 
-function installedProtocol(): DwnMessage[DwnInterface.ProtocolsConfigure] {
+function installedModule(): DwnMessage[DwnInterface.ModulesConfigure] {
   return {
     authorization : authorization(connectedDid),
     descriptor    : {
-      definition       : SharedProtocol.definition,
-      interface        : 'Protocols',
+      definition       : SharedModule.definition,
+      interface        : 'Modules',
       messageTimestamp : '2026-01-01T00:00:00.000000Z',
       method           : 'Configure',
     },
-  } as DwnMessage[DwnInterface.ProtocolsConfigure];
+  } as DwnMessage[DwnInterface.ModulesConfigure];
 }
 
 function invitationEntry(options: {
@@ -222,7 +222,7 @@ function invitationEntry(options: {
     path      : options.path ?? 'workspace',
     preview   : options.preview ?? {},
   };
-  const definition = SharedProtocol.definition as ProtocolDefinition;
+  const definition = SharedModule.definition as ModuleDefinition;
   return {
     authorization : authorization(options.ownerDid ?? sourceDid),
     descriptor    : {
@@ -233,8 +233,8 @@ function invitationEntry(options: {
       dataSize         : JSON.stringify(data).length,
       dateCreated      : options.timestamp,
       messageTimestamp : options.timestamp,
-      protocol         : definition.protocol,
-      protocolPath     : CONTEXT_INVITATION_PATH,
+      module           : definition.module,
+      modulePath       : CONTEXT_INVITATION_PATH,
       recipient        : options.recipient ?? connectedDid,
       schema           : definition.types[CONTEXT_INVITATION_PATH].schema,
     },
@@ -247,12 +247,12 @@ function membershipEntry(options: {
   data?: unknown;
   recipient: string;
   recordId?: string;
-  role?: typeof protocolRole | typeof viewerRole;
+  role?: typeof moduleRole | typeof viewerRole;
   timestamp?: string;
 }): DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string } {
   const data = options.data ?? {};
   const recordId = options.recordId ?? 'member-record';
-  const role = options.role ?? protocolRole;
+  const role = options.role ?? moduleRole;
   const timestamp = options.timestamp ?? '2026-01-01T00:00:00.000000Z';
   return {
     authorization : authorization(connectedDid),
@@ -266,8 +266,8 @@ function membershipEntry(options: {
       dateCreated      : timestamp,
       messageTimestamp : timestamp,
       parentId         : contextId,
-      protocol         : SharedDefinition.protocol,
-      protocolPath     : role,
+      module           : SharedDefinition.module,
+      modulePath       : role,
       recipient        : options.recipient,
     },
     encodedData: Convert.object(data).toBase64Url(),
@@ -290,8 +290,8 @@ function contextEntry(
       dataSize         : JSON.stringify(data).length,
       dateCreated      : '2026-01-01T00:00:00.000000Z',
       messageTimestamp : '2026-01-01T00:00:00.000000Z',
-      protocol         : SharedDefinition.protocol,
-      protocolPath     : 'workspace',
+      module           : SharedDefinition.module,
+      modulePath       : 'workspace',
     },
     encodedData: Convert.object(data).toBase64Url(),
     recordId,
@@ -304,10 +304,10 @@ function isFollowIntentRequest(request: ProcessDwnRequest<DwnInterface>): boolea
     return false;
   }
   if (request.messageType === DwnInterface.RecordsWrite) {
-    return request.messageParams.protocolPath === CONTEXT_FOLLOW_PATH;
+    return request.messageParams.modulePath === CONTEXT_FOLLOW_PATH;
   }
   return (request.messageType === DwnInterface.RecordsQuery || request.messageType === DwnInterface.RecordsSubscribe)
-    && request.messageParams.filter.protocolPath === CONTEXT_FOLLOW_PATH;
+    && request.messageParams.filter.modulePath === CONTEXT_FOLLOW_PATH;
 }
 
 function newerIntentEntry(
@@ -343,7 +343,7 @@ describe('TypedEnbox contexts', () => {
   let sync: SyncEngine;
   let typed: TypedEnbox<
     typeof SharedDefinition,
-    typeof SharedProtocol.codecs
+    typeof SharedModule.codecs
   >;
 
   beforeEach(() => {
@@ -383,15 +383,15 @@ describe('TypedEnbox contexts', () => {
       }),
     };
     agent.processDwnRequest.withArgs(sinon.match({
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: SharedDefinition.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: SharedDefinition.module } },
     }))
       .callsFake(async () => ({
-        reply: { entries: [installedProtocol()], status: { code: 200, detail: 'OK' } },
+        reply: { entries: [installedModule()], status: { code: 200, detail: 'OK' } },
       }));
     agent.processDwnRequest.withArgs(sinon.match({
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: { protocol: SharedDefinition.protocol } },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: { module: SharedDefinition.module } },
     }))
       .callsFake(async () => ({ reply: { status: { code: 202, detail: 'Accepted' } } }));
     const intents: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }> = [];
@@ -429,7 +429,7 @@ describe('TypedEnbox contexts', () => {
       if (request.messageType === DwnInterface.RecordsQuery) {
         return {
           reply: {
-            entries : intents.filter(entry => entry.descriptor.protocol === request.messageParams.filter.protocol),
+            entries : intents.filter(entry => entry.descriptor.module === request.messageParams.filter.module),
             status  : { code: 200, detail: 'OK' },
           },
         };
@@ -449,9 +449,9 @@ describe('TypedEnbox contexts', () => {
     follow = sinon.stub().callsFake(async (input: FollowedSyncSourceInput): Promise<FollowedSyncSource> => {
       const active = input.roles[0];
       current = source({
-        protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
-        protocolRole  : active,
-        roles         : [...input.roles],
+        modulePaths : ['workspace', 'workspace/note', 'workspace/title'],
+        moduleRole  : active,
+        roles       : [...input.roles],
       });
       return current;
     });
@@ -486,7 +486,7 @@ describe('TypedEnbox contexts', () => {
       connectedDid,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
     });
-    typed = new TypedEnbox(dwn, SharedProtocol, {
+    typed = new TypedEnbox(dwn, SharedModule, {
       roleDelivery: {
         get       : getRoleDelivery,
         retry     : retryRoleDelivery,
@@ -500,11 +500,11 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('should encode owner and context coordinates without delimiter collisions', () => {
-    expect(protocolContextKey('did:example:a', 'root/child')).toBe(
+    expect(moduleContextKey('did:example:a', 'root/child')).toBe(
       JSON.stringify(['did:example:a', 'root/child']),
     );
-    expect(protocolContextKey('did:example:a/root', 'child')).not.toBe(
-      protocolContextKey('did:example:a', 'root/child'),
+    expect(moduleContextKey('did:example:a/root', 'child')).not.toBe(
+      moduleContextKey('did:example:a', 'root/child'),
     );
   });
 
@@ -514,7 +514,7 @@ describe('TypedEnbox contexts', () => {
     expect(owned).toMatchObject({
       access       : 'owner',
       id           : contextId,
-      key          : protocolContextKey(connectedDid, contextId),
+      key          : moduleContextKey(connectedDid, contextId),
       ownerDid     : connectedDid,
       path         : 'workspace',
       rootRecordId : contextId,
@@ -526,14 +526,14 @@ describe('TypedEnbox contexts', () => {
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/note',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/note',
         },
       },
       target: connectedDid,
     });
     const untypedRecords = owned.records as unknown as {
-      query(path: string, request: { from?: string; protocolRole?: string }): Promise<unknown>;
+      query(path: string, request: { from?: string; moduleRole?: string }): Promise<unknown>;
     };
     await expect(untypedRecords.query('outside', {})).rejects.toThrow(
       'Context-bound records do not expose path \'outside\'.',
@@ -544,8 +544,8 @@ describe('TypedEnbox contexts', () => {
     await expect(untypedRecords.query('workspace/note', { from: sourceDid })).rejects.toThrow(
       'Context-bound operations cannot target another tenant.',
     );
-    await expect(untypedRecords.query('workspace/note', { protocolRole })).rejects.toThrow(
-      'Context-bound operations cannot invoke another protocol role.',
+    await expect(untypedRecords.query('workspace/note', { moduleRole })).rejects.toThrow(
+      'Context-bound operations cannot invoke another module role.',
     );
 
     const followed = await typed.contexts.follow('workspace', { ownerDid: sourceDid, id: contextId });
@@ -559,7 +559,7 @@ describe('TypedEnbox contexts', () => {
     const preferredId = 'preferred-member';
     const fallbackId = 'fallback-viewer';
     const entries = new Map<string, ReturnType<typeof membershipEntry>[]>([
-      [protocolRole, [
+      [moduleRole, [
         membershipEntry({
           data      : { label: 'maintainer' },
           recipient : betaDid,
@@ -584,7 +584,7 @@ describe('TypedEnbox contexts', () => {
     const order: string[] = [];
     const handlers = new Map<string, (message: DwnSubscriptionMessage) => void | Promise<void>>();
     const transports = new Map([
-      [protocolRole, { close: sinon.stub().resolves() }],
+      [moduleRole, { close: sinon.stub().resolves() }],
       [viewerRole, { close: sinon.stub().resolves() }],
     ]);
     let preferredDelivery: RoleDeliveryState = { reason: 'waiting', state: 'pending' };
@@ -593,7 +593,7 @@ describe('TypedEnbox contexts', () => {
       : { state: 'delivered' });
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.RecordsSubscribe) {
-        const role = request.messageParams.filter.protocolPath;
+        const role = request.messageParams.filter.modulePath;
         order.push(`subscribe:${role}`);
         handlers.set(role, request.subscriptionHandler!);
         return {
@@ -604,7 +604,7 @@ describe('TypedEnbox contexts', () => {
         };
       }
       if (request.messageType === DwnInterface.RecordsQuery) {
-        const role = request.messageParams.filter.protocolPath;
+        const role = request.messageParams.filter.modulePath;
         order.push(`query:${role}`);
         return { reply: { entries: entries.get(role) ?? [], status: { code: 200, detail: 'OK' } } };
       }
@@ -619,9 +619,9 @@ describe('TypedEnbox contexts', () => {
     }, Poller.pollRetrySleep, 1_000);
 
     expect(order.slice(0, 3)).toEqual([
-      `subscribe:${protocolRole}`,
+      `subscribe:${moduleRole}`,
       `subscribe:${viewerRole}`,
-      `query:${protocolRole}`,
+      `query:${moduleRole}`,
     ]);
     const initial = view.getSnapshot();
     expect(initial).toBe(view.getSnapshot());
@@ -635,12 +635,12 @@ describe('TypedEnbox contexts', () => {
           data     : { label: 'maintainer' },
           delivery : { reason: 'waiting', state: 'pending' },
           did      : betaDid,
-          role     : protocolRole,
+          role     : moduleRole,
         },
       ],
     });
 
-    preferredDelivery = { reason: 'recipient has not installed the protocol', state: 'failed' };
+    preferredDelivery = { reason: 'recipient has not installed the module', state: 'failed' };
     for (const listener of deliveryListeners) {
       listener();
     }
@@ -663,7 +663,7 @@ describe('TypedEnbox contexts', () => {
       expect(view.getSnapshot().records.find(({ did }) => did === betaDid)?.delivery.state).toBe('delivered');
     }, Poller.pollRetrySleep, 1_000);
 
-    entries.set(protocolRole, []);
+    entries.set(moduleRole, []);
     await handlers.get(viewerRole)!({
       type   : 'event',
       cursor : { streamId: 'local', epoch: '1', position: '1' },
@@ -682,14 +682,14 @@ describe('TypedEnbox contexts', () => {
 
     controller.abort(new Error('member list hidden'));
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
-      expect(transports.get(protocolRole)?.close.calledOnce).toBe(true);
+      expect(transports.get(moduleRole)?.close.calledOnce).toBe(true);
       expect(transports.get(viewerRole)?.close.calledOnce).toBe(true);
     }, Poller.pollRetrySleep, 1_000);
     expect(view.getSnapshot().status).toBe('ready');
     expect(deliveryListeners.size).toBe(0);
   });
 
-  it('rejects a context ID at a different protocol depth', async () => {
+  it('rejects a context ID at a different module depth', async () => {
     await expect(typed.contexts.open('workspace/note', contextId)).rejects.toThrow(
       'id must identify a \'workspace/note\' context',
     );
@@ -702,7 +702,7 @@ describe('TypedEnbox contexts', () => {
 
   it('does not expose role records as contexts', async () => {
     await expect((typed.contexts.open as (path: string, id: string) => Promise<unknown>)(
-      protocolRole,
+      moduleRole,
       `${contextId}/roleRecord`,
     )).rejects.toThrow('cannot open a role record as a context');
   });
@@ -713,17 +713,17 @@ describe('TypedEnbox contexts', () => {
     expect(follow.firstCall.args[0]).toEqual({
       actorDid : connectedDid,
       contextId,
-      protocol : SharedDefinition.protocol,
-      roles    : [protocolRole, viewerRole],
+      module   : SharedDefinition.module,
+      roles    : [moduleRole, viewerRole],
       sourceDid,
     });
     expect(shared).toMatchObject({
       access       : 'member',
       id           : contextId,
-      key          : protocolContextKey(sourceDid, contextId),
+      key          : moduleContextKey(sourceDid, contextId),
       ownerDid     : sourceDid,
       path         : 'workspace',
-      role         : protocolRole,
+      role         : moduleRole,
       rootRecordId : contextId,
     });
 
@@ -734,15 +734,15 @@ describe('TypedEnbox contexts', () => {
 
     const localRequest = agent.processDwnRequest.getCalls().find(call =>
       call.args[0].messageType === DwnInterface.RecordsQuery
-      && call.args[0].messageParams.filter.protocolPath === 'workspace/note')!.args[0];
+      && call.args[0].messageParams.filter.modulePath === 'workspace/note')!.args[0];
     expect(localRequest).toMatchObject({
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/note',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/note',
         },
-        protocolRole,
+        moduleRole,
       },
       target: sourceDid,
     });
@@ -751,10 +751,10 @@ describe('TypedEnbox contexts', () => {
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/note',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/note',
         },
-        protocolRole,
+        moduleRole,
       },
       messageType : DwnInterface.RecordsCount,
       target      : sourceDid,
@@ -763,17 +763,17 @@ describe('TypedEnbox contexts', () => {
     expect(remoteRequest).toMatchObject({
       messageParams: {
         parentContextId : contextId,
-        protocol        : SharedDefinition.protocol,
-        protocolPath    : 'workspace/note',
-        protocolRole,
+        module          : SharedDefinition.module,
+        modulePath      : 'workspace/note',
+        moduleRole,
       },
       target: sourceDid,
     });
     expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
       messageParams: {
         parentContextId : contextId,
-        protocolPath    : 'workspace/writeOnly',
-        protocolRole,
+        modulePath      : 'workspace/writeOnly',
+        moduleRole,
       },
       target: sourceDid,
     });
@@ -832,8 +832,8 @@ describe('TypedEnbox contexts', () => {
         messageTimestamp : '2026-01-01T00:00:00.000000Z',
         method           : 'Write',
         parentId         : contextId,
-        protocol         : SharedDefinition.protocol,
-        protocolPath     : 'workspace/note',
+        module           : SharedDefinition.module,
+        modulePath       : 'workspace/note',
       },
       recordId,
     } as DwnMessage<DwnInterface.RecordsWrite>;
@@ -867,11 +867,11 @@ describe('TypedEnbox contexts', () => {
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/note',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/note',
           recordId,
         },
-        protocolRole,
+        moduleRole,
       },
       messageType : DwnInterface.RecordsRead,
       target      : sourceDid,
@@ -879,9 +879,9 @@ describe('TypedEnbox contexts', () => {
     expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
       messageParams: {
         parentContextId : contextId,
-        protocol        : SharedDefinition.protocol,
-        protocolPath    : 'workspace/note',
-        protocolRole,
+        module          : SharedDefinition.module,
+        modulePath      : 'workspace/note',
+        moduleRole,
         recordId,
       },
       messageType : DwnInterface.RecordsWrite,
@@ -937,10 +937,10 @@ describe('TypedEnbox contexts', () => {
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/title',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/title',
         },
-        protocolRole,
+        moduleRole,
       },
       messageType : DwnInterface.RecordsQuery,
       target      : sourceDid,
@@ -948,9 +948,9 @@ describe('TypedEnbox contexts', () => {
     expect(agent.sendDwnRequest.secondCall.args[0]).toMatchObject({
       messageParams: {
         parentContextId : contextId,
-        protocol        : SharedDefinition.protocol,
-        protocolPath    : 'workspace/title',
-        protocolRole,
+        module          : SharedDefinition.module,
+        modulePath      : 'workspace/title',
+        moduleRole,
       },
       messageType : DwnInterface.RecordsWrite,
       target      : sourceDid,
@@ -964,20 +964,20 @@ describe('TypedEnbox contexts', () => {
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/title',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/title',
         },
-        protocolRole,
+        moduleRole,
       },
       messageType : DwnInterface.RecordsQuery,
       target      : sourceDid,
     });
     expect(agent.sendDwnRequest.getCall(3).args[0]).toMatchObject({
       messageParams: {
-        protocol     : SharedDefinition.protocol,
-        protocolPath : 'workspace/title',
-        protocolRole,
-        recordId     : existing!.recordId,
+        module     : SharedDefinition.module,
+        modulePath : 'workspace/title',
+        moduleRole,
+        recordId   : existing!.recordId,
       },
       messageType : DwnInterface.RecordsWrite,
       target      : sourceDid,
@@ -1021,7 +1021,7 @@ describe('TypedEnbox contexts', () => {
       },
       {
         ...newerIntentEntry(previous, 'foreignPath', forgotten),
-        descriptor: { ...previous.descriptor, protocolPath: 'workspace' },
+        descriptor: { ...previous.descriptor, modulePath: 'workspace' },
       },
       {
         ...newerIntentEntry(previous, 'malformedJson', forgotten),
@@ -1042,7 +1042,7 @@ describe('TypedEnbox contexts', () => {
     intentRecords.splice(0, 1, newerIntentEntry(intentRecords[0], 'otherGroupScope', value));
     current = undefined;
     follow.resetHistory();
-    const fresh = new TypedEnbox(dwn, SharedProtocol, { sync });
+    const fresh = new TypedEnbox(dwn, SharedModule, { sync });
 
     expect((await fresh['readContextFollows']()).map(record => record.value)).toEqual([value]);
     expect(await fresh.contexts.list()).toEqual([]);
@@ -1064,7 +1064,7 @@ describe('TypedEnbox contexts', () => {
         await expect(following).rejects.toBeInstanceOf(ContextRetiredError);
         expect(current).toBeUndefined();
       } else {
-        expect((await following).role).toBe(protocolRole);
+        expect((await following).role).toBe(moduleRole);
         expect(current).toBeDefined();
       }
     } finally {
@@ -1107,15 +1107,15 @@ describe('TypedEnbox contexts', () => {
   it('preserves declared role precedence in one follow request', async () => {
     const shared = await typed.contexts.follow('workspace', { ownerDid: sourceDid, id: contextId });
 
-    expect(follow.firstCall.args[0].roles).toEqual([protocolRole, viewerRole]);
-    expect(shared.role).toBe(protocolRole);
+    expect(follow.firstCall.args[0].roles).toEqual([moduleRole, viewerRole]);
+    expect(shared.role).toBe(moduleRole);
   });
 
   it('sends a bounded invitation only after membership is established', async () => {
     const recipient = 'did:example:recipient';
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
       if (request.messageType === DwnInterface.RecordsQuery) {
-        const entries = request.messageParams.filter.protocolPath === protocolRole
+        const entries = request.messageParams.filter.modulePath === moduleRole
           && request.messageParams.filter.recipient === recipient
           ? [membershipEntry({ recipient })]
           : [];
@@ -1131,8 +1131,8 @@ describe('TypedEnbox contexts', () => {
     const request = agent.sendDwnRequest.firstCall.args[0];
     expect(request).toMatchObject({
       messageParams: {
-        protocol     : SharedDefinition.protocol,
-        protocolPath : CONTEXT_INVITATION_PATH,
+        module     : SharedDefinition.module,
+        modulePath : CONTEXT_INVITATION_PATH,
         recipient,
       },
       target: recipient,
@@ -1183,7 +1183,7 @@ describe('TypedEnbox contexts', () => {
       agent          : agent as unknown as EnboxAgent,
       connectedDid,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
-    }), SharedProtocol);
+    }), SharedModule);
 
     expect(await local.contexts.list()).toMatchObject([
       { access: 'owner', id: contextId, ownerDid: connectedDid },
@@ -1248,7 +1248,7 @@ describe('TypedEnbox contexts', () => {
     });
     expect(agent.processDwnRequest.getCalls()
       .filter(call => call.args[0].messageType === DwnInterface.RecordsSubscribe
-        && call.args[0].messageParams.filter.protocolPath === 'workspace')
+        && call.args[0].messageParams.filter.modulePath === 'workspace')
       .map(call => call.args[0].messageParams.filter.contextId)
       .sort()).toEqual(sources.map(candidate => candidate.contextId).sort());
     expect(view.getSnapshot().contexts[0]).toMatchObject({
@@ -1275,7 +1275,7 @@ describe('TypedEnbox contexts', () => {
     const transport = { close: sinon.stub().resolves() };
     const subscriptions = agent.processDwnRequest.withArgs(sinon.match({
       messageType   : DwnInterface.RecordsSubscribe,
-      messageParams : { filter: { protocolPath: 'workspace' } },
+      messageParams : { filter: { modulePath: 'workspace' } },
     }));
     subscriptions.onFirstCall().resolves({ reply: { status: { code: 500, detail: 'Unavailable' } } });
     subscriptions.onSecondCall().resolves({
@@ -1341,13 +1341,13 @@ describe('TypedEnbox contexts', () => {
     });
     expect(agent.processDwnRequest.getCalls().find(
       call => call.args[0].messageType === DwnInterface.RecordsSubscribe
-        && call.args[0].messageParams.filter.protocolPath === 'workspace',
+        && call.args[0].messageParams.filter.modulePath === 'workspace',
     )?.args[0]).toMatchObject({
       messageParams: {
         filter: {
           contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace',
+          module     : SharedDefinition.module,
+          modulePath : 'workspace',
         },
       },
       target: sourceDid,
@@ -1380,7 +1380,7 @@ describe('TypedEnbox contexts', () => {
     current = source({
       acceptanceId : 'acceptance-b',
       id           : 'viewer-role-record',
-      protocolRole : viewerRole,
+      moduleRole   : viewerRole,
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
@@ -1441,7 +1441,7 @@ describe('TypedEnbox contexts', () => {
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(agent.processDwnRequest.getCalls().filter(
         call => call.args[0].messageType === DwnInterface.RecordsSubscribe
-          && call.args[0].messageParams.filter.protocolPath === 'workspace',
+          && call.args[0].messageParams.filter.modulePath === 'workspace',
       )).toHaveLength(4);
     });
     await view.close();
@@ -1452,14 +1452,14 @@ describe('TypedEnbox contexts', () => {
     });
     expect(agent.processDwnRequest.getCalls().some(
       call => call.args[0].messageType === DwnInterface.RecordsQuery
-        && call.args[0].messageParams.filter.protocolPath === 'workspace',
+        && call.args[0].messageParams.filter.modulePath === 'workspace',
     )).toBe(false);
     expect(listeners.size).toBe(0);
   });
 
   it('walks parent contexts when listing a nested owned context root', async () => {
     const nestedEntry = (
-      protocolPath: 'notebook' | 'notebook/page',
+      modulePath: 'notebook' | 'notebook/page',
       recordId: string,
       recordContextId: string,
       parentId?: string,
@@ -1471,8 +1471,8 @@ describe('TypedEnbox contexts', () => {
         descriptor : {
           ...entry.descriptor,
           ...(parentId === undefined ? {} : { parentId }),
-          protocol: NestedDefinition.protocol,
-          protocolPath,
+          module: NestedDefinition.module,
+          modulePath,
         },
       } as ReturnType<typeof contextEntry>;
     };
@@ -1480,16 +1480,16 @@ describe('TypedEnbox contexts', () => {
     const pageContextId = `${notebookId}/pageRecord`;
     const queries: unknown[] = [];
     agent.processDwnRequest.callsFake(async (request: ProcessDwnRequest<DwnInterface>) => {
-      if (request.messageType === DwnInterface.ProtocolsQuery) {
+      if (request.messageType === DwnInterface.ModulesQuery) {
         return { reply: { entries: [], status: { code: 200, detail: 'OK' } } };
       }
-      if (request.messageType === DwnInterface.ProtocolsConfigure) {
+      if (request.messageType === DwnInterface.ModulesConfigure) {
         return { reply: { status: { code: 202, detail: 'Accepted' } } };
       }
       if (request.messageType === DwnInterface.RecordsQuery) {
         const filter = request.messageParams.filter;
         queries.push(filter);
-        const entries = filter.protocolPath === 'notebook'
+        const entries = filter.modulePath === 'notebook'
           ? [nestedEntry('notebook', notebookId, notebookId)]
           : [nestedEntry('notebook/page', 'pageRecord', pageContextId, notebookId)];
         return { reply: { entries, status: { code: 200, detail: 'OK' } } };
@@ -1500,24 +1500,24 @@ describe('TypedEnbox contexts', () => {
       agent          : agent as unknown as EnboxAgent,
       connectedDid,
       permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
-    }), NestedProtocol);
+    }), NestedModule);
 
     expect(await local.contexts.list()).toMatchObject([{
       access       : 'owner',
       id           : pageContextId,
-      key          : protocolContextKey(connectedDid, pageContextId),
+      key          : moduleContextKey(connectedDid, pageContextId),
       ownerDid     : connectedDid,
       path         : 'notebook/page',
       rootRecordId : 'pageRecord',
     }]);
     expect(queries).toEqual([
-      { protocol: NestedDefinition.protocol, protocolPath: 'notebook' },
-      { contextId: notebookId, protocol: NestedDefinition.protocol, protocolPath: 'notebook/page' },
+      { module: NestedDefinition.module, modulePath: 'notebook' },
+      { contextId: notebookId, module: NestedDefinition.module, modulePath: 'notebook/page' },
     ]);
-    const protocolRead = agent.processDwnRequest.getCalls()
-      .find((call): boolean => call.args[0].messageType === DwnInterface.ProtocolsQuery
-        && call.args[0].messageParams.filter.protocol === NestedDefinition.protocol);
-    await expect(protocolRead?.returnValue).resolves.toMatchObject({ reply: { entries: [] } });
+    const moduleRead = agent.processDwnRequest.getCalls()
+      .find((call): boolean => call.args[0].messageType === DwnInterface.ModulesQuery
+        && call.args[0].messageParams.filter.module === NestedDefinition.module);
+    await expect(moduleRead?.returnValue).resolves.toMatchObject({ reply: { entries: [] } });
   });
 
   it('observes owned context additions and removals through the shared catalog view', async () => {
@@ -1760,7 +1760,7 @@ describe('TypedEnbox contexts', () => {
     expect(accepted).toMatchObject({ id: contextId, ownerDid: sourceDid });
     expect(follow.secondCall.args[0]).toMatchObject({
       contextId,
-      roles: [protocolRole, viewerRole],
+      roles: [moduleRole, viewerRole],
       sourceDid,
     });
     expect(deleteAttempts).toBe(1);
@@ -1775,11 +1775,11 @@ describe('TypedEnbox contexts', () => {
         messageParams: {
           filter: {
             contextId,
-            protocol     : SharedDefinition.protocol,
-            protocolPath : 'workspace/note',
-            recordId     : 'sibling-note',
+            module     : SharedDefinition.module,
+            modulePath : 'workspace/note',
+            recordId   : 'sibling-note',
           },
-          protocolRole,
+          moduleRole,
         },
         messageType : DwnInterface.RecordsRead,
         target      : sourceDid,
@@ -1842,8 +1842,8 @@ describe('TypedEnbox contexts', () => {
         messageTimestamp : '2026-01-01T00:00:00.000000Z',
         method           : 'Write',
         parentId         : contextId,
-        protocol         : SharedDefinition.protocol,
-        protocolPath     : 'workspace/note',
+        module           : SharedDefinition.module,
+        modulePath       : 'workspace/note',
       },
       recordId: 'raced-note',
     } as DwnMessage<DwnInterface.RecordsWrite>;
@@ -1891,7 +1891,7 @@ describe('TypedEnbox contexts', () => {
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
     current = source({
-      protocolRole: viewerRole,
+      moduleRole: viewerRole,
     });
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
@@ -1902,17 +1902,17 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('binds the active role without requiring retired fallback roles in the current definition', async () => {
-    current = source({ roles: [protocolRole, 'workspace/retired'] });
+    current = source({ roles: [moduleRole, 'workspace/retired'] });
 
     const [shared] = await typed.contexts.list();
 
-    expect(shared.role).toBe(protocolRole);
+    expect(shared.role).toBe(moduleRole);
     await shared.records.query('workspace/note');
   });
 
   it('omits an accepted source whose active role is absent from the current definition', async () => {
     current = source({
-      protocolRole: 'workspace/retired',
+      moduleRole: 'workspace/retired',
     });
 
     expect(await typed.contexts.list()).toEqual([]);
@@ -1923,9 +1923,9 @@ describe('TypedEnbox contexts', () => {
 
   it('omits an accepted source whose active role is not declared as a context role', async () => {
     current = source({
-      contextId     : 'outsideRecord',
-      protocolPaths : ['outside'],
-      protocolRole  : outsideRole,
+      contextId   : 'outsideRecord',
+      modulePaths : ['outside'],
+      moduleRole  : outsideRole,
     });
 
     expect(await typed.contexts.list()).toEqual([]);
@@ -1935,7 +1935,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('limits a persisted context to readable paths stored under its accepted definition', async () => {
-    current = source({ protocolPaths: ['workspace', 'workspace/note'] });
+    current = source({ modulePaths: ['workspace', 'workspace/note'] });
     const [shared] = await typed.contexts.list();
 
     await shared.records.query('workspace/note');
@@ -1983,32 +1983,32 @@ describe('TypedEnbox contexts', () => {
         filters: [{
           contextIdPrefix : contextId,
           interface       : 'Records',
-          protocol        : SharedDefinition.protocol,
-          protocolPath    : 'workspace/note',
+          module          : SharedDefinition.module,
+          modulePath      : 'workspace/note',
         }],
-        protocolRole,
+        moduleRole,
       },
       target: sourceDid,
     });
     const queryRequest = agent.processDwnRequest.getCalls().find(
       call => call.args[0].messageType === DwnInterface.RecordsQuery &&
-        call.args[0].messageParams?.filter?.protocolPath === 'workspace/note',
+        call.args[0].messageParams?.filter?.modulePath === 'workspace/note',
     )!.args[0];
     expect(queryRequest).toMatchObject({
       messageParams: {
         filter: {
-          contextId    : contextId,
-          protocol     : SharedDefinition.protocol,
-          protocolPath : 'workspace/note',
+          contextId  : contextId,
+          module     : SharedDefinition.module,
+          modulePath : 'workspace/note',
         },
-        protocolRole,
+        moduleRole,
       },
       target: sourceDid,
     });
     await subscription.close();
   });
 
-  it('closes an old-scope member stream when protocol evolution starts a new acceptance', async () => {
+  it('closes an old-scope member stream when module evolution starts a new acceptance', async () => {
     current = source();
     const transport = { close: sinon.stub().resolves() };
     let deliver!: (message: DwnSubscriptionMessage) => void | Promise<void>;
@@ -2033,8 +2033,8 @@ describe('TypedEnbox contexts', () => {
     const subscription = await shared.records.subscribe('workspace/note', received);
 
     current = source({
-      acceptanceId  : 'acceptance-b',
-      protocolPaths : ['workspace', 'workspace/note'],
+      acceptanceId : 'acceptance-b',
+      modulePaths  : ['workspace', 'workspace/note'],
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await deliver({
@@ -2115,10 +2115,10 @@ describe('TypedEnbox contexts', () => {
     expect(states).toEqual([]);
 
     current = source({
-      acceptanceId  : 'acceptance-b',
-      id            : 'viewer-role-record',
-      protocolRole  : viewerRole,
-      protocolPaths : ['workspace', 'workspace/note', 'workspace/title'],
+      acceptanceId : 'acceptance-b',
+      id           : 'viewer-role-record',
+      moduleRole   : viewerRole,
+      modulePaths  : ['workspace', 'workspace/note', 'workspace/title'],
     });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -2207,16 +2207,16 @@ describe('TypedEnbox contexts', () => {
     await expect(invoke({ ownerDid: 'https://owner.example', id: contextId }))
       .rejects.toThrow('is not a DID');
     await expect(invoke({ ownerDid: sourceDid, id: `${contextId}/` }))
-      .rejects.toThrow('canonical protocol context');
+      .rejects.toThrow('canonical module context');
 
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(follow.notCalled).toBe(true);
   });
 
-  it('rejects unsupported saved-choice operations before preparing protocol records', async () => {
-    const withoutSync = new TypedEnbox(dwn, SharedProtocol);
-    const unshared = defineProtocol({
-      protocol  : 'https://example.com/protocols/local-notes',
+  it('rejects unsupported saved-choice operations before preparing module records', async () => {
+    const withoutSync = new TypedEnbox(dwn, SharedModule);
+    const unshared = defineModule({
+      module    : 'https://example.com/modules/local-notes',
       published : false,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: {} },
@@ -2226,16 +2226,16 @@ describe('TypedEnbox contexts', () => {
     await expect(withoutSync.contexts.forget({ ownerDid: sourceDid, id: contextId }))
       .rejects.toThrow('shared-context storage');
     await expect(withoutJournal.contexts.forget({ ownerDid: sourceDid, id: contextId }))
-      .rejects.toThrow('this protocol does not support saved following choices');
+      .rejects.toThrow('this module does not support saved following choices');
     expect(agent.processDwnRequest.notCalled).toBe(true);
     expect(follow.notCalled).toBe(true);
   });
 
-  it('retires unsaved authority when the recipient protocol denies the follow write', async () => {
+  it('retires unsaved authority when the recipient module denies the follow write', async () => {
     agent.processDwnRequest.withArgs(sinon.match({
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: SharedDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
-    })).resolves({ reply: { status: { code: 403, detail: 'Protocol write not granted' } } });
+      messageParams : { module: SharedDefinition.module, modulePath: CONTEXT_FOLLOW_PATH },
+    })).resolves({ reply: { status: { code: 403, detail: 'Module write not granted' } } });
 
     await expect(typed.contexts.follow('workspace', { ownerDid: sourceDid, id: contextId }))
       .rejects.toThrow('could not establish the requested context');
@@ -2250,7 +2250,7 @@ describe('TypedEnbox contexts', () => {
     current = undefined;
     follow.resetHistory();
     agent.sendDwnRequest.resetHistory();
-    const client = facade === 'current' ? typed : new TypedEnbox(dwn, SharedProtocol, { sync });
+    const client = facade === 'current' ? typed : new TypedEnbox(dwn, SharedModule, { sync });
 
     await client.contexts.forget({ ownerDid: sourceDid, id: contextId });
 
@@ -2273,7 +2273,7 @@ describe('TypedEnbox contexts', () => {
         ownerDid: sourceDid, contextId, path, following: true,
       }));
     }
-    const fresh = new TypedEnbox(dwn, SharedProtocol, { sync });
+    const fresh = new TypedEnbox(dwn, SharedModule, { sync });
     const view = mode === 'materialized'
       ? await fresh.contexts.observe({ access: 'member', materializeRoot: true })
       : await fresh.contexts.observe();
@@ -2281,7 +2281,7 @@ describe('TypedEnbox contexts', () => {
       const state = await view.ready();
       expect(state.contexts).toEqual([]);
       expect(state.savedFollows).toEqual([{
-        key: protocolContextKey(sourceDid, contextId), id: contextId, ownerDid: sourceDid, path,
+        key: moduleContextKey(sourceDid, contextId), id: contextId, ownerDid: sourceDid, path,
       }]);
       if (mode === 'unknown path') { expect(follow.called).toBe(false); }
 
@@ -2302,10 +2302,10 @@ describe('TypedEnbox contexts', () => {
     const accepted = current;
     agent.processDwnRequest.withArgs(sinon.match({
       messageType   : DwnInterface.RecordsWrite,
-      messageParams : { protocol: SharedDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
-    })).resolves({ reply: { status: { code: 403, detail: 'Protocol write not granted' } } });
+      messageParams : { module: SharedDefinition.module, modulePath: CONTEXT_FOLLOW_PATH },
+    })).resolves({ reply: { status: { code: 403, detail: 'Module write not granted' } } });
 
-    await expect(typed.contexts.forget({ ownerDid: sourceDid, id: contextId })).rejects.toThrow('Protocol write not granted');
+    await expect(typed.contexts.forget({ ownerDid: sourceDid, id: contextId })).rejects.toThrow('Module write not granted');
 
     expect(current).toBe(accepted);
     expect(deleteFollowedSource.called).toBe(false);
@@ -2397,7 +2397,7 @@ describe('TypedEnbox contexts', () => {
       remoteEndpoint : source().remoteEndpoint,
       target         : sourceDid,
     });
-    expect(agent.sendDwnRequest.secondCall.args[0].messageParams.protocolRole).toBeUndefined();
+    expect(agent.sendDwnRequest.secondCall.args[0].messageParams.moduleRole).toBeUndefined();
     expect(deleteFollowedSource.calledOnceWith(source())).toBe(true);
   });
 });

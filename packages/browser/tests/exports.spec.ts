@@ -41,19 +41,19 @@ describe('@enbox/browser exports', () => {
     expect(typeof mod.Enbox).toBe('function');
   });
 
-  it('re-exports defineProtocol from @enbox/api', async () => {
+  it('re-exports defineModule from @enbox/api', async () => {
     const mod = await getBrowserExports();
-    expect(mod.defineProtocol).toBeDefined();
-    expect(typeof mod.defineProtocol).toBe('function');
+    expect(mod.defineModule).toBeDefined();
+    expect(typeof mod.defineModule).toBe('function');
   });
 
-  it('re-exports recordCodecs and ServiceConfigProtocol from @enbox/api', async () => {
+  it('re-exports recordCodecs and ServiceConfigModule from @enbox/api', async () => {
     const [browser, api] = await Promise.all([
       getBrowserExports(),
       import('@enbox/api'),
     ]);
     expect(browser.recordCodecs).toBe(api.recordCodecs);
-    expect(browser.ServiceConfigProtocol).toBe(api.ServiceConfigProtocol);
+    expect(browser.ServiceConfigModule).toBe(api.ServiceConfigModule);
     expect(typeof (browser.recordCodecs as typeof api.recordCodecs).fileEnvelope).toBe('function');
   });
 
@@ -79,12 +79,12 @@ describe('@enbox/browser exports', () => {
     expect(browser.RecordValidationError).toBe(api.RecordValidationError);
   });
 
-  it('re-exports protocolContextKey from @enbox/api', async () => {
+  it('re-exports moduleContextKey from @enbox/api', async () => {
     const [browser, api] = await Promise.all([
       getBrowserExports(),
       import('@enbox/api'),
     ]);
-    expect(browser.protocolContextKey).toBe(api.protocolContextKey);
+    expect(browser.moduleContextKey).toBe(api.moduleContextKey);
   });
 
   it('re-exports Time from @enbox/api', async () => {
@@ -108,10 +108,10 @@ describe('@enbox/browser exports', () => {
     expect(mod.AgentSession).toBe(agent.AgentSession);
   });
 
-  it('re-exports normalizeProtocolRequests from @enbox/auth', async () => {
+  it('re-exports normalizeModuleRequests from @enbox/auth', async () => {
     const mod = await getBrowserExports();
-    expect(mod.normalizeProtocolRequests).toBeDefined();
-    expect(typeof mod.normalizeProtocolRequests).toBe('function');
+    expect(mod.normalizeModuleRequests).toBeDefined();
+    expect(typeof mod.normalizeModuleRequests).toBe('function');
   });
 
   it('exports BrowserConnectHandler', async () => {

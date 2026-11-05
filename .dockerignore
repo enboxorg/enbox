@@ -38,10 +38,10 @@ packages/api/src/
 packages/api/tests/
 packages/browser/src/
 packages/browser/tests/
-packages/protocols/src/
-packages/protocols/tests/
-packages/protocol-codegen/src/
-packages/protocol-codegen/tests/
+packages/modules/src/
+packages/modules/tests/
+packages/module-codegen/src/
+packages/module-codegen/tests/
 
 # Build artifacts (rebuilt in Docker)
 **/dist/

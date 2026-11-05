@@ -29,11 +29,11 @@ function token(position: number, messageCid: string): ProgressToken {
   return { epoch: 'local-epoch', messageCid, position: String(position), streamId: 'local-stream' };
 }
 
-function protocolMessage(name: string): GenericMessage {
+function moduleMessage(name: string): GenericMessage {
   return {
     descriptor: {
-      definition       : { protocol: `https://example.com/${name}`, published: true, structure: {}, types: {} },
-      interface        : 'Protocols',
+      definition       : { module: `https://example.com/${name}`, published: true, structure: {}, types: {} },
+      interface        : 'Modules',
       messageTimestamp : `2026-10-01T00:00:${String(name.length).padStart(2, '0')}.000000Z`,
       method           : 'Configure',
     },
@@ -141,7 +141,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should retry an unavailable endpoint and settle only that endpoint after delivery', async () => {
-    const message = protocolMessage('endpoint');
+    const message = moduleMessage('endpoint');
     const first = target();
     const second = target('https://second.example.com');
     const firstLink = await retain(first, [message]);
@@ -162,7 +162,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should rotate a quota-blocked receipt behind another retained root', async () => {
-    const messages = [protocolMessage('first'), protocolMessage('second')];
+    const messages = [moduleMessage('first'), moduleMessage('second')];
     const link = await retain(target(), messages);
     const fixture = fakeAgent();
     for (const message of messages) {
@@ -185,7 +185,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should rotate a malformed oldest row so a healthy receipt can retry next', async () => {
-    const messages = [protocolMessage('malformed'), protocolMessage('healthy')];
+    const messages = [moduleMessage('malformed'), moduleMessage('healthy')];
     const link = await retain(target(), messages);
     const [oldest] = await progressStore.getDeliveryForLink(link);
     const delivery = (progressStore as unknown as {
@@ -213,8 +213,8 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should retain a root while a remote dependency is unavailable, then settle its retry', async () => {
-    const message = protocolMessage('root');
-    const dependency = protocolMessage('dependency');
+    const message = moduleMessage('root');
+    const dependency = moduleMessage('dependency');
     const link = await retain(target(), [message]);
     const fixture = fakeAgent();
     const rootCid = await Message.getCid(message);
@@ -228,7 +228,7 @@ describe('retryOneDeliveryObligation', () => {
       }
       return dependencyDelivered
         ? { kind: 'Applied' }
-        : { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/dependency', messageCid: dependencyCid }] };
+        : { kind: 'Incomplete', missing: [{ type: 'Module', module: 'https://example.com/dependency', messageCid: dependencyCid }] };
     });
 
     expect(await retryOneDeliveryObligation({ agent: fixture.agent, progressStore, target: target() })).toEqual({
@@ -350,7 +350,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should not let an old retry alter a replacement link with the same identity', async () => {
-    const message = protocolMessage('recreated');
+    const message = moduleMessage('recreated');
     const oldLink = await retain(target(), [message]);
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(message), message);
@@ -366,7 +366,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should leave the receipt intact when the caller is cancelled after remote delivery', async () => {
-    const message = protocolMessage('cancelled');
+    const message = moduleMessage('cancelled');
     const link = await retain(target(), [message]);
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(message), message);
@@ -383,7 +383,7 @@ describe('retryOneDeliveryObligation', () => {
   });
 
   it('should replay an acknowledged remote message after failed progress-store settlement', async () => {
-    const message = protocolMessage('crash');
+    const message = moduleMessage('crash');
     const link = await retain(target(), [message]);
     const fixture = fakeAgent();
     fixture.localMessages.set(await Message.getCid(message), message);

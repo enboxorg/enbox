@@ -1,28 +1,28 @@
 import type { DwnInterface } from './types/dwn.js';
 import type { GenericMessage, GenericSignaturePayload, MessagesPermissionScope } from '@enbox/dwn-sdk-js';
-import type { NonEmptyStringArray, SyncAuthorizationGrant, syncScopeFromProtocols } from './types/sync.js';
+import type { NonEmptyStringArray, SyncAuthorizationGrant, syncScopeFromModules } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
 import { Jws, Message } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
-type IdentitySyncScope = ReturnType<typeof syncScopeFromProtocols>;
+type IdentitySyncScope = ReturnType<typeof syncScopeFromModules>;
 
 export type MessagesScopeResolution = {
   scope: IdentitySyncScope;
   permissionGrants: PermissionGrantEntry[];
 };
 
-export class SyncProtocolRootPermissionGrantMissingError extends Error {
-  public readonly protocol?: string;
+export class SyncModuleRootPermissionGrantMissingError extends Error {
+  public readonly module?: string;
 
-  public constructor(messageType: DwnInterface, protocol?: string) {
-    super(protocol === undefined
-      ? `SyncPermissions: No active Messages.Read permission found for ${messageType}: all protocols`
-      : `SyncPermissions: No active protocol-root Messages.Read permission found for ${messageType}: ${protocol}`);
-    this.name = 'SyncProtocolRootPermissionGrantMissingError';
-    this.protocol = protocol;
+  public constructor(messageType: DwnInterface, module?: string) {
+    super(module === undefined
+      ? `SyncPermissions: No active Messages.Read permission found for ${messageType}: all modules`
+      : `SyncPermissions: No active module-root Messages.Read permission found for ${messageType}: ${module}`);
+    this.name = 'SyncModuleRootPermissionGrantMissingError';
+    this.module = module;
   }
 }
 
@@ -39,7 +39,7 @@ export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | unde
  *
  * Owner-authored Messages feed access does not invoke grants. Delegate full
  * scope requires at least one active unscoped Messages.Read grant. Delegate
- * protocol-set scope requires each requested protocol root to be covered by an
+ * module-set scope requires each requested module root to be covered by an
  * active Messages.Read grant, then invokes every active grant that participates
  * in that root set. This keeps the authorization epoch tied to grant churn
  * without widening the CID set being compared.
@@ -47,19 +47,19 @@ export function toMessagesPermissionGrantIds(permissionGrantIds: string[] | unde
 export async function getMessagesPermissionGrantsForScope({
   did,
   delegateDid,
-  protocols,
+  modules,
   messageType,
   permissionsApi,
 }: {
   did: string;
   delegateDid?: string;
-  protocols?: NonEmptyStringArray;
+  modules?: NonEmptyStringArray;
   messageType: DwnInterface;
   permissionsApi: PermissionsApi;
 }): Promise<PermissionGrantEntry[]> {
-  const requestedScope: IdentitySyncScope = protocols === undefined
+  const requestedScope: IdentitySyncScope = modules === undefined
     ? { kind: 'full' }
-    : { kind: 'protocolSet', protocols };
+    : { kind: 'moduleSet', modules };
   const resolutions = await resolveMessagesScopes({
     did,
     delegateDid,
@@ -75,7 +75,7 @@ export async function getMessagesPermissionGrantsForScope({
 /**
  * Resolves active Messages.Read grants into one or more Messages feed scopes.
  *
- * Exact protocolPath and contextId grants do not authorize root log scopes
+ * Exact modulePath and contextId grants do not authorize root log scopes
  * because they cover a strict subset of the messages in those scopes.
  */
 export async function resolveMessagesScopes({
@@ -108,7 +108,7 @@ export async function resolveMessagesScopes({
     return [resolveFullScope(permissionGrants, requestedScope, messageType)];
   }
 
-  return [resolveProtocolSetScope(permissionGrants, requestedScope, messageType)];
+  return [resolveModuleSetScope(permissionGrants, requestedScope, messageType)];
 }
 
 function resolveFullScope(
@@ -120,27 +120,27 @@ function resolveFullScope(
     .filter(grantMatchesFullRoot)
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
   if (grants.length === 0) {
-    throw new SyncProtocolRootPermissionGrantMissingError(messageType);
+    throw new SyncModuleRootPermissionGrantMissingError(messageType);
   }
 
   return { scope: requestedScope, permissionGrants: grants };
 }
 
-function resolveProtocolSetScope(
+function resolveModuleSetScope(
   permissionGrants: PermissionGrantEntry[],
-  requestedScope: Extract<IdentitySyncScope, { kind: 'protocolSet' }>,
+  requestedScope: Extract<IdentitySyncScope, { kind: 'moduleSet' }>,
   messageType: DwnInterface,
 ): MessagesScopeResolution {
-  for (const protocol of requestedScope.protocols) {
-    if (permissionGrants.some(entry => grantMatchesProtocolRoot(entry, protocol))) {
+  for (const module of requestedScope.modules) {
+    if (permissionGrants.some(entry => grantMatchesModuleRoot(entry, module))) {
       continue;
     }
 
-    throw new SyncProtocolRootPermissionGrantMissingError(messageType, protocol);
+    throw new SyncModuleRootPermissionGrantMissingError(messageType, module);
   }
 
   const grants = permissionGrants
-    .filter(entry => grantParticipatesInProtocolSet(entry, requestedScope.protocols))
+    .filter(entry => grantParticipatesInModuleSet(entry, requestedScope.modules))
     .sort((a, b) => lexicographicalCompare(a.grant.id, b.grant.id));
 
   return { scope: requestedScope, permissionGrants: grants };
@@ -151,11 +151,11 @@ function isMessagesReadScope(scope: PermissionGrantEntry['grant']['scope']): sco
     scope.method === 'Read';
 }
 
-function grantParticipatesInProtocolSet(
+function grantParticipatesInModuleSet(
   entry: PermissionGrantEntry,
-  protocols: NonEmptyStringArray,
+  modules: NonEmptyStringArray,
 ): boolean {
-  return protocols.some(protocol => grantMatchesProtocolRoot(entry, protocol));
+  return modules.some(module => grantMatchesModuleRoot(entry, module));
 }
 
 /** Converts permission grant entries into authorization epoch inputs. */
@@ -195,14 +195,14 @@ function isActiveMessagesGrant(
 function grantMatchesFullRoot(entry: PermissionGrantEntry): boolean {
   const scope = entry.grant.scope;
   return isMessagesReadScope(scope) &&
-    scope.protocol === undefined &&
-    scope.protocolPath === undefined &&
+    scope.module === undefined &&
+    scope.modulePath === undefined &&
     scope.contextId === undefined;
 }
 
-function grantMatchesProtocolRoot(
+function grantMatchesModuleRoot(
   entry: PermissionGrantEntry,
-  protocol: string,
+  module: string,
 ): boolean {
   if (grantMatchesFullRoot(entry)) {
     return true;
@@ -210,8 +210,8 @@ function grantMatchesProtocolRoot(
 
   const scope = entry.grant.scope;
   return isMessagesReadScope(scope) &&
-    scope.protocol === protocol &&
-    scope.protocolPath === undefined &&
+    scope.module === module &&
+    scope.modulePath === undefined &&
     scope.contextId === undefined;
 }
 

@@ -7,7 +7,7 @@ import {
   buildDwnDiscoveryRedirectUrl,
   decodeDwnDiscoveryPayload,
   DWN_CONNECT_PATH,
-  DWN_PROTOCOL_SCHEME,
+  DWN_MODULE_SCHEME,
   encodeDwnDiscoveryPayload,
   parseDwnConnectUrl,
   readDwnDiscoveryPayloadFromUrl,
@@ -22,8 +22,8 @@ function toBase64Url(input: string): string {
 
 describe('DwnDiscoveryPayload', () => {
   describe('constants', () => {
-    it('should export the dwn protocol scheme', () => {
-      expect(DWN_PROTOCOL_SCHEME).toBe('dwn');
+    it('should export the dwn module scheme', () => {
+      expect(DWN_MODULE_SCHEME).toBe('dwn');
     });
 
     it('should export the connect path', () => {
@@ -341,7 +341,7 @@ describe('DwnDiscoveryPayload', () => {
     it('should complete the full dwn://connect flow', () => {
       // 1. Web app builds the connect URL.
       const callback = 'https://notes.sh/dwn';
-      const connectUrl = `${DWN_PROTOCOL_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callback)}`;
+      const connectUrl = `${DWN_MODULE_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callback)}`;
 
       // 2. electrobun-dwn parses the connect URL.
       const params = parseDwnConnectUrl(connectUrl);

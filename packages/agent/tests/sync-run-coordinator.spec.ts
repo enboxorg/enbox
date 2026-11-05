@@ -45,14 +45,14 @@ function roleTarget(actorDid: string, sourceDid = 'did:example:owner'): SyncTarg
     authorization: {
       kind         : 'role',
       actorDid,
-      protocolRole : 'notebook/member',
+      moduleRole   : 'notebook/member',
       roleRecordId : `role-${actorDid}`,
     },
     scope: {
-      kind          : 'context',
-      contextId     : 'notebook-a',
-      protocol      : 'https://example.com/notebooks',
-      protocolPaths : ['notebook'],
+      kind        : 'context',
+      contextId   : 'notebook-a',
+      module      : 'https://example.com/notebooks',
+      modulePaths : ['notebook'],
     },
   };
 }

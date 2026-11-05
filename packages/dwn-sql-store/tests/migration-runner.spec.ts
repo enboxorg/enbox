@@ -2,6 +2,7 @@ import type { DwnDatabaseType } from '../src/types.js';
 import type { Migration } from 'kysely';
 
 import { allDwnMigrations } from '../src/migrations/index.js';
+import { MessageStoreSql } from '../src/message-store-sql.js';
 import { migration001InitialSchema } from '../src/migrations/001-initial-schema.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -69,6 +70,27 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
       });
 
       // ─── Fresh database tests ───────────────────────────────────────
+
+      it('rejects old and mixed module schemas before recording or applying migrations', async () => {
+        await db.schema.createTable('messageStoreMessages')
+          .addColumn('protocol', 'text')
+          .addColumn('protocolPath', 'text')
+          .execute();
+
+        await expect(runDwnStoreMigrations(db, dialect)).rejects.toThrow('MessageStoreIncompatibleFormat');
+        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(false);
+
+        const store = new MessageStoreSql(dialect);
+        await expect(store.open()).rejects.toThrow('MessageStoreIncompatibleFormat');
+        await expect(store.open()).rejects.toThrow('MessageStoreIncompatibleFormat');
+        await store.close();
+
+        await db.schema.alterTable('messageStoreMessages').addColumn('module', 'text').execute();
+        await db.schema.alterTable('messageStoreMessages').addColumn('modulePath', 'text').execute();
+
+        await expect(runDwnStoreMigrations(db, dialect)).rejects.toThrow('MessageStoreIncompatibleFormat');
+        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(false);
+      });
 
       it('should create Kysely migration tracking tables on first run', async () => {
         let exists = await dialect.hasTable(db, 'kysely_migration');
@@ -160,35 +182,35 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
             tenant              : 'did:example:alice',
             messageCid          : 'root',
             contextId           : 'root',
-            protocolPath        : 'thread',
+            modulePath          : 'thread',
             encodedMessageBytes : Buffer.from('root'),
           },
           {
             tenant              : 'did:example:alice',
             messageCid          : 'child',
             contextId           : 'root/child',
-            protocolPath        : 'thread/note',
+            modulePath          : 'thread/note',
             encodedMessageBytes : Buffer.from('child'),
           },
           {
             tenant              : 'did:example:alice',
             messageCid          : 'case-variant',
             contextId           : 'Root',
-            protocolPath        : 'Thread',
+            modulePath          : 'Thread',
             encodedMessageBytes : Buffer.from('case-variant'),
           },
           {
             tenant              : 'did:example:alice',
             messageCid          : 'case-variant-child',
             contextId           : 'Root/child',
-            protocolPath        : 'Thread/note',
+            modulePath          : 'Thread/note',
             encodedMessageBytes : Buffer.from('case-variant-child'),
           },
           {
             tenant              : 'did:example:alice',
             messageCid          : 'padded-path',
             contextId           : 'other',
-            protocolPath        : 'thread ',
+            modulePath          : 'thread ',
             encodedMessageBytes : Buffer.from('padded-path'),
           },
         ] as any).execute();
@@ -211,20 +233,20 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
           .execute();
         expect(descendants.map(({ messageCid }) => messageCid)).toEqual(['child']);
 
-        const protocolPaths = await db.selectFrom('messageStoreMessages')
+        const modulePaths = await db.selectFrom('messageStoreMessages')
           .select('messageCid')
           .where('tenant', '=', 'did:example:alice')
-          .where('protocolPath', '>=', 'thread/')
-          .where('protocolPath', '<', 'thread0')
+          .where('modulePath', '>=', 'thread/')
+          .where('modulePath', '<', 'thread0')
           .execute();
-        expect(protocolPaths.map(({ messageCid }) => messageCid)).toEqual(['child']);
+        expect(modulePaths.map(({ messageCid }) => messageCid)).toEqual(['child']);
 
-        const exactProtocolPath = await db.selectFrom('messageStoreMessages')
+        const exactModulePath = await db.selectFrom('messageStoreMessages')
           .select('messageCid')
           .where('tenant', '=', 'did:example:alice')
-          .where('protocolPath', '=', 'thread')
+          .where('modulePath', '=', 'thread')
           .execute();
-        expect(exactProtocolPath.map(({ messageCid }) => messageCid)).toEqual(['root']);
+        expect(exactModulePath.map(({ messageCid }) => messageCid)).toEqual(['root']);
 
         if (dialect.name === 'MySQL') {
           const columns = await sql<{ COLUMN_NAME: string; COLLATION_NAME: string }>`
@@ -232,12 +254,12 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
             FROM information_schema.columns
             WHERE table_schema = DATABASE()
               AND table_name = 'messageStoreMessages'
-              AND column_name IN ('contextId', 'protocolPath')
+              AND column_name IN ('contextId', 'modulePath')
             ORDER BY column_name
           `.execute(db);
           expect(columns.rows).toEqual([
             { COLUMN_NAME: 'contextId', COLLATION_NAME: 'ascii_bin' },
-            { COLUMN_NAME: 'protocolPath', COLLATION_NAME: 'utf8mb4_0900_bin' },
+            { COLUMN_NAME: 'modulePath', COLLATION_NAME: 'utf8mb4_0900_bin' },
           ]);
 
           const indexColumns = await sql<{ prefixLength: number | null }>`
@@ -254,12 +276,12 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
             SELECT column_name, collation_name
             FROM information_schema.columns
             WHERE table_name = 'messageStoreMessages'
-              AND column_name IN ('contextId', 'protocolPath')
+              AND column_name IN ('contextId', 'modulePath')
             ORDER BY column_name
           `.execute(db);
           expect(columns.rows).toEqual([
             { column_name: 'contextId', collation_name: 'C' },
-            { column_name: 'protocolPath', collation_name: 'C' },
+            { column_name: 'modulePath', collation_name: 'C' },
           ]);
         }
       });

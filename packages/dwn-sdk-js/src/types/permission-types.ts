@@ -133,12 +133,12 @@ export type PermissionRevocationData = {
 /**
  * The data model for a permission scope.
  */
-export type PermissionScope = ProtocolPermissionScope | MessagesPermissionScope | RecordsPermissionScope;
+export type PermissionScope = ModulePermissionScope | MessagesPermissionScope | RecordsPermissionScope;
 
-export type ProtocolPermissionScope = {
-  interface: DwnInterfaceName.Protocols;
+export type ModulePermissionScope = {
+  interface: DwnInterfaceName.Modules;
   method: DwnMethodName.Configure | DwnMethodName.Query;
-  protocol?: string;
+  module?: string;
 };
 
 /**
@@ -147,16 +147,16 @@ export type ProtocolPermissionScope = {
  * `Read` is the only valid method and acts as a unified scope that authorizes
  * `MessagesRead`, `MessagesQuery`, and `MessagesSubscribe` operations.
  * Context- and path-scoped grants expose matching signed messages and metadata,
- * but not record payload bytes or protocol-support messages.
+ * but not record payload bytes or module-support messages.
  */
 export type MessagesPermissionScope = {
   interface: DwnInterfaceName.Messages;
   method: DwnMethodName.Read;
-  protocol?: string;
-  /** May only be present when `protocol` is defined and `protocolPath` is undefined */
+  module?: string;
+  /** May only be present when `module` is defined and `modulePath` is undefined */
   contextId?: string;
-  /** May only be present when `protocol` is defined and `contextId` is undefined */
-  protocolPath?: string;
+  /** May only be present when `module` is defined and `contextId` is undefined */
+  modulePath?: string;
 };
 
 /**
@@ -168,11 +168,11 @@ export type MessagesPermissionScope = {
 export type RecordsPermissionScope = {
   interface: DwnInterfaceName.Records;
   method: DwnMethodName.Read | DwnMethodName.Write | DwnMethodName.Delete;
-  protocol: string;
-  /** May only be present when `protocol` is defined and `protocolPath` is undefined */
+  module: string;
+  /** May only be present when `module` is defined and `modulePath` is undefined */
   contextId?: string;
-  /** May only be present when `protocol` is defined and `contextId` is undefined */
-  protocolPath?: string;
+  /** May only be present when `module` is defined and `contextId` is undefined */
+  modulePath?: string;
 };
 
 export enum PermissionConditionPublication {

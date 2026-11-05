@@ -1,76 +1,76 @@
-import type { ProtocolDefinition, ProtocolRuleSet } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet } from '@enbox/dwn-sdk-js';
 
-import { parseCrossProtocolRef } from '@enbox/dwn-sdk-js';
+import { parseCrossModuleRef } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
-export type ProtocolClosureEdges = {
-  dependencyProtocols: string[];
-  usesProtocols: string[];
+export type ModuleClosureEdges = {
+  dependencyModules: string[];
+  usesModules: string[];
 };
 
 /**
- * Extracts the protocol-level closure edges a retained protocol definition can
+ * Extracts the module-level closure edges a retained module definition can
  * introduce for sync registration validation.
  */
-export function getProtocolClosureEdges(definition: ProtocolDefinition): ProtocolClosureEdges {
-  const usesProtocols = sortedUnique(Object.values(definition.uses ?? {}));
-  const dependencyProtocols = sortedUnique(collectDependencyProtocols(definition));
+export function getModuleClosureEdges(definition: ModuleDefinition): ModuleClosureEdges {
+  const usesModules = sortedUnique(Object.values(definition.uses ?? {}));
+  const dependencyModules = sortedUnique(collectDependencyModules(definition));
 
-  return { dependencyProtocols, usesProtocols };
+  return { dependencyModules, usesModules };
 }
 
-function collectDependencyProtocols(definition: ProtocolDefinition): string[] {
-  const protocols: string[] = [];
+function collectDependencyModules(definition: ModuleDefinition): string[] {
+  const modules: string[] = [];
   for (const ruleSet of Object.values(definition.structure)) {
-    collectDependencyProtocolsFromRuleSet(ruleSet, definition.uses ?? {}, protocols);
+    collectDependencyModulesFromRuleSet(ruleSet, definition.uses ?? {}, modules);
   }
 
-  return protocols;
+  return modules;
 }
 
-function collectDependencyProtocolsFromRuleSet(
-  ruleSet: ProtocolRuleSet,
+function collectDependencyModulesFromRuleSet(
+  ruleSet: ModuleRuleSet,
   uses: Record<string, string>,
-  protocols: string[],
+  modules: string[],
 ): void {
-  collectReferencedProtocol(ruleSet.$ref, uses, protocols);
+  collectReferencedModule(ruleSet.$ref, uses, modules);
 
   for (const actionRule of ruleSet.$actions ?? []) {
-    collectReferencedProtocol(actionRule.role, uses, protocols);
-    collectReferencedProtocol(actionRule.of, uses, protocols);
+    collectReferencedModule(actionRule.role, uses, modules);
+    collectReferencedModule(actionRule.of, uses, modules);
   }
 
   for (const [key, value] of Object.entries(ruleSet)) {
-    if (key.startsWith('$') || !isProtocolRuleSet(value)) {
+    if (key.startsWith('$') || !isModuleRuleSet(value)) {
       continue;
     }
 
-    collectDependencyProtocolsFromRuleSet(value, uses, protocols);
+    collectDependencyModulesFromRuleSet(value, uses, modules);
   }
 }
 
-function collectReferencedProtocol(
+function collectReferencedModule(
   ref: string | undefined,
   uses: Record<string, string>,
-  protocols: string[],
+  modules: string[],
 ): void {
   if (ref === undefined) {
     return;
   }
 
-  const parsed = parseCrossProtocolRef(ref);
+  const parsed = parseCrossModuleRef(ref);
   if (parsed === undefined) {
     return;
   }
 
-  const protocol = uses[parsed.alias];
-  if (protocol !== undefined) {
-    protocols.push(protocol);
+  const module = uses[parsed.alias];
+  if (module !== undefined) {
+    modules.push(module);
   }
 }
 
-function isProtocolRuleSet(value: unknown): value is ProtocolRuleSet {
+function isModuleRuleSet(value: unknown): value is ModuleRuleSet {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

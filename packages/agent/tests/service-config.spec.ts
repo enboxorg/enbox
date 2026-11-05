@@ -12,7 +12,7 @@ import { DwnInterface } from '../src/types/dwn.js';
 import {
   isServiceConfigNoticeDelivery,
   publishServiceConfigNotice,
-  ServiceConfigProtocolDefinition,
+  ServiceConfigModuleDefinition,
 } from '../src/service-config.js';
 
 const OWNER_DID = 'did:example:alice';
@@ -20,14 +20,14 @@ const OWNER_DID = 'did:example:alice';
 function createAgent(): {
   agent: EnboxPlatformAgent;
   processRequest: sinon.SinonStub;
-  protocolMessage: GenericMessage;
+  moduleMessage: GenericMessage;
   recordMessage: GenericMessage;
   sendDwnRequest: sinon.SinonStub;
   } {
-  const protocolMessage = { descriptor: { interface: 'Protocols', method: 'Configure' } } as GenericMessage;
+  const moduleMessage = { descriptor: { interface: 'Modules', method: 'Configure' } } as GenericMessage;
   const recordMessage = { descriptor: { interface: 'Records', method: 'Write' } } as GenericMessage;
   const processRequest = sinon.stub().callsFake(async (request: { messageType: DwnInterface }) => ({
-    message : request.messageType === DwnInterface.ProtocolsConfigure ? protocolMessage : recordMessage,
+    message : request.messageType === DwnInterface.ModulesConfigure ? moduleMessage : recordMessage,
     reply   : { status: { code: 202, detail: 'Accepted' } },
   }));
   const sendDwnRequest = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
@@ -36,7 +36,7 @@ function createAgent(): {
     rpc : { sendDwnRequest },
   } as unknown as EnboxPlatformAgent;
 
-  return { agent, processRequest, protocolMessage, recordMessage, sendDwnRequest };
+  return { agent, processRequest, moduleMessage, recordMessage, sendDwnRequest };
 }
 
 describe('service-config notice', () => {
@@ -52,9 +52,9 @@ describe('service-config notice', () => {
     const requests = processRequest.getCalls().map(call => call.args[0]);
     const writes = requests.filter(request => request.messageType === DwnInterface.RecordsWrite);
     expect(requests.map(request => request.messageType)).toEqual([
-      DwnInterface.ProtocolsConfigure,
+      DwnInterface.ModulesConfigure,
       DwnInterface.RecordsWrite,
-      DwnInterface.ProtocolsConfigure,
+      DwnInterface.ModulesConfigure,
       DwnInterface.RecordsWrite,
     ]);
     expect(writes).toHaveLength(2);
@@ -64,9 +64,9 @@ describe('service-config notice', () => {
     }
   });
 
-  it('configures the protocol before sending the record to every former and current endpoint', async () => {
+  it('configures the module before sending the record to every former and current endpoint', async () => {
     const {
-      agent, protocolMessage, recordMessage, sendDwnRequest,
+      agent, moduleMessage, recordMessage, sendDwnRequest,
     } = createAgent();
     const formerEndpoints = ['https://old.example/dwn', 'https://shared.example/dwn'];
     const currentEndpoints = ['https://shared.example/dwn', 'https://new.example/dwn'];
@@ -81,7 +81,7 @@ describe('service-config notice', () => {
     ]) {
       const calls = sendDwnRequest.getCalls().filter(call => call.args[0].dwnUrl === endpoint);
       expect(calls).toHaveLength(2);
-      expect(calls[0].args[0].message).toBe(protocolMessage);
+      expect(calls[0].args[0].message).toBe(moduleMessage);
       expect(calls[0].args[0].data).toBeUndefined();
       expect(calls[1].args[0].message).toBe(recordMessage);
       expect(calls[1].args[0].data).toBeInstanceOf(Blob);
@@ -95,11 +95,11 @@ describe('service-config notice', () => {
       remoteEndpoint : 'https://old.example/dwn',
       messageCid     : 'bafy-notice',
       descriptor     : {
-        interface    : DwnInterfaceName.Records,
-        method       : DwnMethodName.Write,
-        protocol     : ServiceConfigProtocolDefinition.protocol,
-        protocolPath : 'serviceConfig',
-        author       : OWNER_DID,
+        interface  : DwnInterfaceName.Records,
+        method     : DwnMethodName.Write,
+        module     : ServiceConfigModuleDefinition.module,
+        modulePath : 'serviceConfig',
+        author     : OWNER_DID,
       },
     };
 
@@ -107,10 +107,10 @@ describe('service-config notice', () => {
     const mismatches: SyncEvent[] = [
       { ...event, tenantDid: 'did:example:bob' },
       { ...event, descriptor: { ...event.descriptor, author: 'did:example:bob' } },
-      { ...event, descriptor: { ...event.descriptor, interface: DwnInterfaceName.Protocols } },
+      { ...event, descriptor: { ...event.descriptor, interface: DwnInterfaceName.Modules } },
       { ...event, descriptor: { ...event.descriptor, method: DwnMethodName.Delete } },
-      { ...event, descriptor: { ...event.descriptor, protocol: 'https://example.com/other' } },
-      { ...event, descriptor: { ...event.descriptor, protocolPath: 'other' } },
+      { ...event, descriptor: { ...event.descriptor, module: 'https://example.com/other' } },
+      { ...event, descriptor: { ...event.descriptor, modulePath: 'other' } },
       { type: 'identity:registration-change', tenantDid: OWNER_DID },
     ];
     for (const mismatch of mismatches) {

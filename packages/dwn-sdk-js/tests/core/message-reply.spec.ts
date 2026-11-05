@@ -20,7 +20,7 @@ describe('Message Reply', () => {
 
   it('carries the error code and info of a DwnError constructed with an info bag', () => {
     const error = new DwnError(
-      DwnErrorCode.ProtocolAuthorizationSquashBackstop,
+      DwnErrorCode.ModuleAuthorizationSquashBackstop,
       'some prose detail',
       { info: { squashFloorTimestamp: '2026-01-01T00:00:00.000000Z', someCount: 2, someFlag: true } }
     );
@@ -29,17 +29,17 @@ describe('Message Reply', () => {
 
     expect(response.status.code).toBe(409);
     expect(response.status.detail).toContain('some prose detail');
-    expect(response.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+    expect(response.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
     expect(response.status.info).toEqual({ squashFloorTimestamp: '2026-01-01T00:00:00.000000Z', someCount: 2, someFlag: true });
   });
 
   it('carries the error code of a DwnError without an info bag and omits `info`', () => {
-    const error = new DwnError(DwnErrorCode.ProtocolAuthorizationMissingRuleSet, 'some prose detail');
+    const error = new DwnError(DwnErrorCode.ModuleAuthorizationMissingRuleSet, 'some prose detail');
 
     const response = messageReplyFromError(error, 400);
 
     expect(response.status.code).toBe(400);
-    expect(response.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
+    expect(response.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
     expect(response.status.info).toBeUndefined();
     expect('info' in response.status).toBe(false);
   });

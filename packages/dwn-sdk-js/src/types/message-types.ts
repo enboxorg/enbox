@@ -59,8 +59,8 @@ export type DelegatedGrantRecordsWriteMessage = {
   descriptor: {
     interface: DwnInterfaceName.Records;
     method: DwnMethodName.Write;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient?: string;
     schema?: string;
     parentId?: string;
@@ -89,9 +89,9 @@ export type GenericSignaturePayload = {
   delegatedGrantId?: string;
 
   /**
-   * Used in the Records interface to authorize role-authorized actions for protocol records.
+   * Used in the Records interface to authorize role-authorized actions for module records.
    */
-  protocolRole?: string;
+  moduleRole?: string;
 };
 
 /**

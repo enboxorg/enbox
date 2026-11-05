@@ -5,7 +5,7 @@ export type FetchPermissionsParams = {
   target: string;
   grantee?: string;
   grantor?: string;
-  protocol?: string;
+  module?: string;
   remote?: boolean;
   /** Whether to filter out revoked grants. Defaults to `false`. */
   checkRevoked?: boolean;
@@ -14,7 +14,7 @@ export type FetchPermissionsParams = {
 export type FetchPermissionRequestParams = {
   author: string;
   target: string;
-  protocol?: string;
+  module?: string;
   remote?: boolean;
 };
 
@@ -75,8 +75,8 @@ export type GetPermissionParams = {
   connectedDid: string;
   delegateDid: string;
   messageType: DwnInterface;
-  protocol?: string;
-  protocolPath?: string;
+  module?: string;
+  modulePath?: string;
   contextId?: string;
   /** Whether to bypass cached grant catalogs and force a fresh grant lookup. */
   forceRefresh?: boolean;
@@ -85,19 +85,19 @@ export type GetPermissionParams = {
 
 export interface PermissionsApi {
   /**
-   * Get the permission grant for a given author, target, and protocol. To be used when authoring delegated requests.
+   * Get the permission grant for a given author, target, and module. To be used when authoring delegated requests.
    *
    * @throws PermissionGrantNotFoundError if no active grant matches the requested permission scope.
    */
   getPermissionForRequest: (params: GetPermissionParams) => Promise<PermissionGrantEntry>;
 
   /**
-   * Fetch all grants for a given author and target, optionally filtered by a specific grantee, grantor, or protocol.
+   * Fetch all grants for a given author and target, optionally filtered by a specific grantee, grantor, or module.
    */
   fetchGrants: (params: FetchPermissionsParams) => Promise<PermissionGrantEntry[]>;
 
   /**
-   * Fetch all requests for a given author and target, optionally filtered by a specific protocol.
+   * Fetch all requests for a given author and target, optionally filtered by a specific module.
    */
   fetchRequests: (params: FetchPermissionRequestParams) => Promise<PermissionRequestEntry[]>;
 

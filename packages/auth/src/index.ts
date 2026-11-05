@@ -21,7 +21,7 @@
  * const auth = await AuthManager.create({
  *   connectHandler: BrowserConnectHandler(),
  * });
- * const session = await auth.connect({ protocols: [NotesProtocol] });
+ * const session = await auth.connect({ modules: [NotesModule] });
  * ```
  *
  * @packageDocumentation

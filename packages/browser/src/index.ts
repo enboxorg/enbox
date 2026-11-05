@@ -11,10 +11,10 @@
  *   BrowserConnectHandler, createConnectionStore,
  *   defineApplicationManifest,
  * } from '@enbox/browser';
- * import { MyProtocol } from './my-protocol.js';
+ * import { MyModule } from './my-module.js';
  *
  * const store = createConnectionStore({
- *   application    : defineApplicationManifest({ protocols: [MyProtocol] }),
+ *   application    : defineApplicationManifest({ modules: [MyModule] }),
  *   connectHandler : BrowserConnectHandler({ appName: 'My App' }),
  * });
  * const snapshot = await store.connect();
@@ -29,7 +29,7 @@
 
 // ─── Re-exports from @enbox/api ─────────────────────────────────
 //
-// The high-level Enbox API: DWN records and protocols.
+// The high-level Enbox API: DWN records and modules.
 
 export * from '@enbox/api';
 export { createApplication, getApplicationWalletOptions } from './application.js';
@@ -95,16 +95,16 @@ export type {
 // ─── Convenience re-exports for dapps ───────────────────────────
 //
 // So that most browser dapps only need `@enbox/browser` (plus
-// `@enbox/protocols` for shared protocol definitions). These surface the
+// `@enbox/modules` for shared module definitions). These surface the
 // symbols dapps most commonly reached into sibling packages for; anything
 // more specialized is still available by importing the underlying package
 // directly.
 
-// Public-profile read/cache layer (from @enbox/protocols): fetch other
+// Public-profile read/cache layer (from @enbox/modules): fetch other
 // users' published profiles (displayName + avatar/hero) from their DWNs
 // with caching, retries, negative caching, and refcounted subscriptions.
 // Works over a connected records surface and over `Enbox.anonymous()`.
-export { createProfileReader, isRetryableProfileReadStatus } from '@enbox/protocols';
+export { createProfileReader, isRetryableProfileReadStatus } from '@enbox/modules';
 export type {
   ProfileEntryStatus,
   ProfileFieldSnapshot,
@@ -120,7 +120,7 @@ export type {
   ProfileSnapshot,
   ProfileWatchListener,
   PublicProfile,
-} from '@enbox/protocols';
+} from '@enbox/modules';
 
 // DWN interface enum for typing agent requests (from @enbox/agent).
 export { DwnInterface } from '@enbox/agent';
@@ -140,7 +140,7 @@ export type {
   SyncIdentityStatus,
 } from '@enbox/agent';
 
-// Common DWN primitives for record queries, permission scopes, and protocol
+// Common DWN primitives for record queries, permission scopes, and module
 // typing (from @enbox/dwn-sdk-js).
 export { DateSort, DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
-export type { ProtocolActionRule, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+export type { ModuleActionRule, ModuleDefinition } from '@enbox/dwn-sdk-js';

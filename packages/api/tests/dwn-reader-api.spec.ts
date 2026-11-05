@@ -1,6 +1,6 @@
 import type { AnonymousDwnApi } from '@enbox/agent';
 import type {
-  ProtocolsQueryReply,
+  ModulesQueryReply,
   RecordsCountReply,
   RecordsQueryReply,
   RecordsReadReply,
@@ -23,7 +23,7 @@ function createAnonymousDwnStub(): sinon.SinonStubbedInstance<AnonymousDwnApi> {
     recordsRead      : sinon.stub(),
     recordsSubscribe : sinon.stub(),
     recordsCount     : sinon.stub(),
-    protocolsQuery   : sinon.stub(),
+    modulesQuery     : sinon.stub(),
   } as unknown as sinon.SinonStubbedInstance<AnonymousDwnApi>;
 }
 
@@ -38,8 +38,8 @@ function createMockRecordsWriteMessage(overrides: Partial<RecordsWriteMessage> =
     descriptor    : {
       interface        : 'Records' as any,
       method           : 'Write' as any,
-      protocol         : 'https://blog.example/posts',
-      protocolPath     : 'post',
+      module           : 'https://blog.example/posts',
+      modulePath       : 'post',
       schema           : 'https://blog.example/schemas/post',
       dataFormat       : 'application/json',
       dataCid          : 'bafyrei-test-cid',
@@ -77,15 +77,15 @@ describe('DwnReaderApi', () => {
 
       const { records, status, cursor } = await readerApi.records.query({
         from   : targetDid,
-        filter : { protocol: 'https://blog.example/posts', protocolPath: 'post' },
+        filter : { module: 'https://blog.example/posts', modulePath: 'post' },
       });
 
       expect(status.code).toBe(200);
       expect(records).toHaveLength(1);
       expect(records[0]).toBeInstanceOf(ReadOnlyRecord);
       expect(records[0].id).toBe('test-record-id');
-      expect(records[0].protocol).toBe('https://blog.example/posts');
-      expect(records[0].protocolPath).toBe('post');
+      expect(records[0].module).toBe('https://blog.example/posts');
+      expect(records[0].modulePath).toBe('post');
       expect(records[0].published).toBe(true);
       expect(records[0].dataFormat).toBe('application/json');
       expect(records[0].dataSize).toBe(256);
@@ -103,7 +103,7 @@ describe('DwnReaderApi', () => {
 
       await readerApi.records.query({
         from       : targetDid,
-        filter     : { protocol: 'https://example.com' },
+        filter     : { module: 'https://example.com' },
         dateSort   : 'createdDescending' as any,
         pagination : { limit: 25 },
       });
@@ -125,7 +125,7 @@ describe('DwnReaderApi', () => {
 
       const { records, status } = await readerApi.records.query({
         from   : targetDid,
-        filter : { protocol: 'https://nonexistent.example' },
+        filter : { module: 'https://nonexistent.example' },
       });
 
       expect(status.code).toBe(200);
@@ -200,7 +200,7 @@ describe('DwnReaderApi', () => {
 
       const { count, status } = await readerApi.records.count({
         from   : targetDid,
-        filter : { protocol: 'https://blog.example/posts' },
+        filter : { module: 'https://blog.example/posts' },
       });
 
       expect(status.code).toBe(200);
@@ -208,49 +208,49 @@ describe('DwnReaderApi', () => {
     });
   });
 
-  describe('protocols.query()', () => {
-    it('should query published protocols and return definitions', async () => {
+  describe('modules.query()', () => {
+    it('should query published modules and return definitions', async () => {
       anonStub = createAnonymousDwnStub();
       readerApi = new DwnReaderApi(anonStub as unknown as AnonymousDwnApi);
 
       const mockDefinition = {
-        protocol  : 'https://blog.example/posts',
+        module    : 'https://blog.example/posts',
         published : true,
         types     : { post: { schema: 'https://blog.example/schemas/post' } },
         structure : { post: {} },
       };
 
-      anonStub.protocolsQuery.resolves({
+      anonStub.modulesQuery.resolves({
         status  : { code: 200, detail: 'OK' },
         entries : [{ descriptor: { definition: mockDefinition } }],
-      } as ProtocolsQueryReply);
+      } as ModulesQueryReply);
 
-      const { protocols, status } = await readerApi.protocols.query({
+      const { modules, status } = await readerApi.modules.query({
         from: targetDid,
       });
 
       expect(status.code).toBe(200);
-      expect(protocols).toHaveLength(1);
-      expect(protocols[0].protocol).toBe('https://blog.example/posts');
-      expect(protocols[0].published).toBe(true);
+      expect(modules).toHaveLength(1);
+      expect(modules[0].module).toBe('https://blog.example/posts');
+      expect(modules[0].published).toBe(true);
     });
 
     it('should pass filter to AnonymousDwnApi', async () => {
       anonStub = createAnonymousDwnStub();
       readerApi = new DwnReaderApi(anonStub as unknown as AnonymousDwnApi);
 
-      anonStub.protocolsQuery.resolves({
+      anonStub.modulesQuery.resolves({
         status  : { code: 200, detail: 'OK' },
         entries : [],
-      } as ProtocolsQueryReply);
+      } as ModulesQueryReply);
 
-      await readerApi.protocols.query({
+      await readerApi.modules.query({
         from   : targetDid,
-        filter : { protocol: 'https://blog.example/posts' },
+        filter : { module: 'https://blog.example/posts' },
       });
 
-      const callArgs = anonStub.protocolsQuery.args[0];
-      expect(callArgs[1].filter).toEqual({ protocol: 'https://blog.example/posts' });
+      const callArgs = anonStub.modulesQuery.args[0];
+      expect(callArgs[1].filter).toEqual({ module: 'https://blog.example/posts' });
     });
   });
 });
@@ -285,8 +285,8 @@ describe('ReadOnlyRecord', () => {
 
     expect(record.id).toBe('record-123');
     expect(record.contextId).toBe('ctx-456');
-    expect(record.protocol).toBe('https://blog.example/posts');
-    expect(record.protocolPath).toBe('post');
+    expect(record.module).toBe('https://blog.example/posts');
+    expect(record.modulePath).toBe('post');
     expect(record.schema).toBe('https://blog.example/schemas/post');
     expect(record.dataFormat).toBe('application/json');
     expect(record.dataCid).toBe('bafyrei-test-cid');
@@ -439,7 +439,7 @@ describe('ReadOnlyRecord', () => {
 
     const json = record.toJSON();
     expect(json.recordId).toBe('json-test');
-    expect(json.protocol).toBe('https://blog.example/posts');
+    expect(json.module).toBe('https://blog.example/posts');
     expect(json.timestamp).toBe('2024-06-15T10:00:00.000000Z');
   });
 

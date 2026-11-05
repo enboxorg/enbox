@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -54,9 +54,9 @@ export function testRecordsSquash(): void {
       await dwn.close();
     });
 
-    // shared protocol definition for squash tests
-    const squashProtocolDefinition: ProtocolDefinition = {
-      protocol  : 'http://squash-test.xyz',
+    // shared module definition for squash tests
+    const squashModuleDefinition: ModuleDefinition = {
+      module    : 'http://squash-test.xyz',
       published : true,
       types     : {
         document : {},
@@ -74,57 +74,57 @@ export function testRecordsSquash(): void {
       }
     };
 
-    // helper to install the squash protocol and create a parent document
-    async function setupProtocolAndDocument(
+    // helper to install the squash module and create a parent document
+    async function setupModuleAndDocument(
       alice: Awaited<ReturnType<typeof TestDataGenerator.generateDidKeyPersona>>,
-    ): Promise<{ protocol: string; documentContextId: string }> {
-      const protocol = squashProtocolDefinition.protocol;
+    ): Promise<{ module: string; documentContextId: string }> {
+      const module = squashModuleDefinition.module;
 
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : squashProtocolDefinition,
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : squashModuleDefinition,
       });
 
-      const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+      const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
       expect(configReply.status.code).toBe(202);
 
       // create a parent document
       const document = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol,
-        protocolPath : 'document',
+        author     : alice,
+        module,
+        modulePath : 'document',
       });
 
       const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
       expect(docReply.status.code).toBe(202);
 
       return {
-        protocol,
+        module,
         documentContextId: document.message.contextId,
       };
     }
 
-    describe('protocol definition validation', () => {
-      it('should accept a protocol definition with $squash: true', async () => {
+    describe('module definition validation', () => {
+      it('should accept a module definition with $squash: true', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : squashProtocolDefinition,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : squashModuleDefinition,
         });
 
-        const reply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const reply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(reply.status.code).toBe(202);
       });
     });
 
     describe('squash eligibility', () => {
-      it('should reject squash write at a protocol path without $squash: true', async () => {
+      it('should reject squash write at a module path without $squash: true', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // install a protocol WITHOUT $squash
-        const noSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://no-squash.xyz',
+        // install a module WITHOUT $squash
+        const noSquashModule: ModuleDefinition = {
+          module    : 'http://no-squash.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -134,32 +134,32 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : noSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : noSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // attempt a squash write — should be rejected
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : noSquashProtocol.protocol,
-          protocolPath : 'note',
-          squash       : true,
+          author     : alice,
+          module     : noSquashModule.module,
+          modulePath : 'note',
+          squash     : true,
         });
 
         const reply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashNotEnabled);
+        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashNotEnabled);
       });
 
       it('should reject squash on non-initial writes (updates)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // install squash protocol but on a path that allows updates (for testing purposes)
-        const updatableSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://updatable-squash.xyz',
+        // install squash module but on a path that allows updates (for testing purposes)
+        const updatableSquashModule: ModuleDefinition = {
+          module    : 'http://updatable-squash.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -170,18 +170,18 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : updatableSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : updatableSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create the initial record (non-squash)
         const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : updatableSquashProtocol.protocol,
-          protocolPath : 'note',
+          author     : alice,
+          module     : updatableSquashModule.module,
+          modulePath : 'note',
         });
         const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
         expect(writeReply.status.code).toBe(202);
@@ -207,7 +207,7 @@ export function testRecordsSquash(): void {
     describe('squash processing', () => {
       it('should create a squash record and delete all older sibling records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create several patch records
         const patches = [];
@@ -215,8 +215,8 @@ export function testRecordsSquash(): void {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const patch = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'document/patch',
+            module,
+            modulePath       : 'document/patch',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -231,8 +231,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -246,9 +246,9 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath : 'document/patch',
-            contextId    : documentContextId,
+            module,
+            modulePath : 'document/patch',
+            contextId  : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -259,14 +259,14 @@ export function testRecordsSquash(): void {
 
       it('should not delete sibling records that are newer than the squash', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a patch record before the squash
         const beforeTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
         const patchBefore = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : beforeTimestamp,
           dateCreated      : beforeTimestamp,
@@ -278,8 +278,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -292,8 +292,8 @@ export function testRecordsSquash(): void {
         const afterTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const patchAfter = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : afterTimestamp,
           dateCreated      : afterTimestamp,
@@ -305,9 +305,9 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath : 'document/patch',
-            contextId    : documentContextId,
+            module,
+            modulePath : 'document/patch',
+            contextId  : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -322,15 +322,15 @@ export function testRecordsSquash(): void {
 
       it('should support recursive squash (newer squash deletes older squash)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create first batch of patches
         for (let i = 0; i < 3; i++) {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const patch = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'document/patch',
+            module,
+            modulePath       : 'document/patch',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -343,8 +343,8 @@ export function testRecordsSquash(): void {
         const firstSquashTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const firstSquash = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : firstSquashTimestamp,
           dateCreated      : firstSquashTimestamp,
@@ -358,8 +358,8 @@ export function testRecordsSquash(): void {
           const timestamp = Time.createOffsetTimestamp({ seconds: 6 + i });
           const patch = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'document/patch',
+            module,
+            modulePath       : 'document/patch',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -372,8 +372,8 @@ export function testRecordsSquash(): void {
         const secondSquashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const secondSquash = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : secondSquashTimestamp,
           dateCreated      : secondSquashTimestamp,
@@ -386,9 +386,9 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath : 'document/patch',
-            contextId    : documentContextId,
+            module,
+            modulePath : 'document/patch',
+            contextId  : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -401,14 +401,14 @@ export function testRecordsSquash(): void {
     describe('squash backstop', () => {
       it('should reject writes older than the most recent squash (temporal floor)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a squash record
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -421,31 +421,31 @@ export function testRecordsSquash(): void {
         const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const olderRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : olderTimestamp,
           dateCreated      : olderTimestamp,
         });
         const olderReply = await dwn.processMessage(alice.did, olderRecord.message, { dataStream: olderRecord.dataStream });
         expect(olderReply.status.code).toBe(409);
-        expect(olderReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(olderReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashBackstop);
 
         // the reply status carries the error code and the squash floor timestamp as machine-readable data
-        expect(olderReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(olderReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
         expect(olderReply.status.info).toEqual({ squashFloorTimestamp: squashTimestamp });
       });
 
       it('should allow writes newer than the most recent squash', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a squash record
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -458,8 +458,8 @@ export function testRecordsSquash(): void {
         const newerTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const newerRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : newerTimestamp,
           dateCreated      : newerTimestamp,
@@ -470,14 +470,14 @@ export function testRecordsSquash(): void {
 
       it('should reject a squash record that is older than an existing squash', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a squash record with a later timestamp
         const laterTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const laterSquash = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : laterTimestamp,
           dateCreated      : laterTimestamp,
@@ -490,8 +490,8 @@ export function testRecordsSquash(): void {
         const earlierTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const earlierSquash = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : earlierTimestamp,
           dateCreated      : earlierTimestamp,
@@ -499,7 +499,7 @@ export function testRecordsSquash(): void {
         });
         const earlierReply = await dwn.processMessage(alice.did, earlierSquash.message, { dataStream: earlierSquash.dataStream });
         expect(earlierReply.status.code).toBe(409);
-        expect(earlierReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(earlierReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashBackstop);
       });
     });
 
@@ -509,8 +509,8 @@ export function testRecordsSquash(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        const roleSeparatedSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://role-separated-squash.xyz',
+        const roleSeparatedSquashModule: ModuleDefinition = {
+          module    : 'http://role-separated-squash.xyz',
           published : true,
           types     : {
             document : {},
@@ -541,18 +541,18 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : roleSeparatedSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : roleSeparatedSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create parent document
         const document = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : roleSeparatedSquashProtocol.protocol,
-          protocolPath : 'document',
+          author     : alice,
+          module     : roleSeparatedSquashModule.module,
+          modulePath : 'document',
         });
         const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
         expect(docReply.status.code).toBe(202);
@@ -562,8 +562,8 @@ export function testRecordsSquash(): void {
         const editorRole = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           recipient       : bob.did,
-          protocol        : roleSeparatedSquashProtocol.protocol,
-          protocolPath    : 'document/editor',
+          module          : roleSeparatedSquashModule.module,
+          modulePath      : 'document/editor',
           parentContextId : documentContextId,
         });
         const editorReply = await dwn.processMessage(alice.did, editorRole.message, { dataStream: editorRole.dataStream });
@@ -572,8 +572,8 @@ export function testRecordsSquash(): void {
         const adminRole = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           recipient       : carol.did,
-          protocol        : roleSeparatedSquashProtocol.protocol,
-          protocolPath    : 'document/admin',
+          module          : roleSeparatedSquashModule.module,
+          modulePath      : 'document/admin',
           parentContextId : documentContextId,
         });
         const adminReply = await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream });
@@ -584,9 +584,9 @@ export function testRecordsSquash(): void {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const patch = await TestDataGenerator.generateRecordsWrite({
             author           : bob,
-            protocol         : roleSeparatedSquashProtocol.protocol,
-            protocolPath     : 'document/patch',
-            protocolRole     : 'document/editor',
+            module           : roleSeparatedSquashModule.module,
+            modulePath       : 'document/patch',
+            moduleRole       : 'document/editor',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -600,9 +600,9 @@ export function testRecordsSquash(): void {
         const editorSquashData = TestDataGenerator.randomBytes(64);
         const bobSquash = await RecordsWrite.create({
           signer           : Jws.createSigner(bob),
-          protocol         : roleSeparatedSquashProtocol.protocol,
-          protocolPath     : 'document/patch',
-          protocolRole     : 'document/editor',
+          module           : roleSeparatedSquashModule.module,
+          modulePath       : 'document/patch',
+          moduleRole       : 'document/editor',
           parentContextId  : documentContextId,
           dataFormat       : 'application/json',
           data             : editorSquashData,
@@ -615,16 +615,16 @@ export function testRecordsSquash(): void {
           alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(editorSquashData) }
         );
         expect(bobSquashReply.status.code).toBe(401);
-        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
         // admin squash is authorized by the explicit action
         const adminSquashTimestamp = Time.createOffsetTimestamp({ seconds: 20 });
         const adminSquashData = TestDataGenerator.randomBytes(64);
         const carolSquash = await RecordsWrite.create({
           signer           : Jws.createSigner(carol),
-          protocol         : roleSeparatedSquashProtocol.protocol,
-          protocolPath     : 'document/patch',
-          protocolRole     : 'document/admin',
+          module           : roleSeparatedSquashModule.module,
+          modulePath       : 'document/patch',
+          moduleRole       : 'document/admin',
           parentContextId  : documentContextId,
           dataFormat       : 'application/json',
           data             : adminSquashData,
@@ -642,9 +642,9 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol     : roleSeparatedSquashProtocol.protocol,
-            protocolPath : 'document/patch',
-            contextId    : documentContextId,
+            module     : roleSeparatedSquashModule.module,
+            modulePath : 'document/patch',
+            contextId  : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -655,9 +655,9 @@ export function testRecordsSquash(): void {
 
       it('should authorize squash via create fallback when no explicit squash rule exists', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
-        // the default squash protocol only has 'create' and 'read' actions — no explicit 'squash' rule
+        // the default squash module only has 'create' and 'read' actions — no explicit 'squash' rule
         // squash should fall back to create authorization
 
         // create some patches
@@ -665,8 +665,8 @@ export function testRecordsSquash(): void {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const patch = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'document/patch',
+            module,
+            modulePath       : 'document/patch',
             parentContextId  : documentContextId,
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
@@ -679,8 +679,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -698,8 +698,8 @@ export function testRecordsSquash(): void {
         // This test verifies that a non-squash record cannot be "updated" into a squash record.
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const updatableSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://immutable-squash-prop.xyz',
+        const updatableSquashModule: ModuleDefinition = {
+          module    : 'http://immutable-squash-prop.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -710,18 +710,18 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : updatableSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : updatableSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create a non-squash record
         const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : updatableSquashProtocol.protocol,
-          protocolPath : 'note',
+          author     : alice,
+          module     : updatableSquashModule.module,
+          modulePath : 'note',
         });
         const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
         expect(writeReply.status.code).toBe(202);
@@ -731,12 +731,12 @@ export function testRecordsSquash(): void {
       });
     });
 
-    describe('protocol definition validation — $squash: false', () => {
-      it('should reject a protocol definition with $squash: false at schema validation time', async () => {
+    describe('module definition validation — $squash: false', () => {
+      it('should reject a module definition with $squash: false at schema validation time', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const invalidProtocol: ProtocolDefinition = {
-          protocol  : 'http://squash-false-test.xyz',
+        const invalidModule: ModuleDefinition = {
+          module    : 'http://squash-false-test.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -748,20 +748,20 @@ export function testRecordsSquash(): void {
         };
 
         // $squash: false is rejected by JSON schema validation (enum: [true]) during message creation
-        await expect(TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : invalidProtocol,
+        await expect(TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : invalidModule,
         })).rejects.toThrow('must be equal to one of the allowed values');
       });
     });
 
     describe('root-level squash path', () => {
-      it('should squash records at a root-level protocol path (no parent context)', async () => {
+      it('should squash records at a root-level module path (no parent context)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // protocol with $squash at root level
-        const rootSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://root-squash.xyz',
+        // module with $squash at root level
+        const rootSquashModule: ModuleDefinition = {
+          module    : 'http://root-squash.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -772,11 +772,11 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : rootSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : rootSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create several root-level records
@@ -785,8 +785,8 @@ export function testRecordsSquash(): void {
           const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
           const record = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol         : rootSquashProtocol.protocol,
-            protocolPath     : 'note',
+            module           : rootSquashModule.module,
+            modulePath       : 'note',
             messageTimestamp : timestamp,
             dateCreated      : timestamp,
           });
@@ -799,8 +799,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : rootSquashProtocol.protocol,
-          protocolPath     : 'note',
+          module           : rootSquashModule.module,
+          modulePath       : 'note',
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
           squash           : true,
@@ -812,8 +812,8 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol     : rootSquashProtocol.protocol,
-            protocolPath : 'note',
+            module     : rootSquashModule.module,
+            modulePath : 'note',
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);
@@ -822,11 +822,11 @@ export function testRecordsSquash(): void {
         expect(queryReply.entries![0].recordId).toBe(squashRecord.message.recordId);
       });
 
-      it('should enforce backstop at a root-level protocol path', async () => {
+      it('should enforce backstop at a root-level module path', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const rootSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://root-squash-backstop.xyz',
+        const rootSquashModule: ModuleDefinition = {
+          module    : 'http://root-squash-backstop.xyz',
           published : true,
           types     : { note: {} },
           structure : {
@@ -837,19 +837,19 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : rootSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : rootSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create a squash
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : rootSquashProtocol.protocol,
-          protocolPath     : 'note',
+          module           : rootSquashModule.module,
+          modulePath       : 'note',
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
           squash           : true,
@@ -861,27 +861,27 @@ export function testRecordsSquash(): void {
         const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const olderRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : rootSquashProtocol.protocol,
-          protocolPath     : 'note',
+          module           : rootSquashModule.module,
+          modulePath       : 'note',
           messageTimestamp : olderTimestamp,
           dateCreated      : olderTimestamp,
         });
         const olderReply = await dwn.processMessage(alice.did, olderRecord.message, { dataStream: olderRecord.dataStream });
         expect(olderReply.status.code).toBe(409);
-        expect(olderReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(olderReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashBackstop);
       });
     });
 
     describe('cross-context isolation', () => {
       it('should not delete records under a different parent context', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId: docAContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId: docAContextId } = await setupModuleAndDocument(alice);
 
         // create a second document (different parent context)
         const docB = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol,
-          protocolPath : 'document',
+          author     : alice,
+          module,
+          modulePath : 'document',
         });
         const docBReply = await dwn.processMessage(alice.did, docB.message, { dataStream: docB.dataStream });
         expect(docBReply.status.code).toBe(202);
@@ -891,8 +891,8 @@ export function testRecordsSquash(): void {
         const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
         const patchA = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : docAContextId,
           messageTimestamp : patchTimestamp,
           dateCreated      : patchTimestamp,
@@ -903,8 +903,8 @@ export function testRecordsSquash(): void {
         // create patches under document B
         const patchB = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : docBContextId,
           messageTimestamp : patchTimestamp,
           dateCreated      : patchTimestamp,
@@ -916,8 +916,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashA = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : docAContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -930,9 +930,9 @@ export function testRecordsSquash(): void {
         const queryA = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath : 'document/patch',
-            contextId    : docAContextId,
+            module,
+            modulePath : 'document/patch',
+            contextId  : docAContextId,
           },
         });
         const queryAReply = await dwn.processMessage(alice.did, queryA.message);
@@ -944,9 +944,9 @@ export function testRecordsSquash(): void {
         const queryB = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath : 'document/patch',
-            contextId    : docBContextId,
+            module,
+            modulePath : 'document/patch',
+            contextId  : docBContextId,
           },
         });
         const queryBReply = await dwn.processMessage(alice.did, queryB.message);
@@ -959,15 +959,15 @@ export function testRecordsSquash(): void {
     describe('squash with large data (data store cleanup)', () => {
       it('should delete data from the data store for records with large data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a patch with data larger than maxDataSizeAllowedToBeEncoded so it goes to the data store
         const largeData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
         const patch = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : patchTimestamp,
           dateCreated      : patchTimestamp,
@@ -984,8 +984,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -1003,14 +1003,14 @@ export function testRecordsSquash(): void {
     describe('squash backstop — equal timestamps', () => {
       it('should reject a write whose messageTimestamp equals the most recent squash timestamp', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { protocol, documentContextId } = await setupProtocolAndDocument(alice);
+        const { module, documentContextId } = await setupModuleAndDocument(alice);
 
         // create a squash
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -1022,8 +1022,8 @@ export function testRecordsSquash(): void {
         // attempt a write with the exact same timestamp as the squash — should be rejected
         const equalTimestampRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol,
-          protocolPath     : 'document/patch',
+          module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -1032,8 +1032,8 @@ export function testRecordsSquash(): void {
           alice.did, equalTimestampRecord.message, { dataStream: equalTimestampRecord.dataStream }
         );
         expect(equalReply.status.code).toBe(409);
-        expect(equalReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
-        expect(equalReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+        expect(equalReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashBackstop);
+        expect(equalReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
         expect(equalReply.status.info).toEqual({ squashFloorTimestamp: squashTimestamp });
       });
     });
@@ -1043,10 +1043,10 @@ export function testRecordsSquash(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // protocol where only author of document can create patches and only editors can squash
+        // module where only author of document can create patches and only editors can squash
         // bob has no role at all
-        const restrictedProtocol: ProtocolDefinition = {
-          protocol  : 'http://restricted-squash.xyz',
+        const restrictedModule: ModuleDefinition = {
+          module    : 'http://restricted-squash.xyz',
           published : true,
           types     : {
             document : {},
@@ -1071,18 +1071,18 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : restrictedProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : restrictedModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // alice creates a document
         const document = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : restrictedProtocol.protocol,
-          protocolPath : 'document',
+          author     : alice,
+          module     : restrictedModule.module,
+          modulePath : 'document',
         });
         const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
         expect(docReply.status.code).toBe(202);
@@ -1093,8 +1093,8 @@ export function testRecordsSquash(): void {
         const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
         const patch = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : restrictedProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : restrictedModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : patchTimestamp,
           dateCreated      : patchTimestamp,
@@ -1106,8 +1106,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const bobSquash = await RecordsWrite.create({
           signer           : Jws.createSigner(bob),
-          protocol         : restrictedProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : restrictedModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           dataFormat       : 'application/json',
           data             : TestDataGenerator.randomBytes(32),
@@ -1120,7 +1120,7 @@ export function testRecordsSquash(): void {
           alice.did, bobSquash.message, { dataStream: DataStream.fromBytes(TestDataGenerator.randomBytes(32)) }
         );
         expect(bobSquashReply.status.code).toBe(401);
-        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(bobSquashReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
       });
     });
 
@@ -1128,9 +1128,9 @@ export function testRecordsSquash(): void {
       it('should purge RecordsDelete tombstones for records that predate the squash', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // Use a protocol with $squash but without $immutable so records can be deleted
-        const deletableSquashProtocol: ProtocolDefinition = {
-          protocol  : 'http://deletable-squash.xyz',
+        // Use a module with $squash but without $immutable so records can be deleted
+        const deletableSquashModule: ModuleDefinition = {
+          module    : 'http://deletable-squash.xyz',
           published : true,
           types     : {
             document : {},
@@ -1147,18 +1147,18 @@ export function testRecordsSquash(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : deletableSquashProtocol,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : deletableSquashModule,
         });
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // create parent document
         const document = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : deletableSquashProtocol.protocol,
-          protocolPath : 'document',
+          author     : alice,
+          module     : deletableSquashModule.module,
+          modulePath : 'document',
         });
         const docReply = await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream });
         expect(docReply.status.code).toBe(202);
@@ -1168,8 +1168,8 @@ export function testRecordsSquash(): void {
         const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
         const patch = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : deletableSquashProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : deletableSquashModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : patchTimestamp,
           dateCreated      : patchTimestamp,
@@ -1191,8 +1191,8 @@ export function testRecordsSquash(): void {
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : deletableSquashProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : deletableSquashModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : documentContextId,
           messageTimestamp : squashTimestamp,
           dateCreated      : squashTimestamp,
@@ -1205,9 +1205,9 @@ export function testRecordsSquash(): void {
         const query = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol     : deletableSquashProtocol.protocol,
-            protocolPath : 'document/patch',
-            contextId    : documentContextId,
+            module     : deletableSquashModule.module,
+            modulePath : 'document/patch',
+            contextId  : documentContextId,
           },
         });
         const queryReply = await dwn.processMessage(alice.did, query.message);

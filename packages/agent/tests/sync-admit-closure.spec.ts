@@ -65,8 +65,8 @@ describe('admitClosure', () => {
   }
 
   it('fetches a missing initial write and retries the root in dependency order', async () => {
-    const protocol = 'https://example.com/protocol';
-    const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const initial = await TestDataGenerator.generateRecordsWrite({ module });
     await Time.minimalSleep();
     const update = await TestDataGenerator.generateFromRecordsWrite({
       author        : initial.author,
@@ -82,7 +82,7 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'InitialWrite', recordId: initial.message.recordId, protocol }],
+        missing : [{ type: 'InitialWrite', recordId: initial.message.recordId, module }],
       })
       .onSecondCall().resolves({ kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' });
@@ -103,18 +103,18 @@ describe('admitClosure', () => {
   });
 
   it('cancels a root body opened before a missing dependency is retried', async () => {
-    const protocol = 'https://example.com/stream-cleanup';
+    const module = 'https://example.com/stream-cleanup';
     const parent = await TestDataGenerator.generateRecordsWrite({
-      data         : new Uint8Array([1]),
-      protocol,
-      protocolPath : 'parent',
+      data       : new Uint8Array([1]),
+      module,
+      modulePath : 'parent',
     });
     const child = await TestDataGenerator.generateRecordsWrite({
       author          : parent.author,
       data            : new Uint8Array([2]),
       parentContextId : parent.message.contextId,
-      protocol,
-      protocolPath    : 'parent/child',
+      module,
+      modulePath      : 'parent/child',
     });
     const parentCid = await Message.getCid(parent.message);
     const childCid = await Message.getCid(child.message);
@@ -142,7 +142,7 @@ describe('admitClosure', () => {
         parentMissing = false;
         return {
           kind    : 'Incomplete',
-          missing : [{ type: 'Parent', recordId: parent.message.recordId, messageCid: parentCid, protocol }],
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, messageCid: parentCid, module }],
         };
       }
       await readStreamBytes(options.dataStream);
@@ -166,11 +166,11 @@ describe('admitClosure', () => {
   });
 
   it('cancels a fetched dependency body when interrupted before its admission pass', async () => {
-    const protocol = 'https://example.com/interrupted-dependency';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/interrupted-dependency';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
     const dependency = await TestDataGenerator.generateRecordsWrite({
       data: new Uint8Array([4, 5, 6]),
-      protocol,
+      module,
     });
     const rootCid = await Message.getCid(root.message);
     const cancelDependencyBody = sinon.spy();
@@ -193,7 +193,7 @@ describe('admitClosure', () => {
       missing : [{
         type     : 'RecordData',
         dataCid  : dependency.message.descriptor.dataCid,
-        protocol,
+        module,
         recordId : dependency.message.recordId,
       }],
     });
@@ -211,8 +211,8 @@ describe('admitClosure', () => {
   });
 
   it('defers missing dependencies without remote reads during page intake', async () => {
-    const protocol = 'https://example.com/protocol';
-    const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const initial = await TestDataGenerator.generateRecordsWrite({ module });
     await Time.minimalSleep();
     const update = await TestDataGenerator.generateFromRecordsWrite({
       author        : initial.author,
@@ -222,7 +222,7 @@ describe('admitClosure', () => {
     const agent = createMockAgent();
     agent.dwn.applyReplicatedMessage.resolves({
       kind    : 'Incomplete',
-      missing : [{ type: 'InitialWrite', recordId: initial.message.recordId, protocol }],
+      missing : [{ type: 'InitialWrite', recordId: initial.message.recordId, module }],
     });
 
     const outcome = await admitClosure(rootCid, {
@@ -240,7 +240,7 @@ describe('admitClosure', () => {
   });
 
   it('reports duplicate and superseded applies as admitted but not fresh', async () => {
-    const write = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/protocol' });
+    const write = await TestDataGenerator.generateRecordsWrite({ module: 'https://example.com/module' });
     const rootCid = await Message.getCid(write.message);
     const agent = createMockAgent();
     agent.dwn.applyReplicatedMessage.resolves({ kind: 'Duplicate' });
@@ -258,7 +258,7 @@ describe('admitClosure', () => {
   });
 
   it('marks a remotely sourced CID before applying it to the local DWN', async () => {
-    const write = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/protocol' });
+    const write = await TestDataGenerator.generateRecordsWrite({ module: 'https://example.com/module' });
     const rootCid = await Message.getCid(write.message);
     const agent = createMockAgent();
     const order: string[] = [];
@@ -280,16 +280,16 @@ describe('admitClosure', () => {
   });
 
   it('splits RecordsQuery initialWrite hints into separately admissible entries', async () => {
-    const protocol = 'https://example.com/protocol';
-    const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const parent = await TestDataGenerator.generateRecordsWrite({ module });
     const parentUpdate = await TestDataGenerator.generateFromRecordsWrite({
       author        : parent.author,
       existingWrite : parent.recordsWrite,
     });
     const child = await TestDataGenerator.generateRecordsWrite({
       author          : parent.author,
-      protocol,
-      protocolPath    : 'testRecord',
+      module,
+      modulePath      : 'testRecord',
       parentContextId : parent.message.contextId,
     });
     const rootCid = await Message.getCid(child.message);
@@ -306,7 +306,7 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+        missing : [{ type: 'Parent', recordId: parent.message.recordId, module }],
       })
       .onSecondCall().resolves({ kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' })
@@ -352,8 +352,8 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage.resolves({
       kind    : 'Incomplete',
       missing : [{
-        type     : 'Protocol',
-        protocol : 'https://example.com/protocol',
+        type     : 'Module',
+        module   : 'https://example.com/module',
         terminal : true,
       }],
     });
@@ -369,7 +369,7 @@ describe('admitClosure', () => {
       kind   : 'failed',
       rootCid,
       reason : 'terminal',
-      detail : JSON.stringify({ type: 'Protocol', protocol: 'https://example.com/protocol', terminal: true }),
+      detail : JSON.stringify({ type: 'Module', module: 'https://example.com/module', terminal: true }),
     });
     expect(agent.rpc.sendDwnRequest.called).toBe(false);
   });
@@ -401,8 +401,8 @@ describe('admitClosure', () => {
   });
 
   it('fails scoped RecordsDelete admission as unknown when the initial write is unavailable in remote mode', async () => {
-    const protocol = 'https://example.com/protocol';
-    const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const initial = await TestDataGenerator.generateRecordsWrite({ module });
     const recordsDelete = await TestDataGenerator.generateRecordsDelete({
       author   : initial.author,
       recordId : initial.message.recordId,
@@ -413,7 +413,7 @@ describe('admitClosure', () => {
     const outcome = await admitClosure(rootCid, {
       did        : 'did:example:alice',
       dwnUrl     : 'https://dwn.example.com',
-      scope      : { kind: 'protocolSet', protocols: [protocol] },
+      scope      : { kind: 'moduleSet', modules: [module] },
       agent,
       prefetched : [{ message: recordsDelete.message }],
     });
@@ -467,12 +467,12 @@ describe('admitClosure', () => {
   });
 
   it('fetches role records with a delegated query grant', async () => {
-    const protocol = 'https://example.com/protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
     const role = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath : 'thread/member',
-      recipient    : 'did:example:bob',
+      module,
+      modulePath : 'thread/member',
+      recipient  : 'did:example:bob',
     });
     const rootCid = await Message.getCid(root.message);
     const roleCid = await Message.getCid(role.message);
@@ -491,8 +491,8 @@ describe('admitClosure', () => {
         missing : [{
           type          : 'Role',
           contextPrefix : 'thread-context',
-          protocol,
-          protocolPath  : 'thread/member',
+          module,
+          modulePath    : 'thread/member',
           recipient     : 'did:example:bob',
         }],
       })
@@ -514,7 +514,7 @@ describe('admitClosure', () => {
       connectedDid : 'did:example:alice',
       delegateDid  : 'did:example:delegate',
       messageType  : DwnInterface.RecordsQuery,
-      protocol,
+      module,
     });
     expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
       author        : 'did:example:delegate',
@@ -522,10 +522,10 @@ describe('admitClosure', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          contextId    : 'thread-context',
-          protocol,
-          protocolPath : 'thread/member',
-          recipient    : 'did:example:bob',
+          contextId  : 'thread-context',
+          module,
+          modulePath : 'thread/member',
+          recipient  : 'did:example:bob',
         },
         permissionGrantId: 'records-query-grant',
       },
@@ -584,11 +584,11 @@ describe('admitClosure', () => {
     expect(appliedCids).toEqual(new Set(cids));
   });
 
-  it('fetches cross-protocol record references by record ID and protocol', async () => {
-    const protocol = 'https://example.com/protocol';
-    const referencedProtocol = 'https://example.com/referenced-protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
-    const referenced = await TestDataGenerator.generateRecordsWrite({ protocol: referencedProtocol });
+  it('fetches cross-module record references by record ID and module', async () => {
+    const module = 'https://example.com/module';
+    const referencedModule = 'https://example.com/referenced-module';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
+    const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule });
     const rootCid = await Message.getCid(root.message);
     const referencedCid = await Message.getCid(referenced.message);
     const agent = createMockAgent();
@@ -601,8 +601,8 @@ describe('admitClosure', () => {
       .onFirstCall().resolves({
         kind    : 'Incomplete',
         missing : [{
-          type     : 'CrossProtocolRef',
-          protocol : referencedProtocol,
+          type     : 'CrossModuleRef',
+          module   : referencedModule,
           recordId : referenced.message.recordId,
         }],
       })
@@ -623,7 +623,7 @@ describe('admitClosure', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol : referencedProtocol,
+          module   : referencedModule,
           recordId : referenced.message.recordId,
         },
       },
@@ -632,18 +632,18 @@ describe('admitClosure', () => {
   });
 
 
-  it('fetches encryption control dependencies from the source protocol feed', async () => {
-    const protocol = 'https://example.com/protocol-control';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+  it('fetches encryption control dependencies from the source module feed', async () => {
+    const module = 'https://example.com/module-control';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
     const tags = {
-      protocol,
+      module,
       contextId : 'root-context',
       rolePath  : 'thread/member',
       keyId     : 'key-id',
     };
     const audience = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      module,
+      modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH,
       tags,
     });
     const rootCid = await Message.getCid(root.message);
@@ -668,7 +668,7 @@ describe('admitClosure', () => {
           seq               : '1',
           messageCid        : audienceCid,
           isLatestBaseState : true,
-          protocol,
+          module,
           message           : audience.message,
           encodedData       : Encoder.bytesToBase64Url(audience.dataBytes!),
         }],
@@ -678,9 +678,9 @@ describe('admitClosure', () => {
       .onFirstCall().resolves({
         kind    : 'Incomplete',
         missing : [{
-          type         : 'EncryptionControl',
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          type       : 'EncryptionControl',
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
           tags,
         }],
       })
@@ -703,7 +703,7 @@ describe('admitClosure', () => {
       granteeDid    : 'did:example:delegate',
       messageType   : DwnInterface.MessagesQuery,
       messageParams : {
-        filters            : [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }],
+        filters            : [{ module, modulePathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }],
         permissionGrantIds : ['messages-query-grant'],
       },
     });
@@ -714,11 +714,11 @@ describe('admitClosure', () => {
   });
 
   it('fetches record data with RecordsRead and retries with the data stream', async () => {
-    const protocol = 'https://example.com/protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
     const dataRecord = await TestDataGenerator.generateRecordsWrite({
       data: new Uint8Array([4, 5, 6]),
-      protocol,
+      module,
     });
     const rootCid = await Message.getCid(root.message);
     const dataRecordCid = await Message.getCid(dataRecord.message);
@@ -735,7 +735,7 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'RecordData', recordId: dataRecord.message.recordId, dataCid, protocol }],
+        missing : [{ type: 'RecordData', recordId: dataRecord.message.recordId, dataCid, module }],
       })
       .onSecondCall().resolves({ kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' });
@@ -759,11 +759,11 @@ describe('admitClosure', () => {
   });
 
   it('fails admission when a record data dependency exceeds descriptor dataSize', async () => {
-    const protocol = 'https://example.com/protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
     const dataRecord = await TestDataGenerator.generateRecordsWrite({
       data: new Uint8Array([4]),
-      protocol,
+      module,
     });
     const rootCid = await Message.getCid(root.message);
     const dataCid = dataRecord.message.descriptor.dataCid;
@@ -779,7 +779,7 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'RecordData', recordId: dataRecord.message.recordId, dataCid, protocol }],
+        missing : [{ type: 'RecordData', recordId: dataRecord.message.recordId, dataCid, module }],
       })
       .onSecondCall().callsFake(async (
         _tenant: string,
@@ -809,8 +809,8 @@ describe('admitClosure', () => {
 
   it('does not admit a source-latest RecordsWrite when its data is unavailable', async () => {
     const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-      data     : new Uint8Array([1, 2, 3]),
-      protocol : 'https://example.com/protocol',
+      data   : new Uint8Array([1, 2, 3]),
+      module : 'https://example.com/module',
     });
     const rootCid = await Message.getCid(recordsWrite.message);
     const agent = createMockAgent();
@@ -836,8 +836,8 @@ describe('admitClosure', () => {
 
   it('defers a missing source-latest body without attempting hydration during page intake', async () => {
     const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-      data     : new Uint8Array([1, 2, 3]),
-      protocol : 'https://example.com/protocol',
+      data   : new Uint8Array([1, 2, 3]),
+      module : 'https://example.com/module',
     });
     const rootCid = await Message.getCid(recordsWrite.message);
     const agent = createMockAgent();
@@ -865,8 +865,8 @@ describe('admitClosure', () => {
 
   it('defers a source-latest RecordsWrite when its retryable data fetch is temporarily unavailable', async () => {
     const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-      data     : new Uint8Array([1, 2, 3]),
-      protocol : 'https://example.com/protocol',
+      data   : new Uint8Array([1, 2, 3]),
+      module : 'https://example.com/module',
     });
     const rootCid = await Message.getCid(recordsWrite.message);
     const agent = createMockAgent();
@@ -894,8 +894,8 @@ describe('admitClosure', () => {
 
   it('hydrates a role root through the replication-support hook instead of an owner-shaped fetch', async () => {
     const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-      data     : new Uint8Array([1, 2, 3]),
-      protocol : 'https://example.com/protocol',
+      data   : new Uint8Array([1, 2, 3]),
+      module : 'https://example.com/module',
     });
     const rootCid = await Message.getCid(recordsWrite.message);
     const agent = createMockAgent();
@@ -923,11 +923,11 @@ describe('admitClosure', () => {
   });
 
   it('requests role replication support only after local admission reports a missing dependency', async () => {
-    const protocol = 'https://example.com/protocol';
-    const root = await TestDataGenerator.generateRecordsWrite({ protocol });
-    const configure = await TestDataGenerator.generateProtocolsConfigure({
-      author             : root.author,
-      protocolDefinition : { protocol, published: true, structure: {}, types: {} },
+    const module = 'https://example.com/module';
+    const root = await TestDataGenerator.generateRecordsWrite({ module });
+    const configure = await TestDataGenerator.generateModulesConfigure({
+      author           : root.author,
+      moduleDefinition : { module, published: true, structure: {}, types: {} },
     });
     const rootCid = await Message.getCid(root.message);
     const configureCid = await Message.getCid(configure.message);
@@ -937,7 +937,7 @@ describe('admitClosure', () => {
       root         : { bufferedData: root.dataBytes, isLatestBaseState: true, message: root.message },
     });
     agent.dwn.applyReplicatedMessage
-      .onFirstCall().resolves({ kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] })
+      .onFirstCall().resolves({ kind: 'Incomplete', missing: [{ type: 'Module', module }] })
       .onSecondCall().resolves({ kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' });
 
@@ -954,27 +954,27 @@ describe('admitClosure', () => {
     expect(agent.rpc.sendDwnRequest.notCalled).toBe(true);
   });
 
-  it('fetches the newest tenant protocol config', async () => {
-    const protocol = 'https://example.com/protocol';
+  it('fetches the newest tenant module config', async () => {
+    const module = 'https://example.com/module';
     const definition = {
-      protocol,
+      module,
       published : true,
       types     : {
         post: { schema: 'https://example.com/post', dataFormats: ['text/plain'] },
       },
       structure: { post: {} },
     };
-    const older = await TestDataGenerator.generateProtocolsConfigure({ protocolDefinition: definition });
-    const newer = await TestDataGenerator.generateProtocolsConfigure({
-      author             : older.author,
-      protocolDefinition : definition,
+    const older = await TestDataGenerator.generateModulesConfigure({ moduleDefinition: definition });
+    const newer = await TestDataGenerator.generateModulesConfigure({
+      author           : older.author,
+      moduleDefinition : definition,
     });
     older.message.descriptor.messageTimestamp = '2024-01-01T00:00:00.000000Z';
     newer.message.descriptor.messageTimestamp = '2024-01-02T00:00:00.000000Z';
 
     const root = await TestDataGenerator.generateRecordsWrite({
       author: older.author,
-      protocol,
+      module,
     });
     const rootCid = await Message.getCid(root.message);
     const newerCid = await Message.getCid(newer.message);
@@ -987,7 +987,7 @@ describe('admitClosure', () => {
     agent.dwn.applyReplicatedMessage
       .onFirstCall().resolves({
         kind    : 'Incomplete',
-        missing : [{ type: 'Protocol', protocol }],
+        missing : [{ type: 'Module', module }],
       })
       .onSecondCall().resolves({ kind: 'Applied' })
       .onThirdCall().resolves({ kind: 'Applied' });
@@ -1003,9 +1003,9 @@ describe('admitClosure', () => {
     expect(freshCidsOf(outcome)).toEqual([newerCid, rootCid]);
     expect(agent.dwn.processRequest.firstCall.args[0]).toMatchObject({
       author        : older.author.did,
-      messageType   : DwnInterface.ProtocolsQuery,
+      messageType   : DwnInterface.ModulesQuery,
       messageParams : {
-        filter: { protocol },
+        filter: { module },
       },
     });
     expect(agent.dwn.applyReplicatedMessage.secondCall.args[1]).toEqual(newer.message);

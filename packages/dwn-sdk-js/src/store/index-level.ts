@@ -414,7 +414,7 @@ export class IndexLevel {
    *
    * The existing `parentId` index keeps the scan isolated to one nested-record
    * group. Root records have no `parentId`, so they are read from the exact
-   * `protocolPath` range and explicitly fenced to rows without a parent. The
+   * `modulePath` range and explicitly fenced to rows without a parent. The
    * bounded max-heap retains only the earliest `max` rank keys while the range
    * is streamed; no group-sized array is materialized.
    */
@@ -429,13 +429,13 @@ export class IndexLevel {
       throw new TypeError(`IndexLevel: record-limit max must be a positive integer.`);
     }
 
-    const protocolPath = candidateFilter.protocolPath;
-    if (typeof protocolPath !== 'string') {
-      throw new TypeError(`IndexLevel: record-limit candidate filter must contain one protocolPath.`);
+    const modulePath = candidateFilter.modulePath;
+    if (typeof modulePath !== 'string') {
+      throw new TypeError(`IndexLevel: record-limit candidate filter must contain one modulePath.`);
     }
 
-    const indexName = parentId === undefined ? 'protocolPath' : 'parentId';
-    const indexValue = parentId ?? protocolPath;
+    const indexName = parentId === undefined ? 'modulePath' : 'parentId';
+    const indexValue = parentId ?? modulePath;
     const rankHeap: string[] = [];
 
     for await (const item of this.iterateExactMatches(tenant, indexName, indexValue, options)) {
@@ -1118,7 +1118,7 @@ export class IndexLevel {
     }
     // NOTE: remaining conditions will not have cursor
     if (
-      filter.protocolPath !== undefined ||
+      filter.modulePath !== undefined ||
       filter.contextId !== undefined ||
       filter.parentId !== undefined ||
       filter.schema !== undefined

@@ -1,7 +1,7 @@
 import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, EncryptionInput, MessageStore, ProtocolDefinition, ProtocolRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, EncryptionInput, MessageStore, ModuleDefinition, ModuleRuleSet, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
 
 import { createAudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import { Encoder } from '../../src/index.js';
@@ -11,7 +11,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
@@ -21,7 +21,7 @@ import {
   Encryption,
   Jws,
   KeyAgreementAlgorithm,
-  Protocols,
+  Modules,
   Records,
   RecordsRead,
   ROLE_AUDIENCE_DERIVATION_SCHEME
@@ -64,23 +64,23 @@ export function testEndToEndScenarios(): void {
       await dwn.close();
     });
 
-    it('should support protocol-path encrypted records with role-authorized reads', async () => {
+    it('should support module-path encrypted records with role-authorized reads', async () => {
       // Scenario:
       // 1. Alice starts a chat thread and adds Bob as a plaintext participant role.
-      // 2. Alice writes an encrypted chat message with a protocol-path CEK wrap.
+      // 2. Alice writes an encrypted chat message with a module-path CEK wrap.
       // 3. Bob reads the encrypted message through his participant role.
-      // 4. Alice decrypts through her protocol-path key.
+      // 4. Alice decrypts through her module-path key.
 
       // creating Alice and Bob persona and setting up a stub DID resolver
       const alice = await TestDataGenerator.generatePersona();
       const bob = await TestDataGenerator.generatePersona();
       TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-      const protocolDefinition: ProtocolDefinition = structuredClone(threadRoleProtocolDefinition) as ProtocolDefinition;
-      protocolDefinition.types.chat.encryptionRequired = true;
-      const threadRuleSet = protocolDefinition.structure.thread as ProtocolRuleSet;
-      const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
-      const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
+      const moduleDefinition: ModuleDefinition = structuredClone(threadRoleModuleDefinition) as ModuleDefinition;
+      moduleDefinition.types.chat.encryptionRequired = true;
+      const threadRuleSet = moduleDefinition.structure.thread as ModuleRuleSet;
+      const participantRuleSet = threadRuleSet.participant as ModuleRuleSet;
+      const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
       participantRuleSet.$actions = [
         { who: 'author', of: 'thread', can: ['create'] },
         { role: 'thread/participant', can: ['read', 'create'] },
@@ -90,31 +90,31 @@ export function testEndToEndScenarios(): void {
         ...chatRuleSet.$actions!,
       ];
 
-      // Alice configures chat protocol with encryption
-      const protocolDefinitionForAlice = await Protocols.deriveAndInjectPublicEncryptionKeys(
-        protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+      // Alice configures chat module with encryption
+      const moduleDefinitionForAlice = await Modules.deriveAndInjectPublicEncryptionKeys(
+        moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
       );
-      const encryptedThreadRuleSet = protocolDefinitionForAlice.structure.thread as ProtocolRuleSet;
-      const encryptedParticipantRuleSet = encryptedThreadRuleSet.participant as ProtocolRuleSet;
-      const encryptedChatRuleSet = encryptedThreadRuleSet.chat as ProtocolRuleSet;
-      const protocolsConfigureForAlice = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : protocolDefinitionForAlice
+      const encryptedThreadRuleSet = moduleDefinitionForAlice.structure.thread as ModuleRuleSet;
+      const encryptedParticipantRuleSet = encryptedThreadRuleSet.participant as ModuleRuleSet;
+      const encryptedChatRuleSet = encryptedThreadRuleSet.chat as ModuleRuleSet;
+      const modulesConfigureForAlice = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : moduleDefinitionForAlice
       });
 
-      const protocolsConfigureForAliceReply = await dwn.processMessage(
+      const modulesConfigureForAliceReply = await dwn.processMessage(
         alice.did,
-        protocolsConfigureForAlice.message
+        modulesConfigureForAlice.message
       );
-      expect(protocolsConfigureForAliceReply.status.code).toBe(202);
+      expect(modulesConfigureForAliceReply.status.code).toBe(202);
 
       // 1. Alice starts a plaintext chat thread writing to her own DWN
       const threadBytes = Encoder.objectToBytes({ title: 'Top Secret' });
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        data         : threadBytes,
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        data       : threadBytes,
       });
       const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRecordReply1.status.code).toBe(202);
@@ -124,8 +124,8 @@ export function testEndToEndScenarios(): void {
         author          : alice,
         data            : Encoder.objectToBytes({ did: bob.did }),
         parentContextId : threadRecord.message.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         recipient       : bob.did,
       });
       const participantRecordReply =
@@ -135,7 +135,7 @@ export function testEndToEndScenarios(): void {
       const role = 'thread/participant';
       const audience = await createAudienceControlWrite({
         author      : alice,
-        protocol    : protocolDefinition.protocol,
+        module      : moduleDefinition.module,
         rolePath    : role,
         contextId   : threadRecord.message.contextId!,
         roleRuleSet : encryptedParticipantRuleSet,
@@ -159,31 +159,31 @@ export function testEndToEndScenarios(): void {
         dataEncryptionInitializationVector,
         Encoder.stringToBytes(messageByAlice)
       );
-      const protocolPathPublicKey = encryptedChatRuleSet.$keyAgreement!.publicKeyJwk;
+      const modulePathPublicKey = encryptedChatRuleSet.$keyAgreement!.publicKeyJwk;
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [
           {
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-            keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-            publicKey        : protocolPathPublicKey,
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : await Encryption.getKeyId(modulePathPublicKey),
+            publicKey        : modulePathPublicKey,
+            derivationScheme : KeyDerivationScheme.ModulePath,
           },
           {
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : roleKeyId,
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-            protocol         : protocolDefinition.protocol,
+            module           : moduleDefinition.module,
             rolePath         : role,
           },
         ],
       };
       const chatMessageByAlice = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
         data            : encryptedData,
         encryptionInput,
@@ -195,9 +195,9 @@ export function testEndToEndScenarios(): void {
       const participantRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
-          protocolPath : 'thread/participant',
-          recipient    : bob.did,
-          contextId    : threadRecord.message.contextId
+          modulePath : 'thread/participant',
+          recipient  : bob.did,
+          contextId  : threadRecord.message.contextId
         },
       });
       const participantReadReply = await dwn.processMessage(alice.did, participantRead.message) as RecordsReadReply;
@@ -207,10 +207,10 @@ export function testEndToEndScenarios(): void {
       const threadRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
-          protocolPath : 'thread',
-          contextId    : threadRecord.message.contextId
+          modulePath : 'thread',
+          contextId  : threadRecord.message.contextId
         },
-        protocolRole: 'thread/participant'
+        moduleRole: 'thread/participant'
       });
       const threadReadReply = await dwn.processMessage(alice.did, threadRead.message) as RecordsReadReply;
       expect(threadReadReply.status.code).toBe(200);
@@ -220,20 +220,20 @@ export function testEndToEndScenarios(): void {
       const chatRead = await RecordsRead.create({
         signer : Jws.createSigner(bob),
         filter : {
-          protocolPath : 'thread/chat',
-          contextId    : threadRecord.message.contextId
+          modulePath : 'thread/chat',
+          contextId  : threadRecord.message.contextId
         },
-        protocolRole: 'thread/participant'
+        moduleRole: 'thread/participant'
       });
       const chatReadReply = await dwn.processMessage(alice.did, chatRead.message) as RecordsReadReply;
       expect(chatReadReply.status.code).toBe(200);
       expect(chatReadReply.entry!.recordsWrite).toBeDefined();
 
       const encryptedChatMessageBytes = await DataStream.toBytes(chatReadReply.entry!.data!); // to create streams for testing
-      // Alice can decrypt through the protocol-path entry.
+      // Alice can decrypt through the module-path entry.
       const aliceRootKey: DerivedPrivateJwk = {
         derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationScheme  : KeyDerivationScheme.ModulePath,
         rootKeyId         : alice.keyId,
       };
       const decryptedChatMessageStream2 = await Records.decrypt(

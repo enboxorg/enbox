@@ -98,7 +98,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const scope = { kind: 'full' as const };
     const projectionId = await computeProjectionId(TENANT, scope);
     const authorizationEpoch = await computeAuthorizationEpoch({ kind: 'owner' });
-    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ modules: 'all' }));
     await db.sublevel('replicationLinks').put(
       buildLinkKey(TENANT, REMOTE, projectionId, authorizationEpoch),
       JSON.stringify({
@@ -219,7 +219,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
 
   it('unregistering an identity removes only that tenant\'s quota state', async () => {
     const nextProbeAt = new Date(Date.now() + 60_000).toISOString();
-    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ modules: 'all' }));
     await seedQuotaBlock({ cid: 'alice-cid', nextProbeAt });
     await seedQuotaBlock({ cid: 'bob-cid', nextProbeAt, tenant: OTHER_TENANT });
 
@@ -230,10 +230,10 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   });
 
   it('replacement identity options do not inherit quota state from the old link', async () => {
-    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ modules: 'all' }));
     await seedQuotaBlock({ cid: 'old-link-cid', nextProbeAt: new Date(Date.now() + 60_000).toISOString() });
 
-    await syncEngine.setIdentityOptions({ did: TENANT, options: { protocols: 'all' } });
+    await syncEngine.setIdentityOptions({ did: TENANT, options: { modules: 'all' } });
 
     expect(await getRemoteStatuses(TENANT)).toHaveLength(0);
   });
@@ -263,7 +263,7 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
     const currentRemote = 'https://current-dwn.example.com';
     const currentEpoch = 'current-epoch';
     const nextProbeAt = new Date(Date.now() + 60_000).toISOString();
-    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put(TENANT, JSON.stringify({ modules: 'all' }));
     await seedQuotaBlock({ authorizationEpoch: 'old-epoch', cid: 'old-epoch-cid', nextProbeAt });
     await seedQuotaBlock({ authorizationEpoch: currentEpoch, cid: 'old-endpoint-cid', nextProbeAt });
     await seedQuotaBlock({

@@ -8,20 +8,20 @@ export type RecordAudienceKeyDeliveryParams = Readonly<{
   outcome: AudienceKeyDeliveryOutcome;
 }>;
 
-export type ReconcileAudienceKeyDeliveryProtocolParams = Readonly<{
-  protocol: string;
+export type ReconcileAudienceKeyDeliveryModuleParams = Readonly<{
+  module: string;
   scan: () => Promise<readonly AudienceKeyDeliveryIntent[]>;
   sourceDid: string;
 }>;
 
-export type AudienceKeyDeliveryChange = Readonly<Pick<AudienceKeyDeliveryIntent, 'protocol' | 'sourceDid'>>;
+export type AudienceKeyDeliveryChange = Readonly<Pick<AudienceKeyDeliveryIntent, 'module' | 'sourceDid'>>;
 
 /** Internal persistence contract for reconstructable audience-key delivery state. */
 export interface AudienceKeyDeliveryStore {
   clear(): Promise<void>;
   close(): Promise<void>;
   get(sourceDid: string, roleRecordId: string): Promise<AudienceKeyDeliveryState | undefined>;
-  reconcileProtocol(params: ReconcileAudienceKeyDeliveryProtocolParams): Promise<AudienceKeyDeliveryState[]>;
+  reconcileModule(params: ReconcileAudienceKeyDeliveryModuleParams): Promise<AudienceKeyDeliveryState[]>;
   record(params: RecordAudienceKeyDeliveryParams): Promise<void>;
   subscribe(listener: (change: AudienceKeyDeliveryChange) => void): () => void;
 }

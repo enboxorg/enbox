@@ -1,5 +1,5 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, describe, expect, it } from 'bun:test';
@@ -13,7 +13,7 @@ import {
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
-import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
+import { JwkModuleDefinition } from '../src/store-data-modules.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
@@ -25,9 +25,9 @@ import { resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
  * underlying key material is deterministically derived from a BIP-39 seed phrase.
  *
  * Layer 2 (DWN record-level): Private keys stored in the DWN via DwnKeyStore are
- * encrypted using DWN protocol-path key agreement. The protocol definition for
+ * encrypted using DWN module-path key agreement. The module definition for
  * JWK storage has `encryptionRequired: true`, which triggers `$keyAgreement`
- * key injection at protocol install time.
+ * key injection at module install time.
  *
  * Recovery path: seed phrase → deterministic agent DID → X25519 `#enc` key →
  * decrypt DWN key records.
@@ -42,9 +42,9 @@ describe('e2e: two-layer encryption recovery', () => {
   let originalKeyUris: string[];
   let originalKeys: Jwk[];
   let audienceRecoveryKeyId: string;
-  const audienceRecoveryProtocol: ProtocolDefinition = {
+  const audienceRecoveryModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://protocol.xyz/two-layer-audience-recovery',
+    module    : 'https://module.xyz/two-layer-audience-recovery',
     types     : {
       admin : { dataFormats: ['application/json'] },
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
@@ -136,7 +136,7 @@ describe('e2e: two-layer encryption recovery', () => {
 
     it('should generate keys that are encrypted at the DWN level (Layer 2)', async () => {
       // Generate multiple keys through the key manager — each is stored via
-      // DwnKeyStore which encrypts them using the protocol's $keyAgreement keys.
+      // DwnKeyStore which encrypts them using the module's $keyAgreement keys.
       const keyUri1 = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
       const keyUri2 = await harness.agent.keyManager.generateKey({ algorithm: 'secp256k1' });
       const keyUri3 = await harness.agent.keyManager.generateKey({ algorithm: 'Ed25519' });
@@ -152,23 +152,23 @@ describe('e2e: two-layer encryption recovery', () => {
       }
     });
 
-    it('should have $keyAgreement injected into the installed JWK protocol', async () => {
-      // The JwkProtocolDefinition has `encryptionRequired: true` on the privateJwk
-      // type. When installed, DwnDataStore.installProtocol() derives and injects
-      // `$keyAgreement` keys into the protocol structure. Verify this happened.
+    it('should have $keyAgreement injected into the installed JWK module', async () => {
+      // The JwkModuleDefinition has `encryptionRequired: true` on the privateJwk
+      // type. When installed, DwnDataStore.installModule() derives and injects
+      // `$keyAgreement` keys into the module structure. Verify this happened.
       const { reply } = await harness.agent.dwn.processRequest({
         author        : originalAgentDidUri,
         target        : originalAgentDidUri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {
-          filter: { protocol: JwkProtocolDefinition.protocol }
+          filter: { module: JwkModuleDefinition.module }
         },
       });
 
       expect(reply.status.code).toBe(200);
       expect(reply.entries).toHaveLength(1);
 
-      // Verify $keyAgreement was injected into the protocol root and privateJwk rule set.
+      // Verify $keyAgreement was injected into the module root and privateJwk rule set.
       const installedDefinition = reply.entries![0].descriptor.definition;
       const privateJwkRuleSet = installedDefinition.structure.privateJwk;
       expect(installedDefinition).toHaveProperty('$keyAgreement');
@@ -186,8 +186,8 @@ describe('e2e: two-layer encryption recovery', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : JwkProtocolDefinition.protocol,
-            protocolPath : 'privateJwk',
+            module     : JwkModuleDefinition.module,
+            modulePath : 'privateJwk',
           }
         },
       });
@@ -200,7 +200,7 @@ describe('e2e: two-layer encryption recovery', () => {
         expect(entry.encryption).toBeDefined();
         expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
         expect(entry.encryption!.keyEncryption).toHaveLength(1);
-        expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+        expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
         // Verify the raw data is ciphertext, not readable JSON. Encrypted records
         // may have encodedData (base64url ciphertext) — if present, decoding it
@@ -224,23 +224,23 @@ describe('e2e: two-layer encryption recovery', () => {
     });
 
     it('should write a sealed audience key for seed-recovery verification', async () => {
-      const protocolConfigure = await harness.agent.dwn.processRequest({
+      const moduleConfigure = await harness.agent.dwn.processRequest({
         author        : originalAgentDidUri,
         target        : originalAgentDidUri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: audienceRecoveryProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: audienceRecoveryModule },
       });
-      expect(protocolConfigure.reply.status.code).toBe(202);
+      expect(moduleConfigure.reply.status.code).toBe(202);
 
       const { reply, message } = await harness.agent.dwn.processRequest({
         author        : originalAgentDidUri,
         target        : originalAgentDidUri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : audienceRecoveryProtocol.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          data         : new TextEncoder().encode('sealed audience recovery note'),
+          module     : audienceRecoveryModule.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          data       : new TextEncoder().encode('sealed audience recovery note'),
         },
       });
       expect(reply.status.code).toBe(202);
@@ -257,10 +257,10 @@ describe('e2e: two-layer encryption recovery', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : audienceRecoveryProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
-              protocol  : audienceRecoveryProtocol.protocol,
+            module     : audienceRecoveryModule.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
+              module    : audienceRecoveryModule.module,
               rolePath  : 'admin',
               contextId : '',
               keyId     : audienceRecoveryKeyId,
@@ -368,7 +368,7 @@ describe('e2e: two-layer encryption recovery', () => {
         agent        : harness.agent,
         sourceDid    : originalAgentDidUri,
         recipientDid : originalAgentDidUri,
-        protocol     : audienceRecoveryProtocol.protocol,
+        module       : audienceRecoveryModule.module,
         contextId    : '',
         rolePath     : 'admin',
         keyId        : audienceRecoveryKeyId,

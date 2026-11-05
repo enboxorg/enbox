@@ -1,6 +1,6 @@
 import type {
-  ProtocolDefinition,
-  ProtocolsConfigureMessage,
+  ModuleDefinition,
+  ModulesConfigureMessage,
   RecordsDeleteMessage,
   RecordsReadMessage,
   RecordsReadReplicationSupportEntry,
@@ -35,16 +35,16 @@ import {
 
 import { DwnInterface } from './types/dwn.js';
 import { isEncryptionControlRecordFor } from './dwn-encryption.js';
-import { isTenantProtocolConfig } from './sync-fetch-helpers.js';
+import { isTenantModuleConfig } from './sync-fetch-helpers.js';
 import { runSyncRemoteRequest } from './sync-request-runner.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import { dataStreamFromBytes, SyncWorkInterruptedError } from './sync-messages.js';
-import { getRecordAuthor, getRecordProtocolRole, resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
+import { getRecordAuthor, getRecordModuleRole, resolveDwnSubscriptionUrl as resolveDwnWebSocketUrl } from './utils.js';
 
-/** A role-authorized read, its current protocol definition, and its local-replication prerequisites. */
+/** A role-authorized read, its current module definition, and its local-replication prerequisites. */
 export type RoleReplicationSupportBatch = {
   dependencies: SyncMessageEntry[];
-  protocolDefinition: ProtocolDefinition;
+  moduleDefinition: ModuleDefinition;
   roleRecordId: string;
   root: SyncMessageEntry;
   rootCid: string;
@@ -54,7 +54,7 @@ type DelegatedRoleReadParams = {
   actorDid: string;
   delegateDid?: string;
   permissionsApi: PermissionsApi;
-  protocol: string;
+  module: string;
 };
 
 type RoleReplicationSupportParams = DelegatedRoleReadParams & {
@@ -62,8 +62,8 @@ type RoleReplicationSupportParams = DelegatedRoleReadParams & {
   contextId: string;
   dwnUrl: string;
   expectedRoot?: RecordsDeleteMessage | RecordsWriteMessage;
-  protocolPath: string;
-  protocolRole: string;
+  modulePath: string;
+  moduleRole: string;
   rootData?: Uint8Array;
   runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
@@ -72,17 +72,17 @@ type RoleReplicationSupportParams = DelegatedRoleReadParams & {
 
 type ExactRoleReadFilter = {
   contextId: string;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   recordId: string;
 };
 
 type SupportValidationParams = {
   actorDid: string;
   contextId: string;
-  protocol: string;
-  protocolPath: string;
-  protocolRole: string;
+  module: string;
+  modulePath: string;
+  moduleRole: string;
   replyRoleId: string | undefined;
   roleIdentity: RoleRecordIdentity;
   root: RecordsWriteMessage;
@@ -94,8 +94,8 @@ type SupportValidationParams = {
 
 type SupportScan = {
   audienceKeyIds: Set<string>;
-  currentProtocolConfigure?: ProtocolsConfigureMessage;
-  currentProtocolConfigureMatches: number;
+  currentModuleConfigure?: ModulesConfigureMessage;
+  currentModuleConfigureMatches: number;
   deliveredKeyIds: Set<string>;
   role?: RecordsWriteMessage;
 };
@@ -137,14 +137,14 @@ export async function readRoleReplicationSupport(
   if (recordId === undefined || recordId.length === 0) {
     throw new TypeError('Role replication support requires an exact context ID.');
   }
-  const { protocolPath } = params;
+  const { modulePath } = params;
 
-  const delegatedGrant = await resolveDelegatedRoleReadGrant(params, params.contextId, protocolPath);
+  const delegatedGrant = await resolveDelegatedRoleReadGrant(params, params.contextId, modulePath);
 
   const filter: ExactRoleReadFilter = {
     contextId : params.contextId,
-    protocol  : params.protocol,
-    protocolPath,
+    module    : params.module,
+    modulePath,
     recordId,
   };
   const message = await createRoleReplicationSupportReadMessage(params, filter, delegatedGrant, true);
@@ -172,7 +172,7 @@ async function createRoleReplicationSupportReadMessage(
     messageParams : {
       filter,
       includeReplicationSupport,
-      protocolRole: params.protocolRole,
+      moduleRole: params.moduleRole,
       ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
     },
     messageType : DwnInterface.RecordsRead,
@@ -298,18 +298,18 @@ async function consumeRoleReplicationSupportReply(
   }
 
   const support = reply.support ?? [];
-  const { protocolDefinition, roleRecordId } = await validateSupport({
+  const { moduleDefinition, roleRecordId } = await validateSupport({
     actorDid     : params.actorDid,
     contextId    : params.contextId,
-    protocol     : params.protocol,
-    protocolPath : params.protocolPath,
-    protocolRole : params.protocolRole,
+    module       : params.module,
+    modulePath   : params.modulePath,
+    moduleRole   : params.moduleRole,
     replyRoleId  : reply.roleRecordId,
     roleIdentity : getRoleRecordIdentity({
-      contextId    : params.contextId,
-      protocol     : params.protocol,
-      protocolPath : params.protocolRole,
-      recipient    : params.actorDid,
+      contextId  : params.contextId,
+      module     : params.module,
+      modulePath : params.moduleRole,
+      recipient  : params.actorDid,
     }),
     root             : rootWrite,
     rootDelete       : expectsDelete ? rootMessage as RecordsDeleteMessage : undefined,
@@ -332,7 +332,7 @@ async function consumeRoleReplicationSupportReply(
 
   return {
     dependencies,
-    protocolDefinition,
+    moduleDefinition,
     roleRecordId,
     root: {
       message: rootMessage,
@@ -350,7 +350,7 @@ function assertSuccessfulRoleReplicationSupport(reply: RecordsReadReply, expects
     return;
   }
   const detail = reply.status.detail ?? 'Unknown error';
-  const missingRole = DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound;
+  const missingRole = DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound;
   if (reply.status.code === 401 && (detail === missingRole || detail.startsWith(`${missingRole}:`))) {
     throw new FollowedSourceRoleAbsentError(detail);
   }
@@ -389,8 +389,8 @@ function assertRoot(
   if (
     root.recordId !== expected.recordId ||
     root.contextId !== expected.contextId ||
-    root.descriptor.protocol !== expected.protocol ||
-    root.descriptor.protocolPath !== expected.protocolPath
+    root.descriptor.module !== expected.module ||
+    root.descriptor.modulePath !== expected.modulePath
   ) {
     throw new RoleReplicationSupportError('the response root does not match the exact requested context record.');
   }
@@ -398,20 +398,20 @@ function assertRoot(
 
 async function validateSupport(
   params: SupportValidationParams,
-): Promise<{ protocolDefinition: ProtocolDefinition; roleRecordId: string }> {
+): Promise<{ moduleDefinition: ModuleDefinition; roleRecordId: string }> {
   const contextSegments = params.contextId.split('/');
-  const pathSegments = params.protocolPath.split('/');
+  const pathSegments = params.modulePath.split('/');
   const ancestorIds = new Map(contextSegments.slice(0, -1).map((recordId, index) => [
     recordId,
     {
-      contextId    : contextSegments.slice(0, index + 1).join('/'),
-      protocolPath : pathSegments.slice(0, index + 1).join('/'),
+      contextId  : contextSegments.slice(0, index + 1).join('/'),
+      modulePath : pathSegments.slice(0, index + 1).join('/'),
     },
   ]));
-  const audienceContextId = getRoleAudienceContextId(params.protocolRole, params.contextId);
+  const audienceContextId = getRoleAudienceContextId(params.moduleRole, params.contextId);
   const wrappedKeyIds = new Set(params.root.encryption?.keyEncryption
     .filter(entry => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-      'protocol' in entry && entry.protocol === params.protocol && entry.rolePath === params.protocolRole)
+      'module' in entry && entry.module === params.module && entry.rolePath === params.moduleRole)
     .map(entry => entry.keyId) ?? []);
   const authorRoles = expectedAuthorRoleProofs(params, ancestorIds);
   const scan = await scanSupport(params, ancestorIds, audienceContextId, authorRoles);
@@ -422,38 +422,38 @@ async function validateSupport(
   if (scan.role === undefined) {
     throw new RoleReplicationSupportError(`role '${params.replyRoleId}' has no signed active assignment.`);
   }
-  if (scan.currentProtocolConfigure === undefined || scan.currentProtocolConfigureMatches !== 1) {
-    throw new RoleReplicationSupportError('the response must contain exactly one current protocol configuration.');
+  if (scan.currentModuleConfigure === undefined || scan.currentModuleConfigureMatches !== 1) {
+    throw new RoleReplicationSupportError('the response must contain exactly one current module configuration.');
   }
 
-  assertRoleAudienceReady(params, scan.currentProtocolConfigure, wrappedKeyIds, scan);
+  assertRoleAudienceReady(params, scan.currentModuleConfigure, wrappedKeyIds, scan);
   return {
-    protocolDefinition : scan.currentProtocolConfigure.descriptor.definition,
-    roleRecordId       : params.replyRoleId,
+    moduleDefinition : scan.currentModuleConfigure.descriptor.definition,
+    roleRecordId     : params.replyRoleId,
   };
 }
 
 async function scanSupport(
   params: SupportValidationParams,
-  ancestorIds: ReadonlyMap<string, { contextId: string; protocolPath: string }>,
+  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
   audienceContextId: string | undefined,
   authorRoles: ReadonlySet<string>,
 ): Promise<SupportScan> {
   const scan: SupportScan = {
-    audienceKeyIds                  : new Set(),
-    currentProtocolConfigureMatches : 0,
-    deliveredKeyIds                 : new Set(),
+    audienceKeyIds                : new Set(),
+    currentModuleConfigureMatches : 0,
+    deliveredKeyIds               : new Set(),
   };
-  const isExpectedProtocolConfigure = isTenantProtocolConfig(params.sourceDid, params.protocol);
+  const isExpectedModuleConfigure = isTenantModuleConfig(params.sourceDid, params.module);
 
   for (const entry of params.support) {
-    if (isExpectedProtocolConfigure(entry.message)) {
+    if (isExpectedModuleConfigure(entry.message)) {
       if (typeof entry.isLatestBaseState !== 'boolean' || entry.encodedData !== undefined) {
         throw unsupportedEntry(entry);
       }
       if (entry.isLatestBaseState === true) {
-        scan.currentProtocolConfigure = entry.message;
-        scan.currentProtocolConfigureMatches++;
+        scan.currentModuleConfigure = entry.message;
+        scan.currentModuleConfigureMatches++;
       }
       continue;
     }
@@ -470,11 +470,11 @@ async function scanRecordsWriteSupport(
   params: SupportValidationParams,
   entry: RecordsReadReplicationSupportEntry,
   message: RecordsWriteMessage,
-  ancestorIds: ReadonlyMap<string, { contextId: string; protocolPath: string }>,
+  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
   audienceContextId: string | undefined,
   authorRoles: ReadonlySet<string>,
 ): Promise<void> {
-  const isAncestor = isExpectedAncestor(entry, message, params.protocol, ancestorIds);
+  const isAncestor = isExpectedAncestor(entry, message, params.module, ancestorIds);
   const identity = getRecordsWriteRoleIdentity(message);
   const isRoleVersion = message.recordId === params.replyRoleId && identity?.key === params.roleIdentity.key;
   const isRole = isRoleVersion &&
@@ -491,18 +491,18 @@ async function scanRecordsWriteSupport(
   const isRoleAudience = isTaggedEncryptionControl(
     message,
     ENCRYPTION_CONTROL_AUDIENCE_PATH,
-    params.protocol,
-    params.protocolRole,
+    params.module,
+    params.moduleRole,
     audienceContextId,
   );
-  const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.protocol);
+  const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.module);
   const isUsableAudience = isAudience &&
     entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
   const isDelivery = isTaggedEncryptionControl(
     message,
     ENCRYPTION_CONTROL_DELIVERY_PATH,
-    params.protocol,
-    params.protocolRole,
+    params.module,
+    params.moduleRole,
     audienceContextId,
   ) && message.descriptor.recipient === params.actorDid &&
     entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
@@ -523,21 +523,21 @@ async function scanRecordsWriteSupport(
 
 function expectedAuthorRoleProofs(
   params: SupportValidationParams,
-  ancestorIds: ReadonlyMap<string, { contextId: string; protocolPath: string }>,
+  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
 ): Set<string> {
   const records = [params.root];
   if (params.rootInitialWrite !== undefined) {
     records.push(params.rootInitialWrite);
   }
   for (const entry of params.support) {
-    if (Records.isRecordsWrite(entry.message) && isExpectedAncestor(entry, entry.message, params.protocol, ancestorIds)) {
+    if (Records.isRecordsWrite(entry.message) && isExpectedAncestor(entry, entry.message, params.module, ancestorIds)) {
       records.push(entry.message);
     }
   }
 
   const proofs = new Set<string>();
-  const addProof = (protocolPath: string | undefined, recipient: string | undefined, contextId: string | undefined): void => {
-    if (protocolPath === undefined) {
+  const addProof = (modulePath: string | undefined, recipient: string | undefined, contextId: string | undefined): void => {
+    if (modulePath === undefined) {
       return;
     }
     if (recipient === undefined) {
@@ -545,8 +545,8 @@ function expectedAuthorRoleProofs(
     }
     const identity = getRoleRecordIdentity({
       contextId,
-      protocol: params.protocol,
-      protocolPath,
+      module: params.module,
+      modulePath,
       recipient,
     });
     if (identity.key === params.roleIdentity.key) {
@@ -555,10 +555,10 @@ function expectedAuthorRoleProofs(
     proofs.add(identity.key);
   };
   for (const record of records) {
-    addProof(getRecordProtocolRole(record), getRecordAuthor(record), record.contextId);
+    addProof(getRecordModuleRole(record), getRecordAuthor(record), record.contextId);
   }
   if (params.rootDelete !== undefined) {
-    addProof(getRecordProtocolRole(params.rootDelete), getRecordAuthor(params.rootDelete), params.root.contextId);
+    addProof(getRecordModuleRole(params.rootDelete), getRecordAuthor(params.rootDelete), params.root.contextId);
   }
   return proofs;
 }
@@ -573,25 +573,25 @@ function isRecordsDeleteMessage(
 function isExpectedAncestor(
   entry: RecordsReadReplicationSupportEntry,
   message: RecordsWriteMessage,
-  protocol: string,
-  ancestorIds: ReadonlyMap<string, { contextId: string; protocolPath: string }>,
+  module: string,
+  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
 ): boolean {
   const ancestor = ancestorIds.get(message.recordId);
   return ancestor !== undefined &&
     message.contextId === ancestor.contextId &&
-    message.descriptor.protocol === protocol &&
-    message.descriptor.protocolPath === ancestor.protocolPath &&
+    message.descriptor.module === module &&
+    message.descriptor.modulePath === ancestor.modulePath &&
     entry.isLatestBaseState === false &&
     entry.encodedData === undefined;
 }
 
 function assertRoleAudienceReady(
   params: SupportValidationParams,
-  currentProtocolConfigure: ProtocolsConfigureMessage,
+  currentModuleConfigure: ModulesConfigureMessage,
   wrappedKeyIds: ReadonlySet<string>,
   scan: SupportScan,
 ): void {
-  const roleRuleSet = getRuleSetAtPath(params.protocolRole, currentProtocolConfigure.descriptor.definition.structure);
+  const roleRuleSet = getRuleSetAtPath(params.moduleRole, currentModuleConfigure.descriptor.definition.structure);
   const deliveryRequired = roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined;
   const missingAudience = (params.rootDelete === undefined && deliveryRequired && scan.audienceKeyIds.size === 0) ||
     [...wrappedKeyIds].some(keyId => !scan.audienceKeyIds.has(keyId));
@@ -608,25 +608,25 @@ function assertRoleAudienceReady(
 
 function isTaggedEncryptionControl(
   message: RecordsWriteMessage,
-  protocolPath: string,
-  protocol: string,
+  modulePath: string,
+  module: string,
   rolePath: string,
   contextId: string | undefined,
 ): boolean {
   return contextId !== undefined &&
-    isEncryptionControlRecordFor(message, protocolPath, { protocol, rolePath, contextId });
+    isEncryptionControlRecordFor(message, modulePath, { module, rolePath, contextId });
 }
 
 function isRootAudienceControl(
   message: RecordsWriteMessage,
   root: RecordsWriteMessage,
-  protocol: string,
+  module: string,
 ): boolean {
   const tags = message.descriptor.tags;
   if (
-    message.descriptor.protocol !== protocol ||
-    message.descriptor.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
-    tags?.protocol !== protocol ||
+    message.descriptor.module !== module ||
+    message.descriptor.modulePath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
+    tags?.module !== module ||
     typeof tags.rolePath !== 'string' ||
     typeof tags.contextId !== 'string' ||
     typeof tags.keyId !== 'string'
@@ -636,8 +636,8 @@ function isRootAudienceControl(
 
   return root.encryption?.keyEncryption.some((entry): boolean =>
     entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-    'protocol' in entry &&
-    entry.protocol === protocol &&
+    'module' in entry &&
+    entry.module === module &&
     entry.rolePath === tags.rolePath &&
     entry.keyId === tags.keyId &&
     getRoleAudienceContextId(entry.rolePath, root.contextId) === tags.contextId
@@ -676,7 +676,7 @@ function assertCurrent(shouldContinue: (() => boolean) | undefined): void {
 async function resolveDelegatedRoleReadGrant(
   params: DelegatedRoleReadParams,
   contextId: string,
-  protocolPath: string,
+  modulePath: string,
 ): Promise<DwnDataEncodedRecordsWriteMessage | undefined> {
   if (params.delegateDid === undefined) {
     return undefined;
@@ -688,8 +688,8 @@ async function resolveDelegatedRoleReadGrant(
     delegateDid  : params.delegateDid,
     forceRefresh : true,
     messageType  : DwnInterface.RecordsRead,
-    protocol     : params.protocol,
-    protocolPath,
+    module       : params.module,
+    modulePath,
   });
   return message;
 }

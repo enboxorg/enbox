@@ -85,21 +85,21 @@ describe('AudienceKeyDeliveryStoreLevel', () => {
     expect(await store.get(intent.sourceDid, intent.roleRecordId)).toEqual({ ...intent, state: 'delivered' });
   });
 
-  it('rebuilds one protocol slice without replacing delivered or unrelated state', async () => {
+  it('rebuilds one module slice without replacing delivered or unrelated state', async () => {
     const delivered = deliveryIntent();
     const stale = deliveryIntent({ roleRecordId: 'stale-role' });
-    const otherProtocol = deliveryIntent({ protocol: 'https://example.com/other', roleRecordId: 'other-protocol' });
+    const otherModule = deliveryIntent({ module: 'https://example.com/other', roleRecordId: 'other-module' });
     const otherSource = deliveryIntent({ sourceDid: `${delivered.sourceDid}-other`, roleRecordId: 'other-source' });
     const discovered = deliveryIntent({ roleRecordId: 'discovered-role' });
     await Promise.all([
       recordDelivered(store, delivered),
       recordDelivered(store, stale),
-      recordDelivered(store, otherProtocol),
+      recordDelivered(store, otherModule),
       recordDelivered(store, otherSource),
     ]);
 
-    const states = await store.reconcileProtocol({
-      protocol  : delivered.protocol,
+    const states = await store.reconcileModule({
+      module    : delivered.module,
       sourceDid : delivered.sourceDid,
       scan      : async () => [delivered, discovered],
     });
@@ -110,7 +110,7 @@ describe('AudienceKeyDeliveryStoreLevel', () => {
     ]));
     expect(states).toHaveLength(2);
     expect(await store.get(stale.sourceDid, stale.roleRecordId)).toBeUndefined();
-    expect(await store.get(otherProtocol.sourceDid, otherProtocol.roleRecordId)).toBeDefined();
+    expect(await store.get(otherModule.sourceDid, otherModule.roleRecordId)).toBeDefined();
     expect(await store.get(otherSource.sourceDid, otherSource.roleRecordId)).toBeDefined();
   });
 
@@ -118,8 +118,8 @@ describe('AudienceKeyDeliveryStoreLevel', () => {
     const intent = deliveryIntent();
     await recordDelivered(store, intent);
 
-    await expect(store.reconcileProtocol({
-      protocol  : intent.protocol,
+    await expect(store.reconcileModule({
+      module    : intent.module,
       sourceDid : intent.sourceDid,
       scan      : async () => { throw new Error('incomplete scan'); },
     })).rejects.toThrow('incomplete scan');
@@ -131,7 +131,7 @@ describe('AudienceKeyDeliveryStoreLevel', () => {
 function deliveryIntent(overrides: Partial<AudienceKeyDeliveryIntent> = {}): AudienceKeyDeliveryIntent {
   return {
     contextId    : 'workspace-id',
-    protocol     : 'https://example.com/workspace',
+    module       : 'https://example.com/workspace',
     recipientDid : 'did:example:bob',
     rolePath     : 'workspace/member',
     roleRecordId : 'role-record-id',

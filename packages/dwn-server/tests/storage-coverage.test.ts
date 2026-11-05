@@ -50,7 +50,7 @@ describe('storage — coverage', () => {
       expect(dialect).toBeDefined();
     });
 
-    it('should throw for an unknown protocol', () => {
+    it('should throw for an unknown module', () => {
       expect(() => getDialectFromUrl(new URL('ftp://localhost/data'))).toThrow('Unsupported database protocol');
     });
   });
@@ -103,7 +103,7 @@ describe('storage — coverage', () => {
       expect(dwnConfig.resumableTaskStore).toBeDefined();
     });
 
-    it('should throw for unknown storage protocol', async () => {
+    it('should throw for unknown storage module', async () => {
       const cfg = testConfig({
         dataStore          : 'redis://localhost:6379',
         messageStore       : 'sqlite://',
@@ -137,7 +137,7 @@ describe('storage — coverage', () => {
 
     it('should skip SQL migrations for level:// backend', async () => {
       // level:// stores don't need SQL migrations — the function should
-      // detect the non-SQL protocol and skip without error.
+      // detect the non-SQL module and skip without error.
       const cfg = testConfig({
         dataStore          : 'level://migration-skip-data',
         messageStore       : 'level://migration-skip-msg',

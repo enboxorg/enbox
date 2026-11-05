@@ -1,19 +1,19 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   ContextMember,
   ContextRecord,
   ContextView,
   MemberContext,
+  ModuleContext,
   OwnedContext,
-  ProtocolContext,
   RecordView,
   TypedEnbox,
 } from '@enbox/api';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs } from '@enbox/api';
 
 const ContextDefinition = {
-  protocol  : 'https://example.com/protocols/context-records',
+  module    : 'https://example.com/modules/context-records',
   published : true,
   types     : {
     invite    : { dataFormats: ['application/json'] },
@@ -56,9 +56,9 @@ const ContextDefinition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const ContextProtocol = defineProtocol(ContextDefinition, {
+const ContextModule = defineModule(ContextDefinition, {
   invite    : recordCodecs.json<{ code: string }>(),
   live      : recordCodecs.json<{ active: boolean }>(),
   member    : recordCodecs.json<{ label: string }>(),
@@ -70,27 +70,27 @@ const ContextProtocol = defineProtocol(ContextDefinition, {
   viewer    : recordCodecs.json<{ expires: boolean }>(),
   workspace : recordCodecs.json<{ name: string }>(),
 });
-void ContextProtocol;
+void ContextModule;
 
 declare const context:
   | OwnedContext<
     typeof ContextDefinition,
-    typeof ContextProtocol.codecs,
+    typeof ContextModule.codecs,
     'workspace'
   >
   | MemberContext<
     typeof ContextDefinition,
-    typeof ContextProtocol.codecs,
+    typeof ContextModule.codecs,
     'workspace/member' | 'workspace/viewer'
   >;
 declare const catalogContext: MemberContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs,
+  typeof ContextModule.codecs,
   'workspace/member' | 'project/outsider'
 >;
 declare const typed: TypedEnbox<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs
+  typeof ContextModule.codecs
 >;
 declare const callerSignal: AbortSignal;
 void typed.records.subscribe('workspace/note', { signal: callerSignal }, (): void => {});
@@ -110,14 +110,14 @@ if (catalogContext.role === 'workspace/member') {
 }
 
 const owned = typed.contexts.open('workspace', 'workspace-id');
-const listed: Promise<ProtocolContext<
+const listed: Promise<ModuleContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs
+  typeof ContextModule.codecs
 >[]> =
   typed.contexts.list();
-const observed: Promise<ContextView<ProtocolContext<
+const observed: Promise<ContextView<ModuleContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs
+  typeof ContextModule.codecs
 >>> =
   typed.contexts.observe({ signal: callerSignal });
 void listed;
@@ -139,9 +139,9 @@ void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: c
 void typed.contexts.list({ access: 'member', materializeRoot: true });
 // @ts-expect-error root materialization is only supported for accepted member contexts.
 void typed.contexts.observe({ access: 'owner', materializeRoot: true });
-declare const listedContext: ProtocolContext<
+declare const listedContext: ModuleContext<
   typeof ContextDefinition,
-  typeof ContextProtocol.codecs
+  typeof ContextModule.codecs
 >;
 if (listedContext.access === 'owner') {
   if (listedContext.path === 'workspace') {
@@ -175,12 +175,12 @@ void owned.then((value): void => {
   void value.invite('did:example:alice', { preview: { title: 'Shared workspace' } });
   // @ts-expect-error invitation preview values are intentionally string-only.
   void value.invite('did:example:alice', { preview: { count: 1 } });
-  // @ts-expect-error invitations use the bound context's protocol policy.
+  // @ts-expect-error invitations use the bound context's module policy.
   void value.invite('did:example:alice', { path: 'project' });
   const members = value.members;
   const assigned: Promise<ContextMember<
     typeof ContextDefinition,
-    typeof ContextProtocol.codecs,
+    typeof ContextModule.codecs,
     'workspace/member'
   >> = members.set('did:example:alice', {
     data : { label: 'editor' },
@@ -205,7 +205,7 @@ void owned.then((value): void => {
   });
   const memberView: Promise<RecordView<ContextMember<
     typeof ContextDefinition,
-    typeof ContextProtocol.codecs,
+    typeof ContextModule.codecs,
     'workspace/member' | 'workspace/viewer'
   >>> = members.observe({ signal: callerSignal });
   void memberView.then((view): void => {
@@ -429,7 +429,7 @@ void created.then(async (record): Promise<void> => {
   // @ts-expect-error context updates cannot override their source tenant.
   await record.update({ data: { text: 'wrong tenant' }, from: 'did:example:other' });
   // @ts-expect-error context updates cannot override their role.
-  await record.update({ data: { text: 'wrong role' }, protocolRole: 'workspace/other' });
+  await record.update({ data: { text: 'wrong role' }, moduleRole: 'workspace/other' });
   // @ts-expect-error partial updates belong to context.records.patch().
   await record.patch({ text: 'patched' });
   // @ts-expect-error context records cannot expose their raw serialization.
@@ -441,7 +441,7 @@ void created.then(async (record): Promise<void> => {
 // @ts-expect-error context creates cannot override their source tenant.
 void context.records.create('workspace/note', { data: { text: 'hello' }, from: 'did:example:other' });
 // @ts-expect-error context creates cannot override their role.
-void context.records.create('workspace/note', { data: { text: 'hello' }, protocolRole: 'workspace/other' });
+void context.records.create('workspace/note', { data: { text: 'hello' }, moduleRole: 'workspace/other' });
 // @ts-expect-error context creates cannot inject audience keys.
 void context.records.create('workspace/note', { data: { text: 'hello' }, recipientRolePublicKey: {} });
 void context.records.create('workspace/note', {
@@ -466,7 +466,7 @@ void context.records.query('workspace/member');
 // @ts-expect-error context queries cannot override their source tenant.
 void context.records.query('workspace/note', { from: 'did:example:other' });
 // @ts-expect-error context queries cannot override their role.
-void context.records.query('workspace/note', { protocolRole: 'workspace/other' });
+void context.records.query('workspace/note', { moduleRole: 'workspace/other' });
 // @ts-expect-error context views cannot override their source tenant.
 void context.records.observe('workspace/note', { from: 'did:example:other', pagination: { limit: 20 } });
 // @ts-expect-error context subscriptions accept no routing or query options.
@@ -476,7 +476,7 @@ void context.records.read('workspace/note', { filter: { recordId: 'note-id' }, f
 // @ts-expect-error context deletes cannot override their source tenant.
 void context.records.delete('workspace/note', { from: 'did:example:other', recordId: 'note-id' });
 // @ts-expect-error context deletes cannot override their role.
-void context.records.delete('workspace/note', { protocolRole: 'workspace/other', recordId: 'note-id' });
+void context.records.delete('workspace/note', { moduleRole: 'workspace/other', recordId: 'note-id' });
 // @ts-expect-error delivery repair belongs to the owner-side membership API.
 void context.records.retryDelivery('workspace/member', 'role-id');
 // @ts-expect-error delivery state belongs to the owner-side membership API.

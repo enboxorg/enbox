@@ -3,13 +3,13 @@ import type { DwnApi } from '../src/dwn-api.js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const definition = {
-  protocol  : 'https://example.com/protocols/typed-record-delete',
+  module    : 'https://example.com/modules/typed-record-delete',
   published : true,
   types     : {
     note: { dataFormats: ['application/json'] },
@@ -19,21 +19,21 @@ const definition = {
   },
 } as const;
 
-const protocol = defineProtocol(definition, {
+const module = defineModule(definition, {
   note: recordCodecs.json<{ title: string }>(),
 });
 
-function createTypedDelete(deleteRecord: sinon.SinonStub): TypedEnbox<typeof definition, typeof protocol.codecs> {
+function createTypedDelete(deleteRecord: sinon.SinonStub): TypedEnbox<typeof definition, typeof module.codecs> {
   const dwn = {
-    protocols: {
+    modules: {
       query: sinon.stub().resolves({
-        protocols : [{ definition }],
-        status    : { code: 200, detail: 'OK' },
+        modules : [{ definition }],
+        status  : { code: 200, detail: 'OK' },
       }),
     },
     records: { delete: deleteRecord },
   } as unknown as DwnApi;
-  return new TypedEnbox(dwn, protocol);
+  return new TypedEnbox(dwn, module);
 }
 
 describe('TypedEnbox.records.delete()', () => {
@@ -49,9 +49,9 @@ describe('TypedEnbox.records.delete()', () => {
 
       await expect(typed.records.delete('note', { recordId: 'note-id' })).resolves.toBeUndefined();
       expect(deleteRecord.calledOnceWithMatch({
-        protocol     : definition.protocol,
-        protocolPath : 'note',
-        recordId     : 'note-id',
+        module     : definition.module,
+        modulePath : 'note',
+        recordId   : 'note-id',
       })).toBe(true);
     }
   });

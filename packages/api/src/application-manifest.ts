@@ -1,146 +1,146 @@
 /**
- * Typed application protocol registration and auth-request projection.
+ * Typed application module registration and auth-request projection.
  *
- * An application manifest keeps each {@link TypedProtocol} together with the
+ * An application manifest keeps each {@link TypedModule} together with the
  * permission policy used for delegated connect. Runtime codecs remain on the
- * application side; {@link getApplicationProtocolRequests} projects only raw
+ * application side; {@link getApplicationModuleRequests} projects only raw
  * definitions and permissions across the auth/connect boundary.
  */
 
-import type { TypedProtocol } from './protocol-types.js';
-import type { Permission, ProtocolRequest } from '@enbox/auth';
+import type { TypedModule } from './module-types.js';
+import type { ModuleRequest, Permission } from '@enbox/auth';
 
-import { authoredProtocolDefinitionsEqual } from '@enbox/dwn-sdk-js';
-import { isTypedProtocol } from './define-protocol.js';
+import { authoredModuleDefinitionsEqual } from '@enbox/dwn-sdk-js';
+import { isTypedModule } from './define-module.js';
 import { normalizePermissionPolicy } from '@enbox/auth';
 
-/** One typed protocol registered by an application. */
-export type ApplicationManifestProtocol<Protocol extends TypedProtocol = TypedProtocol> = {
-  /** Typed protocol retained for application APIs and future readiness checks. */
-  readonly protocol: Protocol;
+/** One typed module registered by an application. */
+export type ApplicationManifestModule<Module extends TypedModule = TypedModule> = {
+  /** Typed module retained for application APIs and future readiness checks. */
+  readonly module: Module;
 
-  /** Normalized delegated permissions requested for this protocol. */
+  /** Normalized delegated permissions requested for this module. */
   readonly permissions: readonly Permission[];
 };
 
-type ApplicationManifestProtocolRegistration<Protocol extends TypedProtocol = TypedProtocol> = {
-  readonly protocol: Protocol;
+type ApplicationManifestModuleRegistration<Module extends TypedModule = TypedModule> = {
+  readonly module: Module;
   readonly permissions?: readonly Permission[];
 };
 
-/** A direct typed-protocol shorthand or an entry with explicit permissions. */
-export type ApplicationManifestProtocolInput<Protocol extends TypedProtocol = TypedProtocol> =
-  | Protocol
-  | ApplicationManifestProtocolRegistration<Protocol>;
+/** A direct typed-module shorthand or an entry with explicit permissions. */
+export type ApplicationManifestModuleInput<Module extends TypedModule = TypedModule> =
+  | Module
+  | ApplicationManifestModuleRegistration<Module>;
 
-/** A stable application-owned registry of typed protocols. */
+/** A stable application-owned registry of typed modules. */
 export type ApplicationManifest<
-  Protocols extends readonly ApplicationManifestProtocol[] = readonly ApplicationManifestProtocol[],
+  Modules extends readonly ApplicationManifestModule[] = readonly ApplicationManifestModule[],
 > = {
-  /** Normalized typed protocol registrations, in declaration order. */
-  readonly protocols: Protocols;
+  /** Normalized typed module registrations, in declaration order. */
+  readonly modules: Modules;
 };
 
-type TypedProtocolFromInput<Input> =
-  Input extends TypedProtocol
+type TypedModuleFromInput<Input> =
+  Input extends TypedModule
     ? Input
-    : Input extends ApplicationManifestProtocolRegistration<infer Protocol>
-      ? Protocol
+    : Input extends ApplicationManifestModuleRegistration<infer Module>
+      ? Module
       : never;
 
-type NormalizedManifestProtocols<Inputs extends readonly ApplicationManifestProtocolInput[]> = {
-  readonly [Index in keyof Inputs]: ApplicationManifestProtocol<TypedProtocolFromInput<Inputs[Index]>>;
+type NormalizedManifestModules<Inputs extends readonly ApplicationManifestModuleInput[]> = {
+  readonly [Index in keyof Inputs]: ApplicationManifestModule<TypedModuleFromInput<Inputs[Index]>>;
 };
 
 /** Options accepted by {@link defineApplicationManifest}. */
 export type DefineApplicationManifestOptions<
-  Inputs extends readonly ApplicationManifestProtocolInput[] = readonly ApplicationManifestProtocolInput[],
+  Inputs extends readonly ApplicationManifestModuleInput[] = readonly ApplicationManifestModuleInput[],
 > = {
-  readonly protocols: Inputs;
+  readonly modules: Inputs;
 };
 
 /**
- * Registers the typed protocols and delegated permission policies for one
+ * Registers the typed modules and delegated permission policies for one
  * application.
  *
- * Direct `TypedProtocol` entries use auth's default permissions. Wrap a typed
- * protocol in `{ protocol, permissions }` for an explicit policy. Protocol URIs
+ * Direct `TypedModule` entries use auth's default permissions. Wrap a typed
+ * module in `{ module, permissions }` for an explicit policy. Module URIs
  * must be unique; duplicate and conflicting definitions are rejected instead
  * of silently merging permission policies.
  *
  * The returned manifest freezes only its copied containers. Caller-owned typed
- * protocols, definitions, and codecs are retained by reference and are not
+ * modules, definitions, and codecs are retained by reference and are not
  * frozen or otherwise mutated.
  *
  * @example
  * ```ts
  * const application = defineApplicationManifest({
- *   protocols: [
- *     NotesProtocol,
- *     { protocol: PhotosProtocol, permissions: ['read'] },
+ *   modules: [
+ *     NotesModule,
+ *     { module: PhotosModule, permissions: ['read'] },
  *   ],
  * } as const);
  * ```
  */
 export function defineApplicationManifest<
-  const Inputs extends readonly ApplicationManifestProtocolInput[],
+  const Inputs extends readonly ApplicationManifestModuleInput[],
 >(
   options: DefineApplicationManifestOptions<Inputs>,
-): ApplicationManifest<NormalizedManifestProtocols<Inputs>> {
-  const normalized: ApplicationManifestProtocol[] = [];
-  const seen = new Map<string, { index: number; protocol: TypedProtocol }>();
+): ApplicationManifest<NormalizedManifestModules<Inputs>> {
+  const normalized: ApplicationManifestModule[] = [];
+  const seen = new Map<string, { index: number; module: TypedModule }>();
 
-  for (const [index, input] of options.protocols.entries()) {
-    const registration = isApplicationManifestProtocol(input) ? input : undefined;
-    const protocol = registration?.protocol ?? input;
-    if (!isTypedProtocol(protocol)) {
-      throw new TypeError(`defineApplicationManifest: protocols[${index}] must be a TypedProtocol.`);
+  for (const [index, input] of options.modules.entries()) {
+    const registration = isApplicationManifestModule(input) ? input : undefined;
+    const module = registration?.module ?? input;
+    if (!isTypedModule(module)) {
+      throw new TypeError(`defineApplicationManifest: modules[${index}] must be a TypedModule.`);
     }
 
-    const protocolUri = protocol.definition.protocol;
-    const previous = seen.get(protocolUri);
+    const moduleUri = module.definition.module;
+    const previous = seen.get(moduleUri);
     if (previous !== undefined) {
-      const duplicate = authoredProtocolDefinitionsEqual(previous.protocol.definition, protocol.definition);
-      const reason = duplicate ? 'duplicate protocol URI' : 'conflicting definitions for protocol URI';
+      const duplicate = authoredModuleDefinitionsEqual(previous.module.definition, module.definition);
+      const reason = duplicate ? 'duplicate module URI' : 'conflicting definitions for module URI';
       throw new TypeError(
-        `defineApplicationManifest: ${reason} '${protocolUri}' at indexes ${previous.index} and ${index}.`,
+        `defineApplicationManifest: ${reason} '${moduleUri}' at indexes ${previous.index} and ${index}.`,
       );
     }
-    seen.set(protocolUri, { index, protocol });
+    seen.set(moduleUri, { index, module });
 
     const permissions = Object.freeze(normalizePermissionPolicy(
       registration?.permissions,
-      `defineApplicationManifest: protocols[${index}].permissions`,
+      `defineApplicationManifest: modules[${index}].permissions`,
     ));
-    normalized.push(Object.freeze({ permissions, protocol }));
+    normalized.push(Object.freeze({ permissions, module }));
   }
 
   return Object.freeze({
-    protocols: Object.freeze(normalized),
-  }) as ApplicationManifest<NormalizedManifestProtocols<Inputs>>;
+    modules: Object.freeze(normalized),
+  }) as ApplicationManifest<NormalizedManifestModules<Inputs>>;
 }
 
 /**
- * Projects a typed application manifest into dependency-neutral auth protocol
+ * Projects a typed application manifest into dependency-neutral auth module
  * requests for a delegated connect or refresh call.
  *
  * The returned array and permission arrays are fresh mutable copies.
  * Runtime codecs are never included. Owner/vault callers should not pass these
- * requests to `connect()` because a non-empty protocol list intentionally
+ * requests to `connect()` because a non-empty module list intentionally
  * selects auth's delegated-handler route.
  */
-export function getApplicationProtocolRequests(
+export function getApplicationModuleRequests(
   application: ApplicationManifest,
-): ProtocolRequest[] {
-  return application.protocols.map(({ permissions, protocol }) => ({
-    definition  : protocol.definition,
+): ModuleRequest[] {
+  return application.modules.map(({ permissions, module }) => ({
+    definition  : module.definition,
     permissions : [...permissions],
   }));
 }
 
 /** Whether an input uses the explicit application-manifest entry shape. */
-function isApplicationManifestProtocol(
-  input: ApplicationManifestProtocolInput,
-): input is ApplicationManifestProtocolRegistration {
-  return Object.hasOwn(input, 'protocol');
+function isApplicationManifestModule(
+  input: ApplicationManifestModuleInput,
+): input is ApplicationManifestModuleRegistration {
+  return Object.hasOwn(input, 'module');
 }

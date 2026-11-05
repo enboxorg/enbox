@@ -11,7 +11,7 @@ import type {
 } from './types/sync.js';
 
 import { DwnInterface } from './types/dwn.js';
-import { computeAuthorizationEpoch, computeProjectionId, syncScopeFromProtocols } from './types/sync.js';
+import { computeAuthorizationEpoch, computeProjectionId, syncScopeFromModules } from './types/sync.js';
 import { permissionGrantIdsFromEntries, resolveMessagesScopes, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
 /** The endpoint-discovery surface required to resolve sync targets. */
@@ -139,7 +139,7 @@ export class SyncTargetResolver {
     options: SyncIdentityOptions,
     resolvedTargets?: SyncTargetResolution[],
   ): Promise<SyncTarget[]> {
-    const requestedScope = syncScopeFromProtocols(options.protocols);
+    const requestedScope = syncScopeFromModules(options.modules);
     const resolutions = resolvedTargets ?? await this.buildTargetResolutions(did, requestedScope, options);
 
     return Promise.all(resolutions.map(async (resolution) => ({
@@ -156,16 +156,16 @@ export class SyncTargetResolver {
     delegateDid?: string,
   ): Promise<SyncTarget> {
     const scope = {
-      kind          : 'context' as const,
-      protocol      : source.protocol,
-      contextId     : source.contextId,
-      protocolPaths : source.protocolPaths,
+      kind        : 'context' as const,
+      module      : source.module,
+      contextId   : source.contextId,
+      modulePaths : source.modulePaths,
     };
 
     const authorization: Extract<SyncAuthorization, { kind: 'role' }> = {
       kind         : 'role',
       actorDid     : source.actorDid,
-      protocolRole : source.protocolRole,
+      moduleRole   : source.moduleRole,
       roleRecordId : source.id,
     };
 
@@ -194,7 +194,7 @@ export class SyncTargetResolver {
       delegate     : true,
       forceRefresh : true,
       messageType  : DwnInterface.MessagesQuery,
-      protocol     : target.scope.kind === 'context' ? target.scope.protocol : undefined,
+      module       : target.scope.kind === 'context' ? target.scope.module : undefined,
     });
     return { ...target, authorDelegatedGrant: message };
   }
@@ -202,7 +202,7 @@ export class SyncTargetResolver {
   /** Resolve the scopes and authorization epochs represented by identity options. */
   public async buildTargetResolutions(
     did: string,
-    requestedScope: ReturnType<typeof syncScopeFromProtocols>,
+    requestedScope: ReturnType<typeof syncScopeFromModules>,
     options: SyncIdentityOptions,
   ): Promise<SyncTargetResolution[]> {
     const { delegateDid } = options;

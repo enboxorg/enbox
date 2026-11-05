@@ -26,19 +26,19 @@ need no Node-global or standard-library shims in a Vite browser build.
 
 ## Define the application boundary
 
-Give the protocol and schema stable HTTPS identifiers owned by the application.
+Give the module and schema stable HTTPS identifiers owned by the application.
 Changing them later creates a different data model.
 
-```ts title="src/features/notes/protocol.ts"
-import { defineProtocol, recordCodecs } from '@enbox/browser';
+```ts title="src/features/notes/module.ts"
+import { defineModule, recordCodecs } from '@enbox/browser';
 
 export type Note = {
   body: string;
   title: string;
 };
 
-export const NotesProtocol = defineProtocol({
-  protocol  : 'https://notes.example/protocols/notes/v1',
+export const NotesModule = defineModule({
+  module  : 'https://notes.example/modules/notes/v1',
   published : false,
   types     : {
     note: {
@@ -52,16 +52,16 @@ export const NotesProtocol = defineProtocol({
 ```
 
 Name resources and domain actions once. Input drafts and navigation remain UI
-state; protocol paths and record defaults belong to the feature:
+state; module paths and record defaults belong to the feature:
 
 ```ts title="src/features/notes/store.ts"
 import { defineStore } from '@enbox/browser';
-import { NotesProtocol } from './protocol.js';
+import { NotesModule } from './module.js';
 
 export const NotesStore = defineStore({
-  protocols: { notes: NotesProtocol },
-  create({ protocols }) {
-    const notes = protocols.notes.collection('note', { pagination: { limit: 50 } });
+  modules: { notes: NotesModule },
+  create({ modules }) {
+    const notes = modules.notes.collection('note', { pagination: { limit: 50 } });
     return {
       notes,
       addNote: (title: string) => notes.create.run({ title: title.trim(), body: '' }),
@@ -71,7 +71,7 @@ export const NotesStore = defineStore({
 ```
 
 Create one application owner for the browser lifetime. It derives the manifest
-for protocol installation, delegated permissions, sync, and grant refresh:
+for module installation, delegated permissions, sync, and grant refresh:
 
 ```ts title="src/app/application.ts"
 import { createApplication } from '@enbox/browser';
@@ -333,7 +333,7 @@ or views.
 
 ## Add multi-party data
 
-Model collaboration in the protocol instead of copying each record into every
+Model collaboration in the module instead of copying each record into every
 user's tenant. Use a `recipient` rule for one record addressed to one DID. Use
 a shared context when several related records need roles such as editor and
 viewer.
@@ -345,11 +345,11 @@ both sides then use the same context-bound records API and live views. The
 invitation is not the permission, and a local replica is not a second owner.
 
 See [Shared contexts](/docs/packages/api#shared-contexts) for one complete
-protocol policy and workflow: role paths, member/viewer actions, owner role
+module policy and workflow: role paths, member/viewer actions, owner role
 assignment and invitation, recipient acceptance, live access lists, role
 changes, revocation, and offline behavior. Use `contexts`, `members`, and
 `context.records` from that guide instead of manually threading `from`,
-`protocolRole`, or a root `within` through dapp code.
+`moduleRole`, or a root `within` through dapp code.
 
 ## Hosting requirements
 
@@ -389,7 +389,7 @@ Before calling the dapp complete, verify all of these in a real browser:
 - creating or changing a record updates an `observe()` view without a timer or
   refresh button;
 - a change from another connected tab or device arrives through the live path;
-- for a collaborative protocol, two distinct identities prove that an editor
+- for a collaborative module, two distinct identities prove that an editor
   can mutate, a viewer cannot, role changes take effect, and revocation retires
   retained member handles;
 - existing records and the application shell render offline, an offline write

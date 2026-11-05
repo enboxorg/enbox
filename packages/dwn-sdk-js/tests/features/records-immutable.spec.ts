@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -8,7 +8,7 @@ import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
-import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
+import { ModulesConfigure } from '../../src/interfaces/modules-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -50,12 +50,12 @@ export function testRecordsImmutable(): void {
       await dwn.close();
     });
 
-    describe('ProtocolsConfigure validation', () => {
-      it('should accept a protocol definition with $immutable: true', async () => {
+    describe('ModulesConfigure validation', () => {
+      it('should accept a module definition with $immutable: true', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -66,20 +66,20 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const reply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const reply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(reply.status.code).toBe(202);
       });
 
       it('should reject $immutable on a $ref node', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const badDefinition: ProtocolDefinition = {
-          protocol  : 'https://bad-immutable-ref.example.com',
+        const badDefinition: ModuleDefinition = {
+          module    : 'https://bad-immutable-ref.example.com',
           published : true,
           uses      : { threads: 'https://threads.example.com' },
           types     : {},
@@ -92,13 +92,13 @@ export function testRecordsImmutable(): void {
         };
 
         try {
-          await ProtocolsConfigure.create({
+          await ModulesConfigure.create({
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
+          expect(error.message).toContain(DwnErrorCode.ModulesConfigureInvalidRefNodeHasDirectives);
         }
       });
 
@@ -106,8 +106,8 @@ export function testRecordsImmutable(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const warnSpy = sinon.spy(console, 'warn');
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-warn-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-warn-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -118,12 +118,12 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const reply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const reply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(reply.status.code).toBe(202);
 
         expect(warnSpy.called).toBe(true);
@@ -133,11 +133,11 @@ export function testRecordsImmutable(): void {
     });
 
     describe('runtime enforcement', () => {
-      it('should allow initial writes to immutable protocol paths', async () => {
+      it('should allow initial writes to immutable module paths', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -148,31 +148,31 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocol = protocolDefinition.protocol;
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const module = moduleDefinition.module;
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'credential',
+          author     : alice,
+          recipient  : alice.did,
+          module,
+          modulePath : 'credential',
         });
 
         const reply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
         expect(reply.status.code).toBe(202);
       });
 
-      it('should reject updates to records at immutable protocol paths', async () => {
+      it('should reject updates to records at immutable module paths', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -183,21 +183,21 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocol = protocolDefinition.protocol;
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const module = moduleDefinition.module;
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // initial write — should succeed
         const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'credential',
+          author     : alice,
+          recipient  : alice.did,
+          module,
+          modulePath : 'credential',
         });
 
         const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
@@ -211,14 +211,14 @@ export function testRecordsImmutable(): void {
 
         const updateReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
         expect(updateReply.status.code).toBe(400);
-        expect(updateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(updateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
       it('should still allow deletion of immutable records when authorized by $actions', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -229,21 +229,21 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocol = protocolDefinition.protocol;
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const module = moduleDefinition.module;
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // initial write
         const record = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'credential',
+          author     : alice,
+          recipient  : alice.did,
+          module,
+          modulePath : 'credential',
         });
 
         const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
@@ -259,11 +259,11 @@ export function testRecordsImmutable(): void {
         expect(deleteReply.status.code).toBe(202);
       });
 
-      it('should allow updates to non-immutable protocol paths in the same protocol', async () => {
+      it('should allow updates to non-immutable module paths in the same module', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://mixed-immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://mixed-immutable-test.xyz',
           published : true,
           types     : {
             credential : {},
@@ -280,21 +280,21 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocol = protocolDefinition.protocol;
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const module = moduleDefinition.module;
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // write a note
         const noteRecord = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'note',
+          author     : alice,
+          recipient  : alice.did,
+          module,
+          modulePath : 'note',
         });
 
         const noteReply = await dwn.processMessage(alice.did, noteRecord.message, { dataStream: noteRecord.dataStream });
@@ -311,10 +311,10 @@ export function testRecordsImmutable(): void {
 
         // write an immutable credential
         const credRecord = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : alice.did,
-          protocol,
-          protocolPath : 'credential',
+          author     : alice,
+          recipient  : alice.did,
+          module,
+          modulePath : 'credential',
         });
 
         const credReply = await dwn.processMessage(alice.did, credRecord.message, { dataStream: credRecord.dataStream });
@@ -328,14 +328,14 @@ export function testRecordsImmutable(): void {
 
         const credUpdateReply = await dwn.processMessage(alice.did, updatedCred.message, { dataStream: updatedCred.dataStream });
         expect(credUpdateReply.status.code).toBe(400);
-        expect(credUpdateReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationImmutableRecord);
+        expect(credUpdateReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationImmutableRecord);
       });
 
-      it('should allow multiple initial writes (different records) to the same immutable protocol path', async () => {
+      it('should allow multiple initial writes (different records) to the same immutable module path', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://immutable-test.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://immutable-test.xyz',
           published : true,
           types     : { credential: {} },
           structure : {
@@ -346,22 +346,22 @@ export function testRecordsImmutable(): void {
           }
         };
 
-        const protocol = protocolDefinition.protocol;
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const module = moduleDefinition.module;
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(configReply.status.code).toBe(202);
 
         // write multiple distinct records — all should succeed
         for (let i = 0; i < 3; i++) {
           const record = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credential',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credential',
           });
 
           const reply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });

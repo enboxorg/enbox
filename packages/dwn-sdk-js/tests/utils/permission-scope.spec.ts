@@ -4,85 +4,85 @@ import { PermissionScopeMatcher } from '../../src/utils/permission-scope.js';
 
 describe('PermissionScopeMatcher', () => {
   it('matches unrestricted scopes', () => {
-    expect(PermissionScopeMatcher.matches({}, { protocol: 'https://example.com/protocol' })).toBe(true);
+    expect(PermissionScopeMatcher.matches({}, { module: 'https://example.com/module' })).toBe(true);
   });
 
-  it('matches protocol scopes exactly', () => {
+  it('matches module scopes exactly', () => {
     expect(PermissionScopeMatcher.matches(
-      { protocol: 'https://example.com/protocol' },
-      { protocol: 'https://example.com/protocol' },
+      { module: 'https://example.com/module' },
+      { module: 'https://example.com/module' },
     )).toBe(true);
     expect(PermissionScopeMatcher.matches(
-      { protocol: 'https://example.com/protocol' },
-      { protocol: 'https://example.com/protocol-sibling' },
+      { module: 'https://example.com/module' },
+      { module: 'https://example.com/module-sibling' },
     )).toBe(false);
   });
 
-  it('matches protocolPath scopes by subtree', () => {
+  it('matches modulePath scopes by subtree', () => {
     const scope = {
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread/message',
+      module     : 'https://example.com/module',
+      modulePath : 'thread/message',
     };
 
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread/message',
+      module     : 'https://example.com/module',
+      modulePath : 'thread/message',
     })).toBe(true);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread/message/reaction',
+      module     : 'https://example.com/module',
+      modulePath : 'thread/message/reaction',
     })).toBe(true);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread/messageEvil',
+      module     : 'https://example.com/module',
+      modulePath : 'thread/messageEvil',
     })).toBe(false);
   });
 
   it('matches contextId scopes by context subtree', () => {
     const scope = {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 'root',
     };
 
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 'root',
     })).toBe(true);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 'root/child',
     })).toBe(true);
     expect(PermissionScopeMatcher.matches({ ...scope, contextId: 'root/child' }, {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 'root',
     })).toBe(false);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 'rootEVIL',
     })).toBe(false);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol: 'https://example.com/protocol',
+      module: 'https://example.com/module',
     })).toBe(false);
     expect(PermissionScopeMatcher.matches(scope, {
-      protocol  : 'https://example.com/protocol',
+      module    : 'https://example.com/module',
       contextId : 42 as any,
     })).toBe(false);
   });
 
-  it('fails closed for path or context scopes without protocol', () => {
-    expect(PermissionScopeMatcher.matches({ protocolPath: 'thread' }, { protocolPath: 'thread' })).toBe(false);
+  it('fails closed for path or context scopes without module', () => {
+    expect(PermissionScopeMatcher.matches({ modulePath: 'thread' }, { modulePath: 'thread' })).toBe(false);
     expect(PermissionScopeMatcher.matches({ contextId: 'root' }, { contextId: 'root' })).toBe(false);
   });
 
-  it('fails closed when protocolPath and contextId are both present', () => {
+  it('fails closed when modulePath and contextId are both present', () => {
     expect(PermissionScopeMatcher.matches({
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread',
-      contextId    : 'root',
+      module     : 'https://example.com/module',
+      modulePath : 'thread',
+      contextId  : 'root',
     }, {
-      protocol     : 'https://example.com/protocol',
-      protocolPath : 'thread',
-      contextId    : 'root',
+      module     : 'https://example.com/module',
+      modulePath : 'thread',
+      contextId  : 'root',
     })).toBe(false);
   });
 });

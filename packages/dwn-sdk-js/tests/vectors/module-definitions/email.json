@@ -1,0 +1,62 @@
+{
+  "module": "http://email-module.xyz",
+  "published": true,
+  "types": {
+    "email": {
+      "schema": "https://schemas.example.com/email",
+      "dataFormats": [
+        "text/plain"
+      ]
+    }
+  },
+  "structure": {
+    "email": {
+      "$actions": [
+        {
+          "who": "anyone",
+          "can": [
+            "create"
+          ]
+        },
+        {
+          "who": "author",
+          "of": "email",
+          "can": [
+            "read"
+          ]
+        },
+        {
+          "who": "recipient",
+          "of": "email",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "email": {
+        "$actions": [
+          {
+            "who": "anyone",
+            "can": [
+              "create"
+            ]
+          },
+          {
+            "who": "author",
+            "of": "email/email",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "of": "email/email",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

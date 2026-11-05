@@ -71,7 +71,7 @@ export function isTerminalSyncAuthorizationFailure(detail: string | undefined): 
 
 /** Whether a role-authorized operation no longer has its matching role record. */
 export function isMissingRoleAuthorizationFailure(detail: string | undefined): boolean {
-  return detail?.includes(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound) === true;
+  return detail?.includes(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound) === true;
 }
 
 /** Authorization failures that must reach engine lifecycle handling instead of entering retry queues. */

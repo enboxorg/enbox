@@ -1079,8 +1079,8 @@ describe('web features', () => {
     });
 
     it('should preserve nested path segments', () => {
-      const result = parseDrlUrl('https://dweb/did:dht:abc/protocols/xyz/records/123');
-      expect(result).toEqual(['did:dht:abc', 'protocols/xyz/records/123']);
+      const result = parseDrlUrl('https://dweb/did:dht:abc/modules/xyz/records/123');
+      expect(result).toEqual(['did:dht:abc', 'modules/xyz/records/123']);
     });
   });
 });

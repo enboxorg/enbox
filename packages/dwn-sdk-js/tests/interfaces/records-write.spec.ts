@@ -24,7 +24,7 @@ import {
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  PermissionsProtocol,
+  PermissionsModule,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '../../src/index.js';
 
@@ -42,13 +42,13 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options: RecordsWriteOptions = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        dateCreated  : '2022-10-14T10:20:30.405060Z',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        signer       : Jws.createSigner(alice)
+        data        : TestDataGenerator.randomBytes(10),
+        dataFormat  : 'application/json',
+        dateCreated : '2022-10-14T10:20:30.405060Z',
+        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        module      : 'http://test-module.xyz',
+        modulePath  : 'testRecord',
+        signer      : Jws.createSigner(alice)
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -79,8 +79,8 @@ describe('RecordsWrite', () => {
         data              : TestDataGenerator.randomBytes(10),
         dataFormat        : 'application/json',
         recordId          : await TestDataGenerator.randomCborSha256Cid(),
-        protocol          : 'http://test-protocol.xyz',
-        protocolPath      : 'testRecord',
+        module            : 'http://test-module.xyz',
+        modulePath        : 'testRecord',
         signer            : Jws.createSigner(alice),
         permissionGrantId : grantId,
       });
@@ -96,8 +96,8 @@ describe('RecordsWrite', () => {
         data              : TestDataGenerator.randomBytes(10),
         dataFormat        : 'application/json',
         recordId          : await TestDataGenerator.randomCborSha256Cid(),
-        protocol          : 'http://test-protocol.xyz',
-        protocolPath      : 'testRecord',
+        module            : 'http://test-module.xyz',
+        modulePath        : 'testRecord',
         signer            : Jws.createSigner(alice),
         permissionGrantId : grantId,
       });
@@ -110,12 +110,12 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        signer       : Jws.createSigner(alice),
+        data       : TestDataGenerator.randomBytes(10),
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        signer     : Jws.createSigner(alice),
       });
 
       expect(recordsWrite.message.descriptor.permissionGrantId).toBeUndefined();
@@ -130,8 +130,8 @@ describe('RecordsWrite', () => {
         data              : TestDataGenerator.randomBytes(10),
         dataFormat        : 'application/json',
         recordId          : await TestDataGenerator.randomCborSha256Cid(),
-        protocol          : 'http://test-protocol.xyz',
-        protocolPath      : 'testRecord',
+        module            : 'http://test-module.xyz',
+        modulePath        : 'testRecord',
         signer            : Jws.createSigner(alice),
         permissionGrantId : grantId,
       });
@@ -147,13 +147,13 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options: RecordsWriteOptions = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        published    : true,
-        signer       : Jws.createSigner(alice)
+        data       : TestDataGenerator.randomBytes(10),
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        published  : true,
+        signer     : Jws.createSigner(alice)
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -167,15 +167,15 @@ describe('RecordsWrite', () => {
 
       // testing `data` and `dataCid` both defined
       const options1 = {
-        recipient    : alice.did,
-        data         : TestDataGenerator.randomBytes(10),
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        published    : true,
-        signer       : Jws.createSigner(alice)
+        recipient  : alice.did,
+        data       : TestDataGenerator.randomBytes(10),
+        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        published  : true,
+        signer     : Jws.createSigner(alice)
       };
       const createPromise1 = RecordsWrite.create(options1);
 
@@ -183,16 +183,16 @@ describe('RecordsWrite', () => {
 
       // testing `data` and `dataCid` both undefined
       const options2 = {
-        recipient    : alice.did,
+        recipient  : alice.did,
         // intentionally showing both `data` and `dataCid` are undefined
         // data                        : TestDataGenerator.randomBytes(10),
         // dataCid                     : await TestDataGenerator.randomCborSha256Cid(),
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        published    : true,
-        signer       : Jws.createSigner(alice)
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        published  : true,
+        signer     : Jws.createSigner(alice)
       };
       const createPromise2 = RecordsWrite.create(options2);
 
@@ -203,57 +203,57 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options1 = {
-        recipient    : alice.did,
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
+        recipient  : alice.did,
+        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
         // dataSize                  : 123, // intentionally missing
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        published    : true,
-        signer       : Jws.createSigner(alice)
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        published  : true,
+        signer     : Jws.createSigner(alice)
       };
       const createPromise1 = RecordsWrite.create(options1);
 
       await expect(createPromise1).rejects.toThrow('`dataCid` and `dataSize` must both be defined or undefined at the same time');
 
       const options2 = {
-        recipient    : alice.did,
-        data         : TestDataGenerator.randomBytes(10),
+        recipient  : alice.did,
+        data       : TestDataGenerator.randomBytes(10),
         // dataCid                   : await TestDataGenerator.randomCborSha256Cid(), // intentionally missing
-        dataSize     : 123,
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        published    : true,
-        signer       : Jws.createSigner(alice)
+        dataSize   : 123,
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        published  : true,
+        signer     : Jws.createSigner(alice)
       };
       const createPromise2 = RecordsWrite.create(options2);
 
       await expect(createPromise2).rejects.toThrow('`dataCid` and `dataSize` must both be defined or undefined at the same time');
     });
 
-    it('should auto-normalize protocol URL', async () => {
+    it('should auto-normalize module URL', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options: RecordsWriteOptions = {
-        recipient    : alice.did,
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        signer       : Jws.createSigner(alice),
-        protocol     : 'example.com/',
-        protocolPath : 'example',
-        schema       : 'http://foo.bar/schema'
+        recipient  : alice.did,
+        data       : TestDataGenerator.randomBytes(10),
+        dataFormat : 'application/json',
+        signer     : Jws.createSigner(alice),
+        module     : 'example.com/',
+        modulePath : 'example',
+        schema     : 'http://foo.bar/schema'
       };
       const recordsWrite = await RecordsWrite.create(options);
 
       const message = recordsWrite.message;
 
-      expect(message.descriptor.protocol).toBe('http://example.com');
+      expect(message.descriptor.module).toBe('http://example.com');
     });
 
-    it('should require `protocol` and `protocolPath`', async () => {
+    it('should require `module` and `modulePath`', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const baseOptions = {
@@ -265,19 +265,19 @@ describe('RecordsWrite', () => {
         signer     : Jws.createSigner(alice)
       };
 
-      // missing protocol
-      const missingProtocol = RecordsWrite.create({
+      // missing module
+      const missingModule = RecordsWrite.create({
         ...baseOptions,
-        protocolPath: 'foo/bar',
+        modulePath: 'foo/bar',
       } as RecordsWriteOptions);
-      await expect(missingProtocol).rejects.toThrow('`protocol` and `protocolPath` are required');
+      await expect(missingModule).rejects.toThrow('`module` and `modulePath` are required');
 
-      // missing protocolPath
-      const missingProtocolPath = RecordsWrite.create({
+      // missing modulePath
+      const missingModulePath = RecordsWrite.create({
         ...baseOptions,
-        protocol: 'http://example.com',
+        module: 'http://example.com',
       } as RecordsWriteOptions);
-      await expect(missingProtocolPath).rejects.toThrow('`protocol` and `protocolPath` are required');
+      await expect(missingModulePath).rejects.toThrow('`module` and `modulePath` are required');
     });
 
     it('should be able to create a RecordsWrite successfully using a custom signer', async () => {
@@ -294,13 +294,13 @@ describe('RecordsWrite', () => {
       const signer = new CustomSigner();
 
       const options: RecordsWriteOptions = {
-        schema       : 'http://any-schema.com',
-        protocol     : 'http://example.com',
-        protocolPath : 'foo/bar',
-        dataCid      : await TestDataGenerator.randomCborSha256Cid(),
-        dataSize     : 123,
-        dataFormat   : 'application/json',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
+        schema     : 'http://any-schema.com',
+        module     : 'http://example.com',
+        modulePath : 'foo/bar',
+        dataCid    : await TestDataGenerator.randomCborSha256Cid(),
+        dataSize   : 123,
+        dataFormat : 'application/json',
+        recordId   : await TestDataGenerator.randomCborSha256Cid(),
         signer
       };
 
@@ -316,21 +316,21 @@ describe('RecordsWrite', () => {
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'chat'
+        module    : 'chat'
       };
-      const grantToBob = await PermissionsProtocol.createGrant({
+      const grantToBob = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-        description : 'Allow Bob to write as me in chat protocol',
+        description : 'Allow Bob to write as me in chat module',
         grantedTo   : bob.did,
         scope
       });
 
       const createPromise = RecordsWrite.create({
         delegatedGrant : grantToBob.dataEncodedMessage,
-        protocol       : 'http://test-protocol.xyz',
-        protocolPath   : 'testRecord',
+        module         : 'http://test-module.xyz',
+        modulePath     : 'testRecord',
         dataFormat     : 'application/octet-stream',
         data           : TestDataGenerator.randomBytes(10),
       });
@@ -348,28 +348,28 @@ describe('RecordsWrite', () => {
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
           algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          derivationScheme : KeyDerivationScheme.ModulePath,
           keyId            : await Encryption.getKeyId(publicKey),
           publicKey,
         }],
       };
       const encryptedWrite = await RecordsWrite.create({
-        data         : TestDataGenerator.randomBytes(32),
-        dataFormat   : 'application/octet-stream',
+        data       : TestDataGenerator.randomBytes(32),
+        dataFormat : 'application/octet-stream',
         encryptionInput,
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'message',
-        signer       : Jws.createSigner(alice),
+        module     : 'https://example.com/module',
+        modulePath : 'message',
+        signer     : Jws.createSigner(alice),
       });
 
       const createPromise = RecordsWrite.create({
-        data         : TestDataGenerator.randomBytes(32),
-        dataFormat   : 'application/octet-stream',
-        encryption   : encryptedWrite.message.encryption,
+        data       : TestDataGenerator.randomBytes(32),
+        dataFormat : 'application/octet-stream',
+        encryption : encryptedWrite.message.encryption,
         encryptionInput,
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'message',
-        signer       : Jws.createSigner(alice),
+        module     : 'https://example.com/module',
+        modulePath : 'message',
+        signer     : Jws.createSigner(alice),
       });
 
       await expect(createPromise).rejects.toThrow(DwnErrorCode.RecordsWriteCreateEncryptionAndEncryptionInputMutuallyExclusive);
@@ -386,14 +386,14 @@ describe('RecordsWrite', () => {
           key                  : TestDataGenerator.randomBytes(32),
           keyEncryptionInputs  : [{
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            derivationScheme : KeyDerivationScheme.ModulePath,
             keyId            : await Encryption.getKeyId(publicKey),
             publicKey,
           }],
         },
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'message',
-        signer       : Jws.createSigner(alice),
+        module     : 'https://example.com/module',
+        modulePath : 'message',
+        signer     : Jws.createSigner(alice),
       });
 
       const message = structuredClone(recordsWrite.message);
@@ -417,21 +417,21 @@ describe('RecordsWrite', () => {
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
             keyId            : await Encryption.getKeyId(publicKey),
-            protocol         : 'https://example.com/protocol',
+            module           : 'https://example.com/module',
             publicKey,
             rolePath         : 'thread/member',
           }],
         },
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'message',
-        signer       : Jws.createSigner(alice),
+        module     : 'https://example.com/module',
+        modulePath : 'message',
+        signer     : Jws.createSigner(alice),
       });
 
       await RecordsWrite.parse(recordsWrite.message);
 
       const keyEncryption = recordsWrite.message.encryption!.keyEncryption[0];
       expect(keyEncryption.derivationScheme).toBe(ROLE_AUDIENCE_DERIVATION_SCHEME);
-      expect('protocol' in keyEncryption && keyEncryption.protocol).toBe('https://example.com/protocol');
+      expect('module' in keyEncryption && keyEncryption.module).toBe('https://example.com/module');
       expect('rolePath' in keyEncryption && keyEncryption.rolePath).toBe('thread/member');
       expect('epoch' in keyEncryption).toBe(false);
       expect('role' in keyEncryption).toBe(false);
@@ -502,7 +502,7 @@ describe('RecordsWrite', () => {
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
           algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          derivationScheme : KeyDerivationScheme.ModulePath,
           keyId,
           publicKey,
         }],
@@ -529,21 +529,21 @@ describe('RecordsWrite', () => {
       const encryptedData = await Encryption.encrypt(
         ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, plaintext
       );
-      const protocol = 'https://example.com/protocol';
-      const protocolPath = 'message';
+      const module = 'https://example.com/module';
+      const modulePath = 'message';
       const rootKey = {
         derivedPrivateKey : alice.encryptionKeyPair.privateJwk,
-        derivationScheme  : KeyDerivationScheme.ProtocolPath,
+        derivationScheme  : KeyDerivationScheme.ModulePath,
         rootKeyId         : 'unused',
       };
-      const leafKey = await TestDataGenerator.deriveDescendantPrivateKey(rootKey, [KeyDerivationScheme.ProtocolPath, protocol, protocolPath]);
+      const leafKey = await TestDataGenerator.deriveDescendantPrivateKey(rootKey, [KeyDerivationScheme.ModulePath, module, modulePath]);
       const publicKey = await X25519.getPublicKey({ key: leafKey.derivedPrivateKey }) as PublicKeyJwk;
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [{
           algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : KeyDerivationScheme.ProtocolPath,
+          derivationScheme : KeyDerivationScheme.ModulePath,
           keyId            : await Encryption.getKeyId(publicKey),
           publicKey,
         }],
@@ -552,8 +552,8 @@ describe('RecordsWrite', () => {
         data       : encryptedData,
         dataFormat : 'application/octet-stream',
         encryptionInput,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         signer     : Jws.createSigner(alice),
       });
 
@@ -580,11 +580,11 @@ describe('RecordsWrite', () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const recordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(alice),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
-        dataFormat   : 'application/octet-stream',
-        data         : TestDataGenerator.randomBytes(10),
+        signer     : Jws.createSigner(alice),
+        module     : 'http://test-module.xyz',
+        modulePath : 'testRecord',
+        dataFormat : 'application/octet-stream',
+        data       : TestDataGenerator.randomBytes(10),
       });
 
       const validateJsonSchemaSpy = sinon.spy(Message, 'validateJsonSchema');
@@ -599,10 +599,10 @@ describe('RecordsWrite', () => {
     it('should return false if the given RecordsWrite is not signed at all', async () => {
       const data = new TextEncoder().encode('any data');
       const recordsWrite = await RecordsWrite.create({
-        protocol     : 'unused',
-        protocolPath : 'unused',
-        schema       : 'unused',
-        dataFormat   : 'unused',
+        module     : 'unused',
+        modulePath : 'unused',
+        schema     : 'unused',
+        dataFormat : 'unused',
         data
       });
 
@@ -615,10 +615,10 @@ describe('RecordsWrite', () => {
     it('should return false if the given RecordsWrite is not signed at all', async () => {
       const data = new TextEncoder().encode('any data');
       const recordsWrite = await RecordsWrite.create({
-        protocol     : 'unused',
-        protocolPath : 'unused',
-        schema       : 'unused',
-        dataFormat   : 'unused',
+        module     : 'unused',
+        modulePath : 'unused',
+        schema     : 'unused',
+        dataFormat : 'unused',
         data
       });
 
@@ -648,13 +648,13 @@ describe('RecordsWrite', () => {
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'chat'
+        module    : 'chat'
       };
-      const grantToBob = await PermissionsProtocol.createGrant({
+      const grantToBob = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-        description : 'Allow Bob to write as me in chat protocol',
+        description : 'Allow Bob to write as me in chat module',
         grantedTo   : bob.did,
         scope
       });
@@ -664,8 +664,8 @@ describe('RecordsWrite', () => {
         dataFormat       : 'application/octet-stream',
         dateCreated      : '2024-03-01T00:00:00.000000Z',
         messageTimestamp : '2024-03-01T00:00:00.000000Z',
-        protocol         : 'http://test-protocol.xyz',
-        protocolPath     : 'testRecord',
+        module           : 'http://test-module.xyz',
+        modulePath       : 'testRecord',
         signer           : Jws.createSigner(bob),
       };
 
@@ -683,12 +683,12 @@ describe('RecordsWrite', () => {
   describe('signAsOwner()', () => {
     it('should throw if the RecordsWrite is not signed by an author yet', async () => {
       const options = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        dateCreated  : '2023-07-27T10:20:30.405060Z',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
+        data        : TestDataGenerator.randomBytes(10),
+        dataFormat  : 'application/json',
+        dateCreated : '2023-07-27T10:20:30.405060Z',
+        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        module      : 'http://test-module.xyz',
+        modulePath  : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -706,12 +706,12 @@ describe('RecordsWrite', () => {
   describe('signAsOwnerDelegate()', () => {
     it('should throw if the RecordsWrite is not signed by an author yet', async () => {
       const options = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        dateCreated  : '2023-07-27T10:20:30.405060Z',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
+        data        : TestDataGenerator.randomBytes(10),
+        dataFormat  : 'application/json',
+        dateCreated : '2023-07-27T10:20:30.405060Z',
+        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        module      : 'http://test-module.xyz',
+        modulePath  : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -724,9 +724,9 @@ describe('RecordsWrite', () => {
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'chat'
+        module    : 'chat'
       };
-      const ownerDelegatedGrant = await PermissionsProtocol.createGrant({
+      const ownerDelegatedGrant = await PermissionsModule.createGrant({
         signer      : Jws.createSigner(alice),
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
@@ -745,12 +745,12 @@ describe('RecordsWrite', () => {
   describe('ownerSignatureSigner()', () => {
     it('should return `undefined` if owner signature is not present in the message', async () => {
       const options = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        dateCreated  : '2023-07-27T10:20:30.405060Z',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
+        data        : TestDataGenerator.randomBytes(10),
+        dataFormat  : 'application/json',
+        dateCreated : '2023-07-27T10:20:30.405060Z',
+        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        module      : 'http://test-module.xyz',
+        modulePath  : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 
@@ -761,12 +761,12 @@ describe('RecordsWrite', () => {
   describe('message', () => {
     it('should throw if attempting to access the message of a RecordsWrite that is not given authorization signature input', async () => {
       const options = {
-        data         : TestDataGenerator.randomBytes(10),
-        dataFormat   : 'application/json',
-        dateCreated  : '2023-07-27T10:20:30.405060Z',
-        recordId     : await TestDataGenerator.randomCborSha256Cid(),
-        protocol     : 'http://test-protocol.xyz',
-        protocolPath : 'testRecord',
+        data        : TestDataGenerator.randomBytes(10),
+        dataFormat  : 'application/json',
+        dateCreated : '2023-07-27T10:20:30.405060Z',
+        recordId    : await TestDataGenerator.randomCborSha256Cid(),
+        module      : 'http://test-module.xyz',
+        modulePath  : 'testRecord',
       };
       const recordsWrite = await RecordsWrite.create(options);
 

@@ -2,10 +2,10 @@ import type { DwnErrorCode } from './dwn-error.js';
 import type { Filter } from '../types/query-types.js';
 import type { MessagesQuery } from '../interfaces/messages-query.js';
 import type { MessagesSubscribe } from '../interfaces/messages-subscribe.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
-import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
+import type { ResolvedModuleRole } from './module-authorization-action.js';
 import type { SubscriptionEvent } from '../types/subscriptions.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { MessagesFilter, MessagesQueryMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
@@ -15,10 +15,10 @@ import { DwnError } from './dwn-error.js';
 import { FilterUtility } from '../utils/filter.js';
 import { Message } from './message.js';
 import { MessagesGrantAuthorization } from './messages-grant-authorization.js';
-import { PermissionGrant as PermissionGrantClass } from '../protocols/permission-grant.js';
-import { ProtocolAuthorization } from './protocol-authorization.js';
+import { ModuleAuthorization } from './module-authorization.js';
+import { PermissionGrant as PermissionGrantClass } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
-import { verifyProtocolRoleRecord } from './protocol-authorization-action.js';
+import { verifyModuleRoleRecord } from './module-authorization-action.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 type MessagesRoleRequest = MessagesQuery | MessagesSubscribe;
@@ -27,8 +27,8 @@ type RecordsRoleMessage = RecordsQueryMessage | RecordsSubscribeMessage;
 
 type ExactRoleFilter = MessagesFilter & {
   interface: DwnInterfaceName.Records;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   contextIdPrefix: string;
 };
 
@@ -44,7 +44,7 @@ export type MessagesRoleAuthorizationState = {
   author: string;
   authorDelegate?: AuthorDelegateAuthorization;
   metadataOnly: boolean;
-  resolvedRole: ResolvedProtocolRole & { roleRecordId: string };
+  resolvedRole: ResolvedModuleRole & { roleRecordId: string };
 };
 
 /** Narrow adapter from exact Messages filters to existing Records role authorization. */
@@ -56,7 +56,7 @@ export class MessagesRoleAuthorization {
     }
 
     const permissionGrantIds = Message.getPermissionGrantIds(request.signaturePayload!);
-    return permissionGrantIds.length === 0 && request.signaturePayload?.protocolRole !== undefined;
+    return permissionGrantIds.length === 0 && request.signaturePayload?.moduleRole !== undefined;
   }
 
   public static async authorize(input: {
@@ -94,7 +94,7 @@ export class MessagesRoleAuthorization {
     let resolvedRole: MessagesRoleAuthorizationState['resolvedRole'] | undefined;
     for (const filter of filters) {
       const recordsRequest = MessagesRoleAuthorization.toRecordsRequest(request, filter);
-      const filterRole = await ProtocolAuthorization.authorizeQueryOrSubscribe(
+      const filterRole = await ModuleAuthorization.authorizeQueryOrSubscribe(
         tenant,
         recordsRequest,
         validationStateReader,
@@ -141,7 +141,7 @@ export class MessagesRoleAuthorization {
       });
     }
 
-    await verifyProtocolRoleRecord(
+    await verifyModuleRoleRecord(
       tenant,
       authorization.author,
       authorization.resolvedRole,
@@ -153,10 +153,10 @@ export class MessagesRoleAuthorization {
   public static roleWakeFilter(authorization: MessagesRoleAuthorizationState): Filter {
     const { author, resolvedRole } = authorization;
     return {
-      interface    : DwnInterfaceName.Records,
-      protocol     : resolvedRole.protocol,
-      protocolPath : resolvedRole.protocolPath,
-      recipient    : author,
+      interface  : DwnInterfaceName.Records,
+      module     : resolvedRole.module,
+      modulePath : resolvedRole.modulePath,
+      recipient  : author,
       ...(resolvedRole.contextIdPrefix === undefined
         ? {}
         : { contextId: { subtree: resolvedRole.contextIdPrefix } }),
@@ -173,8 +173,8 @@ export class MessagesRoleAuthorization {
     }
 
     const { author, resolvedRole } = authorization;
-    return recordsWrite.descriptor.protocol === resolvedRole.protocol
-      && recordsWrite.descriptor.protocolPath === resolvedRole.protocolPath
+    return recordsWrite.descriptor.module === resolvedRole.module
+      && recordsWrite.descriptor.modulePath === resolvedRole.modulePath
       && recordsWrite.descriptor.recipient === author
       && (resolvedRole.contextIdPrefix === undefined ||
         FilterUtility.matchesSubtree(resolvedRole.contextIdPrefix, recordsWrite.contextId));
@@ -194,12 +194,12 @@ export class MessagesRoleAuthorization {
       method           : event.event.message.descriptor.method,
       messageTimestamp : event.event.message.descriptor.messageTimestamp,
     };
-    const { protocol, protocolPath } = recordsWrite.descriptor;
-    if (protocol !== undefined) {
-      indexes.protocol = protocol;
+    const { module, modulePath } = recordsWrite.descriptor;
+    if (module !== undefined) {
+      indexes.module = module;
     }
-    if (protocolPath !== undefined) {
-      indexes.protocolPath = protocolPath;
+    if (modulePath !== undefined) {
+      indexes.modulePath = modulePath;
     }
     if (recordsWrite.contextId !== undefined) {
       indexes.contextId = recordsWrite.contextId;
@@ -212,17 +212,17 @@ export class MessagesRoleAuthorization {
     for (const filter of filters) {
       if (
         filter.interface !== DwnInterfaceName.Records
-        || typeof filter.protocol !== 'string'
-        || filter.protocol.length === 0
-        || typeof filter.protocolPath !== 'string'
-        || filter.protocolPath.length === 0
-        || filter.protocolPathPrefix !== undefined
+        || typeof filter.module !== 'string'
+        || filter.module.length === 0
+        || typeof filter.modulePath !== 'string'
+        || filter.modulePath.length === 0
+        || filter.modulePathPrefix !== undefined
         || typeof filter.contextIdPrefix !== 'string'
         || filter.contextIdPrefix.length === 0
       ) {
         throw new DwnError(
           failureCode,
-          'role-authorized message filters require exact Records protocol, protocolPath, and contextIdPrefix values',
+          'role-authorized message filters require exact Records module, modulePath, and contextIdPrefix values',
         );
       }
       exactFilters.push(filter as ExactRoleFilter);
@@ -233,9 +233,9 @@ export class MessagesRoleAuthorization {
       throw new DwnError(failureCode, 'role-authorized messages require at least one exact Records filter');
     }
     if (exactFilters.some(filter =>
-      filter.protocol !== first.protocol || filter.contextIdPrefix !== first.contextIdPrefix
+      filter.module !== first.module || filter.contextIdPrefix !== first.contextIdPrefix
     )) {
-      throw new DwnError(failureCode, 'role-authorized message filters must share one protocol and context');
+      throw new DwnError(failureCode, 'role-authorized message filters must share one module and context');
     }
 
     return exactFilters;
@@ -252,9 +252,9 @@ export class MessagesRoleAuthorization {
         method,
         messageTimestamp : request.message.descriptor.messageTimestamp,
         filter           : {
-          protocol     : filter.protocol,
-          protocolPath : filter.protocolPath,
-          contextId    : filter.contextIdPrefix,
+          module     : filter.module,
+          modulePath : filter.modulePath,
+          contextId  : filter.contextIdPrefix,
         },
       },
     } as RecordsRoleMessage;

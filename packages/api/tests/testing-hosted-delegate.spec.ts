@@ -1,11 +1,11 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Jws } from '@enbox/dwn-sdk-js';
 
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -23,25 +23,25 @@ describe('createHostedDelegatedEnboxTestContext', () => {
   });
 
   it('uses hosted routing and delegated grants for encrypted create, read, and delete', async () => {
-    const protocolUri = `https://example.com/protocols/hosted-testing-${TestDataGenerator.randomString(15)}`;
+    const moduleUri = `https://example.com/modules/hosted-testing-${TestDataGenerator.randomString(15)}`;
     const definition = {
-      protocol  : protocolUri,
+      module    : moduleUri,
       published : false,
       types     : {
         secret: {
           dataFormats        : ['application/json'],
           encryptionRequired : true,
-          schema             : `${protocolUri}/schemas/secret`,
+          schema             : `${moduleUri}/schemas/secret`,
         },
       },
       structure: {
         secret: { $immutable: true },
       },
-    } as const satisfies ProtocolDefinition;
-    const protocol = defineProtocol(definition, {
+    } as const satisfies ModuleDefinition;
+    const module = defineModule(definition, {
       secret: recordCodecs.json<{ message: string }>(),
     });
-    const application = defineApplicationManifest({ protocols: [protocol] } as const);
+    const application = defineApplicationManifest({ modules: [module] } as const);
 
     context = await createHostedDelegatedEnboxTestContext({
       application,
@@ -52,7 +52,7 @@ describe('createHostedDelegatedEnboxTestContext', () => {
     expect(context.session.delegateDid).toBe(context.delegateDid);
     expect(context.delegateDid).not.toBe(context.ownerDid);
 
-    const records = context.enbox.using(protocol).records;
+    const records = context.enbox.using(module).records;
     const created = await records.create('secret', {
       data : { message: 'hosted and delegated' },
       from : context.ownerDid,
@@ -75,16 +75,16 @@ describe('createHostedDelegatedEnboxTestContext', () => {
   });
 
   it('requires a caller-managed hosted DWN endpoint', async () => {
-    const protocolUri = 'https://example.com/protocols/hosted-testing-input';
-    const protocol = defineProtocol({
-      protocol  : protocolUri,
+    const moduleUri = 'https://example.com/modules/hosted-testing-input';
+    const module = defineModule({
+      module    : moduleUri,
       published : false,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: {} },
-    } as const satisfies ProtocolDefinition, {
+    } as const satisfies ModuleDefinition, {
       note: recordCodecs.json<{ body: string }>(),
     });
-    const application = defineApplicationManifest({ protocols: [protocol] } as const);
+    const application = defineApplicationManifest({ modules: [module] } as const);
 
     await expect(createHostedDelegatedEnboxTestContext({
       application,

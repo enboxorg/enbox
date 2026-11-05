@@ -7,19 +7,19 @@ export interface MessageStoreOptions {
 }
 
 /**
- * Read-time `$recordLimit` occupancy policy for one concrete protocol path.
+ * Read-time `$recordLimit` occupancy policy for one concrete module path.
  *
  * Stores partition matching latest RecordsWrites by `parentId`, rank each
  * partition by `dateCreated` then `recordId` ascending, and apply `max`
  * before the caller's filters, sort, and pagination.
  */
 export type RecordLimitOccupancy = {
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   /**
    * Root of the candidate context subtree. An exact-record request supplies
    * its direct-parent context here so sibling candidates still consume slots.
-   * Omitted for root protocol paths and selections scoped only by direct parent.
+   * Omitted for root module paths and selections scoped only by direct parent.
    */
   contextId?: string;
   /**

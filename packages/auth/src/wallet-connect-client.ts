@@ -27,7 +27,7 @@ import type {
   ConnectRequestType,
   ConnectResult,
 } from '@enbox/connect';
-import type { DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
+import type { DwnModuleDefinition, DwnPermissionScope } from '@enbox/agent';
 
 import { DidJwk } from '@enbox/dids';
 import { ensureDelegateX25519PrivateKey } from '@enbox/agent';
@@ -100,8 +100,8 @@ export type WalletConnectClientOptions = {
   walletUri: string;
 
   /**
-   * The protocols of permissions requested, along with the definition and
-   * permission scopes for each protocol.
+   * The modules of permissions requested, along with the definition and
+   * permission scopes for each module.
    */
   permissionRequests: ConnectPermissionRequest[];
 
@@ -146,13 +146,13 @@ export type WalletAuthenticationClientOptions = Omit<WalletConnectClientOptions,
   };
 
 /**
- * The options for creating a permission request for a given protocol.
+ * The options for creating a permission request for a given module.
  */
-export type ProtocolPermissionOptions = {
-  /** The protocol definition for the protocol being requested */
-  definition: DwnProtocolDefinition;
+export type ModulePermissionOptions = {
+  /** The module definition for the module being requested */
+  definition: DwnModuleDefinition;
 
-  /** The permissions being requested for the protocol */
+  /** The permissions being requested for the module */
   permissions: Permission[];
 };
 
@@ -281,52 +281,52 @@ async function prepareDelegatePortableDid(delegatePortableDid: PortableDid): Pro
 }
 
 /**
- * Creates a set of Dwn Permission Scopes to request for a given protocol.
+ * Creates a set of Dwn Permission Scopes to request for a given module.
  *
  * If no permissions are provided, the default permissions from
- * {@link DEFAULT_PERMISSIONS} are used (read, write, delete). Protocol configuration
+ * {@link DEFAULT_PERMISSIONS} are used (read, write, delete). Module configuration
  * is wallet-owned; app delegates request record access, not permission to configure
- * protocols themselves.
+ * modules themselves.
  */
-function createPermissionRequestForProtocol({ definition, permissions }: ProtocolPermissionOptions): ConnectPermissionRequest {
+function createPermissionRequestForModule({ definition, permissions }: ModulePermissionOptions): ConnectPermissionRequest {
   const requests: DwnPermissionScope[] = [];
 
   requests.push(
-    // Add the ability to query for the specific protocol
+    // Add the ability to query for the specific module
     {
-      protocol  : definition.protocol,
-      interface : DwnInterfaceName.Protocols,
+      module    : definition.module,
+      interface : DwnInterfaceName.Modules,
       method    : DwnMethodName.Query,
     },
-    // A Messages.Read grant is a unified scope for protocol message feeds and
+    // A Messages.Read grant is a unified scope for module message feeds and
     // real-time subscriptions.
     {
-      protocol  : definition.protocol,
+      module    : definition.module,
       interface : DwnInterfaceName.Messages,
       method    : DwnMethodName.Read,
     },
   );
 
-  // We also request any additional permissions the user has requested for this protocol
+  // We also request any additional permissions the user has requested for this module
   for (const permission of permissions) {
     switch (permission) {
       case 'write':
         requests.push({
-          protocol  : definition.protocol,
+          module    : definition.module,
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
         });
         break;
       case 'read':
         requests.push({
-          protocol  : definition.protocol,
+          module    : definition.module,
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
         });
         break;
       case 'delete':
         requests.push({
-          protocol  : definition.protocol,
+          module    : definition.module,
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
         });
@@ -339,9 +339,9 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
   }
 
   return {
-    protocolDefinition : definition,
-    permissionScopes   : requests,
+    moduleDefinition : definition,
+    permissionScopes : requests,
   };
 }
 
-export const WalletConnect = { initClient, initAuthentication, createPermissionRequestForProtocol };
+export const WalletConnect = { initClient, initAuthentication, createPermissionRequestForModule };

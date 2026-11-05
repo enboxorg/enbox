@@ -71,8 +71,8 @@ export class SocketConnection {
     private readonly tenantRateLimiter?: RateLimiter,
     private readonly messageProcessedHooks?: MessageProcessedHook[],
   ){
-    // Bun answers peer pings automatically at the protocol level; this loop
-    // originates our own protocol pings so dead peers are detected even when
+    // Bun answers peer pings automatically at the module level; this loop
+    // originates our own module pings so dead peers are detected even when
     // the peer's application-level timers are throttled or frozen.
     this.heartbeatInterval = setInterval(() => {
       if (this.isAlive === false) {

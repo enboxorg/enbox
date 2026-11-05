@@ -1,4 +1,4 @@
-import type { Dwn, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import sinon from 'sinon';
@@ -21,8 +21,8 @@ import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/syn
 
 const progressStorePath = '__TESTDATA__/sync-next-pull-page-integration/progress-store';
 const remoteEndpoint = 'http://localhost:9999/dwn';
-const protocol: ProtocolDefinition = {
-  protocol  : 'https://sync-next.example/notes',
+const module: ModuleDefinition = {
+  module    : 'https://sync-next.example/notes',
   published : true,
   types     : {
     note: {
@@ -90,8 +90,8 @@ describe('SyncNext pull and quarantine retry integration', () => {
     const configured = await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: module },
     });
     expect(configured.reply.status.code).toBe(202);
 
@@ -101,10 +101,10 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        schema       : protocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : module.module,
+        modulePath : 'note',
+        schema     : module.types.note.schema,
       },
       dataStream: new Blob([largeBytes]),
     });
@@ -117,10 +117,10 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        schema       : protocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : module.module,
+        modulePath : 'note',
+        schema     : module.types.note.schema,
       },
       dataStream: new Blob([smallText]),
     });
@@ -131,11 +131,11 @@ describe('SyncNext pull and quarantine retry integration', () => {
       author        : tenantDid,
       target        : tenantDid,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: protocol.protocol } },
+      messageParams : { filter: { module: module.module } },
     });
     expect(localBefore.entries ?? []).toHaveLength(0);
 
-    const scope = { kind: 'protocolSet' as const, protocols: [protocol.protocol] as [string] };
+    const scope = { kind: 'moduleSet' as const, modules: [module.module] as [string] };
     const syncTarget: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
@@ -215,12 +215,12 @@ describe('SyncNext pull and quarantine retry integration', () => {
   });
 
   it('settles an older quarantined write after a newer write materializes', async () => {
-    const supersessionProtocol = { ...protocol, protocol: 'https://sync-next.example/pull-supersession' };
+    const supersessionModule = { ...module, module: 'https://sync-next.example/pull-supersession' };
     expect((await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: supersessionProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: supersessionModule },
     })).reply.status.code).toBe(202);
     const initialData = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(3);
     const initial = await harness.agent.dwn.sendRequest({
@@ -228,16 +228,16 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : supersessionProtocol.protocol,
-        protocolPath : 'note',
-        schema       : supersessionProtocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : supersessionModule.module,
+        modulePath : 'note',
+        schema     : supersessionModule.types.note.schema,
       },
       dataStream: new Blob([initialData]),
     });
     expect(initial.reply.status.code).toBe(202);
 
-    const scope = { kind: 'protocolSet' as const, protocols: [supersessionProtocol.protocol] as [string] };
+    const scope = { kind: 'moduleSet' as const, modules: [supersessionModule.module] as [string] };
     const syncTarget: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
@@ -285,18 +285,18 @@ describe('SyncNext pull and quarantine retry integration', () => {
   });
 
   it('settles a locally completed write after failed settlement and progress-store restart without the source', async () => {
-    const crashProtocol = { ...protocol, protocol: 'https://sync-next.example/crash-retry' };
+    const crashModule = { ...module, module: 'https://sync-next.example/crash-retry' };
     expect((await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: crashProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: crashModule },
     })).reply.status.code).toBe(202);
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: crashProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: crashModule },
     })).reply.status.code).toBe(202);
     const data = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(7);
     const sent = await harness.agent.dwn.sendRequest({
@@ -304,10 +304,10 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : crashProtocol.protocol,
-        protocolPath : 'note',
-        schema       : crashProtocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : crashModule.module,
+        modulePath : 'note',
+        schema     : crashModule.types.note.schema,
       },
       dataStream: new Blob([data]),
     });
@@ -370,12 +370,12 @@ describe('SyncNext pull and quarantine retry integration', () => {
   });
 
   it('should recover missing data while an independent record progresses', async () => {
-    const runnerProtocol = { ...protocol, protocol: 'https://sync-next.example/runner' };
+    const runnerModule = { ...module, module: 'https://sync-next.example/runner' };
     expect((await harness.agent.dwn.sendRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: runnerProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: runnerModule },
     })).reply.status.code).toBe(202);
 
     const largeBytes = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(5);
@@ -384,10 +384,10 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : runnerProtocol.protocol,
-        protocolPath : 'note',
-        schema       : runnerProtocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : runnerModule.module,
+        modulePath : 'note',
+        schema     : runnerModule.types.note.schema,
       },
       dataStream: new Blob([largeBytes]),
     });
@@ -397,16 +397,16 @@ describe('SyncNext pull and quarantine retry integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol     : runnerProtocol.protocol,
-        protocolPath : 'note',
-        schema       : runnerProtocol.types.note.schema,
+        dataFormat : 'text/plain',
+        module     : runnerModule.module,
+        modulePath : 'note',
+        schema     : runnerModule.types.note.schema,
       },
       dataStream: new Blob(['independent']),
     });
     expect(small.reply.status.code).toBe(202);
 
-    const scope = { kind: 'protocolSet' as const, protocols: [runnerProtocol.protocol] as [string] };
+    const scope = { kind: 'moduleSet' as const, modules: [runnerModule.module] as [string] };
     const syncTarget: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),

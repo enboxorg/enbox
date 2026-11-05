@@ -18,6 +18,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { deferred } from './utils/deferred.js';
 import { DwnInterface } from '../src/types/dwn.js';
+import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
@@ -25,14 +26,14 @@ import { SyncRuntime } from '../src/sync-runtime.js';
 import { FollowedSourceNotReadyError, RoleReplicationSupportError } from '../src/sync-role-replication-support.js';
 
 const SOURCE_DID = 'did:example:owner';
-const PROTOCOL = 'https://example.com/notebooks';
+const MODULE = 'https://example.com/notebooks';
 
 const ROLES: FollowedSyncSourceInput['roles'] = [
   'notebook/collaborator',
   'notebook/viewer',
 ];
 
-function protocolPathsFor(role: string): [string, ...string[]] {
+function modulePathsFor(role: string): [string, ...string[]] {
   return role === 'notebook/collaborator'
     ? ['notebook', 'notebook/page', 'notebook/page/delta']
     : ['notebook', 'notebook/page'];
@@ -41,7 +42,7 @@ function protocolPathsFor(role: string): [string, ...string[]] {
 function source(
   id = 'role-a',
   contextId = 'notebook-a',
-  protocolRole: FollowedSyncSource['protocolRole'] = 'notebook/viewer',
+  moduleRole: FollowedSyncSource['moduleRole'] = 'notebook/viewer',
 ): FollowedSyncSource {
   return {
     acceptanceId   : `acceptance-${id}`,
@@ -49,10 +50,10 @@ function source(
     sourceDid      : SOURCE_DID,
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    protocol       : PROTOCOL,
+    module         : MODULE,
     contextId,
-    protocolRole,
-    protocolPaths  : protocolPathsFor(protocolRole),
+    moduleRole,
+    modulePaths    : modulePathsFor(moduleRole),
     roles          : ROLES,
   };
 }
@@ -65,15 +66,15 @@ function targetFor(followed: FollowedSyncSource, dwnUrl = followed.remoteEndpoin
     authorization : {
       kind         : 'role',
       actorDid     : followed.actorDid,
-      protocolRole : followed.protocolRole,
+      moduleRole   : followed.moduleRole,
       roleRecordId : followed.id,
     },
     authorizationEpoch : `epoch-${followed.id}`,
     scope              : {
-      kind          : 'context',
-      protocol      : followed.protocol,
-      contextId     : followed.contextId,
-      protocolPaths : followed.protocolPaths,
+      kind        : 'context',
+      module      : followed.module,
+      contextId   : followed.contextId,
+      modulePaths : followed.modulePaths,
     },
   };
 }
@@ -82,7 +83,7 @@ function sourceInput(followed = source()): FollowedSyncSourceInput {
   return {
     actorDid  : followed.actorDid,
     contextId : followed.contextId,
-    protocol  : followed.protocol,
+    module    : followed.module,
     roles     : ROLES,
     sourceDid : followed.sourceDid,
   };
@@ -90,11 +91,11 @@ function sourceInput(followed = source()): FollowedSyncSourceInput {
 
 function supportBatch(roleRecordId: string): RoleReplicationSupportBatch {
   return {
-    dependencies       : [],
-    protocolDefinition : {} as any,
+    dependencies     : [],
+    moduleDefinition : {} as any,
     roleRecordId,
-    root               : { message: { descriptor: {} }, isLatestBaseState: true } as any,
-    rootCid            : `root-${roleRecordId}`,
+    root             : { message: { descriptor: {} }, isLatestBaseState: true } as any,
+    rootCid          : `root-${roleRecordId}`,
   };
 }
 
@@ -118,12 +119,15 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeout = 10
 describe('SyncEngineLevel — followed sources', () => {
   let db: Level<string, string>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-followed-source-spec');
+    await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-followed-source.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-followed-source.spec.ts');
     sinon.restore();
   });
 
@@ -138,7 +142,7 @@ describe('SyncEngineLevel — followed sources', () => {
       const actorDid = sources[0].actorDid;
       const delegateDid = 'did:example:delegate';
       const endpoints = ['https://a.example.com', 'https://b.example.com'];
-      await engine['_identityStore'].set(actorDid, { delegateDid, protocols: 'all' });
+      await engine['_identityStore'].set(actorDid, { delegateDid, modules: 'all' });
       for (const followed of sources) {
         await engine['_followedSourceStore'].replace(followed);
       }
@@ -201,7 +205,7 @@ describe('SyncEngineLevel — followed sources', () => {
         expect(engine.connectivityState).toBe(connectivity);
         expect((await engine.getSyncHealth()).connectivity).toBe(connectivity);
         expect(warn.notCalled).toBe(true);
-        expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, protocols: 'all' });
+        expect(await engine.getIdentityOptions(actorDid)).toEqual({ delegateDid, modules: 'all' });
         for (const followed of sources) {
           expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
         }
@@ -228,7 +232,7 @@ describe('SyncEngineLevel — followed sources', () => {
       const actorDid = sources[0].actorDid;
       const delegateDid = 'did:example:delegate';
       const healthyDid = 'did:example:healthy';
-      const options = { delegateDid, protocols: [PROTOCOL] as [string] };
+      const options = { delegateDid, modules: [MODULE] as [string] };
       const approval = (id: string, createdAt: string, dateExpires: string): PermissionGrantEntry[] =>
         ['Messages', 'Records'].map((interfaceName) => ({
           grant: {
@@ -237,7 +241,7 @@ describe('SyncEngineLevel — followed sources', () => {
             grantee        : delegateDid,
             dateGranted    : createdAt,
             dateExpires,
-            scope          : { interface: interfaceName, method: 'Read', protocol: PROTOCOL },
+            scope          : { interface: interfaceName, method: 'Read', module: MODULE },
             connectSession : { id, createdAt, expiresAt: dateExpires },
           },
         })) as unknown as PermissionGrantEntry[];
@@ -248,7 +252,7 @@ describe('SyncEngineLevel — followed sources', () => {
       const endpoints = sinon.stub(engine['targetResolver'], 'getEndpointUrls').callsFake(async (did) =>
         did === healthyDid ? ['https://healthy.example.com'] : ['https://a.example.com', 'https://b.example.com']);
       await engine['_identityStore'].set(actorDid, options);
-      await engine['_identityStore'].set(healthyDid, { protocols: 'all' });
+      await engine['_identityStore'].set(healthyDid, { modules: 'all' });
       for (const followed of sources) {
         await engine['_followedSourceStore'].replace(followed);
       }
@@ -300,7 +304,7 @@ describe('SyncEngineLevel — followed sources', () => {
         if (scenario === 'followed expiry') {
           const role = [...engine['_linkControllers'].values()].find(({ link }) => link.authorization.kind === 'role')!;
           await engine['transitionToPaused'](role.linkKey, role.link, false);
-          authority.rejects(new PermissionGrantNotFoundError({ messageType: DwnInterface.RecordsRead, protocol: PROTOCOL }));
+          authority.rejects(new PermissionGrantNotFoundError({ messageType: DwnInterface.RecordsRead, module: MODULE }));
           await engine['reconcileFollowedSources'](engine['_runtime']);
           expect(authority.calledOnce).toBe(true);
         }
@@ -391,7 +395,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const followed = source();
     const delegateDid = 'did:example:delegate';
     const target = { ...targetFor(followed), delegateDid };
-    await engine['_identityStore'].set(followed.actorDid, { delegateDid, protocols: [PROTOCOL] });
+    await engine['_identityStore'].set(followed.actorDid, { delegateDid, modules: [MODULE] });
     await engine['_followedSourceStore'].replace(followed);
     const getOrCreate = engine['getOrCreateReplicationLink'].bind(engine);
     sinon.stub(engine as never, 'getOrCreateReplicationLink').callsFake(async (value: SyncTarget) => {
@@ -413,7 +417,7 @@ describe('SyncEngineLevel — followed sources', () => {
       const engine = new SyncEngineLevel({ db });
       const did = 'did:example:member';
       const delegateDid = 'did:example:delegate';
-      await engine['_identityStore'].set(did, { delegateDid, protocols: [PROTOCOL] });
+      await engine['_identityStore'].set(did, { delegateDid, modules: [MODULE] });
       const grants = [{
         grant: {
           id             : 'records-grant',
@@ -421,7 +425,7 @@ describe('SyncEngineLevel — followed sources', () => {
           grantee        : delegateDid,
           dateGranted    : '2020-01-01T00:00:00.000000Z',
           dateExpires    : '2099-01-01T00:00:00.000000Z',
-          scope          : { interface: 'Records', method: 'Read', protocol: PROTOCOL },
+          scope          : { interface: 'Records', method: 'Read', module: MODULE },
           connectSession : {
             id        : 'approval',
             createdAt : '2020-01-01T00:00:00.000000Z',
@@ -446,13 +450,13 @@ describe('SyncEngineLevel — followed sources', () => {
       } else {
         expect(await engine['getSyncTargets']()).toEqual([]);
         expect(warn.calledOnce).toBe(true);
-        expect(warn.firstCall.args[1].message).toContain('No active protocol-root Messages.Read');
+        expect(warn.firstCall.args[1].message).toContain('No active module-root Messages.Read');
       }
       expect(endpoints.notCalled).toBe(true);
-      expect(await engine.getIdentityOptions(did)).toEqual({ delegateDid, protocols: [PROTOCOL] });
+      expect(await engine.getIdentityOptions(did)).toEqual({ delegateDid, modules: [MODULE] });
 
       // Recovery without re-registering proves that none of these failures latched a pause.
-      grants[0].grant.scope = { interface: 'Messages', method: 'Read', protocol: PROTOCOL };
+      grants[0].grant.scope = { interface: 'Messages', method: 'Read', module: MODULE };
       fetch.resolves(grants);
       expect(await engine['getSyncTargets']()).toHaveLength(2);
     },
@@ -461,7 +465,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should defer followed refresh when the prerequisite becomes unavailable during orphan planning', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     const link = await createRoleLink(engine, targetFor(followed));
     await engine['replicationLinkStore'].setStatus(link, 'paused');
@@ -493,7 +497,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should defer a followed-context wave on a shared lookup outage and resume both retained sources', async () => {
     const engine = new SyncEngineLevel({ db });
     const sources = [source(), source('role-b', 'notebook-b')];
-    await engine['_identityStore'].set(sources[0].actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(sources[0].actorDid, { modules: 'all' });
     for (const followed of sources) {
       await engine['_followedSourceStore'].replace(followed);
       const link = await createRoleLink(engine, targetFor(followed));
@@ -534,7 +538,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should preserve unexpected followed-context errors and continue independent source recovery', async () => {
     const engine = new SyncEngineLevel({ db });
     const sources = [source(), source('role-b', 'notebook-b')];
-    await engine['_identityStore'].set(sources[0].actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(sources[0].actorDid, { modules: 'all' });
     for (const followed of sources) {
       await engine['_followedSourceStore'].replace(followed);
       const link = await createRoleLink(engine, targetFor(followed));
@@ -560,7 +564,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
   it('should resolve the context root for an exact nested role context', () => {
     expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', 'notebook/page/viewer'))
-      .toEqual({ protocolPath: 'notebook/page' });
+      .toEqual({ modulePath: 'notebook/page' });
   });
 
   it('should pull one followed source from its accepted endpoint under the sync lock', async () => {
@@ -568,7 +572,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     const target = targetFor(followed);
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     await internal._followedSourceStore.replace(followed);
     const buildTarget = sinon.stub(internal.targetResolver, 'buildTargetForSource').resolves(target);
     const reconcile = sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
@@ -587,7 +591,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     const target = targetFor(followed);
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     await internal._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
     target.projectionId = link.projectionId;
@@ -631,7 +635,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     await internal._followedSourceStore.replace(followed);
     sinon.stub(internal.targetResolver, 'buildTargetForSource').resolves(targetFor(followed));
     sinon.stub(internal, 'reconcileTarget').callsFake(async (): Promise<{ pullDrained: true }> => {
@@ -663,7 +667,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     const delegateDid = 'did:example:delegate';
-    await internal._identityStore.set(followed.actorDid, { delegateDid, protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { delegateDid, modules: 'all' });
     sinon.stub(internal, 'resolveFollowedSource').callsFake(async (
       _input: FollowedSyncSourceInput,
       resolvedDelegateDid: string | undefined,
@@ -688,7 +692,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const previous = source();
     const replacement = source('role-b', previous.contextId, 'notebook/collaborator');
-    await internal._identityStore.set(previous.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(previous.actorDid, { modules: 'all' });
     await internal._followedSourceStore.replace(previous);
     const previousTarget = targetFor(previous);
     const link = await createRoleLink(engine, previousTarget);
@@ -727,7 +731,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     sinon.stub(internal, 'resolveFollowedSource').rejects(
       new FollowedSourceNotReadyError('none of the requested roles is available yet'),
     );
@@ -740,7 +744,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
     const followed = source();
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     const resolutionStarted = deferred();
     const releaseResolution = deferred();
     sinon.stub(internal, 'resolveFollowedSource').callsFake(async () => {
@@ -769,7 +773,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should allow explicit follow and pull after stopping without reopening background intake', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine.stopSync();
     sinon.stub(engine as never, 'resolveFollowedSource').resolves({ batch: supportBatch(followed.id), source: followed });
     sinon.stub(engine as never, 'admitFollowedSource').resolves();
@@ -790,7 +794,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const replacement = source('replacement-role', followed.contextId, 'notebook/collaborator');
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     if (mode === 'refresh') {
       await engine['_followedSourceStore'].replace(followed);
     }
@@ -825,7 +829,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should reject queued preparation after removal without capturing a fresh owner group', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     const resolve = sinon.stub(engine as never, 'resolveFollowedSource');
     await engine['_lifecycle'].acquireSync();
     const removal = engine.removeIdentity(followed.actorDid);
@@ -840,7 +844,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should preserve a followed source when paused intake skips authority inspection', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     engine['_lifecycle'].getIdentityTaskGroup(followed.actorDid).pause();
     const resolve = sinon.stub(engine as never, 'resolveFollowedSourceAtEndpoint');
@@ -854,7 +858,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should let stop settle a catalog refresh before its late activation can queue behind the transition', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     engine['_runtime'] = new SyncRuntime(true);
     const entered = deferred();
@@ -877,7 +881,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it.each(['stop', 'clear'] as const)('should settle a catalog refresh when %s is already queued behind another mutation', async (mode) => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     engine['_runtime'] = new SyncRuntime(true);
     const refreshEntered = deferred();
@@ -910,7 +914,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const first = source();
     const second = { ...source('role-b', 'notebook-b'), actorDid: 'did:example:second' };
     await Promise.all([first, second].map(async followed => {
-      await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+      await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
       await engine['_followedSourceStore'].replace(followed);
     }));
     engine['_runtime'] = new SyncRuntime(true);
@@ -943,8 +947,8 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should preserve a replacement delegate source when an old authority inspection reports absence', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    const first = { delegateDid: 'did:example:first', protocols: 'all' as const };
-    const second = { delegateDid: 'did:example:second', protocols: 'all' as const };
+    const first = { delegateDid: 'did:example:first', modules: 'all' as const };
+    const second = { delegateDid: 'did:example:second', modules: 'all' as const };
     await engine['_identityStore'].set(followed.actorDid, first);
     await engine['_followedSourceStore'].replace(followed);
     const entered = deferred();
@@ -968,7 +972,7 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should keep a delayed activation fenced after unregistering and re-registering the same actor', async () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     engine['_runtime'] = new SyncRuntime(true);
     sinon.stub(engine as never, 'resolveFollowedSource').resolves({ batch: supportBatch(followed.id), source: followed });
     sinon.stub(engine as never, 'admitFollowedSource').resolves();
@@ -983,7 +987,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const following = engine.followSource(sourceInput(followed));
     await committed.promise;
     await engine.removeIdentity(followed.actorDid);
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     engine['_lifecycle'].getIdentityTaskGroup(followed.actorDid).resume();
     release.resolve();
     await following;
@@ -998,7 +1002,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const sibling = new SyncEngineLevel({ db });
     const followed = source();
-    await engine['_identityStore'].set(followed.actorDid, { protocols: 'all' });
+    await engine['_identityStore'].set(followed.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     sinon.stub(engine as never, 'reconcileTarget').callsFake(async () => {
       await sibling.removeIdentity(followed.actorDid);
@@ -1017,7 +1021,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const previous = source('role-a');
     const replacement = source('role-b', previous.contextId, 'notebook/collaborator');
     const events: Array<string | undefined> = [];
-    await secondInternal._identityStore.set(previous.actorDid, { protocols: 'all' });
+    await secondInternal._identityStore.set(previous.actorDid, { modules: 'all' });
     const activate = sinon.spy(secondInternal, 'activateFollowedSource');
     second.on(event => {
       if (event.type === 'followed-context:change') {
@@ -1161,7 +1165,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const currentTarget = targetFor(followed);
     const obsoleteTarget: SyncTarget = {
       ...currentTarget,
-      scope: { ...currentTarget.scope, protocolPaths: ['notebook'] },
+      scope: { ...currentTarget.scope, modulePaths: ['notebook'] },
     };
     await internal._followedSourceStore.replace(followed);
     await createRoleLink(engine, currentTarget);
@@ -1196,7 +1200,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const healthy = source('role-healthy', 'notebook-healthy');
     const unavailableIdentity = 'did:example:unavailable-identity';
-    await internal._identityStore.set(unavailableIdentity, { protocols: 'all' });
+    await internal._identityStore.set(unavailableIdentity, { modules: 'all' });
     await internal._followedSourceStore.replace(healthy);
     await internal.replicationLinkStore.getOrCreateLink({
       tenantDid          : unavailableIdentity,
@@ -1357,8 +1361,8 @@ describe('SyncEngineLevel — followed sources', () => {
     sinon.stub(internal.targetResolver, 'buildTargetForSource').resolves(previousTarget);
     const changed: FollowedSyncSource = {
       ...followed,
-      acceptanceId  : 'acceptance-evolved',
-      protocolPaths : ['notebook', 'notebook/page', 'notebook/page/delta'],
+      acceptanceId : 'acceptance-evolved',
+      modulePaths  : ['notebook', 'notebook/page', 'notebook/page/delta'],
     };
 
     const replaced = await internal.commitFollowedSource(changed);
@@ -1412,12 +1416,12 @@ describe('SyncEngineLevel — followed sources', () => {
     stubRemoteQuery(engine, {
       status: {
         code   : 401,
-        detail : 'ProtocolAuthorizationMatchingRoleRecordNotFound: no matching role record',
+        detail : 'ModuleAuthorizationMatchingRoleRecordNotFound: no matching role record',
       },
     });
 
     await expect((engine as any).reconcileTarget(target, { direction: 'pull' }))
-      .rejects.toThrow('ProtocolAuthorizationMatchingRoleRecordNotFound');
+      .rejects.toThrow('ModuleAuthorizationMatchingRoleRecordNotFound');
 
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
     expect(await (engine as any).replicationLinkStore.getLinksForTenant(SOURCE_DID)).toMatchObject([
@@ -1431,7 +1435,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const target = targetFor(followed);
     const message = {
       descriptor: {
-        interface        : 'Protocols',
+        interface        : 'Modules',
         method           : 'Configure',
         messageTimestamp : '2026-07-21T00:00:00.000000Z',
       },
@@ -1550,7 +1554,7 @@ describe('SyncEngineLevel — followed sources', () => {
     });
     stubRemoteQuery(engine, {
       status       : { code: 200 },
-      entries      : [{ messageCid, protocol: PROTOCOL }],
+      entries      : [{ messageCid, module: MODULE }],
       cursor       : { epoch: 'epoch', position: '2', streamId: 'stream', messageCid },
       drained      : true,
       roleRecordId : followed.id,
@@ -1603,7 +1607,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const actorDid = 'did:example:member';
     const delegateDid = 'did:example:delegate';
-    const options = { delegateDid, protocols: [PROTOCOL] as [string] };
+    const options = { delegateDid, modules: [MODULE] as [string] };
     const followed = source();
     const target = { ...targetFor(followed), delegateDid };
     await (engine as any)._followedSourceStore.replace(followed);
@@ -1649,7 +1653,7 @@ describe('SyncEngineLevel — followed sources', () => {
     await (engine as any)._followedSourceStore.replace(followed);
     await (engine as any)._identityStore.set(actorDid, {
       delegateDid : previousDelegate,
-      protocols   : [PROTOCOL],
+      modules     : [MODULE],
     });
     const link = await createRoleLink(engine, target);
     link.pull.contiguousAppliedToken = checkpoint;
@@ -1669,7 +1673,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
     await engine.setIdentityOptions({
       did     : actorDid,
-      options : { delegateDid, protocols: [PROTOCOL] },
+      options : { delegateDid, modules: [MODULE] },
     });
 
     expect(controller.isActive).toBe(false);
@@ -1694,7 +1698,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     const target = targetFor(followed);
-    await internal._identityStore.set(followed.actorDid, { protocols: 'all' });
+    await internal._identityStore.set(followed.actorDid, { modules: 'all' });
     await internal._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
     await internal.replicationLinkStore.setStatus(link, 'paused');
@@ -1714,7 +1718,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const engine = new SyncEngineLevel({ db });
     const followed = source();
     const delegateDid = 'did:example:delegate';
-    const options = { delegateDid, protocols: 'all' as const };
+    const options = { delegateDid, modules: 'all' as const };
     await engine['_identityStore'].set(followed.actorDid, options);
     await engine['_followedSourceStore'].replace(followed);
     const target = await engine['targetResolver'].buildTargetForSource(followed, delegateDid);
@@ -1753,8 +1757,8 @@ describe('SyncEngineLevel — followed sources', () => {
     const target = await engine['targetResolver'].buildTargetForSource(followed);
     const endpoints = sinon.stub(engine['targetResolver'], 'getEndpointUrls').resolves(['https://example.com/dwn']);
     const checkpoint = { epoch: 'epoch', position: '9', streamId: 'stream', messageCid: 'cid-9' };
-    await engine['_identityStore'].set(actorDid, { protocols: 'all' });
-    await engine['_identityStore'].set(healthyDid, { protocols: 'all' });
+    await engine['_identityStore'].set(actorDid, { modules: 'all' });
+    await engine['_identityStore'].set(healthyDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(followed);
     const link = await createRoleLink(engine, target);
     link.pull.contiguousAppliedToken = checkpoint;
@@ -1784,7 +1788,7 @@ describe('SyncEngineLevel — followed sources', () => {
     engine['_runtime'].dispose();
     await controller.dispose();
 
-    await engine.setIdentityOptions({ did: actorDid, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did: actorDid, options: { modules: 'all' } });
 
     expect(await engine['getSyncTargets']()).toContainEqual(target);
     await engine.getSyncHealth();
@@ -1803,7 +1807,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const internal = engine as any;
     const followed = source();
     const target = targetFor(followed);
-    await internal._identityStore.set(SOURCE_DID, { protocols: 'all' });
+    await internal._identityStore.set(SOURCE_DID, { modules: 'all' });
     await internal._followedSourceStore.replace(followed);
     const link = await createRoleLink(engine, target);
     const checkpoint = { epoch: 'epoch', position: '11', streamId: 'stream', messageCid: 'cid-11' };
@@ -1827,7 +1831,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
     const retired = await (engine as any).tryRetireDeferredPull(target, {
       messageCid : 'deferred-role-message',
-      protocol   : PROTOCOL,
+      module     : MODULE,
     }, 'waiting for role support');
 
     expect(retired).toBe(false);
@@ -1840,7 +1844,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
   it('should retain a role feed delete initialWrite as a non-latest dependency', async () => {
     const engine = new SyncEngineLevel({ db });
-    const initial = await TestDataGenerator.generateRecordsWrite({ protocol: PROTOCOL });
+    const initial = await TestDataGenerator.generateRecordsWrite({ module: MODULE });
     const deleted = await TestDataGenerator.generateRecordsDelete({
       author   : initial.author,
       recordId : initial.message.recordId,
@@ -1860,7 +1864,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
   it('should advance past a retained non-latest role-feed write', async () => {
     const engine = new SyncEngineLevel({ db });
-    const retained = await TestDataGenerator.generateRecordsWrite({ protocol: PROTOCOL });
+    const retained = await TestDataGenerator.generateRecordsWrite({ module: MODULE });
     const hydrate = sinon.spy(engine as any, 'readRoleReplicationSupport');
 
     const outcome = await (engine as any).admitRemoteFeedEntry(targetFor(source()), {
@@ -1875,7 +1879,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
   it('should not discard a role-feed write whose latest-state annotation is absent', async () => {
     const engine = new SyncEngineLevel({ db });
-    const retained = await TestDataGenerator.generateRecordsWrite({ protocol: PROTOCOL });
+    const retained = await TestDataGenerator.generateRecordsWrite({ module: MODULE });
     const continued = sinon.stub(engine as any, 'syncEntriesFromFeedEntry').rejects(new Error('continued'));
 
     await expect((engine as any).admitRemoteFeedEntry(targetFor(source()), {

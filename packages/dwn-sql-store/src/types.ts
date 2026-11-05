@@ -25,9 +25,9 @@ type MessageStoreTable = {
   recordId: string | null;
   entryId: string | null;
   datePublished: string | null;
-  protocol: string | null;
+  module: string | null;
   attester: string | null;
-  protocolPath: string | null;
+  modulePath: string | null;
   recipient: string | null;
   contextId: string | null;
   parentId: string | null;

@@ -1,11 +1,11 @@
-import type { ProtocolRuleSet } from '../../src/types/protocols-types.js';
+import type { ModuleRuleSet } from '../../src/types/modules-types.js';
 import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Encoder } from '../../src/utils/encoder.js';
 import { Encryption } from '../../src/utils/encryption.js';
-import { Protocols } from '../../src/utils/protocols.js';
+import { Modules } from '../../src/utils/modules.js';
 import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { X25519 } from '@enbox/crypto';
@@ -22,10 +22,10 @@ describe('Encryption callback interfaces', () => {
     rootKeyId = 'did:example:alice#enc';
   });
 
-  describe('Protocols.deriveAndInjectPublicEncryptionKeys()', () => {
+  describe('Modules.deriveAndInjectPublicEncryptionKeys()', () => {
     it('injects the derived public key for each rule set path', async () => {
-      const protocolDefinition = {
-        protocol  : 'https://example.com/protocol/foo',
+      const moduleDefinition = {
+        module    : 'https://example.com/module/foo',
         published : true,
         types     : {
           message: {
@@ -46,24 +46,24 @@ describe('Encryption callback interfaces', () => {
       };
 
       const keyDeriver = createKeyDeriver(privateJwk, rootKeyId);
-      const result = await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, keyDeriver);
+      const result = await Modules.deriveAndInjectPublicEncryptionKeys(moduleDefinition, keyDeriver);
 
       // key derivation is deterministic, so re-deriving each path yields the exact key each node must carry
-      const protocol = protocolDefinition.protocol;
-      const rootPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol]);
-      const threadPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol, 'thread']);
-      const messagePublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ProtocolPath, protocol, 'thread', 'message']);
+      const module = moduleDefinition.module;
+      const rootPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ModulePath, module]);
+      const threadPublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ModulePath, module, 'thread']);
+      const messagePublicKey = await keyDeriver.derivePublicKey([KeyDerivationScheme.ModulePath, module, 'thread', 'message']);
 
       expect(result.$keyAgreement!.publicKeyJwk).toEqual(rootPublicKey);
       expect(result.structure.thread.$keyAgreement!.publicKeyJwk).toEqual(threadPublicKey);
 
-      const messageRuleSet = result.structure.thread.message as ProtocolRuleSet;
+      const messageRuleSet = result.structure.thread.message as ModuleRuleSet;
       expect(messageRuleSet.$keyAgreement!.publicKeyJwk).toEqual(messagePublicKey);
     });
 
-    it('calls derivePublicKey with protocol-root and full protocol-path derivation paths', async () => {
-      const protocolDefinition = {
-        protocol  : 'https://example.com/protocol/bar',
+    it('calls derivePublicKey with module-root and full module-path derivation paths', async () => {
+      const moduleDefinition = {
+        module    : 'https://example.com/module/bar',
         published : true,
         types     : {
           message: {
@@ -85,20 +85,20 @@ describe('Encryption callback interfaces', () => {
       const calledPaths: string[][] = [];
       const keyDeriver = createKeyDeriver(privateJwk, rootKeyId, calledPaths);
 
-      await Protocols.deriveAndInjectPublicEncryptionKeys(protocolDefinition, keyDeriver);
+      await Modules.deriveAndInjectPublicEncryptionKeys(moduleDefinition, keyDeriver);
 
       expect(calledPaths).toEqual([
-        [KeyDerivationScheme.ProtocolPath, 'https://example.com/protocol/bar'],
-        [KeyDerivationScheme.ProtocolPath, 'https://example.com/protocol/bar', 'thread'],
-        [KeyDerivationScheme.ProtocolPath, 'https://example.com/protocol/bar', 'thread', 'message'],
+        [KeyDerivationScheme.ModulePath, 'https://example.com/module/bar'],
+        [KeyDerivationScheme.ModulePath, 'https://example.com/module/bar', 'thread'],
+        [KeyDerivationScheme.ModulePath, 'https://example.com/module/bar', 'thread', 'message'],
       ]);
     });
   });
 
   describe('Records.decrypt() with KeyDecrypter', () => {
-    it('decrypts a record encrypted with a protocol-path derived public key', async () => {
-      const protocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
-        protocol  : 'https://example.com/protocol/decrypt-test',
+    it('decrypts a record encrypted with a module-path derived public key', async () => {
+      const moduleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys({
+        module    : 'https://example.com/module/decrypt-test',
         published : true,
         types     : {
           note: {
@@ -114,12 +114,12 @@ describe('Encryption callback interfaces', () => {
       const alice = await TestDataGenerator.generatePersona();
       const plaintext = 'This is a secret message';
       const plaintextBytes = Encoder.stringToBytes(plaintext);
-      const encryptedRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                        : alice,
-        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
+      const encryptedRecord = await TestDataGenerator.generateModuleEncryptedRecordsWrite({
+        author                                      : alice,
+        encryptSymmetricKeyWithModulePathDerivedKey : true,
         plaintextBytes,
-        protocolDefinition,
-        protocolPath                                  : 'note',
+        moduleDefinition,
+        modulePath                                  : 'note',
       });
 
       const keyDecrypter = createKeyDecrypter(privateJwk, rootKeyId);
@@ -130,8 +130,8 @@ describe('Encryption callback interfaces', () => {
     });
 
     it('throws if no matching key encryption entry is found', async () => {
-      const protocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys({
-        protocol  : 'https://example.com/protocol/mismatch-test',
+      const moduleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys({
+        module    : 'https://example.com/module/mismatch-test',
         published : true,
         types     : {
           note: {
@@ -145,12 +145,12 @@ describe('Encryption callback interfaces', () => {
         }
       }, createKeyDeriver(privateJwk, rootKeyId));
       const alice = await TestDataGenerator.generatePersona();
-      const encryptedRecord = await TestDataGenerator.generateProtocolEncryptedRecordsWrite({
-        author                                        : alice,
-        encryptSymmetricKeyWithProtocolPathDerivedKey : true,
-        plaintextBytes                                : Encoder.stringToBytes('secret'),
-        protocolDefinition,
-        protocolPath                                  : 'note',
+      const encryptedRecord = await TestDataGenerator.generateModuleEncryptedRecordsWrite({
+        author                                      : alice,
+        encryptSymmetricKeyWithModulePathDerivedKey : true,
+        plaintextBytes                              : Encoder.stringToBytes('secret'),
+        moduleDefinition,
+        modulePath                                  : 'note',
       });
       const otherPrivateKey = await X25519.generateKey() as PrivateKeyJwk;
 
@@ -167,7 +167,7 @@ describe('Encryption callback interfaces', () => {
 
 function createKeyDeriver(privateJwk: PrivateKeyJwk, rootKeyId: string, calledPaths: string[][] = []): EncryptionKeyDeriver {
   return {
-    derivationScheme : KeyDerivationScheme.ProtocolPath,
+    derivationScheme : KeyDerivationScheme.ModulePath,
     derivePublicKey  : async (fullDerivationPath: string[]): Promise<PublicKeyJwk> => {
       calledPaths.push([...fullDerivationPath]);
       const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateJwk });
@@ -187,7 +187,7 @@ function createKeyDecrypter(privateJwk: PrivateKeyJwk, rootKeyId: string): KeyDe
       const leafPrivateKey = await X25519.bytesToPrivateKey({ privateKeyBytes: leafPrivateKeyBytes });
       return Encryption.unwrapKey(leafPrivateKey, keyUnwrapPayload.keyEncryption);
     },
-    derivationScheme : KeyDerivationScheme.ProtocolPath,
+    derivationScheme : KeyDerivationScheme.ModulePath,
     derivePublicKey  : async (fullDerivationPath): Promise<PublicKeyJwk> => {
       const privateKeyBytes = await X25519.privateKeyToBytes({ privateKey: privateJwk });
       const derivedPrivateKeyBytes = await HdKey.derivePrivateKeyBytes(privateKeyBytes, fullDerivationPath);

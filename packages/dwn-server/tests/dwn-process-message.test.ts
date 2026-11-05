@@ -25,7 +25,7 @@ describe('handleDwnProcessMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
@@ -81,7 +81,7 @@ describe('handleDwnProcessMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(
@@ -146,7 +146,7 @@ describe('handleDwnProcessMessage', () => {
     });
 
     const { dwn } = await getTestDwn();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const context: RequestContext = { dwn, transport: 'http', dataStream };
 
     const { jsonRpcResponse } = await handleDwnProcessMessage(

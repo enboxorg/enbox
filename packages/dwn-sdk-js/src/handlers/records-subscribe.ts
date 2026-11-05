@@ -1,6 +1,6 @@
 import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { RecordsCollectionVisibility } from './records-collection.js';
-import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
+import type { ResolvedModuleRole } from '../core/module-authorization-action.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
@@ -13,11 +13,11 @@ import { GrantAuthorization } from '../core/grant-authorization.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import { Time } from '../utils/time.js';
-import { verifyProtocolRoleRecord } from '../core/protocol-authorization-action.js';
+import { verifyModuleRoleRecord } from '../core/module-authorization-action.js';
 import {
   authorizeRecordsCollection,
   buildRecordsEventFilters,
@@ -39,7 +39,7 @@ type RecordsSubscribeStoredGrantAuthorization = {
 
 type RecordsSubscribeDeliveryAuthorization = {
   authorDelegate?: RecordsSubscribeEmbeddedGrantAuthorization;
-  resolvedRole?: ResolvedProtocolRole;
+  resolvedRole?: ResolvedModuleRole;
   targetGrant?: RecordsSubscribeStoredGrantAuthorization;
 };
 
@@ -146,11 +146,11 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
   /**
    * Retains the authority proven at open so delivery rechecks only dynamic state.
-   * Protocol policy remains pinned to the signed subscription timestamp; current role membership does not.
+   * Module policy remains pinned to the signed subscription timestamp; current role membership does not.
    */
   private createDeliveryAuthorization(input: {
     permissionGrantId?: string;
-    resolvedRole?: ResolvedProtocolRole;
+    resolvedRole?: ResolvedModuleRole;
     recordsSubscribe: RecordsSubscribe;
     tenant: string;
   }): RecordsSubscribeDeliveryAuthorization | undefined {
@@ -321,7 +321,7 @@ export class RecordsSubscribeHandler implements MethodHandler {
         }
 
         if (deliveryAuthorization.resolvedRole !== undefined) {
-          await verifyProtocolRoleRecord(
+          await verifyModuleRoleRecord(
             tenant,
             recordsSubscribe.author!,
             deliveryAuthorization.resolvedRole,

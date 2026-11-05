@@ -1,17 +1,17 @@
+import type { ModuleStore } from './module-store.js';
 import type { ObservationFactory } from './observed-store.js';
-import type { ProtocolStore } from './protocol-store.js';
 import type { StoreCommand } from './command.js';
 import type { StoreScope } from './scope.js';
-import type { TypedProtocol } from '../protocol-types.js';
+import type { TypedModule } from '../module-types.js';
 
 import { createCommand } from './command.js';
+import { createModuleStore } from './module-store.js';
 import { createObservationFactory } from './observed-store.js';
-import { createProtocolStore } from './protocol-store.js';
-import { isTypedProtocol } from '../define-protocol.js';
+import { isTypedModule } from '../define-module.js';
 import { withStoreSignal } from './scope.js';
 
-/** Named protocol dependencies retained by a feature definition. */
-export type StoreProtocols = Readonly<Record<string, TypedProtocol>>;
+/** Named module dependencies retained by a feature definition. */
+export type StoreModules = Readonly<Record<string, TypedModule>>;
 /** Named feature dependencies resolved within the same application session scope. */
 export type StoreDefinitions = Readonly<Record<string, StoreDefinition>>;
 
@@ -19,8 +19,8 @@ const storeFactory = Symbol('storeFactory');
 
 /** An inert feature definition; instances are owned by an application scope. */
 export interface StoreDefinition<Value = unknown> {
-  /** Protocols needed to construct this feature's manifest and typed bindings. */
-  readonly protocols: StoreProtocols;
+  /** Modules needed to construct this feature's manifest and typed bindings. */
+  readonly modules: StoreModules;
   /** Features that must be resolved before this feature is constructed. */
   readonly stores: StoreDefinitions;
   /** @internal Construct a feature from dependencies already resolved in its authorization scope. */
@@ -47,8 +47,8 @@ type InferredCommand<Operation extends CommandOperation> =
   };
 
 /** Session-owned dependencies and lifecycle controls supplied to a feature factory. */
-export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreDefinitions> = Readonly<{
-  protocols: { readonly [Name in keyof Protocols]: ProtocolStore<Protocols[Name]> };
+export type StoreContext<Modules extends StoreModules, Stores extends StoreDefinitions> = Readonly<{
+  modules: { readonly [Name in keyof Modules]: ModuleStore<Modules[Name]> };
   stores: { readonly [Name in keyof Stores]: StoreInstance<Stores[Name]> };
   /** Aborted when this feature closes, fails construction, or its session/facade is replaced. */
   signal: AbortSignal;
@@ -68,11 +68,11 @@ export type StoreContext<Protocols extends StoreProtocols, Stores extends StoreD
 }>;
 
 /** Static dependencies and the factory that builds their feature interface. */
-export type DefineStoreOptions<Protocols extends StoreProtocols, Stores extends StoreDefinitions, Value> = {
-  protocols?: Protocols;
+export type DefineStoreOptions<Modules extends StoreModules, Stores extends StoreDefinitions, Value> = {
+  modules?: Modules;
   stores?: Stores;
   /** Return inert handles synchronously; register effects and cleanup against the scope. */
-  create(context: StoreContext<Protocols, Stores>): Value & ([Extract<Value, PromiseLike<unknown>>] extends [never] ? unknown : never);
+  create(context: StoreContext<Modules, Stores>): Value & ([Extract<Value, PromiseLike<unknown>>] extends [never] ? unknown : never);
 };
 
 /**
@@ -80,35 +80,35 @@ export type DefineStoreOptions<Protocols extends StoreProtocols, Stores extends 
  * The application resolves dependencies and constructs the feature within its session scope.
  */
 export function defineStore<
-  const Protocols extends StoreProtocols = Record<never, never>,
+  const Modules extends StoreModules = Record<never, never>,
   const Stores extends StoreDefinitions = Record<never, never>,
   Value = unknown,
->(options: DefineStoreOptions<Protocols, Stores, Value>): StoreDefinition<Value> {
-  const protocols: StoreProtocols = Object.freeze({ ...options.protocols });
+>(options: DefineStoreOptions<Modules, Stores, Value>): StoreDefinition<Value> {
+  const modules: StoreModules = Object.freeze({ ...options.modules });
   const stores = Object.freeze({ ...options.stores });
-  for (const [name, protocol] of Object.entries(protocols)) {
-    if (!isTypedProtocol(protocol)) {
-      throw new TypeError(`defineStore: protocol '${name}' must be a TypedProtocol.`);
+  for (const [name, module] of Object.entries(modules)) {
+    if (!isTypedModule(module)) {
+      throw new TypeError(`defineStore: module '${name}' must be a TypedModule.`);
     }
   }
   const create = options.create;
   return Object.freeze({
-    protocols,
+    modules,
     stores,
     [storeFactory](scope: StoreScope, dependencies: Readonly<Record<string, unknown>>): Value {
-      const bindings = Object.fromEntries(Object.entries(protocols).map(([name, protocol]): [string, unknown] =>
-        [name, createProtocolStore(protocol, scope)]));
+      const bindings = Object.fromEntries(Object.entries(modules).map(([name, module]): [string, unknown] =>
+        [name, createModuleStore(module, scope)]));
       // Runtime dispatch is single-input; authoring retains its optionality and awaited result.
       const command = ((operation: CommandOperation, options?: Readonly<{ signal?: AbortSignal }>) =>
-        createCommand(withStoreSignal(scope, options?.signal), operation)) as StoreContext<Protocols, Stores>['command'];
+        createCommand(withStoreSignal(scope, options?.signal), operation)) as StoreContext<Modules, Stores>['command'];
       return create({
-        // The declared keys pair each original protocol with its own typed binding.
-        protocols : bindings as unknown as StoreContext<Protocols, Stores>['protocols'],
-        stores    : dependencies as StoreContext<Protocols, Stores>['stores'],
-        signal    : scope.signal,
-        observe   : createObservationFactory(scope),
+        // The declared keys pair each original module with its own typed binding.
+        modules : bindings as unknown as StoreContext<Modules, Stores>['modules'],
+        stores  : dependencies as StoreContext<Modules, Stores>['stores'],
+        signal  : scope.signal,
+        observe : createObservationFactory(scope),
         command,
-        onClose   : (close: () => void | Promise<void>): void => { scope.onClose(close); },
+        onClose : (close: () => void | Promise<void>): void => { scope.onClose(close); },
       });
     },
   });

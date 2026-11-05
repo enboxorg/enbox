@@ -19,11 +19,11 @@ between UI components and headless controllers. These names have distinct roles:
 | Name | Role |
 |---|---|
 | `NotesStore` | An inert feature definition returned by `defineStore`. Its factory must return synchronously. |
-| `app.manifest` | The existing `ApplicationManifest`: typed protocols and delegated permission policy used by the connection. |
+| `app.manifest` | The existing `ApplicationManifest`: typed modules and delegated permission policy used by the connection. |
 | `app` | The running owner returned by `createApplication`; it owns feature instances and the supplied connection. |
 | `feature` | One resolved store instance. A feature is the application's domain module, such as notes or tasks. |
 
-The headless example below expects a typed `NotesProtocol` whose `note` codec
+The headless example below expects a typed `NotesModule` whose `note` codec
 accepts `{ title: string }`. Configure the native connection for your environment;
 the Connect section below describes its vault, endpoint, and wallet options.
 For this Node example, set `ENBOX_VAULT_PASSWORD` to your vault password.
@@ -34,12 +34,12 @@ import {
   createConnectionStore,
   defineStore,
 } from '@enbox/api';
-import { NotesProtocol } from './protocol.js';
+import { NotesModule } from './module.js';
 
 export const NotesStore = defineStore({
-  protocols: { notes: NotesProtocol },
-  create({ protocols }) {
-    const notes = protocols.notes.collection('note');
+  modules: { notes: NotesModule },
+  create({ modules }) {
+    const notes = modules.notes.collection('note');
     const addNote = (title: string) => notes.create.run({ title: title.trim() });
     return { notes, addNote };
   },
@@ -80,7 +80,7 @@ try {
 ```
 
 Definitions and collection handles perform no I/O. A feature factory declares
-handles and commands synchronously. Capture `protocols.notes.native` as a
+handles and commands synchronously. Capture `modules.notes.native` as a
 function if needed, and invoke it inside a command or an observation opener;
 calling `native()` requires a usable session. It returns the existing full
 `TypedEnbox`, including `records` and `contexts`, rather than a second SDK.
@@ -91,14 +91,14 @@ lifetime and does not acquire store progress tracking or canonical-view refresh.
 
 | Need | API |
 |---|---|
-| Locally owned records with codec-derived data | `protocols.notes.collection('note')` with `create.run(data)`, `patch.run({ id, patch })`, and `delete.run(id)` |
+| Locally owned records with codec-derived data | `modules.notes.collection('note')` with `create.run(data)`, `patch.run({ id, patch })`, and `delete.run(id)` |
 | Nested records | A nested path produces a family; `pages.within(parentContextId)` resolves an exact direct-parent collection. |
-| A `$recordLimit.max: 1` slot | `protocols.notes.native().records.set(...)`; singleton paths are excluded from `collection()`. |
-| Tags, publication, timestamps, recipients, full update, or prune | Existing native record operations through `protocols.notes.native().records`, called inside a domain command. |
-| Invitations, memberships, accepted shares, or member writes | Existing `protocols.notes.native().contexts` and context-bound `records`; observe them with the same `observe()` factory shown below. |
+| A `$recordLimit.max: 1` slot | `modules.notes.native().records.set(...)`; singleton paths are excluded from `collection()`. |
+| Tags, publication, timestamps, recipients, full update, or prune | Existing native record operations through `modules.notes.native().records`, called inside a domain command. |
+| Invitations, memberships, accepted shares, or member writes | Existing `modules.notes.native().contexts` and context-bound `records`; observe them with the same `observe()` factory shown below. |
 
 Collection commands accept data-only inputs; read filters never become write
-fields. Deletion first reads the ID at the declared protocol path, then checks
+fields. Deletion first reads the ID at the declared module path, then checks
 the direct parent for nested paths. An absent path match is an idempotent no-op;
 read or authorization failures propagate. Collection deletion therefore requires
 read authorization as well as delete authorization.
@@ -128,10 +128,10 @@ readiness, retry, and cleanup rules. The native view determines its payload
 and whether `refresh()` or `loadMore()` is available.
 
 ```ts
-// Inside defineStore({ create({ protocols, observe }) { ... } }):
-const native = protocols.notes.native;
+// Inside defineStore({ create({ modules, observe }) { ... } }):
+const native = modules.notes.native;
 const acceptedShares = observe(signal => native().contexts.observe({ access: 'member', materializeRoot: true, signal }));
-const pages = protocols.notes.collection('notebook/page');
+const pages = modules.notes.collection('notebook/page');
 const activePages = observe({
   source: (parentContextId: string) => pages.within(parentContextId),
 });
@@ -143,7 +143,7 @@ retained, or awaited. `observe({ open })` declares an observation whose input is
 chosen later with `select(input)`. `observe({ source })` selects an existing
 observable store instead. It releases only its own subscription when the input
 changes; an `open` callback transfers ownership of the native view it returns.
-Protocol collections use this same owner internally. Native `records.observe()`
+Module collections use this same owner internally. Native `records.observe()`
 and context APIs remain available for custom code.
 
 ```ts
@@ -185,7 +185,7 @@ result cap. `loadAll: true` explicitly expands every matching local page.
 | `error` | Opening, query, pagination, or refresh failed. Previously usable rows may remain visible. |
 
 Collection `create`/`patch`/`delete` completion includes local write acceptance
-and refresh of currently active selections for the **same feature/protocol
+and refresh of currently active selections for the **same feature/module
 binding, path, and direct parent**. It does not imply remote delivery or that a
 new record falls inside every retained window. A slow active query can delay
 completion; a `loadAll` selection also completes its expansion. This is an
@@ -216,23 +216,23 @@ drafts, and component completion effects remain caller-owned.
 ### Permissions and lifetime
 
 `createApplication` derives one manifest from transitive store dependencies.
-Protocols use the SDK's existing delegated default of `read`, `write`, and
-`delete`; the application can override a protocol's policy explicitly:
+Modules use the SDK's existing delegated default of `read`, `write`, and
+`delete`; the application can override a module's policy explicitly:
 
 ```ts
 const app = createApplication({
   stores: { notes: NotesStore },
-  protocols: [{ protocol: NotesProtocol, permissions: ['read'] }],
+  modules: [{ module: NotesModule, permissions: ['read'] }],
   connection: manifest => createConnectionStore({ application: manifest }),
 });
 ```
 
 This requests delegated grants; owner authority is still governed by the SDK
 and DWN. Per-store permission declarations are not a separate policy layer.
-At least one protocol must be registered transitively or explicitly before
-constructing a native `ConnectionStore`. Reuse the same `TypedProtocol` object
+At least one module must be registered transitively or explicitly before
+constructing a native `ConnectionStore`. Reuse the same `TypedModule` object
 for one URI across store dependencies and overrides: conflicts include distinct
-codec-bearing protocol objects, even if their wire definitions are equal.
+codec-bearing module objects, even if their wire definitions are equal.
 
 Feature instances belong to exact session/facade references. Before connection,
 `app.store(NotesStore)` can supply inert handles, but those instances retire when
@@ -302,7 +302,7 @@ Common store and connection options:
 
 | Option | Description |
 |---|---|
-| `application` | Canonical typed protocols and delegated permission policies. |
+| `application` | Canonical typed modules and delegated permission policies. |
 | `password` | Local vault password. The default is insecure; production apps should pass one. |
 | `connectVault({ createIdentity: true })` | Create a default identity when no identity exists. |
 | `dwnEndpoints` | Remote DWN endpoints used when creating new DIDs. |
@@ -330,11 +330,11 @@ an expiring session from the same application manifest. Without automatic
 refresh, operations stop succeeding when the grants expire. Two fail-closed
 states require wallet approval:
 
-- `snapshot.walletReapprovalRequired: true` — the wallet's protocol config
+- `snapshot.walletReapprovalRequired: true` — the wallet's module config
   drifted or the session was revoked; the next `connect()` requests fresh
   approval.
 - `ManifestSyncRegistrationCoverageError` — the delegate's sync registration no
-  longer covers every read protocol in the manifest. The store publishes
+  longer covers every read module in the manifest. The store publishes
   `phase: 'disconnected'` with `walletReapprovalRequired: true`, keeps the
   underlying auth session, and the next `store.connect()` repairs approval
   through refresh.
@@ -391,18 +391,18 @@ settle pass repairs missed notifications; it is not an application polling
 API. Use `observe()` and `subscribe()` to keep application state current rather
 than periodically re-querying.
 
-## Typed Protocols
+## Typed Modules
 
 ```ts
 import {
   createConnectionStore,
   defineApplicationManifest,
-  defineProtocol,
+  defineModule,
   recordCodecs,
 } from '@enbox/api';
 
-const NotesProtocol = defineProtocol({
-  protocol  : 'https://example.com/notes',
+const NotesModule = defineModule({
+  module  : 'https://example.com/notes',
   published : false,
   types     : {
     note: {
@@ -419,7 +419,7 @@ const NotesProtocol = defineProtocol({
   note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
-const manifest = defineApplicationManifest({ protocols: [NotesProtocol] });
+const manifest = defineApplicationManifest({ modules: [NotesModule] });
 const store = createConnectionStore({ application: manifest, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
@@ -429,7 +429,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const notes = snapshot.enbox.using(NotesProtocol);
+const notes = snapshot.enbox.using(NotesModule);
 
 const record = await notes.records.create('note', {
   data : { title: 'Hello', body: 'World' },
@@ -442,8 +442,8 @@ await store.disconnect();
 await store.dispose();
 ```
 
-`defineProtocol()` pairs each protocol record type with one runtime codec.
-`enbox.using(protocol)` returns a `TypedEnbox` scoped to that protocol, so
+`defineModule()` pairs each module record type with one runtime codec.
+`enbox.using(module)` returns a `TypedEnbox` scoped to that module, so
 record methods infer paths and application values while using the same codec
 for writes and reads.
 
@@ -456,14 +456,14 @@ const attachmentCodec = recordCodecs.fileEnvelope({
 ```
 
 The descriptor stays `application/octet-stream`; the safe filename and
-canonicalized media type remain inside the payload. Declare the protocol type
+canonicalized media type remain inside the payload. Declare the module type
 with `encryptionRequired: true`. Use
 `attachmentCodec.maxEncodedBytesFor(contentBytes)` when its `$size.max` rule
 should reserve room for that content plus maximum envelope metadata. Pass
 `maxContentBytes` to the codec only when the dapp also wants to reject larger
 files locally; otherwise the codec adds no application size policy.
 
-Register all of an application's typed protocols and delegated permission
+Register all of an application's typed modules and delegated permission
 policies once with `defineApplicationManifest()`:
 
 ```ts
@@ -471,13 +471,13 @@ import {
   createConnectionStore,
   defineApplicationManifest,
   Enbox,
-  getApplicationProtocolRequests,
+  getApplicationModuleRequests,
 } from '@enbox/api';
 
 const manifest = defineApplicationManifest({
-  protocols: [
-    NotesProtocol, // default: read, write, delete
-    { protocol: PhotosProtocol, permissions: ['read'] },
+  modules: [
+    NotesModule, // default: read, write, delete
+    { module: PhotosModule, permissions: ['read'] },
   ],
 } as const);
 
@@ -489,12 +489,12 @@ const store = createConnectionStore({
 await store.initialize(); // restored sessions are readied before publication
 ```
 
-The connection store treats the manifest as the canonical protocol source. It
+The connection store treats the manifest as the canonical module source. It
 projects delegated permission requests into `connect()`, `refresh()`, and an
-opted-in monitor `autoRefresh`; callers cannot supply a competing protocol
-list. Every store requires at least one protocol. It then gates
-each session the store establishes or restores on local protocol readiness
-before publishing `phase: 'connected'`: owners install the protocols locally,
+opted-in monitor `autoRefresh`; callers cannot supply a competing module
+list. Every store requires at least one module. It then gates
+each session the store establishes or restores on local module readiness
+before publishing `phase: 'connected'`: owners install the modules locally,
 while delegates validate and import the wallet-approved configurations. This
 includes app startup with a saved session.
 
@@ -502,15 +502,15 @@ Hosted publication is not required for a local owner connection. Set
 `requireHostedReadiness: true` only when the app must publish and verify every
 owner configuration at the hosted DWN before becoming connected. The default
 keeps local-only, offline, and endpoint-less owner identities usable; an app
-can also call `enbox.protocols.ensureReady({ application: manifest })` later when hosted
+can also call `enbox.modules.ensureReady({ application: manifest })` later when hosted
 receiving becomes necessary.
 
 Transient readiness failures remain retryable while keeping the unusable
 session out of the public snapshot. A missing or incompatible
-wallet protocol configuration instead ends the unusable delegate session and
+wallet module configuration instead ends the unusable delegate session and
 sets `walletReapprovalRequired`, so the next `connect()` requests fresh
 approval. A delegated sync registration that is missing, belongs to another
-delegate, or omits any manifest protocol with read permission also fails closed:
+delegate, or omits any manifest module with read permission also fails closed:
 the store closes and hides the public facade, stops its monitor, and preserves
 the underlying auth session so the next `store.connect()` repairs approval
 through refresh. When no session was restored, call `connect()` from the
@@ -525,18 +525,18 @@ manifest explicitly, and separately close both the session facade and manager:
 import { AuthManager } from '@enbox/auth';
 
 const auth = await AuthManager.create({ connectHandler });
-const protocols = getApplicationProtocolRequests(manifest);
-const session = await auth.connect({ protocols });
+const modules = getApplicationModuleRequests(manifest);
+const session = await auth.connect({ modules });
 const enbox = Enbox.fromSession(session);
 
-await enbox.protocols.ensureReady({ application: manifest });
+await enbox.modules.ensureReady({ application: manifest });
 
 enbox.close();
 await auth.disconnect();
 await auth.shutdown();
 ```
 
-The manifest retains each `TypedProtocol` for application-side use, while the
+The manifest retains each `TypedModule` for application-side use, while the
 auth projection contains only raw definitions and permission names — runtime
 codecs are never transmitted. The manifest itself is not a raw connect-options
 object. Owner/vault connections remain explicit `store.connectVault()` calls,
@@ -549,24 +549,24 @@ authoring or publishing replacements regardless of that option. `targetDid` is
 publish-only: the local install remains on the connected identity, and the
 target must be controlled by the same agent so it can sign the configuration.
 The lower-level
-`enbox.using(protocol).configure()` never publishes to a hosted DWN.
+`enbox.using(module).configure()` never publishes to a hosted DWN.
 
-Typed protocol composition through `$ref` is not inferred from incomplete
-local metadata. `defineProtocol()` rejects it for now; use the raw `enbox.dwn`
-API when an application needs explicit protocol composition.
+Typed module composition through `$ref` is not inferred from incomplete
+local metadata. `defineModule()` rejects it for now; use the raw `enbox.dwn`
+API when an application needs explicit module composition.
 
 ## Integration Testing
 
 Node integration tests can use `@enbox/api/testing` for an isolated owner
 session backed by a real in-process DWN. It installs the application's typed
-protocols locally without requiring hosted services:
+modules locally without requiring hosted services:
 
 ```ts
 import { createEnboxTestContext } from '@enbox/api/testing';
 
 const context = await createEnboxTestContext({ application: manifest });
 try {
-  const notes = context.enbox.using(NotesProtocol);
+  const notes = context.enbox.using(NotesModule);
   await notes.records.create('note', {
     data: { title: 'Test', body: 'Stored by a real DWN' },
   });
@@ -589,7 +589,7 @@ const context = await createHostedDelegatedEnboxTestContext({
   dwnEndpoints: [process.env.TEST_DWN_URL!],
 });
 try {
-  const notes = context.enbox.using(NotesProtocol);
+  const notes = context.enbox.using(NotesModule);
   await notes.records.create('note', {
     data : { title: 'Test', body: 'Stored on the hosted DWN' },
     from : context.ownerDid,
@@ -602,7 +602,7 @@ try {
 This helper requires the normal `did:dht` test gateway and at least one
 caller-managed DWN endpoint that accepts the generated owner tenant. It does
 not start or emulate either service. `close()` stops the local agents and
-removes their temporary files; protocol configurations, grants, revocations,
+removes their temporary files; module configurations, grants, revocations,
 and records already sent to the hosted DWN remain there. Use a disposable or
 resettable test endpoint when test isolation requires remote cleanup.
 
@@ -675,8 +675,8 @@ await view.close();
 await changes.close();
 ```
 
-Typed record operations return protocol-bound `TypedRecord<T>` handles.
-`contextId`, `protocol`, and `protocolPath` are therefore required strings on
+Typed record operations return module-bound `TypedRecord<T>` handles.
+`contextId`, `module`, and `modulePath` are therefore required strings on
 every create, read, query, observe, subscription, and materialization result.
 `update()` mutates and returns the same refined handle. Successful delete
 operations resolve without a value.
@@ -713,7 +713,7 @@ Other non-success replies throw `DwnResponseError` with the same `status`.
 
 Every record that crosses the API boundary (`create()` results, query and
 observe rows, read results) is a `Record`/`TypedRecord` instance. Its public
-address fields (`id`, `contextId`, `protocolPath`, and others) are prototype
+address fields (`id`, `contextId`, `modulePath`, and others) are prototype
 accessors rather than enumerable own properties:
 
 ```ts
@@ -729,7 +729,7 @@ decoded application value rides beside the handle, not inside it.
 
 > [!WARNING]
 > Unbound typed queries and views reject a missing or malformed `within` for a
-> nested protocol path. An unbound typed read rejects a malformed `within`, but an
+> nested module path. An unbound typed read rejects a malformed `within`, but an
 > omitted value currently searches that path across the tenant and can return
 > a sibling from another context. Pass the exact parent context on every nested
 > read. A context-bound records handle supplies its root scope automatically;
@@ -749,14 +749,14 @@ documents the bounded rebase recipe and machine-readable squash backstop.
 after updates and deletion; anonymous `ReadOnlyRecord` handles expose it too.
 
 Returned records are canonical `Record<T>` instances. `value()` decodes the
-typed application value through the protocol codec, while `data.json()`,
+typed application value through the module codec, while `data.json()`,
 `data.text()`, `data.bytes()`, `data.blob()`, and `data.stream()` expose the
 raw representation without wrapping a second record object. `update({ data })`
 replaces the full payload; use `records.patch(path, recordId, patch)` for
 a shallow partial object update with one bounded conflict retry.
 
 `observe()` watches the connected tenant by default; pass `from` and, when
-required, `protocolRole` to watch a foreign tenant. Subscription events are
+required, `moduleRole` to watch a foreign tenant. Subscription events are
 wake hints: every immutable view state is rebuilt from the same canonical query.
 Its required pagination limit is the initial retained-record bound and the
 `loadMore()` step. Expansion reruns the live query from the beginning and
@@ -813,9 +813,9 @@ app-level role list or override; preference does not change DWN authorization
 or imply role inheritance.
 
 Following or accepting an invitation saves an encrypted choice in the application's
-protocol. Each device independently verifies current membership and keys; saved
+module. Each device independently verifies current membership and keys; saved
 choices are not membership proof. Owner unavailability preserves the choice, and
-apps need no separate bookmark protocol or reconciliation controller.
+apps need no separate bookmark module or reconciliation controller.
 
 `contexts.observe()` restores choices in the background. `contexts.list()` waits
 for one restoration attempt and may incur owner network timeouts. Recipient sync
@@ -830,7 +830,7 @@ journal, without awaiting remote owners. Pass a saved choice directly to
 `contexts.forget()` to remove it without a live member handle.
 
 `contexts.forget({ ownerDid, id })` works without a live acceptance and leaves the
-owner's role intact. It requires a session with sync storage and the protocol's
+owner's role intact. It requires a session with sync storage and the module's
 managed following path, rejecting with `TypeError` if either is unavailable.
 The saved context path need not be supported. A member handle's `forget()` first
 checks that its acceptance is still current, so an already-retired handle cannot
@@ -840,20 +840,20 @@ override a later follow.
 rejects and coordinate-based `contexts.forget()` can finish it. These writes are
 not atomic; a retired `leave()` rejects with `ContextRetiredError`.
 
-Changing a saved choice requires own-protocol write access; read-only grants are
+Changing a saved choice requires own-module write access; read-only grants are
 not widened. All apps with that access can change the identity's shared choices.
 The immutable journal retains and reads its history in pages without automatic
 compaction. Future compaction must retain effective forgets so older offline follows cannot return.
 
 Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
-to `protocolContextKey(context.ownerDid, context.id)`.
+to `moduleContextKey(context.ownerDid, context.id)`.
 
 The complete owner/member workflow and current limitations live in
 [Shared contexts](https://enbox-docs.pages.dev/docs/packages/api#shared-contexts).
 
 ## Anonymous Reads
 
-`Enbox.anonymous()` creates a read-only API for published records and protocol
+`Enbox.anonymous()` creates a read-only API for published records and module
 metadata. It has no local identity, so every request needs a `from` DID.
 
 ```ts
@@ -862,15 +862,15 @@ const { dwn } = Enbox.anonymous();
 const { records } = await dwn.records.query({
   from   : 'did:dht:alice...',
   filter : {
-    protocol     : 'https://example.com/notes',
-    protocolPath : 'note',
+    module     : 'https://example.com/notes',
+    modulePath : 'note',
   },
 });
 ```
 
 ## Advanced DWN Access
 
-Most apps should use `enbox.using(protocol)`. If you need raw DWN methods, use
+Most apps should use `enbox.using(module)`. If you need raw DWN methods, use
 the advanced export. Low-level methods keep their exact DWN response envelopes,
 including `status`:
 
@@ -900,40 +900,40 @@ covers its service worker, persistent storage, and build setup.
 
 | Export | Description |
 |---|---|
-| `defineStore()` | Declares synchronous feature factories, typed protocols, dependencies, and commands. |
+| `defineStore()` | Declares synchronous feature factories, typed modules, dependencies, and commands. |
 | `createApplication()` | Derives the manifest and owns session-scoped features and the constructed connection. |
 | `ApplicationRuntime` | Running owner of the derived manifest, connection, and feature instances. |
 | `StoreDefinition` / `StoreContext` / `StoreInstance` | Feature authoring and inferred instance types. |
 | `DefineStoreOptions` / `CreateApplicationOptions` | Feature definitions and application registration, manifest policy, and connection construction. |
-| `StoreProtocols` / `StoreDefinitions` | Named protocol and feature dependencies. |
-| `ProtocolStore` | Inert collection authoring plus explicit `native()` access to the full typed SDK. |
+| `StoreModules` / `StoreDefinitions` | Named module and feature dependencies. |
+| `ModuleStore` | Inert collection authoring plus explicit `native()` access to the full typed SDK. |
 | `StoreCollection` / `StoreCollectionFamily` | Data-only owned CRUD and keyed direct-parent collections. |
-| `StoreCollectionOptions` | Protocol-derived read filters, pagination, and `loadAll` policy. |
+| `StoreCollectionOptions` | Module-derived read filters, pagination, and `loadAll` policy. |
 | `StoreCollectionState` | Collection rows, pagination progress, and idle/native read state. |
 | `ObservationFactory` / `ObservedStore` / `ObservedStoreState` | Common ownership and state for fixed or changing-input observations and borrowed collections. |
 | `StoreCommand` / `StoreCommandState` | One-input domain operations and shared pending/error state. |
 | `StoreNotConnectedError` / `StoreRetiredError` | Unavailable or retired store scope failures. |
 | `createConnectionStore()` | Owns restore, connect, refresh, disconnect, and facade cleanup for applications. |
 | `Enbox` | Session-bound app facade: `fromSession()`, `anonymous()`, `using()`, `close()`. |
-| `defineProtocol()` | Creates typed protocol definitions. |
-| `RecordQuery` | Protocol-derived filter, date ordering, and pagination shared by query and count. |
+| `defineModule()` | Creates typed module definitions. |
+| `RecordQuery` | Module-derived filter, date ordering, and pagination shared by query and count. |
 | `RecordPage<Item>` | One page with cursor-free `next()` and lazy async iteration. |
 | `RecordView<Item>` / `ExpandableRecordView<Item>` | Closeable canonical local queries with `ready()`, `refresh()`, and optional fixed-step `loadMore()`. |
 | `ContextView` | Closeable live catalog of owned and accepted member contexts. |
 | `MaterializedMemberContext` | Accepted member context with its independently observed root state. |
-| `ProtocolContext` | Discriminated owner/member entry returned by a context catalog. |
+| `ModuleContext` | Discriminated owner/member entry returned by a context catalog. |
 | `OwnedContext` / `MemberContext` | Context-scoped records and owner/member lifecycle handles. |
 | `ContextMember` | One owner-managed member and its audience-key delivery state. |
 | `MaterializedRecord<T, Handle>` | A decoded value paired with its retained record handle. |
-| `RecordMaterialization` | Protocol-derived value or direct singleton child selection. |
+| `RecordMaterialization` | Module-derived value or direct singleton child selection. |
 | `RecordObserveRequest` | Bounded query, materialization, and cancellation options for an observed view. |
-| `RecordRepresentation` | Protocol-bound handle or materialized row selected by a request. |
-| `TypedRecord<T>` | A canonical record with required protocol coordinates. |
-| `TypedEnbox` | Protocol-scoped record API returned by `enbox.using()`. |
-| `Record<T>` | Canonical mutable record handle with protocol-derived payload typing. |
+| `RecordRepresentation` | Module-bound handle or materialized row selected by a request. |
+| `TypedRecord<T>` | A canonical record with required module coordinates. |
+| `TypedEnbox` | Module-scoped record API returned by `enbox.using()`. |
+| `Record<T>` | Canonical mutable record handle with module-derived payload typing. |
 | `DwnResponseError` | Typed-operation error carrying the original non-success DWN status. |
 | `RecordSquashBackstopError` | Exact squash-floor rejection with the reported floor timestamp. |
-| `RecordParentNotFoundError` | Exact same-protocol missing-parent write rejection. |
+| `RecordParentNotFoundError` | Exact same-module missing-parent write rejection. |
 | `ReadOnlyRecord` | Anonymous-read record handle. |
 | `DidApi` | DID resolution helpers. |
 | `DwnReaderApi` | Anonymous read-only DWN API. |
@@ -942,8 +942,8 @@ covers its service worker, persistent storage, and build setup.
 
 - [`@enbox/auth`](../auth): Auth lifecycle and session management.
 - [`@enbox/agent`](../agent): Agent runtime, local DWN, key management, sync.
-- [`@enbox/protocols`](../protocols): Ready-to-use protocol definitions.
-- [`@enbox/protocol-codegen`](../protocol-codegen): Type generation from protocol JSON.
+- [`@enbox/modules`](../modules): Ready-to-use module definitions.
+- [`@enbox/module-codegen`](../module-codegen): Type generation from module JSON.
 
 ## License
 

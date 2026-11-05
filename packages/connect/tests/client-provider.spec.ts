@@ -122,8 +122,8 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     for (const requestType of ['connect', 'refresh'] as const) {
       const metadata = { origin: 'https://approved.example' };
       const permissionRequests: ConnectRequest['permissionRequests'] = [{
-        protocolDefinition : { protocol: 'https://approved.example/protocol', published: false, types: {}, structure: {} },
-        permissionScopes   : [{ interface: 'Records', method: 'Read', protocol: 'https://approved.example/protocol' }],
+        moduleDefinition : { module: 'https://approved.example/module', published: false, types: {}, structure: {} },
+        permissionScopes : [{ interface: 'Records', method: 'Read', module: 'https://approved.example/module' }],
       }];
       const approvedPermissions = structuredClone(permissionRequests);
       const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
@@ -149,7 +149,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       };
       const pending = client.connect(new Proxy(options, {}));
       metadata.origin = 'https://changed.example';
-      permissionRequests[0].permissionScopes[0].protocol = 'https://changed.example/protocol';
+      permissionRequests[0].permissionScopes[0].module = 'https://changed.example/module';
       expect((await pending)?.connectedDid).toBe(owner.uri);
       expect(transport.confirmCompleteCalls).toBe(1);
     }

@@ -1,5 +1,5 @@
 /**
- * e2e: grant revocation with encrypted protocols
+ * e2e: grant revocation with encrypted modules
  *
  * Tests for https://github.com/enboxorg/enbox/issues/828
  *
@@ -9,11 +9,11 @@
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnRpcRequest, DwnRpcResponse } from '@enbox/dwn-clients';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsModule } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from '../src/permissions-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
@@ -23,10 +23,10 @@ import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-// Multi-party encrypted chat protocol
-const chatProtocol: ProtocolDefinition = {
+// Multi-party encrypted chat module
+const chatModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://protocol.xyz/e2e-revocation-chat',
+  module    : 'https://module.xyz/e2e-revocation-chat',
   types     : {
     thread: {
       schema             : 'https://schemas.xyz/thread',
@@ -110,8 +110,8 @@ describe('e2e: grant revocation stops future delivery', () => {
     await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     const delegateBearerDid = await DidJwk.create();
@@ -124,7 +124,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       delegated   : true,
       store       : true,
       grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: chatModule.module },
       dateExpires : '2040-06-25T16:09:16.693356Z',
       author      : ownerDid,
     });
@@ -134,11 +134,11 @@ describe('e2e: grant revocation stops future delivery', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : 'https://schemas.xyz/thread',
-        dataFormat   : 'application/json',
-        data         : new TextEncoder().encode(JSON.stringify({ topic: 'Revocation authorization check' })),
+        module     : chatModule.module,
+        modulePath : 'thread',
+        schema     : 'https://schemas.xyz/thread',
+        dataFormat : 'application/json',
+        data       : new TextEncoder().encode(JSON.stringify({ topic: 'Revocation authorization check' })),
       },
     });
 
@@ -193,8 +193,8 @@ describe('e2e: grant revocation stops future delivery', () => {
       await ownerHarness.agent.processDwnRequest({
         author        : ownerDid,
         target        : ownerDid,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: chatProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: chatModule },
       });
 
       const delegateBearerDid = await DidJwk.create();
@@ -204,7 +204,7 @@ describe('e2e: grant revocation stops future delivery', () => {
         delegated   : true,
         store       : true,
         grantedTo   : delegateBearerDid.uri,
-        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+        scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: chatModule.module },
         dateExpires : '2040-06-25T16:09:16.693356Z',
         author      : ownerDid,
       });
@@ -216,7 +216,7 @@ describe('e2e: grant revocation stops future delivery', () => {
         scope     : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : PermissionsProtocol.uri,
+          module    : PermissionsModule.uri,
           contextId : sessionGrant.message.recordId,
         },
         dateExpires : '2040-06-25T16:09:16.693356Z',
@@ -249,14 +249,14 @@ describe('e2e: grant revocation stops future delivery', () => {
       const resolvedOwner = await delegateHarness.agent.did.resolve(ownerDid);
       expect(resolvedOwner.didDocument).toBeDefined();
 
-      // Copy the grants + permissions protocol to the delegate's local DWN
+      // Copy the grants + permissions module to the delegate's local DWN
       // under the owner's tenant (simulates sync)
-      for (const protocolUri of [PermissionsProtocol.uri]) {
+      for (const moduleUri of [PermissionsModule.uri]) {
         const { reply: pq } = await ownerHarness.agent.processDwnRequest({
           author        : ownerDid,
           target        : ownerDid,
-          messageType   : DwnInterface.ProtocolsQuery,
-          messageParams : { filter: { protocol: protocolUri } },
+          messageType   : DwnInterface.ModulesQuery,
+          messageParams : { filter: { module: moduleUri } },
         });
         for (const e of pq.entries ?? []) {
           await delegateHarness.agent.dwn.processRawMessage(ownerDid, e as any);
@@ -264,7 +264,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       }
 
       // Copy grant records to delegate's local DWN using MessagesStore
-      // directly to avoid protocol authorization checks that may need
+      // directly to avoid module authorization checks that may need
       // the owner's encryption key.
       for (const grantMsg of [sessionGrant.message, revGrant.message]) {
         const { encodedData, ...rawMsg } = grantMsg;
@@ -306,10 +306,10 @@ describe('e2e: grant revocation stops future delivery', () => {
       // --- VERIFY: copy revocation back to owner's DWN ---
       // Query for the revocation on the delegate's local DWN
       // Note: The revocation IS stored on the delegate's local DWN, but
-      // the delegate can't query for it via RecordsQuery (DWN protocol
+      // the delegate can't query for it via RecordsQuery (DWN module
       // authorization doesn't allow delegate-signed queries on revocation
       // records). However, the DWN SDK's internal verifyGrantActive()
-      // DOES find it via messageStore.query (bypasses protocol auth).
+      // DOES find it via messageStore.query (bypasses module auth).
       // So the grant is effectively revoked.
 
       // Copy the revocation to the owner's DWN by importing the owner's
@@ -327,9 +327,9 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : 'grant/revocation',
-            contextId    : sessionGrant.message.recordId,
+            module     : PermissionsModule.uri,
+            modulePath : 'grant/revocation',
+            contextId  : sessionGrant.message.recordId,
           },
         },
       });
@@ -390,8 +390,8 @@ describe('e2e: grant revocation stops future delivery', () => {
     await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     const delegateBearerDid = await DidJwk.create();
@@ -401,7 +401,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       delegated   : true,
       store       : true,
       grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: chatModule.module },
       dateExpires : '2040-06-25T16:09:16.693356Z',
       author      : ownerDid,
     });
@@ -413,7 +413,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       scope     : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : PermissionsProtocol.uri,
+        module    : PermissionsModule.uri,
         contextId : sessionGrant.message.recordId,
       },
       dateExpires : '2040-06-25T16:09:16.693356Z',
@@ -445,13 +445,13 @@ describe('e2e: grant revocation stops future delivery', () => {
       // Resolve owner DID (no private keys imported)
       await delegateHarness.agent.did.resolve(ownerDid);
 
-      // Copy permissions protocol + grants to delegate's local DWN
-      for (const protocolUri of [PermissionsProtocol.uri]) {
+      // Copy permissions module + grants to delegate's local DWN
+      for (const moduleUri of [PermissionsModule.uri]) {
         const { reply: pq } = await ownerHarness.agent.processDwnRequest({
           author        : ownerDid,
           target        : ownerDid,
-          messageType   : DwnInterface.ProtocolsQuery,
-          messageParams : { filter: { protocol: protocolUri } },
+          messageType   : DwnInterface.ModulesQuery,
+          messageParams : { filter: { module: moduleUri } },
         });
         for (const e of pq.entries ?? []) {
           await delegateHarness.agent.dwn.processRawMessage(ownerDid, e as any);
@@ -514,9 +514,9 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : 'grant/revocation',
-            contextId    : sessionGrant.message.recordId,
+            module     : PermissionsModule.uri,
+            modulePath : 'grant/revocation',
+            contextId  : sessionGrant.message.recordId,
           },
         },
       });
@@ -561,8 +561,8 @@ describe('e2e: grant revocation stops future delivery', () => {
     await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     const delegateBearerDid = await DidJwk.create();
@@ -572,7 +572,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       delegated   : true,
       store       : true,
       grantedTo   : delegateBearerDid.uri,
-      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, protocol: chatProtocol.protocol },
+      scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: chatModule.module },
       dateExpires : '2040-06-25T16:09:16.693356Z',
       author      : ownerDid,
     });
@@ -584,20 +584,20 @@ describe('e2e: grant revocation stops future delivery', () => {
       scope     : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : PermissionsProtocol.uri,
+        module    : PermissionsModule.uri,
         contextId : sessionGrant.message.recordId,
       },
       dateExpires : '2040-06-25T16:09:16.693356Z',
       author      : ownerDid,
     });
 
-    // Send permissions protocol + grants to DWN server so retry can
+    // Send permissions module + grants to DWN server so retry can
     // confirm revocations remotely.
     const { reply: permProto } = await ownerHarness.agent.processDwnRequest({
       author        : ownerDid,
       target        : ownerDid,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: PermissionsProtocol.uri } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: PermissionsModule.uri } },
     });
     for (const e of permProto.entries ?? []) {
       await sendRemoteSetupRequest({
@@ -639,12 +639,12 @@ describe('e2e: grant revocation stops future delivery', () => {
       });
       await delegateHarness.agent.did.resolve(ownerDid);
 
-      // Copy permissions protocol + grants to delegate's local DWN
+      // Copy permissions module + grants to delegate's local DWN
       const { reply: pq } = await ownerHarness.agent.processDwnRequest({
         author        : ownerDid,
         target        : ownerDid,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: PermissionsProtocol.uri } },
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module: PermissionsModule.uri } },
       });
       for (const e of pq.entries ?? []) {
         await delegateHarness.agent.dwn.processRawMessage(ownerDid, e as any);
@@ -672,7 +672,7 @@ describe('e2e: grant revocation stops future delivery', () => {
       await retryOrphanedRevocations(delegateHarness.agent as any, storage);
 
       // Import owner keys to query for the revocation (delegate can't
-      // query revocations due to DWN protocol auth limitation — see #836).
+      // query revocations due to DWN module auth limitation — see #836).
       const ownerPd = await ownerIdentity.did.export();
       await delegateHarness.agent.did.import({
         portableDid : ownerPd,
@@ -684,9 +684,9 @@ describe('e2e: grant revocation stops future delivery', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : PermissionsProtocol.uri,
-            protocolPath : 'grant/revocation',
-            contextId    : sessionGrant.message.recordId,
+            module     : PermissionsModule.uri,
+            modulePath : 'grant/revocation',
+            contextId  : sessionGrant.message.recordId,
           },
         },
       });

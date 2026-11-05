@@ -6,15 +6,15 @@
   "minProperties": 1,
   "not": {
     "required": [
-      "protocolPath",
-      "protocolPathPrefix"
+      "modulePath",
+      "modulePathPrefix"
     ]
   },
   "properties": {
     "interface": {
       "enum": [
         "Messages",
-        "Protocols",
+        "Modules",
         "Records"
       ],
       "type": "string"
@@ -27,13 +27,13 @@
       ],
       "type": "string"
     },
-    "protocol": {
+    "module": {
       "type": "string"
     },
-    "protocolPath": {
+    "modulePath": {
       "type": "string"
     },
-    "protocolPathPrefix": {
+    "modulePathPrefix": {
       "type": "string"
     },
     "contextIdPrefix": {

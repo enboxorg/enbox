@@ -14,8 +14,8 @@ const deleted: RecordModel = {
   dataCid       : undefined,
   dataFormat    : undefined,
   dataSize      : undefined,
-  protocol      : undefined,
-  protocolPath  : undefined,
+  module        : undefined,
+  modulePath    : undefined,
   contextId     : undefined,
 };
 

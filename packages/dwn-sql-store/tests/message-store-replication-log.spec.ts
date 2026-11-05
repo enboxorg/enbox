@@ -40,11 +40,11 @@ function delay(ms: number): Promise<void> {
 }
 
 async function generateStoredMessage(overrides: {
-  protocol?: string;
+  module?: string;
   tags?: Record<string, string>;
 } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
   const { message } = await TestDataGenerator.generateRecordsWrite({
-    ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: 'post' }),
+    ...(overrides.module !== undefined && { module: overrides.module, modulePath: 'post' }),
     ...(overrides.tags !== undefined && { tags: overrides.tags }),
   });
 
@@ -57,9 +57,9 @@ async function generateStoredMessage(overrides: {
     recordId          : message.recordId,
   };
 
-  if (message.descriptor.protocol !== undefined) {
-    indexes.protocol = message.descriptor.protocol;
-    indexes.protocolPath = message.descriptor.protocolPath;
+  if (message.descriptor.module !== undefined) {
+    indexes.module = message.descriptor.module;
+    indexes.modulePath = message.descriptor.modulePath;
   }
 
   if (message.descriptor.tags !== undefined) {
@@ -71,13 +71,13 @@ async function generateStoredMessage(overrides: {
   return { message, messageCid, indexes };
 }
 
-function constructProtocolConfigureIndexes(message: any, author: string, isLatestBaseState: boolean): KeyValues {
+function constructModuleConfigureIndexes(message: any, author: string, isLatestBaseState: boolean): KeyValues {
   return {
     interface        : message.descriptor.interface,
     method           : message.descriptor.method,
     messageTimestamp : message.descriptor.messageTimestamp,
     author,
-    protocol         : message.descriptor.definition.protocol,
+    module           : message.descriptor.definition.module,
     published        : message.descriptor.definition.published,
     isLatestBaseState,
   };
@@ -416,16 +416,16 @@ function runReplicationLogTests(dialect: Dialect): void {
 
     it('should page with high-water cursors and preserve zero-limit cursor semantics', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/photos';
+      const module = 'https://example.com/photos';
 
-      const matching = await generateStoredMessage({ protocol });
+      const matching = await generateStoredMessage({ module });
       const matchingPut = await messageStore.put(alice.did, matching.message, matching.indexes);
       const other = await generateStoredMessage();
       const otherPut = await messageStore.put(alice.did, other.message, other.indexes);
       const tail = await generateStoredMessage();
       await messageStore.put(alice.did, tail.message, tail.indexes);
 
-      const filtered = await messageStore.logRead(alice.did, { filters: [{ protocol }] });
+      const filtered = await messageStore.logRead(alice.did, { filters: [{ module }] });
       expect(filtered.events.map((entry) => entry.messageCid)).toEqual([matching.messageCid]);
       expect(filtered.drained).toBe(true);
       expect(filtered.cursor!.position).toBe('3');
@@ -474,8 +474,8 @@ function runReplicationLogTests(dialect: Dialect): void {
 
     it('should replace indexes in place without moving rows or mutating fingerprint scopes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/photos';
-      const first = await generateStoredMessage({ protocol });
+      const module = 'https://example.com/photos';
+      const first = await generateStoredMessage({ module });
       const second = await generateStoredMessage();
 
       await messageStore.put(alice.did, { ...first.message, encodedData: 'c29tZSBkYXRh' }, first.indexes);
@@ -491,32 +491,32 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect(wakePublisher.wakes).toHaveLength(wakeCountBefore);
       expect((await messageStore.logBounds(alice.did))!.latest.position).toBe('2');
 
-      await expect(messageStore.updateIndexes(alice.did, first.messageCid, { ...first.indexes, protocol: 'https://example.com/other' }))
+      await expect(messageStore.updateIndexes(alice.did, first.messageCid, { ...first.indexes, module: 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
     });
 
-    it('should fold protocol configs and tombstones into protocol fingerprints and persist across reopen', async () => {
+    it('should fold module configs and tombstones into module fingerprints and persist across reopen', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const photosProtocol = 'https://example.com/photos-fingerprint';
-      const protocolDefinition = {
-        protocol  : photosProtocol,
+      const photosModule = 'https://example.com/photos-fingerprint';
+      const moduleDefinition = {
+        module    : photosModule,
         published : false,
         types     : { post: { schema: 'post', dataFormats: ['text/plain'] } },
         structure : { post: {} },
       };
       const initialEpoch = await messageStore.epoch();
 
-      const config = await TestDataGenerator.generateProtocolsConfigure({
+      const config = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
-      const configIndexes = constructProtocolConfigureIndexes(config.message, alice.did, true);
+      const configIndexes = constructModuleConfigureIndexes(config.message, alice.did, true);
       await messageStore.put(alice.did, config.message, configIndexes);
       const configFingerprint = await cidFingerprint(await Message.getCid(config.message));
 
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)])).toBe(configFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)])).toBe(configFingerprint);
 
-      const photo = await generateStoredMessage({ protocol: photosProtocol });
+      const photo = await generateStoredMessage({ module: photosModule });
       await messageStore.put(alice.did, photo.message, photo.indexes);
       const photoFingerprint = await cidFingerprint(photo.messageCid);
 
@@ -529,9 +529,9 @@ function runReplicationLogTests(dialect: Dialect): void {
       const recordsDeleteCid = await Message.getCid(recordsDelete.message);
       const deleteFingerprint = await cidFingerprint(recordsDeleteCid);
 
-      const expectedProtocolFingerprint = xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
-        .toBe(expectedProtocolFingerprint);
+      const expectedModuleFingerprint = xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)]))
+        .toBe(expectedModuleFingerprint);
 
       const boundsBefore = await messageStore.logBounds(alice.did);
       const logBefore = await messageStore.logRead(alice.did);
@@ -545,11 +545,11 @@ function runReplicationLogTests(dialect: Dialect): void {
       expect((await messageStore.logRead(alice.did)).events.map((entry) => entry.messageCid))
         .toEqual(logBefore.events.map((entry) => entry.messageCid));
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(globalFingerprintBefore);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
-        .toBe(expectedProtocolFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)]))
+        .toBe(expectedModuleFingerprint);
 
       await messageStore.delete(alice.did, recordsDeleteCid);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)]))
         .toBe(xorHex(configFingerprint, photoFingerprint));
       await messageStore.clear();
       expect(await messageStore.epoch()).not.toBe(initialEpoch);

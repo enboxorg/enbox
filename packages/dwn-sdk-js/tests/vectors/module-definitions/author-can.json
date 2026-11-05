@@ -1,0 +1,33 @@
+{
+  "module": "http://author-can-module.xyz",
+  "published": true,
+  "types": {
+    "post": {},
+    "comment": {}
+  },
+  "structure": {
+    "post": {
+      "$actions": [
+        {
+          "who": "anyone",
+          "can": [
+            "create",
+            "update"
+          ]
+        }
+      ],
+      "comment": {
+        "$actions": [
+          {
+            "who": "author",
+            "of": "post",
+            "can": [
+              "co-update",
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -130,7 +130,7 @@ export class MessagesQueryHandler implements MethodHandler {
       return undefined;
     }
 
-    return Messages.convertFilters(filters, deps.coreProtocols, includeShadowFilters);
+    return Messages.convertFilters(filters, deps.coreModules, includeShadowFilters);
   }
 
   private static async buildEntries(
@@ -166,12 +166,12 @@ export class MessagesQueryHandler implements MethodHandler {
     deps: HandlerDependencies,
   ): Promise<MessagesQueryReplyEntry> {
     const messageCid = event.messageCid ?? await Message.getCid(event.event.message);
-    const protocol = MessagesQueryHandler.getStringIndex(event.indexes, 'protocol');
+    const module = MessagesQueryHandler.getStringIndex(event.indexes, 'module');
     const entry: MessagesQueryReplyEntry = {
       seq               : event.seq,
       messageCid,
       isLatestBaseState : MessagesQueryHandler.isLatestBaseState(event.indexes),
-      protocol,
+      module,
     };
 
     if (cidsOnly) {

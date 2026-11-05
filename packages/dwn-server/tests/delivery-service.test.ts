@@ -93,13 +93,13 @@ describe('DeliveryService', () => {
 
       const message: GenericMessage = {
         descriptor: {
-          interface        : DwnInterfaceName.Protocols,
+          interface        : DwnInterfaceName.Modules,
           method           : DwnMethodName.Configure,
           messageTimestamp : new Date().toISOString(),
         },
       } as GenericMessage;
 
-      // A Protocols interface must short-circuit before any dispatch is scheduled.
+      // A Modules interface must short-circuit before any dispatch is scheduled.
       service.dispatchIfNeeded('did:key:test', message, 202);
 
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 10));
@@ -181,7 +181,7 @@ describe('DeliveryService', () => {
       });
 
       const { dwn: testDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(testDwn, alice);
 
       const testConfig: DwnServerConfig = {
         ...config,
@@ -261,7 +261,7 @@ describe('DeliveryService', () => {
       });
 
       const { dwn: testDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(testDwn, alice);
 
       const context: RequestContext = {
         dwn       : testDwn,
@@ -324,7 +324,7 @@ describe('DeliveryService', () => {
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
 
       const { dwn: testDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(testDwn, alice);
 
       const testConfig: DwnServerConfig = {
         ...config,
@@ -379,7 +379,7 @@ describe('DeliveryService', () => {
       const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice, { data });
 
       const { dwn: testDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(testDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(testDwn, alice);
 
       const testConfig: DwnServerConfig = {
         ...config,
@@ -448,14 +448,14 @@ describe('DeliveryService', () => {
         packageJsonPath    : './package.json',
       };
       const { dwn: receiverDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(receiverDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(receiverDwn, alice);
       const receiverServer = new DwnServer({ config: receiverConfig, dwn: receiverDwn });
       await receiverServer.start();
       const receiverUrl = `http://127.0.0.1:${receiverServer.httpServer.port}`;
 
       // Sender: a DWN whose DeliveryService resolves alice's endpoints to the receiver.
       const { dwn: senderDwn } = await getTestDwn();
-      await TestDataGenerator.installDefaultTestProtocol(senderDwn, alice);
+      await TestDataGenerator.installDefaultTestModule(senderDwn, alice);
 
       const senderConfig: DwnServerConfig = {
         ...config,

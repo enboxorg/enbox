@@ -11,7 +11,7 @@ describe('resolveDelegatePermissionGrantId', () => {
     const result = await resolveDelegatePermissionGrantId(
       { did: 'did:example:alice' },
       DwnInterface.RecordsQuery,
-      'https://example.com/protocol',
+      'https://example.com/module',
     );
     expect(result).toBeUndefined();
   });
@@ -20,7 +20,7 @@ describe('resolveDelegatePermissionGrantId', () => {
     const result = await resolveDelegatePermissionGrantId(
       { did: 'did:example:alice', delegateDid: 'did:example:delegate' },
       DwnInterface.RecordsQuery,
-      'https://example.com/protocol',
+      'https://example.com/module',
     );
     expect(result).toBeUndefined();
   });
@@ -30,14 +30,14 @@ describe('resolveDelegatePermissionGrantId', () => {
     const result = await resolveDelegatePermissionGrantId(
       { did: 'did:example:alice', delegateDid: 'did:example:delegate', permissionsApi: permissionsApi as any },
       DwnInterface.RecordsQuery,
-      'https://example.com/protocol',
+      'https://example.com/module',
     );
     expect(result).toBe('grant-123');
     expect(permissionsApi.getPermissionForRequest.firstCall.args[0]).toEqual({
       connectedDid : 'did:example:alice',
       delegateDid  : 'did:example:delegate',
       messageType  : DwnInterface.RecordsQuery,
-      protocol     : 'https://example.com/protocol',
+      module       : 'https://example.com/module',
     });
   });
 
@@ -46,14 +46,14 @@ describe('resolveDelegatePermissionGrantId', () => {
       getPermissionForRequest: sinon.stub().rejects(
         new PermissionGrantNotFoundError({
           messageType : DwnInterface.RecordsQuery,
-          protocol    : 'https://example.com/protocol',
+          module      : 'https://example.com/module',
         })
       ),
     };
     const result = await resolveDelegatePermissionGrantId(
       { did: 'did:example:alice', delegateDid: 'did:example:delegate', permissionsApi: permissionsApi as any },
       DwnInterface.RecordsQuery,
-      'https://example.com/protocol',
+      'https://example.com/module',
     );
     expect(result).toBeUndefined();
   });
@@ -65,7 +65,7 @@ describe('resolveDelegatePermissionGrantId', () => {
     await expect(resolveDelegatePermissionGrantId(
       { did: 'did:example:alice', delegateDid: 'did:example:delegate', permissionsApi: permissionsApi as any },
       DwnInterface.RecordsQuery,
-      'https://example.com/protocol',
+      'https://example.com/module',
     )).rejects.toThrow('Failed to fetch grants');
   });
 });

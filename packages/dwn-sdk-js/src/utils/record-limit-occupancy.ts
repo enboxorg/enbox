@@ -1,11 +1,11 @@
-import type { ProtocolRecordLimitDefinition } from '../types/protocols-types.js';
+import type { ModuleRecordLimitDefinition } from '../types/modules-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { MessageSort, Pagination } from '../types/message-types.js';
 import type { MessageStore, RecordLimitOccupancy } from '../types/message-store.js';
 import type { RecordsFilter, RecordsWriteMessage } from '../types/records-types.js';
 
-import { getRuleSetAtPath } from './protocols.js';
+import { getRuleSetAtPath } from './modules.js';
 import { Records } from './records.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -36,7 +36,7 @@ type OccupancyProjectionInput<T extends RecordsWriteMessage> = {
 
 /**
  * Queries the caller-visible portion of the deterministic `$recordLimit`
- * occupant population for one concrete protocol path.
+ * occupant population for one concrete module path.
  */
 export async function queryRecordsWithRecordLimitOccupancy(
   input: RecordLimitOccupancyQueryInput
@@ -81,10 +81,10 @@ export async function isRecordLimitOccupant(input: RecordLimitOccupancyDependenc
     return true;
   }
 
-  const { protocol, protocolPath } = input.message.descriptor;
+  const { module, modulePath } = input.message.descriptor;
   const recordLimit: RecordLimitOccupancy = {
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     max: recordLimitDefinition.max,
   };
   const parentContextId = Records.getParentContextFromOfContextId(input.message.contextId);
@@ -96,8 +96,8 @@ export async function isRecordLimitOccupant(input: RecordLimitOccupancyDependenc
     interface         : DwnInterfaceName.Records,
     method            : DwnMethodName.Write,
     isLatestBaseState : true,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     recordId          : input.message.recordId,
   }], undefined, { recordLimit });
 
@@ -110,16 +110,16 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   recordsFilter: RecordsFilter;
   messageTimestamp: string;
 }): Promise<RecordLimitOccupancy | undefined> {
-  const { contextId, parentId, protocol, protocolPath } = input.recordsFilter;
-  if (protocol === undefined || protocolPath === undefined) {
+  const { contextId, parentId, module, modulePath } = input.recordsFilter;
+  if (module === undefined || modulePath === undefined) {
     return undefined;
   }
 
   const recordLimitDefinition = await getRecordLimit({
     validationStateReader : input.validationStateReader,
     tenant                : input.tenant,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     messageTimestamp      : input.messageTimestamp,
   });
   if (recordLimitDefinition === undefined) {
@@ -127,11 +127,11 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   }
 
   const recordLimit: RecordLimitOccupancy = {
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     max: recordLimitDefinition.max,
   };
-  if (!protocolPath.includes('/')) {
+  if (!modulePath.includes('/')) {
     return recordLimit;
   }
   if (parentId !== undefined) {
@@ -142,8 +142,8 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   }
 
   const contextDepth = contextId.split('/').length;
-  const protocolPathDepth = protocolPath.split('/').length;
-  recordLimit.contextId = contextDepth === protocolPathDepth
+  const modulePathDepth = modulePath.split('/').length;
+  recordLimit.contextId = contextDepth === modulePathDepth
     ? Records.getParentContextFromOfContextId(contextId)
     : contextId;
 
@@ -154,17 +154,17 @@ async function getRecordLimitForMessage(input: RecordLimitOccupancyDependencies 
   tenant: string;
   message: RecordsWriteMessage;
   messageTimestamp: string;
-}): Promise<ProtocolRecordLimitDefinition | undefined> {
-  const { protocol, protocolPath } = input.message.descriptor;
-  if (protocol === undefined || protocolPath === undefined) {
+}): Promise<ModuleRecordLimitDefinition | undefined> {
+  const { module, modulePath } = input.message.descriptor;
+  if (module === undefined || modulePath === undefined) {
     return undefined;
   }
 
   return getRecordLimit({
     validationStateReader : input.validationStateReader,
     tenant                : input.tenant,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     messageTimestamp      : input.messageTimestamp,
   });
 }
@@ -172,25 +172,25 @@ async function getRecordLimitForMessage(input: RecordLimitOccupancyDependencies 
 async function getRecordLimit(input: {
   validationStateReader: ValidationStateReader;
   tenant: string;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   messageTimestamp: string;
-}): Promise<ProtocolRecordLimitDefinition | undefined> {
-  let protocolDefinition;
+}): Promise<ModuleRecordLimitDefinition | undefined> {
+  let moduleDefinition;
   try {
-    protocolDefinition = await input.validationStateReader.fetchProtocolDefinition(
+    moduleDefinition = await input.validationStateReader.fetchModuleDefinition(
       input.tenant,
-      input.protocol,
+      input.module,
       input.messageTimestamp,
     );
   } catch (error) {
-    if (error instanceof DwnError && error.code === DwnErrorCode.ProtocolAuthorizationProtocolNotFound) {
+    if (error instanceof DwnError && error.code === DwnErrorCode.ModuleAuthorizationModuleNotFound) {
       return undefined;
     }
     throw error;
   }
 
-  const ruleSet = getRuleSetAtPath(input.protocolPath, protocolDefinition.structure);
+  const ruleSet = getRuleSetAtPath(input.modulePath, moduleDefinition.structure);
   const recordLimit = ruleSet?.$recordLimit;
   return recordLimit;
 }

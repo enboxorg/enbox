@@ -463,7 +463,7 @@ describe('LocalKeyManager', () => {
             cek      : plaintext,
             keyInput : {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
               keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
               publicKey        : leafPublicKeyJwk,
             },
@@ -504,7 +504,7 @@ describe('LocalKeyManager', () => {
             cek      : plaintext,
             keyInput : {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
               keyId            : await Encryption.getKeyId(leafPublicKeyJwk),
               publicKey        : leafPublicKeyJwk,
             },

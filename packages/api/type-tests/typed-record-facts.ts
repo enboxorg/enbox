@@ -1,19 +1,19 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   ContextMaterializedRecord,
   MaterializedRecord,
   Record,
   RecordPage,
-  SquashProtocolPaths,
+  SquashModulePaths,
   TypedEnbox,
   TypedMaterializedRecord,
   TypedRecord,
 } from '@enbox/api';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs } from '@enbox/api';
 
 const Definition = {
-  protocol  : 'https://example.com/protocols/typed-record-facts',
+  module    : 'https://example.com/modules/typed-record-facts',
   published : true,
   types     : {
     document : { dataFormats: ['application/json'] },
@@ -27,29 +27,29 @@ const Definition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const _Protocol = defineProtocol(Definition, {
+const _Module = defineModule(Definition, {
   document : recordCodecs.json<{ title: string }>(),
   snapshot : recordCodecs.json<{ revision: number }>(),
 });
 
-declare const typed: TypedEnbox<typeof Definition, typeof _Protocol.codecs>;
-declare const widened: TypedEnbox<ProtocolDefinition, typeof _Protocol.codecs>;
+declare const typed: TypedEnbox<typeof Definition, typeof _Module.codecs>;
+declare const widened: TypedEnbox<ModuleDefinition, typeof _Module.codecs>;
 declare const possiblePath: 'document' | 'document/snapshot';
 
-type SquashPath = SquashProtocolPaths<typeof Definition>;
+type SquashPath = SquashModulePaths<typeof Definition>;
 const squashPath: SquashPath = 'document/snapshot';
 void squashPath;
 
 function requireCoordinates(record: TypedRecord<unknown>): void {
   const contextId: string = record.contextId;
-  const protocol: string = record.protocol;
-  const protocolPath: string = record.protocolPath;
+  const module: string = record.module;
+  const modulePath: string = record.modulePath;
   const squash: boolean = record.squash;
   void contextId;
-  void protocol;
-  void protocolPath;
+  void module;
+  void modulePath;
   void squash;
 }
 
@@ -93,7 +93,7 @@ async function assertTypedSources(): Promise<void> {
     squash : true,
   });
 
-  // Widened definitions defer dynamic protocol checks to the DWN.
+  // Widened definitions defer dynamic module checks to the DWN.
   await widened.records.create('document', { data: { title: 'Dynamic' }, squash: true });
 }
 
@@ -103,11 +103,11 @@ void compatibleHandle;
 
 declare const contextMaterialized: ContextMaterializedRecord<{ title: string }>;
 const contextId: string = contextMaterialized.record.contextId;
-const contextProtocol: string = contextMaterialized.record.protocol;
-const contextPath: string = contextMaterialized.record.protocolPath;
+const contextModule: string = contextMaterialized.record.module;
+const contextPath: string = contextMaterialized.record.modulePath;
 const contextSquash: boolean = contextMaterialized.record.squash;
 void contextId;
-void contextProtocol;
+void contextModule;
 void contextPath;
 void contextSquash;
 

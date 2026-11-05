@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { DidErrorCode } from '@enbox/dids';
 
-import { AGENT_DID_SYNC_PROTOCOLS, recoverIdentitiesFromRemote, registerAgentDidForSync } from '../src/connect/recovery.js';
+import { AGENT_DID_SYNC_MODULES, recoverIdentitiesFromRemote, registerAgentDidForSync } from '../src/connect/recovery.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 type RecoveryOptions = Omit<
@@ -45,9 +45,9 @@ function recoveredAgent(
   };
 }
 
-describe('AGENT_DID_SYNC_PROTOCOLS', () => {
-  test('contains identity store and JWK store protocol URIs', () => {
-    expect(AGENT_DID_SYNC_PROTOCOLS).toEqual([
+describe('AGENT_DID_SYNC_MODULES', () => {
+  test('contains identity store and JWK store module URIs', () => {
+    expect(AGENT_DID_SYNC_MODULES).toEqual([
       'https://identity.foundation/protocols/web5/identity-store',
       'https://identity.foundation/protocols/web5/jwk-store',
     ]);
@@ -55,7 +55,7 @@ describe('AGENT_DID_SYNC_PROTOCOLS', () => {
 });
 
 describe('registerAgentDidForSync', () => {
-  test('sets the agent DID recovery protocols', async () => {
+  test('sets the agent DID recovery modules', async () => {
     const syncCalls: any[] = [];
     const agent = createMockAgent({
       syncSetIdentityOptions: async (params) => { syncCalls.push(params); },
@@ -65,7 +65,7 @@ describe('registerAgentDidForSync', () => {
 
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
-    expect(syncCalls[0].options.protocols).toEqual(AGENT_DID_SYNC_PROTOCOLS);
+    expect(syncCalls[0].options.modules).toEqual(AGENT_DID_SYNC_MODULES);
   });
 
   test('throws when setting sync options fails', async () => {
@@ -86,7 +86,7 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recover(agent, {
-      identitySyncProtocols: ['https://proto.example/profile'],
+      identitySyncModules: ['https://proto.example/profile'],
     });
 
     expect(result).toHaveLength(1);
@@ -94,7 +94,7 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(pulls()).toBe(2);
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testuser123');
-    expect(syncCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+    expect(syncCalls[0].options.modules).toEqual(['https://proto.example/profile']);
   });
 
   test('without explicit identity scope recovers identity metadata only', async () => {
@@ -298,7 +298,7 @@ describe('recoverIdentitiesFromRemote', () => {
 
     const recovered = await recover(agent, {
       replacementDwnEndpoints : ['https://existing.example'],
-      identitySyncProtocols   : ['https://proto.example/profile'],
+      identitySyncModules     : ['https://proto.example/profile'],
       registration            : {},
     });
 
@@ -326,7 +326,7 @@ describe('recoverIdentitiesFromRemote', () => {
 
     await recover(agent, {
       replacementDwnEndpoints : ['https://replacement.example'],
-      identitySyncProtocols   : ['https://proto.example/profile'],
+      identitySyncModules     : ['https://proto.example/profile'],
     });
 
     expect(endpointUpdates).toEqual([{
@@ -374,8 +374,8 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const result = await recover(agent, {
-      identitySyncProtocols : ['https://proto.example/profile'],
-      registration          : {
+      identitySyncModules : ['https://proto.example/profile'],
+      registration        : {
       },
     });
 
@@ -384,7 +384,7 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(pulls()).toBe(2);
   });
 
-  test('prepares one usable signer per recovered owner before pulling protocol data', async () => {
+  test('prepares one usable signer per recovered owner before pulling module data', async () => {
     const ownerIdentity = createMockIdentity({ did: { uri: 'did:dht:local' } });
     const localDelegate = createMockIdentity({
       did      : { uri: 'did:jwk:local-delegate' },
@@ -403,8 +403,8 @@ describe('recoverIdentitiesFromRemote', () => {
     const removed: string[] = [];
     const grantQueries: any[] = [];
     const expectedRegistrations = [
-      { did: ownerIdentity.did.uri, options: { protocols: ['https://proto.example/profile'] } },
-      { did: 'did:dht:external', options: { delegateDid: delegateIdentity.did.uri, protocols: ['https://proto.example/granted'] } },
+      { did: ownerIdentity.did.uri, options: { modules: ['https://proto.example/profile'] } },
+      { did: 'did:dht:external', options: { delegateDid: delegateIdentity.did.uri, modules: ['https://proto.example/granted'] } },
     ];
     const agent = createMockAgent({
       identityList           : async () => pulls > 0 ? identities : [],
@@ -417,7 +417,7 @@ describe('recoverIdentitiesFromRemote', () => {
         }
         return [{ grant: {
           dateExpires : '2040-01-01T00:00:00.000000Z',
-          scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/granted' },
+          scope       : { interface: 'Messages', method: 'Read', module: 'https://proto.example/granted' },
         } }];
       },
       syncSync: async () => {
@@ -429,7 +429,7 @@ describe('recoverIdentitiesFromRemote', () => {
     });
 
     const recovered = await recover(agent, {
-      identitySyncProtocols: ['https://proto.example/profile'],
+      identitySyncModules: ['https://proto.example/profile'],
     });
 
     expect(pulls).toBe(2);
@@ -440,7 +440,7 @@ describe('recoverIdentitiesFromRemote', () => {
     }]);
   });
 
-  test('skips the protocol-data pull when a recovered delegate has no active local grants', async () => {
+  test('skips the module-data pull when a recovered delegate has no active local grants', async () => {
     const delegate = createMockIdentity({
       metadata: { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
     });
@@ -452,7 +452,7 @@ describe('recoverIdentitiesFromRemote', () => {
       syncSetIdentityOptions : async (params) => { syncCalls.push(params); },
     });
 
-    const result = await recover(agent, { identitySyncProtocols: ['https://proto.example/profile'] });
+    const result = await recover(agent, { identitySyncModules: ['https://proto.example/profile'] });
 
     expect(result.map(identity => identity.did.uri)).toEqual([delegate.did.uri]);
     expect(pulls()).toBe(1);
@@ -468,7 +468,7 @@ describe('recoverIdentitiesFromRemote', () => {
 
     await expect(
       recover(agent, {
-        identitySyncProtocols: ['https://proto.example/profile'],
+        identitySyncModules: ['https://proto.example/profile'],
       })
     ).rejects.toThrow('sync store unavailable');
 

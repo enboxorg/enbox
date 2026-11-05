@@ -7,7 +7,7 @@ import { createConnectionStore, createApplication as createHeadlessApplication }
 
 /** Features, native connection settings, and the browser wallet defaults for one application. */
 export type BrowserApplicationOptions<Stores extends StoreDefinitions = StoreDefinitions> =
-  Pick<CreateApplicationOptions<Stores>, 'stores' | 'protocols'> & (
+  Pick<CreateApplicationOptions<Stores>, 'stores' | 'modules'> & (
     | {
       /** Supply a native connection factory for custom hosts and tests. */
       connection: CreateApplicationOptions<Stores>['connection'];
@@ -33,7 +33,7 @@ export function createApplication<const Stores extends StoreDefinitions>(
 ): ApplicationRuntime {
   const registration = {
     stores: options.stores,
-    ...(options.protocols === undefined ? {} : { protocols: options.protocols }),
+    ...(options.modules === undefined ? {} : { modules: options.modules }),
   };
   if (typeof options.connection === 'function') {
     if (options.wallet !== undefined || options.connectHandler !== undefined) {

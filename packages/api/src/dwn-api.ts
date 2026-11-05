@@ -21,7 +21,7 @@ import { captureRecordDataAccess } from './record-data-access.js';
 import { ContextNotReadyError } from './context-errors.js';
 import { dataToBlob } from './utils.js';
 import { invalidateRecordReplica } from './record-types.js';
-import { Protocol } from './protocol.js';
+import { Module } from './module.js';
 import { Record } from './record.js';
 import { Records } from '@enbox/dwn-sdk-js';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
@@ -34,8 +34,8 @@ type ReadInterface =
   | DwnInterface.RecordsSubscribe;
 
 type ReadScope = {
-  protocol?: string;
-  protocolPath?: string;
+  module?: string;
+  modulePath?: string;
   contextId?: string;
 };
 
@@ -47,45 +47,45 @@ type RecordMutationReadResponse<T = unknown> = RecordsReadResponse<T> & {
 };
 
 /**
- * Represents the request payload for configuring a protocol on a Decentralized Web Node (DWN).
+ * Represents the request payload for configuring a module on a Decentralized Web Node (DWN).
  *
- * This request type is used to specify the configuration options for the protocol.
+ * This request type is used to specify the configuration options for the module.
  */
-export type ProtocolsConfigureRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsConfigure], 'signer'>;
+export type ModulesConfigureRequest = Omit<DwnMessageParams[DwnInterface.ModulesConfigure], 'signer'>;
 
 /**
- * Encapsulates the response from a protocol configuration request to a Decentralized Web Node (DWN).
+ * Encapsulates the response from a module configuration request to a Decentralized Web Node (DWN).
  *
- * This response type combines the general operation status with the details of the protocol that
+ * This response type combines the general operation status with the details of the module that
  * was configured, if the operation was successful.
  *
  * @beta
  */
-export type ProtocolsConfigureResponse = DwnResponseStatus & {
-  /** The configured protocol, if successful. */
-  protocol?: Protocol;
+export type ModulesConfigureResponse = DwnResponseStatus & {
+  /** The configured module, if successful. */
+  module?: Module;
 };
 
 /**
- * Defines the request structure for querying protocols from a Decentralized Web Node (DWN).
+ * Defines the request structure for querying modules from a Decentralized Web Node (DWN).
  *
- * This request type is used to specify the target DWN from which protocols should be queried and
+ * This request type is used to specify the target DWN from which modules should be queried and
  * any additional query filters or options. If the `from` property is not provided, the query will
  * target the local DWN. If the `from` property is provided, the query will target the specified
  * remote DWN.
  */
-export type ProtocolsQueryRequest = Omit<DwnMessageParams[DwnInterface.ProtocolsQuery], 'signer'> & {
+export type ModulesQueryRequest = Omit<DwnMessageParams[DwnInterface.ModulesQuery], 'signer'> & {
   /** Optional DID specifying the remote target DWN tenant to be queried. */
   from?: string;
 };
 
 /**
- * Wraps the response from a protocols query, including the operation status and the list of
- * protocols.
+ * Wraps the response from a modules query, including the operation status and the list of
+ * modules.
  */
-export type ProtocolsQueryResponse = DwnResponseStatus & {
-  /** Array of protocols matching the query. */
-  protocols: Protocol[];
+export type ModulesQueryResponse = DwnResponseStatus & {
+  /** Array of modules matching the query. */
+  modules: Module[];
 };
 
 /**
@@ -121,11 +121,11 @@ export type RecordsDeleteRequest = Omit<DwnMessageParams[DwnInterface.RecordsDel
   /** Optional DID specifying the remote target DWN tenant the record will be deleted from. */
   from?: string;
 
-  /** Protocol URI for permission grant resolution. */
-  protocol?: string;
+  /** Module URI for permission grant resolution. */
+  module?: string;
 
-  /** Protocol path for permission grant resolution. This field is not sent in the delete message. */
-  protocolPath?: string;
+  /** Module path for permission grant resolution. This field is not sent in the delete message. */
+  modulePath?: string;
 
   /** Context ID for permission grant resolution. This field is not sent in the delete message. */
   contextId?: string;
@@ -227,9 +227,9 @@ export type MessagesSubscribeResponse = MessagesSubscribeReply;
  */
 export type RecordsWriteRequest = Omit<
   Partial<DwnMessageParams[DwnInterface.RecordsWrite]>,
-  'signer' | 'data' | 'protocol' | 'protocolPath' | 'encryption' | 'encryptionInput'
+  'signer' | 'data' | 'module' | 'modulePath' | 'encryption' | 'encryptionInput'
 > &
-  Pick<DwnMessageParams[DwnInterface.RecordsWrite], 'protocol' | 'protocolPath'> & {
+  Pick<DwnMessageParams[DwnInterface.RecordsWrite], 'module' | 'modulePath'> & {
   /** The data payload for the record, which can be of any type. */
   data: unknown;
 
@@ -239,7 +239,7 @@ export type RecordsWriteRequest = Omit<
    * When set, the write targets the specified tenant's remote DWN (via the agent's
    * `sendDwnRequest`, mirroring how remote reads and queries dispatch) instead of the connected
    * DID's local DWN. The author stays the connected (grantee) DID — the grantee signs as
-   * themselves — and the remote DWN authorizes the write via `protocolRole` (role-invocation) or
+   * themselves — and the remote DWN authorizes the write via `moduleRole` (role-invocation) or
    * grant parameters (`permissionGrantId`/`delegatedGrant`). The returned {@link Record} captures
    * the successful request's remote routing and authorization context for later data reads.
    *
@@ -324,7 +324,7 @@ export type RecordsWriteResponse<T = unknown> = DwnResponseStatus & {
 };
 
 /**
- * Interface to interact with DWN Records and Protocols
+ * Interface to interact with DWN Records and Modules
  */
 export class DwnApi {
   /**
@@ -344,8 +344,8 @@ export class DwnApi {
       const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
         connectedDid : this.connectedDid,
         delegateDid  : this.delegateDid,
-        protocol     : scope.protocol,
-        protocolPath : scope.protocolPath,
+        module       : scope.module,
+        modulePath   : scope.modulePath,
         contextId    : scope.contextId,
         delegate     : true,
         messageType  : request.messageType,
@@ -388,9 +388,9 @@ export class DwnApi {
       messageType : DwnInterface.RecordsQuery,
       target,
     }, {
-      protocol     : messageParams.filter?.protocol,
-      protocolPath : messageParams.filter?.protocolPath,
-      contextId    : messageParams.filter?.contextId,
+      module     : messageParams.filter?.module,
+      modulePath : messageParams.filter?.modulePath,
+      contextId  : messageParams.filter?.contextId,
     }, missingGrantPolicy);
 
     const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
@@ -401,9 +401,9 @@ export class DwnApi {
       return this.createRecordHandle({
         dataAccess,
         initialWrite,
-        message      : recordsWrite as DwnMessage[DwnInterface.RecordsWrite],
-        protocolRole : agentRequest.messageParams.protocolRole,
-        storedData   : encodedData,
+        message    : recordsWrite as DwnMessage[DwnInterface.RecordsWrite],
+        moduleRole : agentRequest.messageParams.moduleRole,
+        storedData : encodedData,
       });
     });
 
@@ -428,9 +428,9 @@ export class DwnApi {
       messageType : DwnInterface.RecordsRead,
       target,
     }, {
-      protocol     : messageParams.filter?.protocol,
-      protocolPath : messageParams.filter?.protocolPath,
-      contextId    : messageParams.filter?.contextId,
+      module     : messageParams.filter?.module,
+      modulePath : messageParams.filter?.modulePath,
+      contextId  : messageParams.filter?.contextId,
     });
 
     const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
@@ -442,7 +442,7 @@ export class DwnApi {
         dataAccess   : captureRecordDataAccess(agentRequest, remoteTarget !== undefined),
         initialWrite : entry.initialWrite,
         message      : entry.recordsWrite,
-        protocolRole : agentRequest.messageParams.protocolRole,
+        moduleRole   : agentRequest.messageParams.moduleRole,
         storedData   : entry.data,
       });
     }
@@ -491,7 +491,7 @@ export class DwnApi {
     agentRequest: ProcessDwnRequest<DwnInterface.RecordsDelete>;
     remoteTarget?: string;
   }> {
-    const { from, protocol, protocolPath, contextId, ...requestedMessageParams } = request;
+    const { from, module, modulePath, contextId, ...requestedMessageParams } = request;
     const { messageParams, remoteTarget, target } = await this.resolveRecordsRoute(
       from,
       requestedMessageParams,
@@ -509,8 +509,8 @@ export class DwnApi {
       const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
         connectedDid : this.connectedDid,
         delegateDid  : this.delegateDid,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         contextId,
         delegate     : true,
         messageType  : agentRequest.messageType
@@ -531,7 +531,7 @@ export class DwnApi {
     dataAccess: RecordDataAccess;
     initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
     message: DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete];
-    protocolRole?: string;
+    moduleRole?: string;
     storedData?: StoredRecordData;
   }): Record {
     const options = {
@@ -539,7 +539,7 @@ export class DwnApi {
       connectedDid : this.connectedDid,
       dataAccess   : params.dataAccess,
       delegateDid  : this.delegateDid,
-      protocolRole : params.protocolRole,
+      moduleRole   : params.moduleRole,
       ...params.message,
       ...(params.initialWrite === undefined ? {} : { initialWrite: params.initialWrite }),
       ...(params.storedData === undefined ? {} : { storedData: params.storedData }),
@@ -567,9 +567,9 @@ export class DwnApi {
       target,
       subscriptionHandler,
     }, {
-      protocol     : messageParams.filter?.protocol,
-      protocolPath : messageParams.filter?.protocolPath,
-      contextId    : messageParams.filter?.contextId,
+      module     : messageParams.filter?.module,
+      modulePath : messageParams.filter?.modulePath,
+      contextId  : messageParams.filter?.contextId,
     });
 
     return (await this.dispatchDwnRequest(agentRequest, remoteTarget)).reply;
@@ -577,17 +577,17 @@ export class DwnApi {
 
   /** @internal Subscribe to exact record paths with canonical frame records attached. */
   public async subscribeRecordFrames(
-    request: { paths: readonly string[]; protocol: string },
+    request: { paths: readonly string[]; module: string },
     subscriptionHandler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
   ): Promise<MessagesSubscribeResponse> {
     const contextId = this.recordExecutionContext?.contextId;
-    const filters: MessagesFilter[] = request.paths.map(protocolPath => ({
+    const filters: MessagesFilter[] = request.paths.map(modulePath => ({
       interface : 'Records',
-      protocol  : request.protocol,
-      protocolPath,
+      module    : request.module,
+      modulePath,
       ...(contextId === undefined ? {} : { contextIdPrefix: contextId }),
     }));
-    const requestedMessageParams: { filters: MessagesFilter[]; protocolRole?: string } = {
+    const requestedMessageParams: { filters: MessagesFilter[]; moduleRole?: string } = {
       filters,
     };
     const { messageParams, target } = await this.resolveRecordsRoute(
@@ -598,12 +598,12 @@ export class DwnApi {
     const dataRequest = await this.prepareReadRequest({
       author        : this.connectedDid,
       messageParams : {
-        filter       : { protocol: request.protocol, ...(contextId === undefined ? {} : { contextId }) },
-        protocolRole : messageParams.protocolRole,
+        filter     : { module: request.module, ...(contextId === undefined ? {} : { contextId }) },
+        moduleRole : messageParams.moduleRole,
       },
       messageType: DwnInterface.RecordsRead,
       target,
-    }, { contextId, protocol: request.protocol }, 'reject');
+    }, { contextId, module: request.module }, 'reject');
     const dataAccess = captureRecordDataAccess(dataRequest, false);
     const handleFrame = (message: DwnSubscriptionMessage): void | Promise<void> => {
       if (message.type !== 'event') {
@@ -619,21 +619,21 @@ export class DwnApi {
         ? message.event.message
         : message.event.initialWrite;
       if (recordsWrite === undefined
-        || recordsWrite.descriptor.protocol !== request.protocol
-        || !request.paths.includes(recordsWrite.descriptor.protocolPath ?? '')) {
+        || recordsWrite.descriptor.module !== request.module
+        || !request.paths.includes(recordsWrite.descriptor.modulePath ?? '')) {
         return;
       }
       const record = this.createRecordHandle({
         dataAccess,
         initialWrite : message.event.initialWrite,
         message      : message.event.message as DwnMessage[DwnInterface.RecordsWrite | DwnInterface.RecordsDelete],
-        protocolRole : messageParams.protocolRole,
+        moduleRole   : messageParams.moduleRole,
         storedData   : message.encodedData,
       });
       return subscriptionHandler(message, record);
     };
 
-    if (messageParams.protocolRole === undefined) {
+    if (messageParams.moduleRole === undefined) {
       return this.messages.subscribe({ filters, subscriptionHandler: handleFrame });
     }
 
@@ -651,7 +651,7 @@ export class DwnApi {
         }
         return handleFrame(message);
       },
-    }, { contextId, protocol: request.protocol }, 'reject');
+    }, { contextId, module: request.module }, 'reject');
     const reply = (await this.dispatchDwnRequest(agentRequest)).reply;
     if (reply.status.code < 200 || reply.status.code >= 300 || reply.subscription === undefined) {
       return reply;
@@ -677,7 +677,7 @@ export class DwnApi {
   }
 
   /** Apply the routing and role carried by an internally bound context. */
-  private async resolveRecordsRoute<T extends { protocolRole?: string }>(
+  private async resolveRecordsRoute<T extends { moduleRole?: string }>(
     from: string | undefined,
     requestedMessageParams: T,
     mutation: boolean,
@@ -695,15 +695,15 @@ export class DwnApi {
     if (from !== undefined && from !== context.tenantDid) {
       throw new TypeError('Context-bound operations cannot target another tenant.');
     }
-    if (requestedMessageParams.protocolRole !== undefined
-      && requestedMessageParams.protocolRole !== context.protocolRole) {
-      throw new TypeError('Context-bound operations cannot invoke another protocol role.');
+    if (requestedMessageParams.moduleRole !== undefined
+      && requestedMessageParams.moduleRole !== context.moduleRole) {
+      throw new TypeError('Context-bound operations cannot invoke another module role.');
     }
 
     return {
-      messageParams: context.protocolRole === undefined
+      messageParams: context.moduleRole === undefined
         ? requestedMessageParams
-        : { ...requestedMessageParams, protocolRole: context.protocolRole },
+        : { ...requestedMessageParams, moduleRole: context.moduleRole },
       remoteTarget : mutation && context.tenantDid !== this.connectedDid ? context.tenantDid : undefined,
       target       : context.tenantDid,
     };
@@ -719,7 +719,7 @@ export class DwnApi {
    * The DID of the DWN tenant under which operations are being performed.
    *
    * Exposed as a public getter so that `TypedEnbox` can read it during
-   * delegate auto-configure (remote protocol fetch).
+   * delegate auto-configure (remote module fetch).
    */
   private _connectedDid: string;
   get connectedDid(): string { return this._connectedDid; }
@@ -751,7 +751,7 @@ export class DwnApi {
   /** (optional) The DID of the signer when signing with permissions */
   private readonly delegateDid?: string;
 
-  /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions protocol records */
+  /** Holds the instance of {@link AgentPermissionsApi} that helps when dealing with permissions module records */
   private readonly permissionsApi: AgentPermissionsApi;
 
   /** Optional routing for a locally replicated foreign tenant. */
@@ -804,50 +804,50 @@ export class DwnApi {
 
   /**
    * @internal
-   * Imports a wallet-owned ProtocolsConfigure message into the local DWN.
+   * Imports a wallet-owned ModulesConfigure message into the local DWN.
    *
-   * Delegate sessions use this after fetching the owner's signed protocol
+   * Delegate sessions use this after fetching the owner's signed module
    * configuration from the wallet DWN. The delegate does not receive a
-   * Protocols.Configure grant and does not author a new protocol
+   * Modules.Configure grant and does not author a new module
    * configuration; it only stores the owner's already-signed message locally
    * so owner-tenant record operations can validate and encrypt against it.
    */
-  async importProtocolConfiguration(
-    protocolsConfigureMessage: DwnMessage[DwnInterface.ProtocolsConfigure],
-  ): Promise<ProtocolsConfigureResponse> {
+  async importModuleConfiguration(
+    modulesConfigureMessage: DwnMessage[DwnInterface.ModulesConfigure],
+  ): Promise<ModulesConfigureResponse> {
     const agentResponse = await this.agent.processDwnRequest({
       author      : this.connectedDid,
-      rawMessage  : protocolsConfigureMessage,
-      messageType : DwnInterface.ProtocolsConfigure,
+      rawMessage  : modulesConfigureMessage,
+      messageType : DwnInterface.ModulesConfigure,
       target      : this.connectedDid,
     });
 
     const { reply: { status } } = agentResponse;
-    const response: ProtocolsConfigureResponse = { status };
+    const response: ModulesConfigureResponse = { status };
 
     if (status.code < 300 || status.code === 409) {
-      response.protocol = new Protocol(protocolsConfigureMessage);
+      response.module = new Module(modulesConfigureMessage);
     }
 
     return response;
   }
 
   /**
-   * API to interact with DWN protocols (e.g., `dwn.protocols.configure()`).
+   * API to interact with DWN modules (e.g., `dwn.modules.configure()`).
    */
-  get protocols(): {
-      configure: (request: ProtocolsConfigureRequest) => Promise<ProtocolsConfigureResponse>;
-      query: (request: ProtocolsQueryRequest) => Promise<ProtocolsQueryResponse>;
+  get modules(): {
+      configure: (request: ModulesConfigureRequest) => Promise<ModulesConfigureResponse>;
+      query: (request: ModulesQueryRequest) => Promise<ModulesQueryResponse>;
       } {
     return {
       /**
-       * Configure method, used to setup a new protocol (or update) with the passed definitions
+       * Configure method, used to setup a new module (or update) with the passed definitions
        */
-      configure: async (request: ProtocolsConfigureRequest): Promise<ProtocolsConfigureResponse> => {
-        const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsConfigure> = {
+      configure: async (request: ModulesConfigureRequest): Promise<ModulesConfigureResponse> => {
+        const agentRequest: ProcessDwnRequest<DwnInterface.ModulesConfigure> = {
           author        : this.connectedDid,
           messageParams : request,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           target        : this.connectedDid,
         };
 
@@ -855,7 +855,7 @@ export class DwnApi {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : request.definition.protocol,
+            module       : request.definition.module,
             delegate     : true,
             messageType  : agentRequest.messageType
           });
@@ -870,37 +870,37 @@ export class DwnApi {
         const agentResponse = await this.agent.processDwnRequest(agentRequest);
 
         const { message, reply: { status } } = agentResponse;
-        const response: ProtocolsConfigureResponse = { status };
+        const response: ModulesConfigureResponse = { status };
 
         if (status.code < 300) {
-          response.protocol = new Protocol(message);
+          response.module = new Module(message);
         }
 
         return response;
       },
 
       /**
-       * Query the available protocols
+       * Query the available modules
        */
-      query: async (request: ProtocolsQueryRequest): Promise<ProtocolsQueryResponse> => {
+      query: async (request: ModulesQueryRequest): Promise<ModulesQueryResponse> => {
         const { from, ...messageParams } = request;
 
-        const agentRequest: ProcessDwnRequest<DwnInterface.ProtocolsQuery> = {
+        const agentRequest: ProcessDwnRequest<DwnInterface.ModulesQuery> = {
           author      : this.connectedDid,
           messageParams,
-          messageType : DwnInterface.ProtocolsQuery,
+          messageType : DwnInterface.ModulesQuery,
           target      : from || this.connectedDid,
         };
 
         if (this.delegateDid) {
           // We attempt to get a grant within a try catch, if there is no grant we will still sign the query with the delegate DID's key
-          // If the protocol is public, the query should be successful. This allows the app to query for public protocols without having a grant.
+          // If the module is public, the query should be successful. This allows the app to query for public modules without having a grant.
 
           try {
             const { grant: { id: permissionGrantId } } = await this.permissionsApi.getPermissionForRequest({
               connectedDid : this.connectedDid,
               delegateDid  : this.delegateDid,
-              protocol     : messageParams.filter.protocol,
+              module       : messageParams.filter.module,
               messageType  : agentRequest.messageType
             });
 
@@ -913,12 +913,12 @@ export class DwnApi {
             if (!(error instanceof PermissionGrantNotFoundError)) {
               throw error;
             }
-            // if a grant is not found, we should author the request as the delegated DID to get public protocols
+            // if a grant is not found, we should author the request as the delegated DID to get public modules
             agentRequest.author = this.delegateDid;
           }
         }
 
-        let agentResponse: DwnResponse<DwnInterface.ProtocolsQuery>;
+        let agentResponse: DwnResponse<DwnInterface.ModulesQuery>;
 
         if (from) {
           agentResponse = await this.agent.sendDwnRequest(agentRequest);
@@ -929,9 +929,9 @@ export class DwnApi {
         const reply = agentResponse.reply;
         const { entries = [], status } = reply;
 
-        const protocols = entries.map(entry => new Protocol(entry));
+        const modules = entries.map(entry => new Module(entry));
 
-        return { protocols, status };
+        return { modules, status };
       }
     };
   }
@@ -947,11 +947,11 @@ export class DwnApi {
     return {
       /**
        * Subscribes to the tenant's raw message-level change feed. The caller's
-       * handler is installed before dispatch and receives the protocol's event,
+       * handler is installed before dispatch and receives the module's event,
        * catch-up, error, and transport lifecycle messages unchanged.
        *
        * Delegated access resolves a `Messages.Read` grant when the filters
-       * name exactly one protocol; multi-protocol delegated subscriptions
+       * name exactly one module; multi-module delegated subscriptions
        * should pass explicit `permissionGrantIds`.
        */
       subscribe: async (request: MessagesSubscribeRequest): Promise<MessagesSubscribeResponse> => {
@@ -970,22 +970,22 @@ export class DwnApi {
             // Caller-supplied grants win: no auto-resolution, no clobbering.
             agentRequest.granteeDid = this.delegateDid;
           } else {
-            const protocols = [...new Set(
+            const modules = [...new Set(
               (messageParams.filters ?? [])
-                .map(filter => filter.protocol)
-                .filter((protocol): protocol is string => protocol !== undefined),
+                .map(filter => filter.module)
+                .filter((module): module is string => module !== undefined),
             )];
-            if (protocols.length !== 1) {
+            if (modules.length !== 1) {
               // Deliberately OUTSIDE the grant-lookup try: a precondition
               // failure must reach the caller, not degrade into the
               // public fallback.
-              throw new Error('DwnApi: delegated messages.subscribe requires a single-protocol filter set or explicit permissionGrantIds.');
+              throw new Error('DwnApi: delegated messages.subscribe requires a single-module filter set or explicit permissionGrantIds.');
             }
             try {
               const { grant } = await this.permissionsApi.getPermissionForRequest({
                 connectedDid : this.connectedDid,
                 delegateDid  : this.delegateDid,
-                protocol     : protocols[0],
+                module       : modules[0],
                 messageType  : agentRequest.messageType,
               });
 
@@ -1041,9 +1041,9 @@ export class DwnApi {
           messageType : DwnInterface.RecordsCount,
           target,
         }, {
-          protocol     : messageParams.filter?.protocol,
-          protocolPath : messageParams.filter?.protocolPath,
-          contextId    : messageParams.filter?.contextId,
+          module     : messageParams.filter?.module,
+          modulePath : messageParams.filter?.modulePath,
+          contextId  : messageParams.filter?.contextId,
         });
 
         const agentResponse = await this.dispatchDwnRequest(agentRequest, remoteTarget);
@@ -1138,8 +1138,8 @@ export class DwnApi {
           const { message: delegatedGrant } = await this.permissionsApi.getPermissionForRequest({
             connectedDid : this.connectedDid,
             delegateDid  : this.delegateDid,
-            protocol     : messageParams.protocol,
-            protocolPath : messageParams.protocolPath,
+            module       : messageParams.module,
+            modulePath   : messageParams.modulePath,
             contextId    : permissionContextId,
             delegate     : true,
             messageType  : dwnRequestParams.messageType
@@ -1166,9 +1166,9 @@ export class DwnApi {
               dwnRequestParams,
               remoteTarget !== undefined && this.recordExecutionContext === undefined,
             ),
-            message      : responseMessage,
-            protocolRole : messageParams.protocolRole,
-            storedData   : responseData,
+            message    : responseMessage,
+            moduleRole : messageParams.moduleRole,
+            storedData : responseData,
           });
           await this.invalidateRecordReplica();
         }

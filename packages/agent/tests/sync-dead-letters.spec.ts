@@ -108,6 +108,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
         sublevel: (): { put: typeof put } => ({ put }),
       } as never,
     });
+    sinon.stub(internal as any, 'ensureStoreFormat').resolves();
     const params = {
       errorDetail    : 'test failure',
       messageCid     : 'cid',
@@ -168,7 +169,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
 
     const promoted = await expiryOf(syncEngine)(
       target(tenantDid),
-      { messageCid, protocol: 'https://protocol.example' },
+      { messageCid, module: 'https://module.example' },
       'dependency unavailable',
     );
 
@@ -367,7 +368,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
     await sweepStarted.promise;
 
     let registerCompleted = false;
-    const register = registerEngine.setIdentityOptions({ did: tenantDid, options: { protocols: 'all' } })
+    const register = registerEngine.setIdentityOptions({ did: tenantDid, options: { modules: 'all' } })
       .then((): void => { registerCompleted = true; });
 
     // Give the re-registration ample time to finish if it were NOT queued on
@@ -518,7 +519,7 @@ describe('SyncEngineLevel dead letter tracking', () => {
   }
 
   async function registerTenant(tenantDid: string): Promise<void> {
-    await db.sublevel('registeredIdentities').put(tenantDid, JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put(tenantDid, JSON.stringify({ modules: 'all' }));
   }
 
 });

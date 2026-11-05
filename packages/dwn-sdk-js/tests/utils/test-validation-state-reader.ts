@@ -1,4 +1,4 @@
-import type { CoreProtocolRegistry } from '../../src/core/core-protocol.js';
+import type { CoreModuleRegistry } from '../../src/core/core-module.js';
 import type { DataStore } from '../../src/types/data-store.js';
 import type { MessageStore } from '../../src/types/message-store.js';
 import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
@@ -15,11 +15,11 @@ import { StoreValidationStateReader } from '../../src/core/validation-state-read
 export function createTestValidationStateReader(input: {
   messageStore: MessageStore;
   dataStore?: DataStore;
-  coreProtocols?: CoreProtocolRegistry;
+  coreModules?: CoreModuleRegistry;
 }): ValidationStateReader {
   return new StoreValidationStateReader({
-    messageStore  : input.messageStore,
-    dataStore     : input.dataStore ?? sinon.createStubInstance(DataStoreLevel),
-    coreProtocols : input.coreProtocols,
+    messageStore : input.messageStore,
+    dataStore    : input.dataStore ?? sinon.createStubInstance(DataStoreLevel),
+    coreModules  : input.coreModules,
   });
 }

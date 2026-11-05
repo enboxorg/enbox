@@ -1,29 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { ConnectPermissionRequest } from '@enbox/connect';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { orderPermissionRequestsByUsesDependencies } from '../src/connect-approval.js';
 
 /** Minimal permission request builder for pure ordering tests. */
-function request(protocol: string, uses?: Record<string, string>): ConnectPermissionRequest {
+function request(module: string, uses?: Record<string, string>): ConnectPermissionRequest {
   const definition = {
-    protocol,
+    module,
     published : false,
     types     : {},
     structure : {},
     ...(uses !== undefined && { uses }),
-  } as unknown as ProtocolDefinition;
-  return { protocolDefinition: definition, permissionScopes: [] };
+  } as unknown as ModuleDefinition;
+  return { moduleDefinition: definition, permissionScopes: [] };
 }
 
-/** Project ordering levels down to protocol URIs for readable assertions. */
+/** Project ordering levels down to module URIs for readable assertions. */
 function levelUris(levels: ConnectPermissionRequest[][]): string[][] {
-  return levels.map((level) => level.map((request) => request.protocolDefinition.protocol));
+  return levels.map((level) => level.map((request) => request.moduleDefinition.module));
 }
 
 describe('orderPermissionRequestsByUsesDependencies', () => {
-  it('keeps independent protocols in a single concurrent level', () => {
+  it('keeps independent modules in a single concurrent level', () => {
     const levels = orderPermissionRequestsByUsesDependencies([
       request('https://example.org/a'),
       request('https://example.org/b'),
@@ -32,7 +32,7 @@ describe('orderPermissionRequestsByUsesDependencies', () => {
     expect(levelUris(levels)).toEqual([['https://example.org/a', 'https://example.org/b']]);
   });
 
-  it('places a composing protocol after its in-batch `uses` dependency', () => {
+  it('places a composing module after its in-batch `uses` dependency', () => {
     const board = request('https://app.example/board', { membership: 'https://id.example/membership' });
     const membership = request('https://id.example/membership');
 

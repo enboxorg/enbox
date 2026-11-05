@@ -17,14 +17,14 @@
         "method": {
           "const": "Read"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         },
         "contextId": {
           "type": "string",
           "maxLength": 600
         },
-        "protocolPath": {
+        "modulePath": {
           "type": "string",
           "maxLength": 600
         }
@@ -34,7 +34,7 @@
           "not": {
             "required": [
               "contextId",
-              "protocolPath"
+              "modulePath"
             ]
           }
         },
@@ -48,20 +48,20 @@
               },
               {
                 "required": [
-                  "protocolPath"
+                  "modulePath"
                 ]
               }
             ]
           },
           "then": {
             "required": [
-              "protocol"
+              "module"
             ]
           }
         }
       ]
     },
-    "protocols-configure-scope": {
+    "modules-configure-scope": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -70,17 +70,17 @@
       ],
       "properties": {
         "interface": {
-          "const": "Protocols"
+          "const": "Modules"
         },
         "method": {
           "const": "Configure"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         }
       }
     },
-    "protocols-query-scope": {
+    "modules-query-scope": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -89,12 +89,12 @@
       ],
       "properties": {
         "interface": {
-          "const": "Protocols"
+          "const": "Modules"
         },
         "method": {
           "const": "Query"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         }
       }
@@ -105,7 +105,7 @@
       "required": [
         "interface",
         "method",
-        "protocol"
+        "module"
       ],
       "properties": {
         "interface": {
@@ -114,14 +114,14 @@
         "method": {
           "const": "Delete"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         },
         "contextId": {
           "type": "string",
           "maxLength": 600
         },
-        "protocolPath": {
+        "modulePath": {
           "type": "string",
           "maxLength": 600
         }
@@ -133,7 +133,7 @@
       "required": [
         "interface",
         "method",
-        "protocol"
+        "module"
       ],
       "properties": {
         "interface": {
@@ -142,14 +142,14 @@
         "method": {
           "const": "Read"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         },
         "contextId": {
           "type": "string",
           "maxLength": 600
         },
-        "protocolPath": {
+        "modulePath": {
           "type": "string",
           "maxLength": 600
         }
@@ -161,7 +161,7 @@
       "required": [
         "interface",
         "method",
-        "protocol"
+        "module"
       ],
       "properties": {
         "interface": {
@@ -170,14 +170,14 @@
         "method": {
           "const": "Write"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         },
         "contextId": {
           "type": "string",
           "maxLength": 600
         },
-        "protocolPath": {
+        "modulePath": {
           "type": "string",
           "maxLength": 600
         }

@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ModuleRuleSet, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 
@@ -8,7 +8,7 @@ import { DidKey } from '@enbox/dids';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
-import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
+import { ModulesConfigure } from '../../src/interfaces/modules-configure.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -50,12 +50,12 @@ export function testRecordsDelivery(): void {
       await dwn.close();
     });
 
-    describe('ProtocolsConfigure validation', () => {
+    describe('ModulesConfigure validation', () => {
       it('should allow $delivery with strategy "direct"', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-direct',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-direct',
           published : true,
           types     : { message: {} },
           structure : {
@@ -66,20 +66,20 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$delivery).toBe('direct');
+        expect(modulesConfigure.message.descriptor.definition).toBeDefined();
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$delivery).toBe('direct');
       });
 
       it('should allow $delivery with strategy "subscribe"', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-subscribe',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-subscribe',
           published : true,
           types     : { message: {} },
           structure : {
@@ -90,20 +90,20 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$delivery).toBe('subscribe');
+        expect(modulesConfigure.message.descriptor.definition).toBeDefined();
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$delivery).toBe('subscribe');
       });
 
-      it('should allow $delivery on nested protocol paths', async () => {
+      it('should allow $delivery on nested module paths', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-nested',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-nested',
           published : true,
           types     : { thread: {}, message: {} },
           structure : {
@@ -117,21 +117,21 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        const threadRuleSet = protocolsConfigure.message.descriptor.definition.structure.thread as ProtocolRuleSet;
-        expect((threadRuleSet.message as ProtocolRuleSet).$delivery).toBe('direct');
+        expect(modulesConfigure.message.descriptor.definition).toBeDefined();
+        const threadRuleSet = modulesConfigure.message.descriptor.definition.structure.thread as ModuleRuleSet;
+        expect((threadRuleSet.message as ModuleRuleSet).$delivery).toBe('direct');
       });
 
       it('should reject $delivery with an invalid strategy value via JSON schema', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-invalid',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-invalid',
           published : true,
           types     : { message: {} },
           structure : {
@@ -142,7 +142,7 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const promise = ProtocolsConfigure.create({
+        const promise = ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
@@ -153,8 +153,8 @@ export function testRecordsDelivery(): void {
       it('should reject $delivery on a $ref node', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const badDefinition: ProtocolDefinition = {
-          protocol  : 'https://bad-delivery-ref.example.com',
+        const badDefinition: ModuleDefinition = {
+          module    : 'https://bad-delivery-ref.example.com',
           published : true,
           uses      : { threads: 'https://threads.example.com' },
           types     : {},
@@ -167,13 +167,13 @@ export function testRecordsDelivery(): void {
         };
 
         try {
-          await ProtocolsConfigure.create({
+          await ModulesConfigure.create({
             definition : badDefinition,
             signer     : Jws.createSigner(alice),
           });
           throw new Error('Expected an error to be thrown');
         } catch (error: any) {
-          expect(error.message).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefNodeHasDirectives);
+          expect(error.message).toContain(DwnErrorCode.ModulesConfigureInvalidRefNodeHasDirectives);
         }
       });
 
@@ -181,8 +181,8 @@ export function testRecordsDelivery(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const warnSpy = sinon.spy(console, 'warn');
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-no-actions',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-no-actions',
           published : true,
           types     : { message: {} },
           structure : {
@@ -192,12 +192,12 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const reply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const reply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(reply.status.code).toBe(202);
 
         expect(warnSpy.called).toBe(true);
@@ -208,8 +208,8 @@ export function testRecordsDelivery(): void {
       it('should accept $delivery alongside other directives', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-with-directives',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-with-directives',
           published : true,
           types     : { message: { schema: 'http://example.com/schema', dataFormats: ['application/json'] } },
           structure : {
@@ -222,22 +222,22 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$delivery).toBe('direct');
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$size).toEqual({ min: 0, max: 10000 });
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 100 });
+        expect(modulesConfigure.message.descriptor.definition).toBeDefined();
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$delivery).toBe('direct');
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$size).toEqual({ min: 0, max: 10000 });
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 100 });
       });
 
-      it('should accept protocol installation with $delivery via DWN processMessage', async () => {
+      it('should accept module installation with $delivery via DWN processMessage', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://example.com/delivery-install',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://example.com/delivery-install',
           published : true,
           types     : {
             participant : {},
@@ -257,12 +257,12 @@ export function testRecordsDelivery(): void {
           }
         };
 
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
 
-        const reply = await dwn.processMessage(alice.did, protocolConfig.message);
+        const reply = await dwn.processMessage(alice.did, moduleConfig.message);
         expect(reply.status.code).toBe(202);
       });
     });

@@ -4,8 +4,8 @@ import type { GenericMessageReply } from '../../src/types/message-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 import type { RecordsQueryReply, RecordsReadReply } from '../../src/types/records-types.js';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import nestedModuleDefinition from '../vectors/module-definitions/nested.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -72,7 +72,7 @@ describe('processMessage parity', () => {
 
   it('should pin reply statuses for the plain record lifecycle', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     // 1. initial write with data → 202
     const { message: writeMessage, dataStream, dataBytes, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -152,26 +152,26 @@ describe('processMessage parity', () => {
     expect(dataBytes!.length).toBeGreaterThan(0); // sanity: the matrix exercised real data
   });
 
-  it('should pin reply statuses for protocol referential integrity and authorization', async () => {
+  it('should pin reply statuses for module referential integrity and authorization', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
     const bob = await TestDataGenerator.generateDidKeyPersona();
 
-    // 1. protocol configure → 202
-    const protocolDefinition = nestedProtocolDefinition;
-    const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+    // 1. module configure → 202
+    const moduleDefinition = nestedModuleDefinition;
+    const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
       author: alice,
-      protocolDefinition,
+      moduleDefinition,
     });
     const configureReply = await dwn.processMessage(alice.did, configureMessage);
     expectReplyWithPosition(configureReply, { code: 202, detail: 'Accepted' });
 
-    // 2. initial protocol write without data → 204 (stored as non-queryable initial state)
+    // 2. initial module write without data → 204 (stored as non-queryable initial state)
     const { message: parentMessage, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-      author       : alice,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'foo',
-      schema       : 'foo',
-      dataFormat   : 'text/plain',
+      author     : alice,
+      module     : moduleDefinition.module,
+      modulePath : 'foo',
+      schema     : 'foo',
+      dataFormat : 'text/plain',
     });
     const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
     expectReplyWithPosition(datalessParentReply, { code: 204, detail: 'No Content' });
@@ -179,8 +179,8 @@ describe('processMessage parity', () => {
     // 3. child write under the dataless (non-latest) parent → 202
     const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
       author          : alice,
-      protocol        : protocolDefinition.protocol,
-      protocolPath    : 'foo/bar',
+      module          : moduleDefinition.module,
+      modulePath      : 'foo/bar',
       schema          : 'bar',
       dataFormat      : 'text/plain',
       parentContextId : parentWrite.message.contextId,
@@ -190,18 +190,18 @@ describe('processMessage parity', () => {
 
     // 4. write by a non-tenant author with no grant, role, or action rule → 401
     const { message: strangerMessage, dataStream: strangerDataStream } = await TestDataGenerator.generateRecordsWrite({
-      author       : bob,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'foo',
-      schema       : 'foo',
-      dataFormat   : 'text/plain',
+      author     : bob,
+      module     : moduleDefinition.module,
+      modulePath : 'foo',
+      schema     : 'foo',
+      dataFormat : 'text/plain',
     });
     const strangerReply = await dwn.processMessage(alice.did, strangerMessage, { dataStream: strangerDataStream });
     expect(strangerReply).toEqual({
       status: {
         code      : 401,
-        detail    : `${DwnErrorCode.ProtocolAuthorizationActionRulesNotFound}: no action rule defined for RecordsWrite, ${bob.did} is unauthorized`,
-        errorCode : DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
+        detail    : `${DwnErrorCode.ModuleAuthorizationActionRulesNotFound}: no action rule defined for RecordsWrite, ${bob.did} is unauthorized`,
+        errorCode : DwnErrorCode.ModuleAuthorizationActionRulesNotFound,
       },
     });
   });
@@ -211,47 +211,47 @@ describe('processMessage parity', () => {
     const bob = await TestDataGenerator.generateDidKeyPersona();
     const carol = await TestDataGenerator.generateDidKeyPersona();
 
-    const protocolDefinition = friendRoleProtocolDefinition;
-    const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+    const moduleDefinition = friendRoleModuleDefinition;
+    const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
       author: alice,
-      protocolDefinition,
+      moduleDefinition,
     });
     const configureReply = await dwn.processMessage(alice.did, configureMessage);
     expectReplyWithPosition(configureReply, { code: 202, detail: 'Accepted' });
 
     // 1. role record for bob with data → 202
     const { message: roleMessage, dataStream: roleDataStream } = await TestDataGenerator.generateRecordsWrite({
-      author       : alice,
-      recipient    : bob.did,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'friend',
+      author     : alice,
+      recipient  : bob.did,
+      module     : moduleDefinition.module,
+      modulePath : 'friend',
     });
     const roleReply = await dwn.processMessage(alice.did, roleMessage, { dataStream: roleDataStream });
     expectReplyWithPosition(roleReply, { code: 202, detail: 'Accepted' });
 
     // 2. bob invokes the friend role to create a chat record → 202
     const { message: chatMessage, dataStream: chatDataStream } = await TestDataGenerator.generateRecordsWrite({
-      author       : bob,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'chat',
-      protocolRole : 'friend',
+      author     : bob,
+      module     : moduleDefinition.module,
+      modulePath : 'chat',
+      moduleRole : 'friend',
     });
     const chatReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
     expectReplyWithPosition(chatReply, { code: 202, detail: 'Accepted' });
 
     // 3. carol invokes the friend role without holding a role record → 401 matching role record not found
     const { message: carolChatMessage, dataStream: carolChatDataStream } = await TestDataGenerator.generateRecordsWrite({
-      author       : carol,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'chat',
-      protocolRole : 'friend',
+      author     : carol,
+      module     : moduleDefinition.module,
+      modulePath : 'chat',
+      moduleRole : 'friend',
     });
     const carolChatReply: GenericMessageReply = await dwn.processMessage(alice.did, carolChatMessage, { dataStream: carolChatDataStream });
     expect(carolChatReply).toEqual({
       status: {
         code      : 401,
-        detail    : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: No matching role record found for protocol path friend`,
-        errorCode : DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
+        detail    : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: No matching role record found for module path friend`,
+        errorCode : DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound,
       },
     });
   });

@@ -2,13 +2,13 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { Filter } from '../../src/types/query-types.js';
 import type { GenericMessage } from '../../src/types/message-types.js';
-import type { ProtocolDefinition } from '../../src/types/protocols-types.js';
+import type { ModuleDefinition } from '../../src/types/modules-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import nestedModuleDefinition from '../vectors/module-definitions/nested.json' with { type: 'json' };
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
@@ -67,29 +67,29 @@ describe('validation-state reader admission parity', () => {
     it('should admit a child of a dataless parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       // the parent replays dataless — a data-compacted parent is ancestry-only mid-replay
       const { message: parentMessage, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : 'foo',
-        dataFormat   : 'text/plain',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        schema     : 'foo',
+        dataFormat : 'text/plain',
       });
       const parentResult = await dwn.applyReplicatedMessage(alice.did, parentMessage);
       expect(parentResult.kind).toBe('Applied'); // stored as non-queryable initial state (204)
 
       const { message: processChildMessage, dataStream: processChildDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -100,8 +100,8 @@ describe('validation-state reader admission parity', () => {
 
       const { message: replicatedChildMessage, dataBytes: replicatedChildDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -116,28 +116,28 @@ describe('validation-state reader admission parity', () => {
     it('should continue to admit a child after same-CID data completion', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       const { message: parentMessage, recordsWrite: parentWrite, dataBytes: parentDataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : 'foo',
-        dataFormat   : 'text/plain',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        schema     : 'foo',
+        dataFormat : 'text/plain',
       });
       const datalessParentReply = await dwn.processMessage(alice.did, parentMessage);
       expect(datalessParentReply.status.code).toBe(204);
 
       const { message: childBeforeRetryMessage, dataStream: childBeforeRetryDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -155,8 +155,8 @@ describe('validation-state reader admission parity', () => {
 
       const { message: childAfterRetryMessage, dataStream: childAfterRetryDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -170,20 +170,20 @@ describe('validation-state reader admission parity', () => {
     it('should admit a child after a parent update because immutable parent facts are unchanged', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       const { message: parentMessage, dataStream: parentDataStream, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : 'foo',
-        dataFormat   : 'text/plain',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        schema     : 'foo',
+        dataFormat : 'text/plain',
       });
       const parentReply = await dwn.processMessage(alice.did, parentMessage, { dataStream: parentDataStream });
       expect(parentReply.status.code).toBe(202);
@@ -198,14 +198,14 @@ describe('validation-state reader admission parity', () => {
 
       const reader = new StoreValidationStateReader({ messageStore, dataStore });
       const retainedParent = await reader.fetchParentRecord({
-        tenant: alice.did, parentProtocolUri: protocolDefinition.protocol, parentId: parentMessage.recordId,
+        tenant: alice.did, parentModuleUri: moduleDefinition.module, parentId: parentMessage.recordId,
       });
       expect(retainedParent?.descriptor).toEqual(parentMessage.descriptor);
 
       const { message: childMessage, dataStream: childDataStream } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -217,21 +217,21 @@ describe('validation-state reader admission parity', () => {
     it('should reject a child of a pruned parent through processMessage and replication apply', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       // parent is written with data, then deleted — its initial write is retained beside the tombstone
       const { message: parentMessage, dataStream: parentDataStream, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : 'foo',
-        dataFormat   : 'text/plain',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        schema     : 'foo',
+        dataFormat : 'text/plain',
       });
       const parentReply = await dwn.processMessage(alice.did, parentMessage, { dataStream: parentDataStream });
       expect(parentReply.status.code).toBe(202);
@@ -246,8 +246,8 @@ describe('validation-state reader admission parity', () => {
 
       const { message: childMessage, dataStream: childDataStream, dataBytes: childDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -256,7 +256,7 @@ describe('validation-state reader admission parity', () => {
       // processMessage rejects with the same generic missing-parent code as a not-yet-seen parent
       const processReply = await dwn.processMessage(alice.did, childMessage, { dataStream: childDataStream });
       expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentRecordNotFound);
 
       // The receiver can see the local tombstone, so it classifies the terminal failure as Invalid
       // rather than an Incomplete dependency that could be retried forever.
@@ -269,15 +269,15 @@ describe('validation-state reader admission parity', () => {
     for (const prune of [false, true]) {
       it(`should converge parent/child/delete arrival orders with prune=${prune}`, async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolDefinition = nestedProtocolDefinition;
-        const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+        const moduleDefinition = nestedModuleDefinition;
+        const configure = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
         const parent = await TestDataGenerator.generateRecordsWrite({
-          author: alice, protocol: protocolDefinition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+          author: alice, module: moduleDefinition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
         });
         const child = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'foo/bar',
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar',
           schema          : 'bar',
           dataFormat      : 'text/plain',
           parentContextId : parent.message.contextId,
@@ -323,7 +323,7 @@ describe('validation-state reader admission parity', () => {
           expect((await dwn.processMessage(alice.did, readChild.message)).status.code).toBe(prune ? 404 : 200);
           for (const filter of [
             { recordId: child.message.recordId },
-            { protocol: protocolDefinition.protocol, protocolPath: 'foo/bar', contextId: child.message.contextId },
+            { module: moduleDefinition.module, modulePath: 'foo/bar', contextId: child.message.contextId },
           ]) {
             const query = await RecordsQuery.create({ filter, signer: Jws.createSigner(alice) });
             const reply = await dwn.processMessage(alice.did, query.message);
@@ -333,8 +333,8 @@ describe('validation-state reader admission parity', () => {
           // Soft-deleted parents produce the same client-facing admission reply as live parents.
           const newChild = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'foo/bar',
+            module          : moduleDefinition.module,
+            modulePath      : 'foo/bar',
             schema          : 'bar',
             dataFormat      : 'text/plain',
             parentContextId : parent.message.contextId,
@@ -350,17 +350,17 @@ describe('validation-state reader admission parity', () => {
 
     it('should settle a late descendant of a pruned subtree without retrying it', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition = nestedProtocolDefinition;
-      const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      const moduleDefinition = nestedModuleDefinition;
+      const configure = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
       expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
       const parent = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: protocolDefinition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        author: alice, module: moduleDefinition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
       });
       expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
       const child = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parent.message.contextId,
@@ -374,8 +374,8 @@ describe('validation-state reader admission parity', () => {
       expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
       const grandchild = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar/baz',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar/baz',
         schema          : 'baz',
         dataFormat      : 'text/plain',
         parentContextId : child.message.contextId,
@@ -389,18 +389,18 @@ describe('validation-state reader admission parity', () => {
     it('should classify a not-yet-seen parent as a repairable Incomplete dependency', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       // No parent was ever written, so the missing dependency can still be repaired.
       const { message: childMessage, dataBytes: childDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : moduleDefinition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : 'missingparentcontext',
@@ -408,7 +408,7 @@ describe('validation-state reader admission parity', () => {
 
       const reply = await dwn.processMessage(alice.did, childMessage, { dataStream: DataStream.fromBytes(childDataBytes!) });
       expect(reply.status.code).toBe(400);
-      expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+      expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentRecordNotFound);
 
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, childMessage, {
         dataStream: DataStream.fromBytes(childDataBytes!),
@@ -425,39 +425,39 @@ describe('validation-state reader admission parity', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = friendRoleProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = friendRoleModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       // the role record replays dataless — an above-threshold role record is ancestry-only mid-replay
       const { message: roleMessage } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        recipient    : bob.did,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'friend',
+        author     : alice,
+        recipient  : bob.did,
+        module     : moduleDefinition.module,
+        modulePath : 'friend',
       });
       const roleResult = await dwn.applyReplicatedMessage(alice.did, roleMessage);
       expect(roleResult.kind).toBe('Applied'); // stored as non-queryable initial state (204)
 
       const { message: processChatMessage, dataStream: processChatDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'chat',
-        protocolRole : 'friend',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'chat',
+        moduleRole : 'friend',
       });
 
       const processReply = await dwn.processMessage(alice.did, processChatMessage, { dataStream: processChatDataStream });
       expect(processReply.status.code).toBe(202);
 
       const { message: replicatedChatMessage, dataBytes: replicatedChatDataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'chat',
-        protocolRole : 'friend',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'chat',
+        moduleRole : 'friend',
       });
 
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, replicatedChatMessage, {
@@ -470,19 +470,19 @@ describe('validation-state reader admission parity', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = friendRoleProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = friendRoleModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const configureReply = await dwn.processMessage(alice.did, configureMessage);
       expect(configureReply.status.code).toBe(202);
 
       const { message: roleMessage, dataStream: roleDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        recipient    : bob.did,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'friend',
+        author     : alice,
+        recipient  : bob.did,
+        module     : moduleDefinition.module,
+        modulePath : 'friend',
       });
       const roleReply = await dwn.processMessage(alice.did, roleMessage, { dataStream: roleDataStream });
       expect(roleReply.status.code).toBe(202);
@@ -495,16 +495,16 @@ describe('validation-state reader admission parity', () => {
       expect(deleteReply.status.code).toBe(202);
 
       const { message: chatMessage, dataStream: chatDataStream, dataBytes: chatDataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'chat',
-        protocolRole : 'friend',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'chat',
+        moduleRole : 'friend',
       });
 
       // processMessage rejects
       const processReply = await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream });
       expect(processReply.status.code).toBe(401);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
 
       // applyReplicatedMessage uses the same admission rule
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, chatMessage, {
@@ -517,13 +517,13 @@ describe('validation-state reader admission parity', () => {
     });
   });
 
-  describe('protocol definition history', () => {
+  describe('module definition history', () => {
     it('should accept backdated initial writes using the earliest retained config in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolUri = 'http://earliest-retained-config.xyz';
-      const v1Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const moduleUri = 'http://earliest-retained-config.xyz';
+      const v1Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           foo : { schema: 'foo', dataFormats: ['text/plain'] },
@@ -534,8 +534,8 @@ describe('validation-state reader admission parity', () => {
           bar : {},
         },
       };
-      const v2Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const v2Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           bar: { schema: 'bar', dataFormats: ['text/plain'] },
@@ -550,25 +550,25 @@ describe('validation-state reader admission parity', () => {
 
       const recordsWrite = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'foo',
+        module           : moduleUri,
+        modulePath       : 'foo',
         schema           : 'foo',
         dataFormat       : 'text/plain',
         dateCreated      : writeTimestamp,
         messageTimestamp : writeTimestamp,
       });
 
-      const v1Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v1Definition,
-        messageTimestamp   : v1Timestamp,
+      const v1Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v1Definition,
+        messageTimestamp : v1Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v1Configure.message)).status.code).toBe(202);
 
-      const v2Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v2Definition,
-        messageTimestamp   : v2Timestamp,
+      const v2Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v2Definition,
+        messageTimestamp : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v2Configure.message)).status.code).toBe(202);
 
@@ -577,8 +577,8 @@ describe('validation-state reader admission parity', () => {
 
       const replicatedWrite = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'foo',
+        module           : moduleUri,
+        modulePath       : 'foo',
         schema           : 'foo',
         dataFormat       : 'text/plain',
         dateCreated      : writeTimestamp,
@@ -593,19 +593,19 @@ describe('validation-state reader admission parity', () => {
 
     it('should report a missing initial write through standard admission before replication maps it to incomplete', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const initialWrite = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo',
-        schema       : 'foo',
-        dataFormat   : 'text/plain',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'foo',
+        schema     : 'foo',
+        dataFormat : 'text/plain',
       });
       const update = await TestDataGenerator.generateFromRecordsWrite({
         author        : alice,
@@ -627,20 +627,20 @@ describe('validation-state reader admission parity', () => {
         missing : [{
           type     : 'InitialWrite',
           recordId : update.message.recordId,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
         }],
       });
     });
 
-    it('should validate replicated ProtocolsConfigure composition against current referenced configs', async () => {
+    it('should validate replicated ModulesConfigure composition against current referenced configs', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const baseProtocolUri = 'http://historical-composition-base.xyz';
-      const composedProtocolUri = 'http://historical-composition-composed.xyz';
+      const baseModuleUri = 'http://historical-composition-base.xyz';
+      const composedModuleUri = 'http://historical-composition-composed.xyz';
       const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
       const composedTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
-      const baseV1Definition: ProtocolDefinition = {
-        protocol  : baseProtocolUri,
+      const baseV1Definition: ModuleDefinition = {
+        module    : baseModuleUri,
         published : false,
         types     : {
           profile : { schema: 'profile', dataFormats: ['text/plain'] },
@@ -651,8 +651,8 @@ describe('validation-state reader admission parity', () => {
           keeper  : {},
         },
       };
-      const baseV2Definition: ProtocolDefinition = {
-        protocol  : baseProtocolUri,
+      const baseV2Definition: ModuleDefinition = {
+        module    : baseModuleUri,
         published : false,
         types     : {
           keeper: { schema: 'keeper', dataFormats: ['text/plain'] },
@@ -661,11 +661,11 @@ describe('validation-state reader admission parity', () => {
           keeper: {},
         },
       };
-      const composedDefinition: ProtocolDefinition = {
-        protocol  : composedProtocolUri,
+      const composedDefinition: ModuleDefinition = {
+        module    : composedModuleUri,
         published : false,
         uses      : {
-          base: baseProtocolUri,
+          base: baseModuleUri,
         },
         types: {
           mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
@@ -677,50 +677,50 @@ describe('validation-state reader admission parity', () => {
         },
       };
 
-      const baseV1Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : baseV1Definition,
-        messageTimestamp   : v1Timestamp,
+      const baseV1Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : baseV1Definition,
+        messageTimestamp : v1Timestamp,
       });
       expect((await dwn.processMessage(alice.did, baseV1Configure.message)).status.code).toBe(202);
 
-      const baseV2Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : baseV2Definition,
-        messageTimestamp   : v2Timestamp,
+      const baseV2Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : baseV2Definition,
+        messageTimestamp : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, baseV2Configure.message)).status.code).toBe(202);
 
-      const composedConfigure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : composedDefinition,
-        messageTimestamp   : composedTimestamp,
+      const composedConfigure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : composedDefinition,
+        messageTimestamp : composedTimestamp,
       });
 
       const processReply = await dwn.processMessage(alice.did, composedConfigure.message);
       expect(processReply.status.code).toBe(400);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefModulePath);
 
       const replicatedResult = await dwn.applyReplicatedMessage(alice.did, composedConfigure.message);
       expect(replicatedResult.kind).toBe('Invalid');
       if (replicatedResult.kind === 'Invalid') {
-        expect(replicatedResult.reason).toContain(DwnErrorCode.ProtocolsConfigureInvalidRefProtocolPath);
+        expect(replicatedResult.reason).toContain(DwnErrorCode.ModulesConfigureInvalidRefModulePath);
       }
     });
 
-    it('should derive missing cross-protocol role dependencies from the incoming message timestamp config', async () => {
+    it('should derive missing cross-module role dependencies from the incoming message timestamp config', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const roleProtocolV1Uri = 'http://role-context-v1.xyz';
-      const roleProtocolV2Uri = 'http://role-context-v2.xyz';
-      const composedProtocolUri = 'http://role-context-composed.xyz';
+      const roleModuleV1Uri = 'http://role-context-v1.xyz';
+      const roleModuleV2Uri = 'http://role-context-v2.xyz';
+      const composedModuleUri = 'http://role-context-composed.xyz';
       const v1Timestamp = Time.createTimestamp({ year: 2024, month: 1, day: 1 });
       const initialTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
       const updateTimestamp = Time.createTimestamp({ year: 2025, month: 6, day: 1 });
 
-      const roleProtocolV1: ProtocolDefinition = {
-        protocol  : roleProtocolV1Uri,
+      const roleModuleV1: ModuleDefinition = {
+        module    : roleModuleV1Uri,
         published : false,
         types     : {
           participant: {},
@@ -731,8 +731,8 @@ describe('validation-state reader admission parity', () => {
           },
         },
       };
-      const roleProtocolV2: ProtocolDefinition = {
-        protocol  : roleProtocolV2Uri,
+      const roleModuleV2: ModuleDefinition = {
+        module    : roleModuleV2Uri,
         published : false,
         types     : {
           participant: {},
@@ -743,11 +743,11 @@ describe('validation-state reader admission parity', () => {
           },
         },
       };
-      const composedV1: ProtocolDefinition = {
-        protocol  : composedProtocolUri,
+      const composedV1: ModuleDefinition = {
+        module    : composedModuleUri,
         published : false,
         uses      : {
-          roles: roleProtocolV1Uri,
+          roles: roleModuleV1Uri,
         },
         types: {
           comment: { schema: 'comment', dataFormats: ['text/plain'] },
@@ -761,29 +761,29 @@ describe('validation-state reader admission parity', () => {
           },
         },
       };
-      const composedV2: ProtocolDefinition = {
+      const composedV2: ModuleDefinition = {
         ...composedV1,
         uses: {
-          roles: roleProtocolV2Uri,
+          roles: roleModuleV2Uri,
         },
       };
 
-      for (const protocolDefinition of [roleProtocolV1, roleProtocolV2]) {
-        const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      for (const moduleDefinition of [roleModuleV1, roleModuleV2]) {
+        const configure = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
         expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
       }
 
-      const composedV1Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : composedV1,
-        messageTimestamp   : v1Timestamp,
+      const composedV1Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : composedV1,
+        messageTimestamp : v1Timestamp,
       });
       expect((await dwn.processMessage(alice.did, composedV1Configure.message)).status.code).toBe(202);
 
       const initialComment = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : composedProtocolUri,
-        protocolPath     : 'comment',
+        module           : composedModuleUri,
+        modulePath       : 'comment',
         schema           : 'comment',
         dataFormat       : 'text/plain',
         dateCreated      : initialTimestamp,
@@ -795,17 +795,17 @@ describe('validation-state reader admission parity', () => {
         { dataStream: DataStream.fromBytes(initialComment.dataBytes!) },
       )).toEqual(expect.objectContaining({ kind: 'Applied' }));
 
-      const composedV2Configure = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : composedV2,
-        messageTimestamp   : v2Timestamp,
+      const composedV2Configure = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : composedV2,
+        messageTimestamp : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, composedV2Configure.message)).status.code).toBe(202);
 
       const update = await TestDataGenerator.generateFromRecordsWrite({
         author           : bob,
         existingWrite    : initialComment.recordsWrite,
-        protocolRole     : 'roles:participant',
+        moduleRole       : 'roles:participant',
         messageTimestamp : updateTimestamp,
       });
 
@@ -816,10 +816,10 @@ describe('validation-state reader admission parity', () => {
       expect(result).toEqual({
         kind    : 'Incomplete',
         missing : [{
-          type         : 'Role',
-          protocol     : roleProtocolV2Uri,
-          protocolPath : 'participant',
-          recipient    : bob.did,
+          type       : 'Role',
+          module     : roleModuleV2Uri,
+          modulePath : 'participant',
+          recipient  : bob.did,
         }],
       });
     });
@@ -827,9 +827,9 @@ describe('validation-state reader admission parity', () => {
     it('should validate initial writes against the config active at their message timestamp in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolUri = 'http://config-history.xyz';
-      const v1Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const moduleUri = 'http://config-history.xyz';
+      const v1Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           alpha  : { schema: 'alpha', dataFormats: ['text/plain'] },
@@ -842,8 +842,8 @@ describe('validation-state reader admission parity', () => {
       };
 
       // v2 removes the `alpha` type entirely
-      const v2Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const v2Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           keeper: { schema: 'keeper', dataFormats: ['text/plain'] },
@@ -857,18 +857,18 @@ describe('validation-state reader admission parity', () => {
       const writeTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
 
-      const { message: v1Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v1Definition,
-        messageTimestamp   : v1Timestamp,
+      const { message: v1Message } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v1Definition,
+        messageTimestamp : v1Timestamp,
       });
       const v1Reply = await dwn.processMessage(alice.did, v1Message);
       expect(v1Reply.status.code).toBe(202);
 
-      const { message: v2Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v2Definition,
-        messageTimestamp   : v2Timestamp,
+      const { message: v2Message } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v2Definition,
+        messageTimestamp : v2Timestamp,
       });
       const v2Reply = await dwn.processMessage(alice.did, v2Message);
       expect(v2Reply.status.code).toBe(202);
@@ -876,8 +876,8 @@ describe('validation-state reader admission parity', () => {
       // an initial write authored between v1 and v2, arriving after v2 superseded v1
       const { message: alphaMessage, dataStream: alphaDataStream } = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'alpha',
+        module           : moduleUri,
+        modulePath       : 'alpha',
         schema           : 'alpha',
         dataFormat       : 'text/plain',
         dateCreated      : writeTimestamp,
@@ -889,8 +889,8 @@ describe('validation-state reader admission parity', () => {
 
       const replicatedWrite = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'alpha',
+        module           : moduleUri,
+        modulePath       : 'alpha',
         schema           : 'alpha',
         dataFormat       : 'text/plain',
         dateCreated      : writeTimestamp,
@@ -906,9 +906,9 @@ describe('validation-state reader admission parity', () => {
     it('should enforce squash backstop from the config active at the incoming write timestamp in both entry points', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolUri = 'http://config-history-squash.xyz';
-      const v1Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const moduleUri = 'http://config-history-squash.xyz';
+      const v1Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           patch: { schema: 'patch', dataFormats: ['text/plain'] },
@@ -917,8 +917,8 @@ describe('validation-state reader admission parity', () => {
           patch: { $squash: true },
         },
       };
-      const v2Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const v2Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : {
           patch: { schema: 'patch', dataFormats: ['text/plain'] },
@@ -933,17 +933,17 @@ describe('validation-state reader admission parity', () => {
       const squashTimestamp = Time.createTimestamp({ year: 2024, month: 3, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2024, month: 4, day: 1 });
 
-      const { message: v1Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v1Definition,
-        messageTimestamp   : v1Timestamp,
+      const { message: v1Message } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v1Definition,
+        messageTimestamp : v1Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v1Message)).status.code).toBe(202);
 
       const squashRecord = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'patch',
+        module           : moduleUri,
+        modulePath       : 'patch',
         schema           : 'patch',
         dataFormat       : 'text/plain',
         dateCreated      : squashTimestamp,
@@ -952,17 +952,17 @@ describe('validation-state reader admission parity', () => {
       });
       expect((await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream })).status.code).toBe(202);
 
-      const { message: v2Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : v2Definition,
-        messageTimestamp   : v2Timestamp,
+      const { message: v2Message } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : v2Definition,
+        messageTimestamp : v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v2Message)).status.code).toBe(202);
 
       const processOlderPatch = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'patch',
+        module           : moduleUri,
+        modulePath       : 'patch',
         schema           : 'patch',
         dataFormat       : 'text/plain',
         dateCreated      : olderPatchTimestamp,
@@ -973,12 +973,12 @@ describe('validation-state reader admission parity', () => {
         dataStream: processOlderPatch.dataStream,
       });
       expect(processReply.status.code).toBe(409);
-      expect(processReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+      expect(processReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationSquashBackstop);
 
       const olderPatch = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'patch',
+        module           : moduleUri,
+        modulePath       : 'patch',
         schema           : 'patch',
         dataFormat       : 'text/plain',
         dateCreated      : olderPatchTimestamp,
@@ -996,7 +996,7 @@ describe('validation-state reader admission parity', () => {
 describe('StoreValidationStateReader', () => {
 
   describe('queryAudienceRecords()', () => {
-    it('should query accepted source-protocol audience records by audience coordinates', async () => {
+    it('should query accepted source-module audience records by audience coordinates', async () => {
       const message = { recordId: 'audience1' } as RecordsWriteMessage;
       let capturedTenant: string | undefined;
       let capturedFilters: Filter[] | undefined;
@@ -1014,7 +1014,7 @@ describe('StoreValidationStateReader', () => {
 
       const messages = await reader.queryAudienceRecords({
         tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
+        module    : 'https://example.com/module/chat',
         contextId : 'chat1',
         rolePath  : 'chat/member',
         keyId     : 'abc',
@@ -1026,16 +1026,16 @@ describe('StoreValidationStateReader', () => {
         interface         : DwnInterfaceName.Records,
         method            : DwnMethodName.Write,
         isLatestBaseState : true,
-        protocol          : 'https://example.com/protocol/chat',
-        protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-        'tag.protocol'    : 'https://example.com/protocol/chat',
+        module            : 'https://example.com/module/chat',
+        modulePath        : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        'tag.module'      : 'https://example.com/module/chat',
         'tag.rolePath'    : 'chat/member',
         'tag.contextId'   : 'chat1',
         'tag.keyId'       : 'abc',
       }]);
     });
 
-    it('should omit keyId from source-protocol audience queries when not supplied', async () => {
+    it('should omit keyId from source-module audience queries when not supplied', async () => {
       let capturedFilters: Filter[] | undefined;
       const messageStore = {
         query: async (_tenant: string, filters: Filter[]): Promise<{ messages: GenericMessage[] }> => {
@@ -1050,7 +1050,7 @@ describe('StoreValidationStateReader', () => {
 
       await reader.queryAudienceRecords({
         tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
+        module    : 'https://example.com/module/chat',
         contextId : '',
         rolePath  : 'member',
       });
@@ -1062,7 +1062,7 @@ describe('StoreValidationStateReader', () => {
 
 describe('RecordingValidationStateReader', () => {
   describe('queryAudienceRecords()', () => {
-    it('should record source-protocol audience reads before delegating', async () => {
+    it('should record source-module audience reads before delegating', async () => {
       const message = { recordId: 'audience1' } as RecordsWriteMessage;
       const inner = {
         queryAudienceRecords: async (): Promise<RecordsWriteMessage[]> => [message],
@@ -1071,7 +1071,7 @@ describe('RecordingValidationStateReader', () => {
 
       const messages = await reader.queryAudienceRecords({
         tenant    : 'did:example:alice',
-        protocol  : 'https://example.com/protocol/chat',
+        module    : 'https://example.com/module/chat',
         contextId : 'chat1',
         rolePath  : 'chat/member',
       });

@@ -1,7 +1,7 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ModuleRuleSet, ResumableTaskStore } from '../../src/index.js';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAll from '../vectors/module-definitions/free-for-all.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -11,9 +11,9 @@ import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/enc
 import { Message } from '../../src/core/message.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestStores } from '../test-stores.js';
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedModule, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStoreLevel, MessageStoreLevel, ResumableTaskStoreLevel } from '../../src/store/level.js';
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, Jws, PermissionsProtocol, RecordsRead, Replication, Time } from '../../src/index.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, EncryptionModule, Jws, PermissionsModule, RecordsRead, Replication, Time } from '../../src/index.js';
 
 async function fingerprintFromCids(messageCids: string[]): Promise<string> {
   let fingerprint = Replication.emptyFingerprint();
@@ -55,7 +55,7 @@ export function testMessagesQueryHandler(): void {
 
     it('returns full log entries with inline RecordsWrite data detached from the message', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       const dataBytes = Encoder.stringToBytes('hello query');
       const record = await TestDataGenerator.generateRecordsWrite({
@@ -75,7 +75,7 @@ export function testMessagesQueryHandler(): void {
       expect(reply.entries).toHaveLength(1);
       expect(reply.entries![0].messageCid).toBe(await Message.getCid(record.message));
       expect(reply.entries![0].isLatestBaseState).toBe(true);
-      expect(reply.entries![0].protocol).toBe(record.message.descriptor.protocol);
+      expect(reply.entries![0].module).toBe(record.message.descriptor.module);
       expect(reply.entries![0].encodedData).toBe(Encoder.bytesToBase64Url(dataBytes));
       expect(reply.entries![0].message).toBeDefined();
       expect((reply.entries![0].message as { encodedData?: string }).encodedData).toBeUndefined();
@@ -85,7 +85,7 @@ export function testMessagesQueryHandler(): void {
 
     it('returns one completed RecordsWrite despite its unchanged CID fingerprint', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
       const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
       const ancestry = await dwn.applyReplicatedMessage(alice.did, record.message);
       if (ancestry.kind !== 'Applied' || ancestry.position === undefined) {
@@ -130,15 +130,15 @@ export function testMessagesQueryHandler(): void {
 
     it('allows a later page to repair a dependency moved behind its child', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition = freeForAll as ProtocolDefinition;
-      const config = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      const moduleDefinition = freeForAll as ModuleDefinition;
+      const config = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
       expect((await dwn.processMessage(alice.did, config.message)).status.code).toBe(202);
 
       const parent = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'post',
-        schema       : 'post',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'post',
+        schema     : 'post',
       });
       expect(await dwn.applyReplicatedMessage(alice.did, parent.message))
         .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
@@ -146,8 +146,8 @@ export function testMessagesQueryHandler(): void {
       const child = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         parentContextId : parent.message.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'post/attachment',
+        module          : moduleDefinition.module,
+        modulePath      : 'post/attachment',
       });
       expect(await dwn.applyReplicatedMessage(alice.did, child.message, { dataStream: child.dataStream }))
         .toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -157,7 +157,7 @@ export function testMessagesQueryHandler(): void {
       const filter = [{
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : protocolDefinition.protocol,
+        module    : moduleDefinition.module,
       }];
       const firstQuery = await TestDataGenerator.generateMessagesQuery({ author: alice, filters: filter, limit: 1 });
       const firstPage = await dwn.processMessage(alice.did, firstQuery.message);
@@ -213,7 +213,7 @@ export function testMessagesQueryHandler(): void {
 
     it('supports cidsOnly pagination with high-water cursors', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       const expectedCids: string[] = [];
       for (let i = 0; i < 3; i++) {
@@ -251,29 +251,29 @@ export function testMessagesQueryHandler(): void {
     it('includes fingerprints only for canonical sync scopes', async () => {
       const feedReader = messageStore;
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
       const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
       expect(writeReply.status.code).toBe(202);
-      const protocol = record.message.descriptor.protocol;
+      const module = record.message.descriptor.module;
 
       const permissionRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : PermissionsProtocol.uri,
-        protocolPath : PermissionsProtocol.grantPath,
-        tags         : { protocol },
+        author     : alice,
+        module     : PermissionsModule.uri,
+        modulePath : PermissionsModule.grantPath,
+        tags       : { module },
       });
       await messageStore.put(alice.did, permissionRecord.message, await permissionRecord.recordsWrite.constructIndexes(true));
 
       const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : {
+        author     : alice,
+        module     : EncryptionModule.uri,
+        modulePath : EncryptionModule.grantKeyPath,
+        tags       : {
           grantId : 'grant1',
           keyId   : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          protocol,
+          module,
         },
       });
       await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
@@ -283,49 +283,49 @@ export function testMessagesQueryHandler(): void {
       expect(globalReply.status.code).toBe(200);
       expect(globalReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [Replication.globalDomain]));
 
-      const protocolQuery = await TestDataGenerator.generateMessagesQuery({
+      const moduleQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
-        filters : [{ protocol }],
+        filters : [{ module }],
       });
-      const protocolReply = await dwn.processMessage(alice.did, protocolQuery.message);
-      expect(protocolReply.status.code).toBe(200);
-      expect(protocolReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
-        Replication.protocolDomain(protocol),
-        Replication.permissionDomain(protocol),
-        Replication.encryptionDomain(protocol),
+      const moduleReply = await dwn.processMessage(alice.did, moduleQuery.message);
+      expect(moduleReply.status.code).toBe(200);
+      expect(moduleReply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
+        Replication.moduleDomain(module),
+        Replication.permissionDomain(module),
+        Replication.encryptionDomain(module),
       ]));
 
-      // Filter sets naming a core protocol directly fail closed: the core
-      // protocols contribute no tagged domains for themselves, so a
+      // Filter sets naming a core module directly fail closed: the core
+      // modules contribute no tagged domains for themselves, so a
       // fingerprint over such a set would not span everything these filters
       // enumerate — no fingerprint beats one with known-incomplete coverage.
-      const protocolAndPermissionsQuery = await TestDataGenerator.generateMessagesQuery({
+      const moduleAndPermissionsQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
-        filters : [{ protocol }, { protocol: PermissionsProtocol.uri }],
+        filters : [{ module }, { module: PermissionsModule.uri }],
       });
-      const protocolAndPermissionsReply = await dwn.processMessage(alice.did, protocolAndPermissionsQuery.message);
-      expect(protocolAndPermissionsReply.status.code).toBe(200);
-      expect(protocolAndPermissionsReply.fingerprint).toBeUndefined();
+      const moduleAndPermissionsReply = await dwn.processMessage(alice.did, moduleAndPermissionsQuery.message);
+      expect(moduleAndPermissionsReply.status.code).toBe(200);
+      expect(moduleAndPermissionsReply.fingerprint).toBeUndefined();
 
-      const protocolAndEncryptionQuery = await TestDataGenerator.generateMessagesQuery({
+      const moduleAndEncryptionQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
-        filters : [{ protocol }, { protocol: EncryptionProtocol.uri }],
+        filters : [{ module }, { module: EncryptionModule.uri }],
       });
-      const protocolAndEncryptionReply = await dwn.processMessage(alice.did, protocolAndEncryptionQuery.message);
-      expect(protocolAndEncryptionReply.status.code).toBe(200);
-      expect(protocolAndEncryptionReply.fingerprint).toBeUndefined();
+      const moduleAndEncryptionReply = await dwn.processMessage(alice.did, moduleAndEncryptionQuery.message);
+      expect(moduleAndEncryptionReply.status.code).toBe(200);
+      expect(moduleAndEncryptionReply.fingerprint).toBeUndefined();
 
-      const allProtocolScopesQuery = await TestDataGenerator.generateMessagesQuery({
+      const allModuleScopesQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
-        filters : [{ protocol }, { protocol: PermissionsProtocol.uri }, { protocol: EncryptionProtocol.uri }],
+        filters : [{ module }, { module: PermissionsModule.uri }, { module: EncryptionModule.uri }],
       });
-      const allProtocolScopesReply = await dwn.processMessage(alice.did, allProtocolScopesQuery.message);
-      expect(allProtocolScopesReply.status.code).toBe(200);
-      expect(allProtocolScopesReply.fingerprint).toBeUndefined();
+      const allModuleScopesReply = await dwn.processMessage(alice.did, allModuleScopesQuery.message);
+      expect(allModuleScopesReply.status.code).toBe(200);
+      expect(allModuleScopesReply.fingerprint).toBeUndefined();
 
       const nonCanonicalQuery = await TestDataGenerator.generateMessagesQuery({
         author  : alice,
-        filters : [{ protocol, method: DwnMethodName.Write }],
+        filters : [{ module, method: DwnMethodName.Write }],
       });
       const nonCanonicalReply = await dwn.processMessage(alice.did, nonCanonicalQuery.message);
       expect(nonCanonicalReply.status.code).toBe(200);
@@ -334,7 +334,7 @@ export function testMessagesQueryHandler(): void {
 
     it('maps progress gaps to a 410 response with structured metadata', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       const { message } = await TestDataGenerator.generateMessagesQuery({
         author : alice,
@@ -354,30 +354,30 @@ export function testMessagesQueryHandler(): void {
     it('rejects a signed grant query whose exact path is paired with a broader path prefix', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'http://messages-query-ambiguous-path-filter';
+      const module = 'http://messages-query-ambiguous-path-filter';
       const grant = await TestDataGenerator.generateGrantCreate({
         author    : alice,
         grantedTo : bob,
         scope     : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol,
-          protocolPath : 'post/attachment',
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module,
+          modulePath : 'post/attachment',
         },
       });
       expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
       const query = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol, protocolPath: 'post/attachment' }],
+        filters            : [{ module, modulePath: 'post/attachment' }],
         permissionGrantIds : [grant.message.recordId],
       });
       const descriptor = {
         ...query.message.descriptor,
         filters: [{
-          protocol,
-          protocolPath       : 'post/attachment',
-          protocolPathPrefix : 'post',
+          module,
+          modulePath       : 'post/attachment',
+          modulePathPrefix : 'post',
         }],
       };
       const authorization = await Message.createAuthorization({
@@ -394,14 +394,14 @@ export function testMessagesQueryHandler(): void {
     it('applies broad and subtree grant visibility to delegated queries', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-delegated' };
+      const moduleDefinition: ModuleDefinition = { ...freeForAll, published: false, module: 'http://messages-query-delegated' };
 
-      const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+      const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
-      const protocolReply = await dwn.processMessage(alice.did, protocolConfigure);
-      expect(protocolReply.status.code).toBe(202);
+      const moduleReply = await dwn.processMessage(alice.did, moduleConfigure);
+      expect(moduleReply.status.code).toBe(202);
 
       const grant = await TestDataGenerator.generateGrantCreate({
         author    : alice,
@@ -409,17 +409,17 @@ export function testMessagesQueryHandler(): void {
         scope     : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol  : protocolDefinition.protocol,
+          module    : moduleDefinition.module,
         },
       });
       const grantReply = await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream });
       expect(grantReply.status.code).toBe(202);
 
       const record = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'post',
-        schema       : protocolDefinition.types.post.schema,
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'post',
+        schema     : moduleDefinition.types.post.schema,
       });
       const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
       expect(writeReply.status.code).toBe(202);
@@ -427,8 +427,8 @@ export function testMessagesQueryHandler(): void {
       const recordContextId = record.message.contextId ?? record.message.recordId;
       const attachment = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'post/attachment',
+        module          : moduleDefinition.module,
+        modulePath      : 'post/attachment',
         parentContextId : recordContextId,
       });
       expect((await dwn.processMessage(alice.did, attachment.message, { dataStream: attachment.dataStream })).status.code).toBe(202);
@@ -437,10 +437,10 @@ export function testMessagesQueryHandler(): void {
         author    : alice,
         grantedTo : bob,
         scope     : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module     : moduleDefinition.module,
+          modulePath : 'post',
         },
       });
       expect((await dwn.processMessage(alice.did, pathGrant.message, { dataStream: pathGrant.dataStream })).status.code).toBe(202);
@@ -451,27 +451,27 @@ export function testMessagesQueryHandler(): void {
         scope     : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol  : protocolDefinition.protocol,
+          module    : moduleDefinition.module,
           contextId : recordContextId,
         },
       });
       expect((await dwn.processMessage(alice.did, contextGrant.message, { dataStream: contextGrant.dataStream })).status.code).toBe(202);
 
       const encryptionRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.grantKeyPath,
-        tags         : {
-          grantId  : 'grant1',
-          keyId    : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          protocol : protocolDefinition.protocol,
+        author     : alice,
+        module     : EncryptionModule.uri,
+        modulePath : EncryptionModule.grantKeyPath,
+        tags       : {
+          grantId : 'grant1',
+          keyId   : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          module  : moduleDefinition.module,
         },
       });
       await messageStore.put(alice.did, encryptionRecord.message, await encryptionRecord.recordsWrite.constructIndexes(true));
 
       const { message: query } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol: protocolDefinition.protocol }],
+        filters            : [{ module: moduleDefinition.module }],
         permissionGrantIds : [grant.message.recordId],
         cidsOnly           : true,
       });
@@ -479,7 +479,7 @@ export function testMessagesQueryHandler(): void {
 
       expect(reply.status.code).toBe(200);
       expect(reply.entries!.map(entry => entry.messageCid).sort()).toEqual([
-        await Message.getCid(protocolConfigure),
+        await Message.getCid(moduleConfigure),
         await Message.getCid(encryptionRecord.message),
         await Message.getCid(grant.message),
         await Message.getCid(pathGrant.message),
@@ -490,14 +490,14 @@ export function testMessagesQueryHandler(): void {
 
       const { message: pathQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol: protocolDefinition.protocol, protocolPathPrefix: 'post' }],
+        filters            : [{ module: moduleDefinition.module, modulePathPrefix: 'post' }],
         permissionGrantIds : [pathGrant.message.recordId],
       });
       const pathReply = await dwn.processMessage(alice.did, pathQuery);
 
       const { message: contextQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol: protocolDefinition.protocol, contextIdPrefix: recordContextId }],
+        filters            : [{ module: moduleDefinition.module, contextIdPrefix: recordContextId }],
         permissionGrantIds : [contextGrant.message.recordId],
       });
       const contextReply = await dwn.processMessage(alice.did, contextQuery);
@@ -515,20 +515,20 @@ export function testMessagesQueryHandler(): void {
 
       const { message: mixedQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol: protocolDefinition.protocol, protocolPathPrefix: 'post' }],
+        filters            : [{ module: moduleDefinition.module, modulePathPrefix: 'post' }],
         permissionGrantIds : [grant.message.recordId, pathGrant.message.recordId],
       });
       const mixedReply = await dwn.processMessage(alice.did, mixedQuery);
       expect(mixedReply.status.code).toBe(200);
       const recordCid = await Message.getCid(record.message);
-      const protocolConfigureCid = await Message.getCid(protocolConfigure);
+      const moduleConfigureCid = await Message.getCid(moduleConfigure);
       const mixedRecord = mixedReply.entries!.find(entry => entry.messageCid === recordCid);
-      expect(mixedReply.entries!.some(entry => entry.messageCid === protocolConfigureCid)).toBe(true);
+      expect(mixedReply.entries!.some(entry => entry.messageCid === moduleConfigureCid)).toBe(true);
       expect(mixedRecord?.encodedData).toBe(Encoder.bytesToBase64Url(record.dataBytes!));
 
       for (const filter of [
-        { protocol: protocolDefinition.protocol },
-        { protocol: protocolDefinition.protocol, protocolPathPrefix: 'poster' },
+        { module: moduleDefinition.module },
+        { module: moduleDefinition.module, modulePathPrefix: 'poster' },
       ]) {
         const { message: rejectedQuery } = await TestDataGenerator.generateMessagesQuery({
           author             : bob,
@@ -537,50 +537,50 @@ export function testMessagesQueryHandler(): void {
         });
         const rejectedReply = await dwn.processMessage(alice.did, rejectedQuery);
         expect(rejectedReply.status.code).toBe(401);
-        expect(rejectedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+        expect(rejectedReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch);
       }
 
       const coreGrant = await TestDataGenerator.generateGrantCreate({
         author    : alice,
         grantedTo : bob,
         scope     : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
         },
       });
       expect((await dwn.processMessage(alice.did, coreGrant.message, { dataStream: coreGrant.dataStream })).status.code).toBe(202);
       const { message: coreQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : bob,
-        filters            : [{ protocol: PermissionsProtocol.uri, protocolPathPrefix: PermissionsProtocol.grantPath }],
+        filters            : [{ module: PermissionsModule.uri, modulePathPrefix: PermissionsModule.grantPath }],
         permissionGrantIds : [coreGrant.message.recordId],
       });
       const coreReply = await dwn.processMessage(alice.did, coreQuery);
       expect(coreReply.status.code).toBe(401);
-      expect(coreReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+      expect(coreReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch);
     });
 
-    it('authorizes exact context feeds through a protocol role and author delegate', async () => {
-      const { delegate, member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+    it('authorizes exact context feeds through a module role and author delegate', async () => {
+      const { delegate, member, moduleDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
       const chat = await TestDataGenerator.generateRecordsWrite({
         author          : source,
         parentContextId : thread.message.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
       });
       expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
 
       const filter = {
         contextIdPrefix : thread.message.contextId!,
         interface       : DwnInterfaceName.Records,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
       };
       const memberQuery = await TestDataGenerator.generateMessagesQuery({
-        author       : member,
-        filters      : [filter],
-        protocolRole : 'thread/participant',
+        author     : member,
+        filters    : [filter],
+        moduleRole : 'thread/participant',
       });
       const memberReply = await dwn.processMessage(source.did, memberQuery.message);
       expect(memberReply.status.code).toBe(200);
@@ -588,15 +588,15 @@ export function testMessagesQueryHandler(): void {
       expect(memberReply.entries?.map(entry => entry.messageCid)).toEqual([await Message.getCid(chat.message)]);
       expect(memberReply.entries?.[0].encodedData).toBe(Encoder.bytesToBase64Url(chat.dataBytes!));
 
-      const delegatedGrant = await PermissionsProtocol.createGrant({
+      const delegatedGrant = await PermissionsModule.createGrant({
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         delegated   : true,
         grantedTo   : delegate.did,
         scope       : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread/chat',
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module     : moduleDefinition.module,
+          modulePath : 'thread/chat',
         },
         signer: Jws.createSigner(member),
       });
@@ -604,7 +604,7 @@ export function testMessagesQueryHandler(): void {
         author         : delegate,
         delegatedGrant : delegatedGrant.dataEncodedMessage,
         filters        : [filter],
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
       });
       const delegatedReply = await dwn.processMessage(source.did, delegatedQuery.message);
       expect(delegatedReply.status.code).toBe(200);
@@ -614,37 +614,37 @@ export function testMessagesQueryHandler(): void {
     });
 
     it('rejects mixed unauthorized paths and the wrong role context', async () => {
-      const { member, otherThread, protocolDefinition, source, thread } = await createMessagesRoleContext(dwn);
+      const { member, otherThread, moduleDefinition, source, thread } = await createMessagesRoleContext(dwn);
       const exactFilter = {
         contextIdPrefix : thread.message.contextId!,
         interface       : DwnInterfaceName.Records,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
       };
       const mixedQuery = await TestDataGenerator.generateMessagesQuery({
-        author       : member,
-        filters      : [exactFilter, { ...exactFilter, protocolPath: 'thread/admin' }],
-        protocolRole : 'thread/participant',
+        author     : member,
+        filters    : [exactFilter, { ...exactFilter, modulePath: 'thread/admin' }],
+        moduleRole : 'thread/participant',
       });
       expect((await dwn.processMessage(source.did, mixedQuery.message)).status.code).toBe(401);
 
       const wrongContextQuery = await TestDataGenerator.generateMessagesQuery({
-        author       : member,
-        filters      : [{ ...exactFilter, contextIdPrefix: otherThread.message.contextId! }],
-        protocolRole : 'thread/participant',
+        author     : member,
+        filters    : [{ ...exactFilter, contextIdPrefix: otherThread.message.contextId! }],
+        moduleRole : 'thread/participant',
       });
       const wrongContextReply = await dwn.processMessage(source.did, wrongContextQuery.message);
       expect(wrongContextReply.status.code).toBe(401);
-      expect(wrongContextReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(wrongContextReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
     });
 
     it('includes the initial write with an exact-context delete entry', async () => {
-      const { member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+      const { member, moduleDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
       const chat = await TestDataGenerator.generateRecordsWrite({
         author          : source,
         parentContextId : thread.message.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
       });
       expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
       const chatDelete = await TestDataGenerator.generateRecordsDelete({ author: source, recordId: chat.message.recordId });
@@ -656,10 +656,10 @@ export function testMessagesQueryHandler(): void {
           contextIdPrefix : thread.message.contextId!,
           interface       : DwnInterfaceName.Records,
           method          : DwnMethodName.Delete,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'thread/chat',
+          module          : moduleDefinition.module,
+          modulePath      : 'thread/chat',
         }],
-        protocolRole: 'thread/participant',
+        moduleRole: 'thread/participant',
       });
       const reply = await dwn.processMessage(source.did, query.message);
       expect(reply.status.code).toBe(200);
@@ -676,8 +676,8 @@ export function testMessagesQueryHandler(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'http://messages-query-control-pagination.xyz',
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'http://messages-query-control-pagination.xyz',
         published : false,
         types     : {
           member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -688,24 +688,24 @@ export function testMessagesQueryHandler(): void {
           post   : {},
         },
       };
-      const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-      const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+      const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+      const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
       const audience = await createAudienceControlWrite({
         author   : alice,
-        protocol : protocolDefinition.protocol,
+        module   : moduleDefinition.module,
         rolePath : 'member',
         roleRuleSet,
       });
       await processControlWrite(dwn, alice.did, audience);
 
       const roleRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        data         : Encoder.stringToBytes('bob is a member'),
-        dataFormat   : 'application/json',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'member',
-        recipient    : bob.did,
-        schema       : 'http://member-schema',
+        author     : alice,
+        data       : Encoder.stringToBytes('bob is a member'),
+        dataFormat : 'application/json',
+        module     : moduleDefinition.module,
+        modulePath : 'member',
+        recipient  : bob.did,
+        schema     : 'http://member-schema',
       });
       expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
 
@@ -715,7 +715,7 @@ export function testMessagesQueryHandler(): void {
         scope     : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol  : protocolDefinition.protocol,
+          module    : moduleDefinition.module,
         },
       });
       expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
@@ -724,7 +724,7 @@ export function testMessagesQueryHandler(): void {
       const delivery = await createDeliveryControlWrite({
         author             : alice,
         keyId              : audience.keyId,
-        protocol           : protocolDefinition.protocol,
+        module             : moduleDefinition.module,
         recipient          : bob.did,
         recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
         rolePath           : 'member',
@@ -733,16 +733,16 @@ export function testMessagesQueryHandler(): void {
       await processControlWrite(dwn, alice.did, delivery);
 
       const record = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'post',
-        schema       : 'http://post-schema',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'post',
+        schema     : 'http://post-schema',
       });
       expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
 
       const { message: query } = await TestDataGenerator.generateMessagesQuery({
         author             : carol,
-        filters            : [{ protocol: protocolDefinition.protocol }],
+        filters            : [{ module: moduleDefinition.module }],
         permissionGrantIds : [grant.message.recordId],
         cursor             : setupCursor,
         limit              : 1,
@@ -756,16 +756,16 @@ export function testMessagesQueryHandler(): void {
 
       const { message: fullQuery } = await TestDataGenerator.generateMessagesQuery({
         author             : carol,
-        filters            : [{ protocol: protocolDefinition.protocol }],
+        filters            : [{ module: moduleDefinition.module }],
         permissionGrantIds : [grant.message.recordId],
         cidsOnly           : true,
       });
       const fullReply = await dwn.processMessage(alice.did, fullQuery);
       const fullReplyCids = fullReply.entries!.map(entry => entry.messageCid);
       const rawFingerprint = await feedReader.fingerprint(alice.did, [
-        Replication.protocolDomain(protocolDefinition.protocol),
-        Replication.permissionDomain(protocolDefinition.protocol),
-        Replication.encryptionDomain(protocolDefinition.protocol),
+        Replication.moduleDomain(moduleDefinition.module),
+        Replication.permissionDomain(moduleDefinition.module),
+        Replication.encryptionDomain(moduleDefinition.module),
       ]);
 
       expect(fullReply.status.code).toBe(200);
@@ -777,7 +777,7 @@ export function testMessagesQueryHandler(): void {
 
       const { message: ownerQuery } = await TestDataGenerator.generateMessagesQuery({
         author   : alice,
-        filters  : [{ protocol: protocolDefinition.protocol }],
+        filters  : [{ module: moduleDefinition.module }],
         cidsOnly : true,
       });
       const ownerReply = await dwn.processMessage(alice.did, ownerQuery);
@@ -785,16 +785,16 @@ export function testMessagesQueryHandler(): void {
       expect(fullReply.fingerprint).toBe(ownerReply.fingerprint);
     });
 
-    it('rejects unfiltered delegated queries with a protocol-scoped grant', async () => {
+    it('rejects unfiltered delegated queries with a module-scoped grant', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: false, protocol: 'http://messages-query-unfiltered-delegated' };
+      const moduleDefinition: ModuleDefinition = { ...freeForAll, published: false, module: 'http://messages-query-unfiltered-delegated' };
 
-      const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+      const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
-      expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
+      expect((await dwn.processMessage(alice.did, moduleConfigure)).status.code).toBe(202);
 
       const grant = await TestDataGenerator.generateGrantCreate({
         author    : alice,
@@ -802,7 +802,7 @@ export function testMessagesQueryHandler(): void {
         scope     : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol  : protocolDefinition.protocol,
+          module    : moduleDefinition.module,
         },
       });
       expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
@@ -814,7 +814,7 @@ export function testMessagesQueryHandler(): void {
       const reply = await dwn.processMessage(alice.did, query);
 
       expect(reply.status.code).toBe(401);
-      expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope);
+      expect(reply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeModuleScope);
     });
   });
 }

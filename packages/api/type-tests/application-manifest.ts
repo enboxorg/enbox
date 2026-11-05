@@ -1,9 +1,9 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   AuthManagerOptions,
   HandlerConnectOptions,
+  ModuleRequest,
   Permission,
-  ProtocolRequest,
   RefreshOptions,
   VaultConnectOptions,
 } from '@enbox/auth';
@@ -12,13 +12,13 @@ import type { ConnectionStoreConnectOptions, ConnectionStoreRefreshOptions, Enbo
 import {
   createConnectionStore,
   defineApplicationManifest,
-  defineProtocol,
-  getApplicationProtocolRequests,
+  defineModule,
+  getApplicationModuleRequests,
   recordCodecs,
 } from '@enbox/api';
 
 const NotesDefinition = {
-  protocol  : 'https://example.com/protocols/manifest-notes',
+  module    : 'https://example.com/modules/manifest-notes',
   published : true,
   types     : {
     note: { dataFormats: ['application/json'] },
@@ -26,14 +26,14 @@ const NotesDefinition = {
   structure: {
     note: {},
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const NotesProtocol = defineProtocol(NotesDefinition, {
+const NotesModule = defineModule(NotesDefinition, {
   note: recordCodecs.json<{ body: string }>(),
 });
 
 const PhotosDefinition = {
-  protocol  : 'https://example.com/protocols/manifest-photos',
+  module    : 'https://example.com/modules/manifest-photos',
   published : true,
   types     : {
     photo: { dataFormats: ['image/jpeg'] },
@@ -41,29 +41,29 @@ const PhotosDefinition = {
   structure: {
     photo: {},
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const PhotosProtocol = defineProtocol(PhotosDefinition, {
+const PhotosModule = defineModule(PhotosDefinition, {
   photo: recordCodecs.blob('image/jpeg'),
 });
 
 const application = defineApplicationManifest({
-  protocols: [
-    NotesProtocol,
-    { protocol: PhotosProtocol, permissions: ['read'] },
+  modules: [
+    NotesModule,
+    { module: PhotosModule, permissions: ['read'] },
   ],
 } as const);
 
-const exactProtocol: typeof NotesProtocol = application.protocols[0].protocol;
-const exactExplicitProtocol: typeof PhotosProtocol = application.protocols[1].protocol;
-const defaultPermissions: readonly Permission[] = application.protocols[0].permissions;
-const authRequests: ProtocolRequest[] = getApplicationProtocolRequests(application);
+const exactModule: typeof NotesModule = application.modules[0].module;
+const exactExplicitModule: typeof PhotosModule = application.modules[1].module;
+const defaultPermissions: readonly Permission[] = application.modules[0].permissions;
+const authRequests: ModuleRequest[] = getApplicationModuleRequests(application);
 const directStructuralAuthRequests = [
-  NotesProtocol,
-  { protocol: PhotosProtocol, permissions: ['read', 'write'] },
-] as const satisfies readonly ProtocolRequest[];
-const delegatedOptions: HandlerConnectOptions = { protocols: authRequests };
-const delegatedRefreshOptions: RefreshOptions = { protocols: authRequests };
+  NotesModule,
+  { module: PhotosModule, permissions: ['read', 'write'] },
+] as const satisfies readonly ModuleRequest[];
+const delegatedOptions: HandlerConnectOptions = { modules: authRequests };
+const delegatedRefreshOptions: RefreshOptions = { modules: authRequests };
 const connectOptions: ConnectionStoreConnectOptions = { password: 'pw' };
 const refreshOptions: ConnectionStoreRefreshOptions = {};
 const vaultOptions: VaultConnectOptions = { createIdentity: true };
@@ -77,11 +77,11 @@ declare const enbox: Enbox;
 void store.connect(connectOptions);
 void store.connectVault({ createIdentity: true });
 void store.refresh(refreshOptions);
-void enbox.protocols.ensureReady({ application });
-void enbox.protocols.ensureReady({ application, publish: false });
-void enbox.protocols.ensureReady({ application, targetDid: 'did:example:owner' });
-void exactProtocol;
-void exactExplicitProtocol;
+void enbox.modules.ensureReady({ application });
+void enbox.modules.ensureReady({ application, publish: false });
+void enbox.modules.ensureReady({ application, targetDid: 'did:example:owner' });
+void exactModule;
+void exactExplicitModule;
 void defaultPermissions;
 void authRequests;
 void directStructuralAuthRequests;
@@ -89,13 +89,13 @@ void directStructuralAuthRequests;
 // @ts-expect-error connection stores accept a caller-owned AuthManager, not a raw agent.
 createConnectionStore({ application, agent: callerAgent });
 
-// @ts-expect-error manifest-backed connect protocols come only from the manifest.
+// @ts-expect-error manifest-backed connect modules come only from the manifest.
 void store.connect(delegatedOptions);
 
 // @ts-expect-error sync cadence is configured once on the connection store.
 void store.connect({ sync: 'off' });
 
-// @ts-expect-error manifest-backed refresh protocols come only from the manifest.
+// @ts-expect-error manifest-backed refresh modules come only from the manifest.
 void store.refresh(delegatedRefreshOptions);
 
 // @ts-expect-error manifest-backed connect is delegated; use connectVault for owners.
@@ -104,23 +104,23 @@ void store.connect(vaultOptions);
 // @ts-expect-error every connection store requires an application manifest.
 createConnectionStore({ monitor: { autoRefresh: {} } });
 
-// @ts-expect-error manifest-backed monitor protocols come only from the manifest.
-createConnectionStore({ application, monitor: { autoRefresh: { protocols: authRequests } } });
+// @ts-expect-error manifest-backed monitor modules come only from the manifest.
+createConnectionStore({ application, monitor: { autoRefresh: { modules: authRequests } } });
 
 defineApplicationManifest({
-  protocols: [
-    // @ts-expect-error application manifests require TypedProtocol values, not raw definitions.
+  modules: [
+    // @ts-expect-error application manifests require TypedModule values, not raw definitions.
     NotesDefinition,
   ],
 } as const);
 
 defineApplicationManifest({
-  protocols: [{
-    protocol    : NotesProtocol,
+  modules: [{
+    module      : NotesModule,
     // @ts-expect-error application permission policies use the auth permission vocabulary.
     permissions : ['admin'],
   }],
 } as const);
 
 // @ts-expect-error readiness requires an application manifest.
-void enbox.protocols.ensureReady({});
+void enbox.modules.ensureReady({});

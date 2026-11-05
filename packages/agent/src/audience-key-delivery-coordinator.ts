@@ -2,7 +2,7 @@ import type { SyncEngine, SyncEvent } from './types/sync.js';
 
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
-import { syncEventCoversProtocol } from './types/sync.js';
+import { syncEventCoversModule } from './types/sync.js';
 import { SyncRuntime } from './sync-runtime.js';
 import { SyncTaskGroup } from './sync-task-group.js';
 
@@ -17,7 +17,7 @@ export class AudienceKeyDeliveryReplicaNotCurrentError extends Error {
   }
 }
 
-/** Session-scoped scheduler for one protocol's role-delivery repair. */
+/** Session-scoped scheduler for one module's role-delivery repair. */
 export class AudienceKeyDeliveryCoordinator {
   private readonly _abortListener = (): void => { this.close(); };
   private readonly _onClosed: () => void;
@@ -34,13 +34,13 @@ export class AudienceKeyDeliveryCoordinator {
   private _running = false;
   private _waitingForCurrent = false;
 
-  public readonly protocol: string;
+  public readonly module: string;
   public readonly sessionSignal: AbortSignal;
   public readonly targetDid: string;
 
   public constructor(params: {
     onClosed?: () => void;
-    protocol: string;
+    module: string;
     retryDelays?: readonly number[];
     rolePaths: ReadonlySet<string>;
     run: (includeDormant: boolean) => Promise<boolean>;
@@ -52,7 +52,7 @@ export class AudienceKeyDeliveryCoordinator {
     this._retryDelays = params.retryDelays ?? DEFAULT_RETRY_DELAYS;
     this._rolePaths = params.rolePaths;
     this._run = params.run;
-    this.protocol = params.protocol;
+    this.module = params.module;
     this.sessionSignal = params.signal;
     this.targetDid = params.targetDid;
     this._unsubscribe = params.sync.on(this.handleSyncEvent.bind(this));
@@ -150,7 +150,7 @@ export class AudienceKeyDeliveryCoordinator {
     if (event.type === 'dead-letter:change') {
       return;
     }
-    if (!syncEventCoversProtocol(event, this.protocol)) {
+    if (!syncEventCoversModule(event, this.module)) {
       return;
     }
     if (event.type === 'link:connectivity-change' && event.to === 'online') {
@@ -167,9 +167,9 @@ export class AudienceKeyDeliveryCoordinator {
 
   private handleDeliveryEvent(event: Extract<SyncEvent, { type: 'delivery:applied' }>): void {
     const { descriptor } = event;
-    if (descriptor.interface === DwnInterfaceName.Protocols &&
+    if (descriptor.interface === DwnInterfaceName.Modules &&
         descriptor.method === DwnMethodName.Configure &&
-        descriptor.protocol === this.protocol) {
+        descriptor.module === this.module) {
       this.wake();
       return;
     }
@@ -177,14 +177,14 @@ export class AudienceKeyDeliveryCoordinator {
       return;
     }
     if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Write) {
-      if (descriptor.protocol === this.protocol && descriptor.protocolPath !== undefined &&
-          this._rolePaths.has(descriptor.protocolPath)) {
+      if (descriptor.module === this.module && descriptor.modulePath !== undefined &&
+          this._rolePaths.has(descriptor.modulePath)) {
         this.reconcile();
       }
     } else if (descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete) {
-      if (descriptor.protocol === undefined
-        ? syncEventCoversProtocol(event, this.protocol)
-        : descriptor.protocol === this.protocol) {
+      if (descriptor.module === undefined
+        ? syncEventCoversModule(event, this.module)
+        : descriptor.module === this.module) {
         this.reconcile();
       }
     }

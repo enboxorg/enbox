@@ -637,7 +637,7 @@ describe('RPC Clients', () => {
         dwnUrl    : httpEndpoint,
         targetDid : 'did:example:alice',
         message   : {
-          descriptor : { interface: 'Protocols', method: 'Configure' },
+          descriptor : { interface: 'Modules', method: 'Configure' },
           padding    : 'x'.repeat(WS_JSON_RPC_ENVELOPE_BYTES),
         } as never,
       });
@@ -778,15 +778,15 @@ describe('RPC Clients', () => {
         socketRequest.resetHistory();
 
         // 2. Bounded control traffic reuses the connected pooled socket.
-        const protocolDefinition = {
-          protocol  : 'http://socket-routing-test.example/protocol',
+        const moduleDefinition = {
+          module    : 'http://socket-routing-test.example/module',
           published : true,
           types     : { note: { dataFormats: ['application/octet-stream'] } },
           structure : { note: {} },
         };
-        const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
+        const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
         const configureReply = await rpcClient.sendDwnRequest({
           dwnUrl    : testDwnUrl,
@@ -808,11 +808,11 @@ describe('RPC Clients', () => {
         // 3. A RecordsWrite also succeeds over HTTP.
         const dataBytes = new TextEncoder().encode('socket routing integration');
         const recordsWrite = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'application/octet-stream',
-          data         : dataBytes,
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'application/octet-stream',
+          data       : dataBytes,
         });
         const writeReply = await rpcClient.sendDwnRequest({
           dwnUrl    : testDwnUrl,
@@ -826,11 +826,11 @@ describe('RPC Clients', () => {
         // 4. Replication of a replayable record also reuses the socket.
         const replicatedData = new TextEncoder().encode('socket replicated apply');
         const replicatedWrite = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'application/octet-stream',
-          data         : replicatedData,
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'note',
+          dataFormat : 'application/octet-stream',
+          data       : replicatedData,
         });
         const applyResult = await rpcClient.applyReplicatedMessage({
           dwnUrl    : testDwnUrl,
@@ -1150,7 +1150,7 @@ describe('RPC Clients', () => {
     });
 
     describe('custom client overrides', () => {
-      it('should allow custom client to override default protocol transport', async () => {
+      it('should allow custom client to override default module transport', async () => {
         const customResponse = {
           status  : { code: 200, detail: 'OK' },
           entries : [{ mock: true }],

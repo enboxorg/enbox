@@ -6,8 +6,8 @@ import type {
   MessagesQueryOptions,
   MessagesQueryReply,
   MessagesReadReply,
+  ModulesQueryReply,
   ProgressToken,
-  ProtocolsQueryReply,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsWriteMessage,
@@ -41,10 +41,10 @@ import { toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import {
   dependencyKey,
   hasTerminalDependency,
-  isTenantProtocolConfig,
+  isTenantModuleConfig,
   matchesEncryptionControlDependency,
   missingDependencyDetail,
-  newestProtocolConfig,
+  newestModuleConfig,
   recordsWriteRequiresData,
 } from './sync-fetch-helpers.js';
 import { DwnRpcError, isQuotaExceededError } from '@enbox/dwn-clients';
@@ -70,18 +70,18 @@ export type SyncMessageEntry = {
 
 /**
  * Builds a {@link SyncMessageDescriptor} for a sync-delivered message so event
- * consumers can route the change (protocol path, record, author) without
+ * consumers can route the change (module path, record, author) without
  * re-reading the local store. Fields a given interface/method does not carry
  * are simply absent: `recordId` comes from the message envelope for
- * `RecordsWrite` and from the descriptor for `RecordsDelete`, and `protocol`
- * falls back to the configured definition for `ProtocolsConfigure`.
+ * `RecordsWrite` and from the descriptor for `RecordsDelete`, and `module`
+ * falls back to the configured definition for `ModulesConfigure`.
  */
 export function syncMessageDescriptor(message: GenericMessage): SyncMessageDescriptor {
   const descriptor = message.descriptor as GenericMessage['descriptor'] & {
-    protocol?: string;
-    protocolPath?: string;
+    module?: string;
+    modulePath?: string;
     recordId?: string;
-    definition?: { protocol?: string };
+    definition?: { module?: string };
   };
   const envelope = message as GenericMessage & { recordId?: string; contextId?: string };
 
@@ -92,15 +92,15 @@ export function syncMessageDescriptor(message: GenericMessage): SyncMessageDescr
     // Anonymous or unparseable authorization — the descriptor stays author-less.
   }
 
-  const protocol = descriptor.protocol ?? descriptor.definition?.protocol;
+  const module = descriptor.module ?? descriptor.definition?.module;
   const recordId = envelope.recordId ?? descriptor.recordId;
 
   return {
     interface : descriptor.interface,
     method    : descriptor.method,
     ...(descriptor.messageTimestamp === undefined ? {} : { messageTimestamp: descriptor.messageTimestamp }),
-    ...(protocol === undefined ? {} : { protocol }),
-    ...(descriptor.protocolPath === undefined ? {} : { protocolPath: descriptor.protocolPath }),
+    ...(module === undefined ? {} : { module }),
+    ...(descriptor.modulePath === undefined ? {} : { modulePath: descriptor.modulePath }),
     ...(recordId === undefined ? {} : { recordId }),
     ...(envelope.contextId === undefined ? {} : { contextId: envelope.contextId }),
     ...(author === undefined ? {} : { author }),
@@ -113,7 +113,7 @@ type MessageFeedQuery = {
   delegateDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
   permissionGrantIds?: string[];
-  protocolRole?: string;
+  moduleRole?: string;
   filters?: MessagesFilter[];
   cursor?: ProgressToken;
   limit?: number;
@@ -363,7 +363,7 @@ function buildMessageFeedParams({
   cidsOnly,
   delegatedGrant,
   permissionGrantIds,
-  protocolRole,
+  moduleRole,
 }: MessageFeedParams): Omit<MessagesQueryOptions, 'signer'> {
   return {
     filters,
@@ -372,7 +372,7 @@ function buildMessageFeedParams({
     cidsOnly,
     permissionGrantIds: toMessagesPermissionGrantIds(permissionGrantIds),
     ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
-    ...(protocolRole === undefined ? {} : { protocolRole }),
+    ...(moduleRole === undefined ? {} : { moduleRole }),
   };
 }
 
@@ -386,7 +386,7 @@ export async function queryRemoteMessageFeed({
   delegateDid,
   delegatedGrant,
   permissionGrantIds,
-  protocolRole,
+  moduleRole,
   filters,
   cursor,
   limit,
@@ -407,7 +407,7 @@ export async function queryRemoteMessageFeed({
       cidsOnly,
       delegatedGrant,
       permissionGrantIds,
-      protocolRole,
+      moduleRole,
     })
   });
 
@@ -430,7 +430,7 @@ export async function queryLocalMessageFeed({
   delegateDid,
   delegatedGrant,
   permissionGrantIds,
-  protocolRole,
+  moduleRole,
   filters,
   cursor,
   limit,
@@ -449,7 +449,7 @@ export async function queryLocalMessageFeed({
       cidsOnly,
       delegatedGrant,
       permissionGrantIds,
-      protocolRole,
+      moduleRole,
     })
   });
 
@@ -1094,13 +1094,13 @@ export class RemoteApplyPushContext {
     }
 
     switch (ref.type) {
-      case 'Protocol':
-        return this.fetchProtocolConfig(ref.protocol);
+      case 'Module':
+        return this.fetchModuleConfig(ref.module);
       case 'InitialWrite':
       case 'Parent':
       case 'Ancestor':
-      case 'CrossProtocolRef':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.protocol);
+      case 'CrossModuleRef':
+        return this.fetchRecordsByRecordId(ref.recordId, ref.module);
       case 'Role':
         return this.fetchRoleRecord(ref);
       case 'Grant':
@@ -1145,44 +1145,44 @@ export class RemoteApplyPushContext {
     return { kind: 'fetched', entries: [result.entry] };
   }
 
-  private async fetchProtocolConfig(protocol: string): Promise<FetchDependencyResult> {
-    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ProtocolsQuery, protocol);
+  private async fetchModuleConfig(module: string): Promise<FetchDependencyResult> {
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.ModulesQuery, module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
-        filter: { protocol },
+        filter: { module },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
-      messageType : DwnInterface.ProtocolsQuery,
+      messageType : DwnInterface.ModulesQuery,
       target      : this.deps.did,
     });
 
-    const protocolsReply = reply as ProtocolsQueryReply;
-    if (protocolsReply.status.code !== 200 || protocolsReply.entries === undefined) {
+    const modulesReply = reply as ModulesQueryReply;
+    if (modulesReply.status.code !== 200 || modulesReply.entries === undefined) {
       return {
         kind            : 'failed',
-        localStatusCode : protocolsReply.status.code,
-        detail          : `local protocol query failed for ${protocol}: ${protocolsReply.status.code} ${protocolsReply.status.detail ?? ''}`,
+        localStatusCode : modulesReply.status.code,
+        detail          : `local module query failed for ${module}: ${modulesReply.status.code} ${modulesReply.status.detail ?? ''}`,
       };
     }
 
-    const config = newestProtocolConfig(protocolsReply.entries.filter(isTenantProtocolConfig(this.deps.did, protocol)));
+    const config = newestModuleConfig(modulesReply.entries.filter(isTenantModuleConfig(this.deps.did, module)));
     const entries = config === undefined ? [] : [{ message: config }];
     return { kind: 'fetched', entries };
   }
 
-  private async fetchRecordsByRecordId(recordId: string, protocol?: string): Promise<FetchDependencyResult> {
-    const permissionGrantId = protocol === undefined
+  private async fetchRecordsByRecordId(recordId: string, module?: string): Promise<FetchDependencyResult> {
+    const permissionGrantId = module === undefined
       ? undefined
-      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
-        filter: { recordId, ...(protocol === undefined ? {} : { protocol }) },
+        filter: { recordId, ...(module === undefined ? {} : { module }) },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
       },
       messageType : DwnInterface.RecordsQuery,
@@ -1202,17 +1202,17 @@ export class RemoteApplyPushContext {
   }
 
   private async fetchRoleRecord(ref: Extract<DependencyRef, { type: 'Role' }>): Promise<FetchDependencyResult> {
-    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, ref.protocol);
+    const permissionGrantId = await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsQuery, ref.module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
-    const key = getRoleKey(ref.protocol, ref.protocolPath, ref.recipient, ref.contextPrefix);
+    const key = getRoleKey(ref.module, ref.modulePath, ref.recipient, ref.contextPrefix);
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,
       granteeDid,
       messageParams : {
         filter: {
-          protocol     : ref.protocol,
-          protocolPath : ref.protocolPath,
-          recipient    : ref.recipient,
+          module     : ref.module,
+          modulePath : ref.modulePath,
+          recipient  : ref.recipient,
           ...(ref.contextPrefix === undefined ? {} : { contextId: ref.contextPrefix }),
         },
         ...(permissionGrantId === undefined ? {} : { permissionGrantId }),
@@ -1241,7 +1241,7 @@ export class RemoteApplyPushContext {
         did                : this.deps.did,
         delegateDid        : this.deps.delegateDid,
         permissionGrantIds : this.deps.permissionGrantIds,
-        filters            : [{ protocol: ref.protocol, protocolPathPrefix: ref.protocolPath }],
+        filters            : [{ module: ref.module, modulePathPrefix: ref.modulePath }],
         cursor,
         agent              : this.deps.agent,
       });
@@ -1249,7 +1249,7 @@ export class RemoteApplyPushContext {
         return {
           kind            : 'failed',
           localStatusCode : reply.status.code,
-          detail          : `local encryption control feed query failed for ${ref.protocol}: ${reply.status.code} ${reply.status.detail ?? ''}`,
+          detail          : `local encryption control feed query failed for ${ref.module}: ${reply.status.code} ${reply.status.detail ?? ''}`,
         };
       }
 
@@ -1276,9 +1276,9 @@ export class RemoteApplyPushContext {
   }
 
   private async fetchRecordData(ref: Extract<DependencyRef, { type: 'RecordData' }>): Promise<FetchDependencyResult> {
-    const permissionGrantId = ref.protocol === undefined
+    const permissionGrantId = ref.module === undefined
       ? undefined
-      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.protocol);
+      : await resolveDelegatePermissionGrantId(this.deps, DwnInterface.RecordsRead, ref.module);
     const granteeDid = permissionGrantId === undefined ? undefined : this.deps.delegateDid;
     const { reply } = await this.deps.agent.dwn.processRequest({
       author        : this.deps.delegateDid ?? this.deps.did,

@@ -12,7 +12,7 @@
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
 import type { SyncEngineLevel } from '../../src/sync-engine-level.js';
-import type { GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -37,9 +37,9 @@ type ObservableSyncEngine = {
   _linkControllers: Map<string, { link: { pull: { contiguousAppliedToken?: { messageCid?: string; position?: string } } } }>;
 };
 
-const chatProtocol: ProtocolDefinition = {
+const chatModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://e2e-convergence.xyz/chat',
+  module    : 'https://e2e-convergence.xyz/chat',
   types     : {
     message: {
       schema      : 'https://e2e-convergence.xyz/schemas/message',
@@ -150,24 +150,24 @@ describe('E2E: live sync convergence', () => {
     });
     aliceDid = alice.did.uri;
 
-    // Install protocol locally and on remote.
+    // Install module locally and on remote.
     await harness.agent.dwn.processRequest({
       author        : aliceDid,
       target        : aliceDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     await harness.agent.dwn.sendRequest({
       author        : aliceDid,
       target        : aliceDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
 
     // Register for sync and start live mode.
     await harness.agent.sync.setIdentityOptions({
       did     : aliceDid,
-      options : { protocols: [chatProtocol.protocol] },
+      options : { modules: [chatModule.module] },
     });
     await harness.agent.sync.startSync({ interval: '30s' });
     expect(harness.agent.sync.hasActiveSubscriptions).toBe(true);
@@ -190,10 +190,10 @@ describe('E2E: live sync convergence', () => {
         target        : aliceDid,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'message',
-          schema       : chatProtocol.types.message.schema,
-          dataFormat   : 'text/plain',
+          module     : chatModule.module,
+          modulePath : 'message',
+          schema     : chatModule.types.message.schema,
+          dataFormat : 'text/plain',
         },
         dataStream: new Blob([dataBytes]),
       });
@@ -207,7 +207,7 @@ describe('E2E: live sync convergence', () => {
           target        : aliceDid,
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
-            filter: { protocol: chatProtocol.protocol, recordId },
+            filter: { module: chatModule.module, recordId },
           },
         });
         return remoteResult.reply.status.code === 200 && (remoteResult.reply.entries?.length ?? 0) > 0;
@@ -225,10 +225,10 @@ describe('E2E: live sync convergence', () => {
       target        : aliceDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'message',
-        schema       : chatProtocol.types.message.schema,
-        dataFormat   : 'text/plain',
+        module     : chatModule.module,
+        modulePath : 'message',
+        schema     : chatModule.types.message.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([pullTestData]),
     });
@@ -240,7 +240,7 @@ describe('E2E: live sync convergence', () => {
       target        : aliceDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
-        filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
+        filter: { module: chatModule.module, recordId: pullRecordId },
       },
     });
     expect(beforePull.reply.entries?.length ?? 0).toBe(0);
@@ -251,7 +251,7 @@ describe('E2E: live sync convergence', () => {
         target        : aliceDid,
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
-          filter: { protocol: chatProtocol.protocol, recordId: pullRecordId },
+          filter: { module: chatModule.module, recordId: pullRecordId },
         },
       });
       return afterPull.reply.status.code === 200 && afterPull.reply.entries?.length === 1;
@@ -268,10 +268,10 @@ describe('E2E: live sync convergence', () => {
         target        : aliceDid,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'message',
-          schema       : chatProtocol.types.message.schema,
-          dataFormat   : 'text/plain',
+          module     : chatModule.module,
+          modulePath : 'message',
+          schema     : chatModule.types.message.schema,
+          dataFormat : 'text/plain',
         },
         dataStream: new Blob([dataBytes]),
       });
@@ -291,10 +291,10 @@ describe('E2E: live sync convergence', () => {
       target        : aliceDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'message',
-        schema       : chatProtocol.types.message.schema,
-        dataFormat   : 'text/plain',
+        module     : chatModule.module,
+        modulePath : 'message',
+        schema     : chatModule.types.message.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([dataBytes]),
     });

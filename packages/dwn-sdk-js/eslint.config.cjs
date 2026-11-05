@@ -91,8 +91,8 @@ module.exports = [{
   // Importing `MessageStore` here would open a validation read outside the reader surface.
   files: [
     'src/core/*grant-authorization*.ts',
-    'src/core/protocol-authorization*.ts',
-    'src/protocols/permissions*.ts',
+    'src/core/module-authorization*.ts',
+    'src/modules/permissions*.ts',
   ],
   rules: {
     'no-restricted-imports': ['error', {

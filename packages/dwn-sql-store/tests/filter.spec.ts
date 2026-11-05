@@ -30,8 +30,8 @@ describe('filterSelectQuery', () => {
       .addColumn('interface', 'varchar(20)')
       .addColumn('method', 'varchar(20)')
       .addColumn('recordId', 'varchar(60)')
-      .addColumn('protocol', 'varchar(200)')
-      .addColumn('protocolPath', 'varchar(200)')
+      .addColumn('module', 'varchar(200)')
+      .addColumn('modulePath', 'varchar(200)')
       .addColumn('schema', 'varchar(200)')
       .addColumn('author', 'varchar(255)')
       .addColumn('messageTimestamp', 'varchar(30)')
@@ -69,7 +69,7 @@ describe('filterSelectQuery', () => {
     messageCid: string;
     interface?: string;
     method?: string;
-    protocol?: string;
+    module?: string;
     author?: string;
     dataFormat?: string;
     messageTimestamp?: string;
@@ -85,7 +85,7 @@ describe('filterSelectQuery', () => {
         encodedData         : null,
         interface           : values.interface ?? null,
         method              : values.method ?? null,
-        protocol            : values.protocol ?? null,
+        module              : values.module ?? null,
         author              : values.author ?? null,
         dataFormat          : values.dataFormat ?? null,
         messageTimestamp    : values.messageTimestamp ?? null,
@@ -117,10 +117,10 @@ describe('filterSelectQuery', () => {
 
   describe('EqualFilter', () => {
     it('should filter by exact string match', async () => {
-      await insertMessage({ tenant: 't1', messageCid: 'cid-1', protocol: 'proto-a' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-2', protocol: 'proto-b' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'proto-a' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'proto-b' });
 
-      const filters: Filter[] = [{ protocol: 'proto-a' }];
+      const filters: Filter[] = [{ module: 'proto-a' }];
 
       let query = db
         .selectFrom('messageStoreMessages')
@@ -361,13 +361,13 @@ describe('filterSelectQuery', () => {
 
   describe('multiple filters (OR)', () => {
     it('should combine multiple filters as OR', async () => {
-      await insertMessage({ tenant: 't1', messageCid: 'cid-1', protocol: 'proto-a', method: 'Write' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-2', protocol: 'proto-b', method: 'Read' });
-      await insertMessage({ tenant: 't1', messageCid: 'cid-3', protocol: 'proto-c', method: 'Delete' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-1', module: 'proto-a', method: 'Write' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-2', module: 'proto-b', method: 'Read' });
+      await insertMessage({ tenant: 't1', messageCid: 'cid-3', module: 'proto-c', method: 'Delete' });
 
-      // Filter 1: protocol = proto-a, Filter 2: method = Delete => OR => cid-1 and cid-3
+      // Filter 1: module = proto-a, Filter 2: method = Delete => OR => cid-1 and cid-3
       const filters: Filter[] = [
-        { protocol: 'proto-a' },
+        { module: 'proto-a' },
         { method: 'Delete' },
       ];
 
@@ -441,19 +441,19 @@ describe('filterSelectQuery', () => {
       const id2 = await insertMessage({ tenant: 't1', messageCid: 'cid-2' });
       const id3 = await insertMessage({ tenant: 't1', messageCid: 'cid-3' });
 
-      await insertTag(id1, 'protocol', 'https://example.com/chat');
+      await insertTag(id1, 'module', 'https://example.com/chat');
       await insertTag(id1, 'contextId', 'thread1');
       await insertTag(id1, 'role', 'thread/participant');
       await insertTag(id1, 'epoch', undefined, 1);
       await insertTag(id1, 'keyId', 'key1');
 
-      await insertTag(id2, 'protocol', 'https://example.com/chat');
+      await insertTag(id2, 'module', 'https://example.com/chat');
       await insertTag(id2, 'contextId', 'thread1');
       await insertTag(id2, 'role', 'thread/moderator');
       await insertTag(id2, 'epoch', undefined, 1);
       await insertTag(id2, 'keyId', 'key1');
 
-      await insertTag(id3, 'protocol', 'https://example.com/chat');
+      await insertTag(id3, 'module', 'https://example.com/chat');
       await insertTag(id3, 'contextId', 'thread2');
       await insertTag(id3, 'role', 'thread/participant');
       await insertTag(id3, 'epoch', undefined, 1);
@@ -463,7 +463,7 @@ describe('filterSelectQuery', () => {
         'tag.contextId' : 'thread1',
         'tag.epoch'     : 1,
         'tag.keyId'     : 'key1',
-        'tag.protocol'  : 'https://example.com/chat',
+        'tag.module'    : 'https://example.com/chat',
         'tag.role'      : 'thread/participant',
       }];
 

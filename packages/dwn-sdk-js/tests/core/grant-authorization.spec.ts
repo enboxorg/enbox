@@ -18,7 +18,7 @@ describe('GrantAuthorization', () => {
         grantee     : 'did:example:grantee',
         dateGranted : '2020-01-01T00:00:00.000Z',
         dateExpires : '2040-01-01T00:00:00.000Z',
-        scope       : { interface: 'Messages', method: 'Sync', protocol: 'https://proto.example' },
+        scope       : { interface: 'Messages', method: 'Sync', module: 'https://proto.example' },
       };
 
       const mockMessage = {
@@ -47,7 +47,7 @@ describe('GrantAuthorization', () => {
         grantee     : 'did:example:grantee',
         dateGranted : '2020-01-01T00:00:00.000Z',
         dateExpires : '2040-01-01T00:00:00.000Z',
-        scope       : { interface: 'Records', method: 'Read', protocol: 'https://proto.example' },
+        scope       : { interface: 'Records', method: 'Read', module: 'https://proto.example' },
       };
 
       for (const method of ['Read', 'Query', 'Subscribe', 'Count']) {
@@ -78,7 +78,7 @@ describe('GrantAuthorization', () => {
         grantee     : 'did:example:grantee',
         dateGranted : '2020-01-01T00:00:00.000Z',
         dateExpires : '2040-01-01T00:00:00.000Z',
-        scope       : { interface: 'Records', method: 'Write', protocol: 'https://proto.example' },
+        scope       : { interface: 'Records', method: 'Write', module: 'https://proto.example' },
       };
 
       for (const method of ['Read', 'Query', 'Subscribe', 'Count']) {
@@ -109,7 +109,7 @@ describe('GrantAuthorization', () => {
         grantee     : 'did:example:grantee',
         dateGranted : '2020-01-01T00:00:00.000Z',
         dateExpires : '2040-01-01T00:00:00.000Z',
-        scope       : { interface: 'Records', method: 'Read', protocol: 'https://proto.example' },
+        scope       : { interface: 'Records', method: 'Read', module: 'https://proto.example' },
       };
 
       const mockMessage = {
@@ -139,7 +139,7 @@ describe('GrantAuthorization', () => {
           grantee     : 'did:example:grantee',
           dateGranted : '2020-01-01T00:00:00.000Z',
           dateExpires : '2040-01-01T00:00:00.000Z',
-          scope       : { interface: 'Records', method, protocol: 'https://proto.example' },
+          scope       : { interface: 'Records', method, module: 'https://proto.example' },
         };
 
         const mockMessage = {

@@ -10,12 +10,12 @@ import type { ProgressGapInfo, ProgressToken, SubscriptionListener } from './sub
 export type MessagesFilter = {
   interface?: string;
   method?: string;
-  protocol?: string;
-  /** Exact protocol path filter. */
-  protocolPath?: string;
-  /** Prefix filter for protocolPath. Matches records whose protocolPath equals
+  module?: string;
+  /** Exact module path filter. */
+  modulePath?: string;
+  /** Prefix filter for modulePath. Matches records whose modulePath equals
    *  the prefix or starts with the prefix followed by '/'. */
-  protocolPathPrefix?: string;
+  modulePathPrefix?: string;
   /** Prefix filter for contextId. Matches records whose contextId equals
    *  the prefix or starts with the prefix followed by '/'. */
   contextIdPrefix?: string;
@@ -65,7 +65,7 @@ export type MessagesQueryReplyEntry = {
   seq: string;
   messageCid: string;
   isLatestBaseState: boolean;
-  protocol?: string;
+  module?: string;
   message?: GenericMessage;
   initialWrite?: RecordsWriteMessage;
   encodedData?: string;

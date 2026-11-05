@@ -50,14 +50,14 @@ describe('Encryption — fuzz', () => {
             cek,
             keyInput: {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
               keyId,
               publicKey        : recipientPublicKey,
             },
           });
           const unwrapped = await Encryption.unwrapKey(recipientPrivateKey, {
             algorithm          : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-            derivationScheme   : KeyDerivationScheme.ProtocolPath,
+            derivationScheme   : KeyDerivationScheme.ModulePath,
             encryptedKey       : Encoder.bytesToBase64Url(wrapped.encryptedKey),
             ephemeralPublicKey : wrapped.ephemeralPublicKey,
             keyId,

@@ -5,22 +5,22 @@ import type { Persona } from '../utils/test-data-generator.js';
 import type { DataEncodedRecordsWriteMessage, RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 import type { GenerateFromRecordsWriteOut, GenerateRecordsWriteOutput } from '../utils/test-data-generator.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
+import type { ModuleDefinition, ModuleRuleSet } from '../../src/types/modules-types.js';
 
-import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
-import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
-import credentialIssuanceProtocolDefinition from '../vectors/protocol-definitions/credential-issuance.json' with { type: 'json' };
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
-import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
-import privateProtocol from '../vectors/protocol-definitions/private-protocol.json' with { type: 'json' };
-import recipientCanProtocol from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
+import anyoneCollaborateModuleDefinition from '../vectors/module-definitions/anyone-collaborate.json' with { type: 'json' };
+import authorCanModuleDefinition from '../vectors/module-definitions/author-can.json' with { type: 'json' };
+import credentialIssuanceModuleDefinition from '../vectors/module-definitions/credential-issuance.json' with { type: 'json' };
+import dexModuleDefinition from '../vectors/module-definitions/dex.json' with { type: 'json' };
+import emailModuleDefinition from '../vectors/module-definitions/email.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import messageModuleDefinition from '../vectors/module-definitions/message.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
+import nestedModule from '../vectors/module-definitions/nested.json' with { type: 'json' };
+import privateModule from '../vectors/module-definitions/private-module.json' with { type: 'json' };
+import recipientCanModule from '../vectors/module-definitions/recipient-can.json' with { type: 'json' };
 import sinon from 'sinon';
-import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import socialMediaModuleDefinition from '../vectors/module-definitions/social-media.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -36,8 +36,8 @@ import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/enc
 import { GeneralJwsBuilder } from '../../src/jose/jws/general/builder.js';
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
+import { ModuleAuthorization } from '../../src/core/module-authorization.js';
 import { PermissionConditionPublication } from '../../src/types/permission-types.js';
-import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { RecordsWriteHandler } from '../../src/handlers/records-write.js';
@@ -46,14 +46,14 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
-import { CoreProtocolRegistry, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, PermissionsProtocol, Protocols, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { CoreModuleRegistry, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, Modules, PermissionsModule, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
-import { defaultTestProtocolDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
+import { defaultTestModuleDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
-import { grantProtocolPathWriteAccess } from '../utils/encryption-control-test-utils.js';
+import { grantModulePathWriteAccess } from '../utils/encryption-control-test-utils.js';
 
 type AudienceControlWrite = {
   dataBytes: Uint8Array;
@@ -103,17 +103,17 @@ export function testRecordsWriteHandler(): void {
         await dwn.close();
       });
 
-      async function installEncryptedProtocol(author: Persona, protocolDefinition: ProtocolDefinition): Promise<ProtocolDefinition> {
-        const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(author.keyId, author.encryptionKeyPair.privateJwk)
+      async function installEncryptedModule(author: Persona, moduleDefinition: ModuleDefinition): Promise<ModuleDefinition> {
+        const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+          moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(author.keyId, author.encryptionKeyPair.privateJwk)
         );
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author,
-          protocolDefinition: encryptedProtocolDefinition,
+          moduleDefinition: encryptedModuleDefinition,
         });
-        expect((await dwn.processMessage(author.did, protocolConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(author.did, moduleConfig.message)).status.code).toBe(202);
 
-        return encryptedProtocolDefinition;
+        return encryptedModuleDefinition;
       }
 
       async function createAudienceControlWrite(input: {
@@ -123,11 +123,11 @@ export function testRecordsWriteHandler(): void {
         delegatedGrant?: DataEncodedRecordsWriteMessage;
         payloadOverrides?: Record<string, unknown>;
         permissionGrantId?: string;
-        protocol: string;
-        protocolRole?: string;
+        module: string;
+        moduleRole?: string;
         published?: boolean;
         rolePath: string;
-        roleRuleSet: ProtocolRuleSet;
+        roleRuleSet: ModuleRuleSet;
         sealKeyId?: string;
         signer?: Persona;
         tags?: Record<string, string>;
@@ -136,7 +136,7 @@ export function testRecordsWriteHandler(): void {
         const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
         const sealKeyId = input.sealKeyId ?? await Encryption.getKeyId(input.roleRuleSet.$keyAgreement!.publicKeyJwk);
         const payload = {
-          protocol         : input.protocol,
+          module           : input.module,
           rolePath         : input.rolePath,
           contextId        : input.contextId ?? '',
           keyId            : audienceKeyId,
@@ -158,14 +158,14 @@ export function testRecordsWriteHandler(): void {
           messageTimestamp  : input.dateCreated,
           delegatedGrant    : input.delegatedGrant,
           permissionGrantId : input.permissionGrantId,
-          protocol          : input.protocol,
-          protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          protocolRole      : input.protocolRole,
+          module            : input.module,
+          modulePath        : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          moduleRole        : input.moduleRole,
           published         : input.published,
           schema            : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
           signer            : Jws.createSigner(input.signer ?? input.author),
           tags              : {
-            protocol  : input.protocol,
+            module    : input.module,
             rolePath  : input.rolePath,
             contextId : input.contextId ?? '',
             keyId     : audienceKeyId,
@@ -185,14 +185,14 @@ export function testRecordsWriteHandler(): void {
         author: Persona;
         contextId?: string;
         keyId: string;
-        protocol: string;
+        module: string;
         recipient: string;
         recipientAuthority: string;
         rolePath: string;
-        roleRuleSet: ProtocolRuleSet;
+        roleRuleSet: ModuleRuleSet;
       }): Promise<{ dataBytes: Uint8Array; recordsWrite: RecordsWrite }> {
         const tags: Record<string, string> = {
-          protocol           : input.protocol,
+          module             : input.module,
           rolePath           : input.rolePath,
           contextId          : input.contextId ?? '',
           keyId              : input.keyId,
@@ -200,7 +200,7 @@ export function testRecordsWriteHandler(): void {
         };
 
         const dataBytes = Encoder.objectToBytes({
-          protocol  : input.protocol,
+          module    : input.module,
           rolePath  : input.rolePath,
           contextId : input.contextId ?? '',
           keyId     : input.keyId,
@@ -215,42 +215,42 @@ export function testRecordsWriteHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(input.roleRuleSet.$keyAgreement!.publicKeyJwk),
               publicKey        : input.roleRuleSet.$keyAgreement!.publicKeyJwk,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
             }],
           },
-          protocol     : input.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : input.recipient,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(input.author),
+          module     : input.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : input.recipient,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
+          signer     : Jws.createSigner(input.author),
           tags,
         });
 
         return { dataBytes, recordsWrite };
       }
 
-      it('should dispatch preProcessWrite hook via CoreProtocolRegistry and abort before storage on failure', async () => {
-        // Register a mock core protocol whose preProcessWrite hook throws.
+      it('should dispatch preProcessWrite hook via CoreModuleRegistry and abort before storage on failure', async () => {
+        // Register a mock core module whose preProcessWrite hook throws.
         // Verify that authorization completes but processMessageWithDataStream is never reached.
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const authorizationSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'authorizeRecordsWrite');
         const processDataStreamSpy = sinon.spy(RecordsWriteHandler.prototype as any, 'processMessageWithDataStream');
 
-        // Register a mock core protocol that matches the default test protocol's URI
-        const coreProtocols: CoreProtocolRegistry = (dwn as any)._coreProtocols;
-        const protocolUri = defaultTestProtocolDefinition.protocol;
-        coreProtocols.register({
-          uri             : protocolUri,
-          definition      : defaultTestProtocolDefinition,
+        // Register a mock core module that matches the default test module's URI
+        const coreModules: CoreModuleRegistry = (dwn as any)._coreModules;
+        const moduleUri = defaultTestModuleDefinition.module;
+        coreModules.register({
+          uri             : moduleUri,
+          definition      : defaultTestModuleDefinition,
           preProcessWrite : (): Promise<void> => {
             throw new DwnError(
-              DwnErrorCode.PermissionsProtocolValidateScopeProtocolMismatch, 'mock pre-process failure',
+              DwnErrorCode.PermissionsModuleValidateScopeModuleMismatch, 'mock pre-process failure',
             );
           },
           mapErrorToStatusCode: (code: string): number | undefined => {
-            return code.startsWith('PermissionsProtocolValidate') ? 400 : undefined;
+            return code.startsWith('PermissionsModuleValidate') ? 400 : undefined;
           },
         });
 
@@ -262,14 +262,14 @@ export function testRecordsWriteHandler(): void {
         expect(processDataStreamSpy.called).toBe(false);
 
         // Cleanup: unregister the mock so it doesn't affect other tests
-        (coreProtocols as any)._protocols.delete(protocolUri);
+        (coreModules as any)._modules.delete(moduleUri);
       });
 
-      it('should accept tenant-authored audience control records at the reserved source-protocol path', async () => {
+      it('should accept tenant-authored audience control records at the reserved source-module path', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-accepted.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-accepted.xyz',
           published : false,
           types     : {
             member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -280,11 +280,11 @@ export function testRecordsWriteHandler(): void {
             message : {},
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author   : alice,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
           rolePath : 'member',
           roleRuleSet,
         });
@@ -297,8 +297,8 @@ export function testRecordsWriteHandler(): void {
       it('should reject published encryption control records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-published-rejected.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-published-rejected.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -307,13 +307,13 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           published   : true,
           rolePath    : 'member',
-          roleRuleSet : encryptedProtocolDefinition.structure.member as ProtocolRuleSet,
+          roleRuleSet : encryptedModuleDefinition.structure.member as ModuleRuleSet,
         });
 
         const reply = await dwn.processMessage(alice.did, audience.recordsWrite.message, { dataStream: DataStream.fromBytes(audience.dataBytes) });
@@ -324,8 +324,8 @@ export function testRecordsWriteHandler(): void {
       it('should reject dataless and update attempts for immutable audience control records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-immutable.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-immutable.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -334,11 +334,11 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author   : alice,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
           rolePath : 'member',
           roleRuleSet,
         });
@@ -358,7 +358,7 @@ export function testRecordsWriteHandler(): void {
 
         const datalessAudience = await createAudienceControlWrite({
           author   : alice,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
           rolePath : 'member',
           roleRuleSet,
         });
@@ -371,8 +371,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-seal-mismatch.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-seal-mismatch.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -381,11 +381,11 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author    : alice,
-          protocol  : protocolDefinition.protocol,
+          module    : moduleDefinition.module,
           rolePath  : 'member',
           roleRuleSet,
           sealKeyId : await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk),
@@ -401,7 +401,7 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         const dataBytes = Encoder.objectToBytes({
-          protocol         : 'http://encryption-control-audience-malformed-tags.xyz',
+          module           : 'http://encryption-control-audience-malformed-tags.xyz',
           rolePath         : 'member',
           contextId        : '',
           keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
@@ -415,14 +415,14 @@ export function testRecordsWriteHandler(): void {
           },
         });
         const audience = await RecordsWrite.create({
-          data         : dataBytes,
-          dataFormat   : 'application/json',
-          protocol     : 'http://encryption-control-audience-malformed-tags.xyz',
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol  : 'http://encryption-control-audience-malformed-tags.xyz',
+          data       : dataBytes,
+          dataFormat : 'application/json',
+          module     : 'http://encryption-control-audience-malformed-tags.xyz',
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
+          signer     : Jws.createSigner(alice),
+          tags       : {
+            module    : 'http://encryption-control-audience-malformed-tags.xyz',
             rolePath  : 'member',
             contextId : '',
           },
@@ -437,8 +437,8 @@ export function testRecordsWriteHandler(): void {
       it('should reject delivery control records that reference a missing audience', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delivery-missing-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-delivery-missing-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -447,8 +447,8 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const rolePublicKey = roleRuleSet.$keyAgreement!.publicKeyJwk;
         const missingAudienceKeyId = await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk);
         const dataBytes = Encoder.objectToBytes({ encrypted: true });
@@ -462,16 +462,16 @@ export function testRecordsWriteHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(rolePublicKey),
               publicKey        : rolePublicKey,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
             }],
           },
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : alice.did,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol           : protocolDefinition.protocol,
+          module     : moduleDefinition.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : alice.did,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
+          signer     : Jws.createSigner(alice),
+          tags       : {
+            module             : moduleDefinition.module,
             rolePath           : 'member',
             contextId          : '',
             keyId              : missingAudienceKeyId,
@@ -489,8 +489,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-author-delegate-rejected.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-author-delegate-rejected.xyz',
           published : false,
           types     : {
             member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -501,34 +501,34 @@ export function testRecordsWriteHandler(): void {
             message : {},
           },
         };
-        const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+        const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+          moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
         );
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : encryptedProtocolDefinition,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : encryptedModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
         const grant = await TestDataGenerator.generateGrantCreate({
           author    : alice,
           grantedTo : bob,
           delegated : true,
           scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'message',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'message',
           },
         });
         expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audiencePublicKeyJwk = alice.encryptionKeyPair.publicJwk;
         const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
         const sealKeyId = await Encryption.getKeyId(roleRuleSet.$keyAgreement!.publicKeyJwk);
         const dataBytes = Encoder.objectToBytes({
-          protocol         : protocolDefinition.protocol,
+          module           : moduleDefinition.module,
           rolePath         : 'member',
           contextId        : '',
           keyId            : audienceKeyId,
@@ -545,12 +545,12 @@ export function testRecordsWriteHandler(): void {
           data           : dataBytes,
           dataFormat     : 'application/json',
           delegatedGrant : grant.dataEncodedMessage,
-          protocol       : protocolDefinition.protocol,
-          protocolPath   : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          module         : moduleDefinition.module,
+          modulePath     : ENCRYPTION_CONTROL_AUDIENCE_PATH,
           schema         : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
           signer         : Jws.createSigner(bob),
           tags           : {
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
             rolePath  : 'member',
             contextId : '',
             keyId     : audienceKeyId,
@@ -568,8 +568,8 @@ export function testRecordsWriteHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        const roleProtocol: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-role-writer.xyz',
+        const roleModule: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-role-writer.xyz',
           published : false,
           types     : {
             admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
@@ -583,25 +583,25 @@ export function testRecordsWriteHandler(): void {
             },
           },
         };
-        const encryptedRoleProtocol = await installEncryptedProtocol(alice, roleProtocol);
-        const memberRoleRuleSet = encryptedRoleProtocol.structure.member as ProtocolRuleSet;
+        const encryptedRoleModule = await installEncryptedModule(alice, roleModule);
+        const memberRoleRuleSet = encryptedRoleModule.structure.member as ModuleRuleSet;
         const adminRole = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is an admin'),
-          dataFormat   : 'application/json',
-          protocol     : roleProtocol.protocol,
-          protocolPath : 'admin',
-          recipient    : bob.did,
-          schema       : 'http://admin-schema',
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is an admin'),
+          dataFormat : 'application/json',
+          module     : roleModule.module,
+          modulePath : 'admin',
+          recipient  : bob.did,
+          schema     : 'http://admin-schema',
         });
         expect((await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream })).status.code).toBe(202);
 
         const roleAudience = await createAudienceControlWrite({
-          author       : bob,
-          protocol     : roleProtocol.protocol,
-          protocolRole : 'admin',
-          rolePath     : 'member',
-          roleRuleSet  : memberRoleRuleSet,
+          author      : bob,
+          module      : roleModule.module,
+          moduleRole  : 'admin',
+          rolePath    : 'member',
+          roleRuleSet : memberRoleRuleSet,
         });
         expect(
           (await dwn.processMessage(alice.did, roleAudience.recordsWrite.message, {
@@ -609,8 +609,8 @@ export function testRecordsWriteHandler(): void {
           })).status.code
         ).toBe(202);
 
-        const grantProtocol: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-delegated-writer.xyz',
+        const grantModule: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-delegated-writer.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -619,17 +619,17 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedGrantProtocol = await installEncryptedProtocol(alice, grantProtocol);
-        const grantRoleRuleSet = encryptedGrantProtocol.structure.member as ProtocolRuleSet;
+        const encryptedGrantModule = await installEncryptedModule(alice, grantModule);
+        const grantRoleRuleSet = encryptedGrantModule.structure.member as ModuleRuleSet;
         const grant = await TestDataGenerator.generateGrantCreate({
           author    : alice,
           grantedTo : carol,
           delegated : true,
           scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : grantProtocol.protocol,
-            protocolPath : 'member',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : grantModule.module,
+            modulePath : 'member',
           },
         });
         expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
@@ -637,7 +637,7 @@ export function testRecordsWriteHandler(): void {
         const delegatedAudience = await createAudienceControlWrite({
           author         : alice,
           delegatedGrant : grant.dataEncodedMessage,
-          protocol       : grantProtocol.protocol,
+          module         : grantModule.module,
           rolePath       : 'member',
           roleRuleSet    : grantRoleRuleSet,
           signer         : carol,
@@ -652,10 +652,10 @@ export function testRecordsWriteHandler(): void {
           author    : alice,
           grantedTo : bob,
           scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : grantProtocol.protocol,
-            protocolPath : 'member',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : grantModule.module,
+            modulePath : 'member',
           },
         });
         expect((await dwn.processMessage(alice.did, directGrant.message, { dataStream: directGrant.dataStream })).status.code).toBe(202);
@@ -663,7 +663,7 @@ export function testRecordsWriteHandler(): void {
         const directGrantAudience = await createAudienceControlWrite({
           author            : bob,
           permissionGrantId : directGrant.message.recordId,
-          protocol          : grantProtocol.protocol,
+          module            : grantModule.module,
           rolePath          : 'member',
           roleRuleSet       : grantRoleRuleSet,
         });
@@ -678,8 +678,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delegated-publication-condition.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-delegated-publication-condition.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -688,17 +688,17 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const grant = await TestDataGenerator.generateGrantCreate({
           author    : alice,
           grantedTo : bob,
           delegated : true,
           scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Write,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'member',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
           },
           conditions: {
             publication: PermissionConditionPublication.Required,
@@ -709,7 +709,7 @@ export function testRecordsWriteHandler(): void {
         const audience = await createAudienceControlWrite({
           author         : alice,
           delegatedGrant : grant.dataEncodedMessage,
-          protocol       : protocolDefinition.protocol,
+          module         : moduleDefinition.module,
           published      : false,
           rolePath       : 'member',
           roleRuleSet,
@@ -725,8 +725,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-audience-malformed-payload.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-audience-malformed-payload.xyz',
           published : false,
           types     : {
             chat   : { schema: 'http://chat-schema', dataFormats: ['application/json'] },
@@ -739,14 +739,14 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const rootRoleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
-        const nestedRoleRuleSet = (encryptedProtocolDefinition.structure.chat as ProtocolRuleSet).member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const rootRoleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
+        const nestedRoleRuleSet = (encryptedModuleDefinition.structure.chat as ModuleRuleSet).member as ModuleRuleSet;
 
         const payloadMismatch = await createAudienceControlWrite({
           author           : alice,
           payloadOverrides : { rolePath: 'other' },
-          protocol         : protocolDefinition.protocol,
+          module           : moduleDefinition.module,
           rolePath         : 'member',
           roleRuleSet      : rootRoleRuleSet,
         });
@@ -761,7 +761,7 @@ export function testRecordsWriteHandler(): void {
         const keyMismatch = await createAudienceControlWrite({
           author           : alice,
           payloadOverrides : { publicKeyJwk: bob.encryptionKeyPair.publicJwk },
-          protocol         : protocolDefinition.protocol,
+          module           : moduleDefinition.module,
           rolePath         : 'member',
           roleRuleSet      : rootRoleRuleSet,
         });
@@ -776,7 +776,7 @@ export function testRecordsWriteHandler(): void {
         const rootWithContext = await createAudienceControlWrite({
           author      : alice,
           contextId   : 'root-context',
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet : rootRoleRuleSet,
         });
@@ -790,7 +790,7 @@ export function testRecordsWriteHandler(): void {
 
         const nestedWithoutContext = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'chat/member',
           roleRuleSet : nestedRoleRuleSet,
         });
@@ -802,27 +802,27 @@ export function testRecordsWriteHandler(): void {
         expect(nestedWithoutContextReply.status.code).toBe(400);
         expect(nestedWithoutContextReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceContextIdInvalid);
 
-        const protocolTagMismatch = await createAudienceControlWrite({
+        const moduleTagMismatch = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet : rootRoleRuleSet,
-          tags        : { protocol: 'http://mismatched-control-tag.xyz' },
+          tags        : { module: 'http://mismatched-control-tag.xyz' },
         });
-        const protocolTagMismatchReply = await dwn.processMessage(
+        const moduleTagMismatchReply = await dwn.processMessage(
           alice.did,
-          protocolTagMismatch.recordsWrite.message,
-          { dataStream: DataStream.fromBytes(protocolTagMismatch.dataBytes) }
+          moduleTagMismatch.recordsWrite.message,
+          { dataStream: DataStream.fromBytes(moduleTagMismatch.dataBytes) }
         );
-        expect(protocolTagMismatchReply.status.code).toBe(400);
-        expect(protocolTagMismatchReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceTagsMismatch);
+        expect(moduleTagMismatchReply.status.code).toBe(400);
+        expect(moduleTagMismatchReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceTagsMismatch);
       });
 
       it('should reject audience control records for role paths without key agreement material', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-role-without-keyagreement.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-role-without-keyagreement.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -831,17 +831,17 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition,
+          moduleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
-          roleRuleSet : protocolDefinition.structure.member as ProtocolRuleSet,
+          roleRuleSet : moduleDefinition.structure.member as ModuleRuleSet,
           sealKeyId   : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
         });
         const reply = await dwn.processMessage(
@@ -857,8 +857,8 @@ export function testRecordsWriteHandler(): void {
       it('should reject oversized inline audience control records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-oversized-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-oversized-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -867,12 +867,12 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author           : alice,
           payloadOverrides : { filler: 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded) },
-          protocol         : protocolDefinition.protocol,
+          module           : moduleDefinition.module,
           rolePath         : 'member',
           roleRuleSet,
         });
@@ -887,8 +887,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delivery-authorities.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-delivery-authorities.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -899,11 +899,11 @@ export function testRecordsWriteHandler(): void {
             },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const memberRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet : memberRuleSet,
         });
@@ -912,20 +912,20 @@ export function testRecordsWriteHandler(): void {
         ).toBe(202);
 
         const memberRole = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is a member'),
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          recipient    : bob.did,
-          schema       : 'http://member-schema',
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is a member'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          recipient  : bob.did,
+          schema     : 'http://member-schema',
         });
         expect((await dwn.processMessage(alice.did, memberRole.message, { dataStream: memberRole.dataStream })).status.code).toBe(202);
 
         const roleHolderDelivery = await createDeliveryControlWrite({
           author             : alice,
           keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
+          module             : moduleDefinition.module,
           recipient          : bob.did,
           recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
           rolePath           : 'member',
@@ -942,8 +942,8 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delivery-malformed.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-delivery-malformed.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -952,11 +952,11 @@ export function testRecordsWriteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-        const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const memberRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
           roleRuleSet : memberRuleSet,
         });
@@ -964,17 +964,17 @@ export function testRecordsWriteHandler(): void {
           (await dwn.processMessage(alice.did, audience.recordsWrite.message, { dataStream: DataStream.fromBytes(audience.dataBytes) })).status.code
         ).toBe(202);
 
-        const unencryptedData = Encoder.objectToBytes({ protocol: protocolDefinition.protocol });
+        const unencryptedData = Encoder.objectToBytes({ module: moduleDefinition.module });
         const unencryptedDelivery = await RecordsWrite.create({
-          data         : unencryptedData,
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : bob.did,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol           : protocolDefinition.protocol,
+          data       : unencryptedData,
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : bob.did,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
+          signer     : Jws.createSigner(alice),
+          tags       : {
+            module             : moduleDefinition.module,
             rolePath           : 'member',
             contextId          : '',
             keyId              : audience.keyId,
@@ -989,7 +989,7 @@ export function testRecordsWriteHandler(): void {
         expect(unencryptedReply.status.code).toBe(400);
         expect(unencryptedReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateUnexpectedRecord);
 
-        const noRecipientData = Encoder.objectToBytes({ protocol: protocolDefinition.protocol });
+        const noRecipientData = Encoder.objectToBytes({ module: moduleDefinition.module });
         const noRecipientDelivery = await RecordsWrite.create({
           data            : noRecipientData,
           dataFormat      : 'application/json',
@@ -1000,15 +1000,15 @@ export function testRecordsWriteHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(memberRuleSet.$keyAgreement!.publicKeyJwk),
               publicKey        : memberRuleSet.$keyAgreement!.publicKeyJwk,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
             }],
           },
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol           : protocolDefinition.protocol,
+          module     : moduleDefinition.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
+          signer     : Jws.createSigner(alice),
+          tags       : {
+            module             : moduleDefinition.module,
             rolePath           : 'member',
             contextId          : '',
             keyId              : audience.keyId,
@@ -1026,7 +1026,7 @@ export function testRecordsWriteHandler(): void {
         const invalidAuthorityDelivery = await createDeliveryControlWrite({
           author             : alice,
           keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
+          module             : moduleDefinition.module,
           recipient          : bob.did,
           recipientAuthority : 'unknown',
           rolePath           : 'member',
@@ -1043,7 +1043,7 @@ export function testRecordsWriteHandler(): void {
         const unauthorizedRoleHolderDelivery = await createDeliveryControlWrite({
           author             : alice,
           keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
+          module             : moduleDefinition.module,
           recipient          : bob.did,
           recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
           rolePath           : 'member',
@@ -1061,25 +1061,25 @@ export function testRecordsWriteHandler(): void {
 
       it('should not treat lookalike encryption control paths as reserved paths', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : defaultTestProtocolDefinition.protocol,
-          protocolPath : '$encryptionx/audience',
+          author     : alice,
+          module     : defaultTestModuleDefinition.module,
+          modulePath : '$encryptionx/audience',
         });
 
         const reply = await dwn.processMessage(alice.did, message, { dataStream });
 
         expect(reply.status.code).toBe(400);
         expect(reply.status.detail).toContain('SchemaValidatorFailure');
-        expect(reply.status.detail).toContain('protocolPath: must match pattern');
+        expect(reply.status.detail).toContain('modulePath: must match pattern');
       });
 
       it('should only be able to overwrite existing record if new record has a later `messageTimestamp` value', async () => {
       // write a message into DB
         const author = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
         const data1 = new TextEncoder().encode('data1');
         const recordsWriteMessageData = await TestDataGenerator.generateRecordsWrite({ author, data: data1 });
 
@@ -1137,7 +1137,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 409 for an exact duplicate initial RecordsWrite with large data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
@@ -1155,7 +1155,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should store and deduplicate an exact RecordsWrite with empty data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = new Uint8Array();
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
         const messageCid = await Message.getCid(message);
@@ -1175,30 +1175,30 @@ export function testRecordsWriteHandler(): void {
       it('should return 409 for an exact duplicate RecordsWrite before mutable parent validation', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = nestedProtocol as ProtocolDefinition;
-        const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+        const moduleDefinition = nestedModule as ModuleDefinition;
+        const modulesConfig = await TestDataGenerator.generateModulesConfigure({
           author: alice,
-          protocolDefinition
+          moduleDefinition
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         const parentWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
-          schema       : protocolDefinition.types.foo.schema,
-          dataFormat   : protocolDefinition.types.foo.dataFormats![0],
+          author     : alice,
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : moduleDefinition.types.foo.schema,
+          dataFormat : moduleDefinition.types.foo.dataFormats![0],
         });
         const parentWriteReply = await dwn.processMessage(alice.did, parentWrite.message, { dataStream: parentWrite.dataStream });
         expect(parentWriteReply.status.code).toBe(202);
 
         const childWrite = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'foo/bar',
-          schema          : protocolDefinition.types.bar.schema,
-          dataFormat      : protocolDefinition.types.bar.dataFormats![0],
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar',
+          schema          : moduleDefinition.types.bar.schema,
+          dataFormat      : moduleDefinition.types.bar.dataFormats![0],
           parentContextId : parentWrite.message.contextId,
         });
         const childWriteReply = await dwn.processMessage(alice.did, childWrite.message, { dataStream: childWrite.dataStream });
@@ -1224,7 +1224,7 @@ export function testRecordsWriteHandler(): void {
 
         // setting up a stub DID resolver
         TestStubGenerator.stubDidResolver(didResolver, [author]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
 
         const originatingMessageData = await TestDataGenerator.generateRecordsWrite({
           author,
@@ -1310,7 +1310,7 @@ export function testRecordsWriteHandler(): void {
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
 
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author });
         const initialWriteReply = await dwn.processMessage(tenant, initialWriteData.message, { dataStream: initialWriteData.dataStream });
@@ -1344,7 +1344,7 @@ export function testRecordsWriteHandler(): void {
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
 
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author });
         const initialWriteReply = await dwn.processMessage(tenant, initialWriteData.message, { dataStream: initialWriteData.dataStream });
@@ -1387,7 +1387,7 @@ export function testRecordsWriteHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const mallory = await TestDataGenerator.generatePersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const initialWrite = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -1397,14 +1397,14 @@ export function testRecordsWriteHandler(): void {
         expect(initialReply.status.code).toBe(202);
 
         const forgedWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : mallory,
-          recordId     : initialWrite.message.recordId,
-          recipient    : mallory.did,
-          protocol     : initialWrite.message.descriptor.protocol,
-          protocolPath : initialWrite.message.descriptor.protocolPath,
-          schema       : initialWrite.message.descriptor.schema,
-          dataFormat   : initialWrite.message.descriptor.dataFormat,
-          dateCreated  : initialWrite.message.descriptor.dateCreated,
+          author      : mallory,
+          recordId    : initialWrite.message.recordId,
+          recipient   : mallory.did,
+          module      : initialWrite.message.descriptor.module,
+          modulePath  : initialWrite.message.descriptor.modulePath,
+          schema      : initialWrite.message.descriptor.schema,
+          dataFormat  : initialWrite.message.descriptor.dataFormat,
+          dateCreated : initialWrite.message.descriptor.dateCreated,
         });
 
         const reply = await dwn.processMessage(alice.did, forgedWrite.message, { dataStream: forgedWrite.dataStream });
@@ -1420,7 +1420,7 @@ export function testRecordsWriteHandler(): void {
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
 
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
           author,
@@ -1456,7 +1456,7 @@ export function testRecordsWriteHandler(): void {
         // the DWN should accept an initial write without data, however prevent the user from querying for it until it's updated.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const { recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
@@ -1499,7 +1499,7 @@ export function testRecordsWriteHandler(): void {
         // the DWN should accept an initial write without data, however prevent the user from querying for it until it's updated.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // write a record into the dwn
         const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -1544,7 +1544,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
-          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+          await TestDataGenerator.installDefaultTestModule(dwn, author);
 
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
             author,
@@ -1581,7 +1581,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
-          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+          await TestDataGenerator.installDefaultTestModule(dwn, author);
 
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
             author,
@@ -1617,7 +1617,7 @@ export function testRecordsWriteHandler(): void {
       describe('should return 400 if actual data size mismatches with `dataSize` in descriptor', () => {
         it('with dataStream and `dataSize` larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -1648,7 +1648,7 @@ export function testRecordsWriteHandler(): void {
 
         it('with only `dataSize` larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
@@ -1679,7 +1679,7 @@ export function testRecordsWriteHandler(): void {
 
         it('with only dataStream larger than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author : alice,
             data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -1710,7 +1710,7 @@ export function testRecordsWriteHandler(): void {
 
         it('with both `dataSize` and dataStream below than encodedData threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
             author: alice
           });
@@ -1741,7 +1741,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with both dataStream and `dataSize` larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -1756,7 +1756,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with `dataSize` larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1)
@@ -1771,7 +1771,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with dataStream larger than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
@@ -1786,7 +1786,7 @@ export function testRecordsWriteHandler(): void {
 
       it('should return 400 for data CID mismatch with both dataStream and `dataSize` below than encodedData threshold', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message } = await TestDataGenerator.generateRecordsWrite({
           author : alice,
           data   : TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded)
@@ -1801,7 +1801,7 @@ export function testRecordsWriteHandler(): void {
 
       it('#359 - should not allow access of data by referencing a different`dataCid` in "modify" `RecordsWrite` with large data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // alice writes a record
         const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -1824,13 +1824,13 @@ export function testRecordsWriteHandler(): void {
 
         // modify write2 by referencing the `dataCid` in write1 (which should not be allowed)
         const write2Change = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : write2.message.descriptor.recipient,
-          recordId     : write2.message.recordId,
-          dateCreated  : write2.message.descriptor.dateCreated,
-          protocolPath : write2.message.descriptor.protocolPath,
-          schema       : write2.message.descriptor.schema,
-          dataFormat   : write2.message.descriptor.dataFormat,
+          author      : alice,
+          recipient   : write2.message.descriptor.recipient,
+          recordId    : write2.message.recordId,
+          dateCreated : write2.message.descriptor.dateCreated,
+          modulePath  : write2.message.descriptor.modulePath,
+          schema      : write2.message.descriptor.schema,
+          dataFormat  : write2.message.descriptor.dataFormat,
           // unauthorized reference to data in write1
           dataCid,
           dataSize
@@ -1856,7 +1856,7 @@ export function testRecordsWriteHandler(): void {
 
       it('#359 - should not allow access of data by referencing a different`dataCid` in "modify" `RecordsWrite`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // alice writes a record
         const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded);
@@ -1879,13 +1879,13 @@ export function testRecordsWriteHandler(): void {
 
         // modify write2 by referencing the `dataCid` in write1 (which should not be allowed)
         const write2Change = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          recipient    : write2.message.descriptor.recipient,
-          recordId     : write2.message.recordId,
-          dateCreated  : write2.message.descriptor.dateCreated,
-          protocolPath : write2.message.descriptor.protocolPath,
-          schema       : write2.message.descriptor.schema,
-          dataFormat   : write2.message.descriptor.dataFormat,
+          author      : alice,
+          recipient   : write2.message.descriptor.recipient,
+          recordId    : write2.message.recordId,
+          dateCreated : write2.message.descriptor.dateCreated,
+          modulePath  : write2.message.descriptor.modulePath,
+          schema      : write2.message.descriptor.schema,
+          dataFormat  : write2.message.descriptor.dataFormat,
           // unauthorized reference to data in write1
           dataCid,
           dataSize
@@ -1920,7 +1920,7 @@ export function testRecordsWriteHandler(): void {
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [author]);
-            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+            await TestDataGenerator.installDefaultTestModule(dwn, author);
 
             // new record
             const { message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -1963,7 +1963,7 @@ export function testRecordsWriteHandler(): void {
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [author]);
-            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+            await TestDataGenerator.installDefaultTestModule(dwn, author);
 
             const { message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
               author,
@@ -2010,7 +2010,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
-          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+          await TestDataGenerator.installDefaultTestModule(dwn, author);
           const reply = await dwn.processMessage(tenant, message, { dataStream });
 
           expect(reply.status.code).toBe(400);
@@ -2025,7 +2025,7 @@ export function testRecordsWriteHandler(): void {
           const tenant = author.did;
 
           TestStubGenerator.stubDidResolver(didResolver, [author]);
-          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+          await TestDataGenerator.installDefaultTestModule(dwn, author);
 
           const reply = await dwn.processMessage(tenant, message, { dataStream });
 
@@ -2033,9 +2033,9 @@ export function testRecordsWriteHandler(): void {
           expect(reply.status.detail).toContain('must match dateCreated');
         });
 
-        it('should return 400 if `contextId` in an initial protocol-base write mismatches with the expected deterministic `contextId`', async () => {
-        // generate a message with protocol so that computed contextId is also computed and included in message
-          const { message, dataStream, author } = await TestDataGenerator.generateRecordsWrite({ protocol: 'http://any.value', protocolPath: 'any/value' });
+        it('should return 400 if `contextId` in an initial module-base write mismatches with the expected deterministic `contextId`', async () => {
+        // generate a message with module so that computed contextId is also computed and included in message
+          const { message, dataStream, author } = await TestDataGenerator.generateRecordsWrite({ module: 'http://any.value', modulePath: 'any/value' });
 
           message.contextId = await TestDataGenerator.randomCborSha256Cid(); // make contextId mismatch from computed value
 
@@ -2050,7 +2050,7 @@ export function testRecordsWriteHandler(): void {
           it('should add an entry to the message store on initial write', async () => {
             const author = await TestDataGenerator.generatePersona();
             TestStubGenerator.stubDidResolver(didResolver, [author]);
-            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+            await TestDataGenerator.installDefaultTestModule(dwn, author);
 
             const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author });
             const reply = await dwn.processMessage(author.did, message, { dataStream });
@@ -2063,7 +2063,7 @@ export function testRecordsWriteHandler(): void {
           it('should only keep first write and latest write when subsequent writes happen', async () => {
             const author = await TestDataGenerator.generatePersona();
             TestStubGenerator.stubDidResolver(didResolver, [author]);
-            await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+            await TestDataGenerator.installDefaultTestModule(dwn, author);
 
             const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author });
             const reply = await dwn.processMessage(author.did, message, { dataStream });
@@ -2098,23 +2098,23 @@ export function testRecordsWriteHandler(): void {
 
       });
 
-      describe('protocol based writes', () => {
-        it('should enforce the validated squash policy without a second protocol lookup', async () => {
+      describe('module based writes', () => {
+        it('should enforce the validated squash policy without a second module lookup', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          const protocol = 'http://single-squash-policy-lookup.xyz';
+          const module = 'http://single-squash-policy-lookup.xyz';
           const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
           const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
           const olderRecord = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'entry',
+            module,
+            modulePath       : 'entry',
             messageTimestamp : olderTimestamp,
             dateCreated      : olderTimestamp,
           });
           const squashRecord = await TestDataGenerator.generateRecordsWrite({
             author           : alice,
-            protocol,
-            protocolPath     : 'entry',
+            module,
+            modulePath       : 'entry',
             messageTimestamp : squashTimestamp,
             dateCreated      : squashTimestamp,
             squash           : true,
@@ -2127,21 +2127,21 @@ export function testRecordsWriteHandler(): void {
             messageStore : messageStoreStub,
             dataStore    : dataStoreStub,
           });
-          const protocolLookup = sinon.stub(validationStateReader, 'fetchProtocolDefinition').rejects(
+          const moduleLookup = sinon.stub(validationStateReader, 'fetchModuleDefinition').rejects(
             new Error('a redundant policy lookup would fail'),
           );
           const squashLookup = sinon.stub(validationStateReader, 'fetchLatestSquashRecordAtScope').resolves(
             squashRecord.message,
           );
           const validateReferentialIntegrity = sinon.stub(
-            ProtocolAuthorization,
+            ModuleAuthorization,
             'validateReferentialIntegrity',
           ).resolves({ $squash: true });
           const recordsWriteHandler = new RecordsWriteHandler({
-            didResolver   : TestStubGenerator.createDidResolverStub(alice),
-            messageStore  : messageStoreStub,
-            dataStore     : dataStoreStub,
-            coreProtocols : new CoreProtocolRegistry(),
+            didResolver  : TestStubGenerator.createDidResolverStub(alice),
+            messageStore : messageStoreStub,
+            dataStore    : dataStoreStub,
+            coreModules  : new CoreModuleRegistry(),
             eventLog,
             validationStateReader,
           });
@@ -2153,46 +2153,46 @@ export function testRecordsWriteHandler(): void {
           });
 
           expect(reply.status.code).toBe(409);
-          expect(reply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationSquashBackstop);
+          expect(reply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationSquashBackstop);
           sinon.assert.calledOnce(validateReferentialIntegrity);
-          sinon.assert.notCalled(protocolLookup);
+          sinon.assert.notCalled(moduleLookup);
           sinon.assert.calledOnceWithExactly(squashLookup, {
             tenant          : alice.did,
-            protocol,
-            protocolPath    : 'entry',
+            module,
+            modulePath      : 'entry',
             contextIdPrefix : undefined,
           });
         });
 
         it('should allow write with allow-anyone rule', async () => {
-          // scenario: Bob writes into Alice's DWN given Alice's "email" protocol allow-anyone rule
+          // scenario: Bob writes into Alice's DWN given Alice's "email" module allow-anyone rule
 
-          // write a protocol definition with an allow-anyone rule
-          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+          // write a module definition with an allow-anyone rule
+          const moduleDefinition = emailModuleDefinition as ModuleDefinition;
           const alice = await TestDataGenerator.generatePersona();
           const bob = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // generate a `RecordsWrite` message from bob
           const bobData = Encoder.stringToBytes('data from bob');
           const emailFromBob = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email',
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
-              data         : bobData
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'email',
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
+              data       : bobData
             }
           );
 
@@ -2217,21 +2217,21 @@ export function testRecordsWriteHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = anyoneCollaborateProtocolDefinition;
+          const moduleDefinition = anyoneCollaborateModuleDefinition;
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // Alice creates a doc
           const docRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'doc'
+            author     : alice,
+            recipient  : alice.did,
+            module     : moduleDefinition.module,
+            modulePath : 'doc'
           });
           const docRecordsReply = await dwn.processMessage(alice.did, docRecord.message, { dataStream: docRecord.dataStream });
           expect(docRecordsReply.status.code).toBe(202);
@@ -2248,14 +2248,14 @@ export function testRecordsWriteHandler(): void {
 
           // Bob tries and fails to create a new record
           const bobDocRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
-            recipient    : bob.did,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'doc'
+            author     : bob,
+            recipient  : bob.did,
+            module     : moduleDefinition.module,
+            modulePath : 'doc'
           });
           const bobDocRecordsReply = await dwn.processMessage(alice.did, bobDocRecord.message, { dataStream: bobDocRecord.dataStream });
           expect(bobDocRecordsReply.status.code).toBe(401);
-          expect(bobDocRecordsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+          expect(bobDocRecordsReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
         });
 
         describe('recipient rules', () => {
@@ -2263,35 +2263,35 @@ export function testRecordsWriteHandler(): void {
             // scenario: VC issuer writes into Alice's DWN an asynchronous credential response upon receiving Alice's credential application
             //           Carol tries to write a credential response but is rejected
 
-            const protocolDefinition = credentialIssuanceProtocolDefinition;
-            const credentialApplicationSchema = protocolDefinition.types.credentialApplication.schema;
-            const credentialResponseSchema = protocolDefinition.types.credentialResponse.schema;
+            const moduleDefinition = credentialIssuanceModuleDefinition;
+            const credentialApplicationSchema = moduleDefinition.types.credentialApplication.schema;
+            const credentialResponseSchema = moduleDefinition.types.credentialResponse.schema;
 
             const alice = await TestDataGenerator.generatePersona();
             const vcIssuer = await TestDataGenerator.generatePersona();
             const carol = await TestDataGenerator.generatePersona();
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, vcIssuer, carol]);
 
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // write a credential application to Alice's DWN to simulate that she has sent a credential application to a VC issuer
             const encodedCredentialApplication = new TextEncoder().encode('credential application data');
             const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : vcIssuer.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'credentialApplication', // this comes from `types` in protocol definition
-              schema       : credentialApplicationSchema,
-              dataFormat   : protocolDefinition.types.credentialApplication.dataFormats[0],
-              data         : encodedCredentialApplication
+              author     : alice,
+              recipient  : vcIssuer.did,
+              module     : moduleDefinition.module,
+              modulePath : 'credentialApplication', // this comes from `types` in module definition
+              schema     : credentialApplicationSchema,
+              dataFormat : moduleDefinition.types.credentialApplication.dataFormats[0],
+              data       : encodedCredentialApplication
             });
 
             const credentialApplicationReply = await dwn.processMessage(
@@ -2307,11 +2307,11 @@ export function testRecordsWriteHandler(): void {
               {
                 author          : vcIssuer,
                 recipient       : alice.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'credentialApplication/credentialResponse', // this comes from `types` in protocol definition
+                module          : moduleDefinition.module,
+                modulePath      : 'credentialApplication/credentialResponse', // this comes from `types` in module definition
                 parentContextId : credentialApplication.message.contextId,
                 schema          : credentialResponseSchema,
-                dataFormat      : protocolDefinition.types.credentialResponse.dataFormats[0],
+                dataFormat      : moduleDefinition.types.credentialResponse.dataFormats[0],
                 data            : encodedCredentialResponse
               }
             );
@@ -2339,21 +2339,21 @@ export function testRecordsWriteHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = recipientCanProtocol;
+            const moduleDefinition = recipientCanModule;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a post with Bob as recipient
             const docRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post'
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'post'
             });
             const docRecordsReply = await dwn.processMessage(alice.did, docRecord.message, { dataStream: docRecord.dataStream });
             expect(docRecordsReply.status.code).toBe(202);
@@ -2362,8 +2362,8 @@ export function testRecordsWriteHandler(): void {
             const tagRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : alice.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/tag',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/tag',
               parentContextId : docRecord.message.contextId!,
             });
             const tagRecordsReply = await dwn.processMessage(alice.did, tagRecord.message, { dataStream: tagRecord.dataStream });
@@ -2383,13 +2383,13 @@ export function testRecordsWriteHandler(): void {
             const bobTagRecord = await TestDataGenerator.generateRecordsWrite({
               author          : bob,
               recipient       : bob.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/tag',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/tag',
               parentContextId : docRecord.message.contextId!,
             });
             const bobTagRecordsReply = await dwn.processMessage(alice.did, bobTagRecord.message, { dataStream: bobTagRecord.dataStream });
             expect(bobTagRecordsReply.status.code).toBe(401);
-            expect(bobTagRecordsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(bobTagRecordsReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
           });
 
           it('should allow co-update with direct recipient rule', async () => {
@@ -2398,28 +2398,28 @@ export function testRecordsWriteHandler(): void {
             // Bob is able to update the 'post' because he was recipient of it.
             // Carol is not able to update it.
 
-            const protocolDefinition = recipientCanProtocol as ProtocolDefinition;
+            const moduleDefinition = recipientCanModule as ModuleDefinition;
             const alice = await TestDataGenerator.generatePersona();
             const bob = await TestDataGenerator.generatePersona();
             const carol = await TestDataGenerator.generatePersona();
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a 'post' with Bob as recipient
             const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
@@ -2431,7 +2431,7 @@ export function testRecordsWriteHandler(): void {
             });
             const carolRecordsWriteReply = await dwn.processMessage(alice.did, carolRecordsWrite.message);
             expect(carolRecordsWriteReply.status.code).toBe(401);
-            expect(carolRecordsWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(carolRecordsWriteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob is able to update the post
             const bobRecordsWrite = await TestDataGenerator.generateFromRecordsWrite({
@@ -2445,9 +2445,9 @@ export function testRecordsWriteHandler(): void {
 
         describe('author action rules', () => {
           it('allow author to write with ancestor author rule and block non-authors', async () => {
-            // scenario: Alice posts an image on the social media protocol to Bob's, then she adds a caption
+            // scenario: Alice posts an image on the social media module to Bob's, then she adds a caption
             //           AliceImposter attempts to post add a caption to Alice's image, but is blocked
-            const protocolDefinition = socialMediaProtocolDefinition;
+            const moduleDefinition = socialMediaModuleDefinition;
 
             const alice = await TestDataGenerator.generatePersona();
             const aliceImposter = await TestDataGenerator.generatePersona();
@@ -2456,23 +2456,23 @@ export function testRecordsWriteHandler(): void {
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, aliceImposter, bob]);
 
-            // Install social-media protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Install social-media module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: bob,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes image to bob's DWN
             const encodedImage = new TextEncoder().encode('cafe-aesthetic.jpg');
             const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'image', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.image.schema,
-              dataFormat   : protocolDefinition.types.image.dataFormats[0],
-              data         : encodedImage
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'image', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.image.schema,
+              dataFormat : moduleDefinition.types.image.dataFormats[0],
+              data       : encodedImage
             });
             const imageReply = await dwn.processMessage(bob.did, imageRecordsWrite.message, { dataStream: imageRecordsWrite.dataStream });
             expect(imageReply.status.code).toBe(202);
@@ -2481,25 +2481,25 @@ export function testRecordsWriteHandler(): void {
             const encodedCaptionImposter = new TextEncoder().encode('bad vibes! >:(');
             const captionImposter = await TestDataGenerator.generateRecordsWrite({
               author          : aliceImposter,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'image/caption', // this comes from `types` in protocol definition
-              schema          : protocolDefinition.types.caption.schema,
-              dataFormat      : protocolDefinition.types.caption.dataFormats[0],
+              module          : moduleDefinition.module,
+              modulePath      : 'image/caption', // this comes from `types` in module definition
+              schema          : moduleDefinition.types.caption.schema,
+              dataFormat      : moduleDefinition.types.caption.dataFormats[0],
               parentContextId : imageRecordsWrite.recordsWrite.message.contextId,
               data            : encodedCaptionImposter
             });
             const captionReply = await dwn.processMessage(bob.did, captionImposter.message, { dataStream: captionImposter.dataStream });
             expect(captionReply.status.code).toBe(401);
-            expect(captionReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(captionReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Alice is able to add a caption to her image
             const encodedCaption = new TextEncoder().encode('coffee and work vibes!');
             const captionRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'image/caption',
-              schema          : protocolDefinition.types.caption.schema,
-              dataFormat      : protocolDefinition.types.caption.dataFormats[0],
+              module          : moduleDefinition.module,
+              modulePath      : 'image/caption',
+              schema          : moduleDefinition.types.caption.schema,
+              dataFormat      : moduleDefinition.types.caption.dataFormats[0],
               parentContextId : imageRecordsWrite.recordsWrite.message.contextId,
               data            : encodedCaption
             });
@@ -2525,21 +2525,21 @@ export function testRecordsWriteHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = authorCanProtocolDefinition;
+            const moduleDefinition = authorCanModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Bob creates a post
             const postRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post'
+              author     : bob,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'post'
             });
             const postRecordsReply = await dwn.processMessage(alice.did, postRecord.message, { dataStream: postRecord.dataStream });
             expect(postRecordsReply.status.code).toBe(202);
@@ -2548,8 +2548,8 @@ export function testRecordsWriteHandler(): void {
             const commentRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : alice.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/comment',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/comment',
               parentContextId : postRecord.message.contextId!,
             });
             const commentRecordsReply = await dwn.processMessage(alice.did, commentRecord.message, { dataStream: commentRecord.dataStream });
@@ -2570,13 +2570,13 @@ export function testRecordsWriteHandler(): void {
             const bobPostRecord = await TestDataGenerator.generateRecordsWrite({
               author          : bob,
               recipient       : bob.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/comment',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/comment',
               parentContextId : postRecord.message.contextId!,
             });
             const bobPostRecordsReply = await dwn.processMessage(alice.did, bobPostRecord.message, { dataStream: bobPostRecord.dataStream });
             expect(bobPostRecordsReply.status.code).toBe(401);
-            expect(bobPostRecordsReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(bobPostRecordsReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
           });
         });
 
@@ -2588,22 +2588,22 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'friend' root-level role record with Bob as recipient
               const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'friend',
-                data         : new TextEncoder().encode('Bob is my friend'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'friend',
+                data       : new TextEncoder().encode('Bob is my friend'),
               });
               const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
               expect(friendRoleReply.status.code).toBe(202);
@@ -2623,25 +2623,25 @@ export function testRecordsWriteHandler(): void {
 
               const alice = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'friend' root-level role record with no recipient
               const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'friend',
-                data         : new TextEncoder().encode('Bob is my friend'),
+                author     : alice,
+                module     : moduleDefinition.module,
+                modulePath : 'friend',
+                data       : new TextEncoder().encode('Bob is my friend'),
               });
               const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
               expect(friendRoleReply.status.code).toBe(400);
-              expect(friendRoleReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationRoleMissingRecipient);
+              expect(friendRoleReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationRoleMissingRecipient);
             });
 
             it('should allow a new root-level role record to be created for the same recipient if their old one was deleted', async () => {
@@ -2650,22 +2650,22 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'friend' root-level role record with Bob as recipient
               const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'friend',
-                data         : new TextEncoder().encode('Bob is my friend'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'friend',
+                data       : new TextEncoder().encode('Bob is my friend'),
               });
               const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
               expect(friendRoleReply.status.code).toBe(202);
@@ -2680,11 +2680,11 @@ export function testRecordsWriteHandler(): void {
 
               // Alice writes a new record adding Bob as a 'friend' again
               const duplicateFriendRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'friend',
-                data         : new TextEncoder().encode('Bob is still my friend'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'friend',
+                data       : new TextEncoder().encode('Bob is still my friend'),
               });
               const duplicateFriendReply =
                 await dwn.processMessage(alice.did, duplicateFriendRecord.message, { dataStream: duplicateFriendRecord.dataStream });
@@ -2699,21 +2699,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates a thread
               const threadRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
               expect(threadRecordReply.status.code).toBe(202);
@@ -2722,8 +2722,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply =
@@ -2746,21 +2746,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates the first thread
               const threadRecord1 = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord1.message, { dataStream: threadRecord1.dataStream });
               expect(threadRecordReply1.status.code).toBe(202);
@@ -2769,8 +2769,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord1 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord1.message.contextId,
               });
               const participantRecordReply1 =
@@ -2779,10 +2779,10 @@ export function testRecordsWriteHandler(): void {
 
               // Alice creates a second thread
               const threadRecord2 = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply2 = await dwn.processMessage(alice.did, threadRecord2.message, { dataStream: threadRecord2.dataStream });
               expect(threadRecordReply2.status.code).toBe(202);
@@ -2791,8 +2791,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord2 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord2.message.contextId,
               });
               const participantRecordReply2 =
@@ -2806,21 +2806,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates the first thread
               const threadRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
               expect(threadRecordReply.status.code).toBe(202);
@@ -2829,8 +2829,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord1 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply1 =
@@ -2841,14 +2841,14 @@ export function testRecordsWriteHandler(): void {
               const participantRecord2 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply2 =
                 await dwn.processMessage(alice.did, participantRecord2.message, { dataStream: participantRecord2.dataStream });
               expect(participantRecordReply2.status.code).toBe(400);
-              expect(participantRecordReply2.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationDuplicateRoleRecipient);
+              expect(participantRecordReply2.status.detail).toContain(DwnErrorCode.ModuleAuthorizationDuplicateRoleRecipient);
             });
 
             it('allows a new context role record to be created for the same recipient in the same context if their old one was deleted', async () => {
@@ -2857,21 +2857,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates the first thread
               const threadRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
               expect(threadRecordReply.status.code).toBe(202);
@@ -2880,8 +2880,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord1 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply1 =
@@ -2900,8 +2900,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord2 = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply2 =
@@ -2918,34 +2918,34 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'friend' $root-level role record with Bob as recipient
               const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'friend',
-                data         : new TextEncoder().encode('Bob is my friend'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'friend',
+                data       : new TextEncoder().encode('Bob is my friend'),
               });
               const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
               expect(friendRoleReply.status.code).toBe(202);
 
               // Bob writes a 'chat' record
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : bob,
-                recipient    : alice.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'chat',
-                data         : new TextEncoder().encode('Bob can write this cuz he is Alices friend'),
-                protocolRole : 'friend'
+                author     : bob,
+                recipient  : alice.did,
+                module     : moduleDefinition.module,
+                modulePath : 'chat',
+                data       : new TextEncoder().encode('Bob can write this cuz he is Alices friend'),
+                moduleRole : 'friend'
               });
               const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatReply.status.code).toBe(202);
@@ -2955,8 +2955,8 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
               const device = await TestDataGenerator.generateDidKeyPersona();
-              const protocolDefinition: ProtocolDefinition = {
-                protocol  : 'http://delegated-role-issuance.xyz',
+              const moduleDefinition: ModuleDefinition = {
+                module    : 'http://delegated-role-issuance.xyz',
                 published : false,
                 types     : {
                   member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -2967,21 +2967,21 @@ export function testRecordsWriteHandler(): void {
                   note   : { $actions: [{ role: 'member', can: ['create'] }] },
                 },
               };
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition,
+                moduleDefinition,
               });
-              expect((await dwn.processMessage(alice.did, protocolsConfig.message)).status.code).toBe(202);
+              expect((await dwn.processMessage(alice.did, modulesConfig.message)).status.code).toBe(202);
 
               const grant = await TestDataGenerator.generateGrantCreate({
                 author    : alice,
                 delegated : true,
                 grantedTo : device,
                 scope     : {
-                  interface    : DwnInterfaceName.Records,
-                  method       : DwnMethodName.Write,
-                  protocol     : protocolDefinition.protocol,
-                  protocolPath : 'member',
+                  interface  : DwnInterfaceName.Records,
+                  method     : DwnMethodName.Write,
+                  module     : moduleDefinition.module,
+                  modulePath : 'member',
                 },
               });
               expect((await dwn.processMessage(
@@ -2995,8 +2995,8 @@ export function testRecordsWriteHandler(): void {
                 data           : roleData,
                 dataFormat     : 'application/json',
                 delegatedGrant : grant.dataEncodedMessage,
-                protocol       : protocolDefinition.protocol,
-                protocolPath   : 'member',
+                module         : moduleDefinition.module,
+                modulePath     : 'member',
                 recipient      : bob.did,
                 schema         : 'http://member-schema',
                 signer         : Jws.createSigner(device),
@@ -3008,12 +3008,12 @@ export function testRecordsWriteHandler(): void {
               )).status.code).toBe(202);
 
               const note = await TestDataGenerator.generateRecordsWrite({
-                author       : bob,
-                dataFormat   : 'text/plain',
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'note',
-                protocolRole : 'member',
-                schema       : 'http://note-schema',
+                author     : bob,
+                dataFormat : 'text/plain',
+                module     : moduleDefinition.module,
+                modulePath : 'note',
+                moduleRole : 'member',
+                schema     : 'http://note-schema',
               });
               expect((await dwn.processMessage(
                 alice.did,
@@ -3029,33 +3029,33 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'admin' root-level role record with Bob as recipient
               const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'admin',
-                data         : new TextEncoder().encode('Bob is my friend'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'admin',
+                data       : new TextEncoder().encode('Bob is my friend'),
               });
               const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
               expect(friendRoleReply.status.code).toBe(202);
 
               // Alice creates a 'chat' record
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : alice.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'chat',
-                data         : new TextEncoder().encode('Bob can write this cuz he is Alices friend'),
+                author     : alice,
+                recipient  : alice.did,
+                module     : moduleDefinition.module,
+                modulePath : 'chat',
+                data       : new TextEncoder().encode('Bob can write this cuz he is Alices friend'),
               });
               const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatReply.status.code).toBe(202);
@@ -3064,50 +3064,50 @@ export function testRecordsWriteHandler(): void {
               const chatUpdateRecord = await TestDataGenerator.generateFromRecordsWrite({
                 author        : bob,
                 existingWrite : chatRecord.recordsWrite,
-                protocolRole  : 'admin',
+                moduleRole    : 'admin',
               });
               const chatUpdateReply = await dwn.processMessage(alice.did, chatUpdateRecord.message, { dataStream: chatUpdateRecord.dataStream });
               expect(chatUpdateReply.status.code).toBe(202);
             });
 
-            it('rejects root-level role authorized writes if the protocolRole is not a valid protocol path to an active role record', async () => {
+            it('rejects root-level role authorized writes if the moduleRole is not a valid module path to an active role record', async () => {
               // scenario: Bob tries to invoke the 'chat' role to write to Alice's DWN, but 'chat' is not a role.
 
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice writes a 'chat' record with Bob as recipient
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'chat',
-                data         : new TextEncoder().encode('Blah blah blah'),
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'chat',
+                data       : new TextEncoder().encode('Blah blah blah'),
               });
               const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatReply.status.code).toBe(202);
 
               // Bob tries to invoke a 'chat' role but 'chat' is not a role
               const writeChatRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : bob,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'chat',
-                data         : new TextEncoder().encode('Blah blah blah'),
-                protocolRole : 'chat',
+                author     : bob,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'chat',
+                data       : new TextEncoder().encode('Blah blah blah'),
+                moduleRole : 'chat',
               });
               const chatReadReply = await dwn.processMessage(alice.did, writeChatRecord.message, { dataStream: writeChatRecord.dataStream });
               expect(chatReadReply.status.code).toBe(401);
-              expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationNotARole);
+              expect(chatReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationNotARole);
             });
 
             it('rejects root-level role authorized writes if there is no active role for the recipient', async () => {
@@ -3116,27 +3116,27 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = friendRoleProtocolDefinition;
+              const moduleDefinition = friendRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Bob writes a 'chat' record invoking a friend role that he does not have
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : bob,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'chat',
-                data         : new TextEncoder().encode('Blah blah blah'),
-                protocolRole : 'friend'
+                author     : bob,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'chat',
+                data       : new TextEncoder().encode('Blah blah blah'),
+                moduleRole : 'friend'
               });
               const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatReply.status.code).toBe(401);
-              expect(chatReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+              expect(chatReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
             });
 
             it('uses a context role to authorize a write', async () => {
@@ -3145,21 +3145,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates a thread
               const threadRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
               expect(threadRecordReply.status.code).toBe(202);
@@ -3168,8 +3168,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply =
@@ -3179,10 +3179,10 @@ export function testRecordsWriteHandler(): void {
               // Bob invokes the role to write to the thread
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : bob,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/chat',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/chat',
                 parentContextId : threadRecord.message.contextId,
-                protocolRole    : 'thread/participant'
+                moduleRole      : 'thread/participant'
               });
               const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatRecordReply.status.code).toBe(202);
@@ -3195,21 +3195,21 @@ export function testRecordsWriteHandler(): void {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates a thread
               const threadRecord = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
               expect(threadRecordReply.status.code).toBe(202);
@@ -3218,8 +3218,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/admin',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/admin',
                 parentContextId : threadRecord.message.contextId,
               });
               const participantRecordReply =
@@ -3229,8 +3229,8 @@ export function testRecordsWriteHandler(): void {
               // Alice writes a chat message in the thread
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/chat',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/chat',
                 parentContextId : threadRecord.message.contextId,
               });
               const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
@@ -3240,35 +3240,35 @@ export function testRecordsWriteHandler(): void {
               const chatCoUpdateRecord = await TestDataGenerator.generateFromRecordsWrite({
                 author        : bob,
                 existingWrite : chatRecord.recordsWrite,
-                protocolRole  : 'thread/admin',
+                moduleRole    : 'thread/admin',
               });
               const chatUpdateRecordReply =
                 await dwn.processMessage(alice.did, chatCoUpdateRecord.message, { dataStream: chatCoUpdateRecord.dataStream });
               expect(chatUpdateRecordReply.status.code).toBe(202);
             });
 
-            it('rejects context role authorized writes if the protocolRole is not a valid protocol path to an active role record', async () => {
+            it('rejects context role authorized writes if the moduleRole is not a valid module path to an active role record', async () => {
               // scenario: Alice creates a thread and adds Bob as a participant. ALice creates another thread. Bob tries and fails to invoke his
               //           contextRole to write a chat in the second thread
 
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
               // Alice creates a thread
               const threadRecord1 = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord1.message, { dataStream: threadRecord1.dataStream });
               expect(threadRecordReply1.status.code).toBe(202);
@@ -3277,8 +3277,8 @@ export function testRecordsWriteHandler(): void {
               const participantRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : alice,
                 recipient       : bob.did,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/participant',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/participant',
                 parentContextId : threadRecord1.message.contextId,
               });
               const participantRecordReply =
@@ -3287,10 +3287,10 @@ export function testRecordsWriteHandler(): void {
 
               // Alice creates a second thread
               const threadRecord2 = await TestDataGenerator.generateRecordsWrite({
-                author       : alice,
-                recipient    : bob.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread'
+                author     : alice,
+                recipient  : bob.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread'
               });
               const threadRecordReply2 = await dwn.processMessage(alice.did, threadRecord2.message, { dataStream: threadRecord2.dataStream });
               expect(threadRecordReply2.status.code).toBe(202);
@@ -3298,77 +3298,77 @@ export function testRecordsWriteHandler(): void {
               // Bob invokes his role to try to write to the second thread
               const chatRecord = await TestDataGenerator.generateRecordsWrite({
                 author          : bob,
-                protocol        : protocolDefinition.protocol,
-                protocolPath    : 'thread/chat',
+                module          : moduleDefinition.module,
+                modulePath      : 'thread/chat',
                 parentContextId : threadRecord2.message.contextId,
-                protocolRole    : 'thread/participant'
+                moduleRole      : 'thread/participant'
               });
               const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
               expect(chatRecordReply.status.code).toBe(401);
-              expect(chatRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+              expect(chatRecordReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
             });
 
-            it('rejects attempts to invoke an invalid path as a protocolRole', async () => {
-              // scenario: Bob tries to invoke 'notARealPath' as a protocolRole and fails
+            it('rejects attempts to invoke an invalid path as a moduleRole', async () => {
+              // scenario: Bob tries to invoke 'notARealPath' as a moduleRole and fails
 
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
 
-              const protocolDefinition = threadRoleProtocolDefinition;
+              const moduleDefinition = threadRoleModuleDefinition;
 
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition
+                moduleDefinition
               });
-              const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsConfigureReply.status.code).toBe(202);
+              const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesConfigureReply.status.code).toBe(202);
 
-              // Bob invokes a fake protocolRole to write
+              // Bob invokes a fake moduleRole to write
               const fakeRoleInvocation = await TestDataGenerator.generateRecordsWrite({
-                author       : bob,
-                recipient    : alice.did,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'thread',
-                protocolRole : 'notARealPath',
+                author     : bob,
+                recipient  : alice.did,
+                module     : moduleDefinition.module,
+                modulePath : 'thread',
+                moduleRole : 'notARealPath',
               });
               const fakeRoleInvocationReply =
                 await dwn.processMessage(alice.did, fakeRoleInvocation.message, { dataStream: fakeRoleInvocation.dataStream });
               expect(fakeRoleInvocationReply.status.code).toBe(401);
-              expect(fakeRoleInvocationReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationNotARole);
+              expect(fakeRoleInvocationReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationNotARole);
             });
           });
         });
 
         it('should allow updating records by the initial author', async () => {
-        // scenario: Bob writes into Alice's DWN given Alice's "message" protocol allow-anyone rule, then modifies the message
+        // scenario: Bob writes into Alice's DWN given Alice's "message" module allow-anyone rule, then modifies the message
 
-          // write a protocol definition with an allow-anyone rule
-          const protocolDefinition = messageProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          // write a module definition with an allow-anyone rule
+          const moduleDefinition = messageModuleDefinition;
+          const module = moduleDefinition.module;
           const alice = await TestDataGenerator.generatePersona();
           const bob = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // generate a `RecordsWrite` message from bob
           const bobData = new TextEncoder().encode('message from bob');
           const messageFromBob = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : bobData
+              author     : bob,
+              module,
+              modulePath : 'message', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.message.schema,
+              dataFormat : moduleDefinition.types.message.dataFormats[0],
+              data       : bobData
             }
           );
 
@@ -3404,36 +3404,36 @@ export function testRecordsWriteHandler(): void {
         });
 
         it('should disallow overwriting existing records by a different author if author is not authorized to `co-update`', async () => {
-          // scenario: Bob writes into Alice's DWN given Alice's "message" protocol, Carol then attempts to modify the existing message
+          // scenario: Bob writes into Alice's DWN given Alice's "message" module, Carol then attempts to modify the existing message
 
-          // write a protocol definition with an allow-anyone rule
-          const protocolDefinition = messageProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          // write a module definition with an allow-anyone rule
+          const moduleDefinition = messageModuleDefinition;
+          const module = moduleDefinition.module;
           const alice = await TestDataGenerator.generatePersona();
           const bob = await TestDataGenerator.generatePersona();
           const carol = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // generate a `RecordsWrite` message from bob
           const bobData = new TextEncoder().encode('data from bob');
           const messageFromBob = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : bobData
+              author     : bob,
+              module,
+              modulePath : 'message', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.message.schema,
+              dataFormat : moduleDefinition.types.message.dataFormats[0],
+              data       : bobData
             }
           );
 
@@ -3461,42 +3461,42 @@ export function testRecordsWriteHandler(): void {
           const carolWriteReply =
             await dwn.processMessage(alice.did, modifiedMessageFromCarol.message, { dataStream: modifiedMessageFromCarol.dataStream });
           expect(carolWriteReply.status.code).toBe(401);
-          expect(carolWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+          expect(carolWriteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
         });
 
         it('should not allow to change immutable recipient', async () => {
-        // scenario: Bob writes into Alice's DWN given Alice's "message" protocol allow-anyone rule, then tries to modify immutable recipient
+        // scenario: Bob writes into Alice's DWN given Alice's "message" module allow-anyone rule, then tries to modify immutable recipient
 
-          // NOTE: no need to test the same for parent, protocol, and contextId
+          // NOTE: no need to test the same for parent, module, and contextId
           // because changing them will result in other error conditions
 
-          // write a protocol definition with an allow-anyone rule
-          const protocolDefinition = messageProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          // write a module definition with an allow-anyone rule
+          const moduleDefinition = messageModuleDefinition;
+          const module = moduleDefinition.module;
           const alice = await TestDataGenerator.generatePersona();
           const bob = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // generate a `RecordsWrite` message from bob
           const bobData = new TextEncoder().encode('message from bob');
           const messageFromBob = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : bobData
+              author     : bob,
+              module,
+              modulePath : 'message', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.message.schema,
+              dataFormat : moduleDefinition.types.message.dataFormats[0],
+              data       : bobData
             }
           );
 
@@ -3516,15 +3516,15 @@ export function testRecordsWriteHandler(): void {
           // generate a new message from bob changing immutable recipient
           const updatedMessageFromBob = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              dateCreated  : messageFromBob.message.descriptor.dateCreated,
-              protocol,
-              protocolPath : 'message', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.message.schema,
-              dataFormat   : protocolDefinition.types.message.dataFormats[0],
-              data         : bobData,
-              recordId     : messageFromBob.message.recordId,
-              recipient    : bob.did // this immutable property was Alice's DID initially
+              author      : bob,
+              dateCreated : messageFromBob.message.descriptor.dateCreated,
+              module,
+              modulePath  : 'message', // this comes from `types` in module definition
+              schema      : moduleDefinition.types.message.schema,
+              dataFormat  : moduleDefinition.types.message.dataFormats[0],
+              data        : bobData,
+              recordId    : messageFromBob.message.recordId,
+              recipient   : bob.did // this immutable property was Alice's DID initially
             }
           );
 
@@ -3537,36 +3537,36 @@ export function testRecordsWriteHandler(): void {
         // scenario: fake VC issuer attempts write into Alice's DWN a credential response
         // upon learning the ID of Alice's credential application to actual issuer
 
-          const protocolDefinition = credentialIssuanceProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const credentialApplicationSchema = protocolDefinition.types.credentialApplication.schema;
-          const credentialResponseSchema = protocolDefinition.types.credentialResponse.schema;
+          const moduleDefinition = credentialIssuanceModuleDefinition;
+          const module = moduleDefinition.module;
+          const credentialApplicationSchema = moduleDefinition.types.credentialApplication.schema;
+          const credentialResponseSchema = moduleDefinition.types.credentialResponse.schema;
 
           const alice = await TestDataGenerator.generatePersona();
           const fakeVcIssuer = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, fakeVcIssuer]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // write a credential application to Alice's DWN to simulate that she has sent a credential application to a VC issuer
           const vcIssuer = await TestDataGenerator.generatePersona();
           const encodedCredentialApplication = new TextEncoder().encode('credential application data');
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : vcIssuer.did,
-            protocol,
-            protocolPath : 'credentialApplication', // this comes from `types` in protocol definition
-            schema       : credentialApplicationSchema,
-            dataFormat   : protocolDefinition.types.credentialApplication.dataFormats[0],
-            data         : encodedCredentialApplication
+            author     : alice,
+            recipient  : vcIssuer.did,
+            module,
+            modulePath : 'credentialApplication', // this comes from `types` in module definition
+            schema     : credentialApplicationSchema,
+            dataFormat : moduleDefinition.types.credentialApplication.dataFormats[0],
+            data       : encodedCredentialApplication
           });
           const credentialApplicationContextId = await credentialApplication.recordsWrite.getEntryId();
 
@@ -3580,11 +3580,11 @@ export function testRecordsWriteHandler(): void {
             {
               author          : fakeVcIssuer,
               recipient       : alice.did,
-              protocol,
-              protocolPath    : 'credentialApplication/credentialResponse', // this comes from `types` in protocol definition
+              module,
+              modulePath      : 'credentialApplication/credentialResponse', // this comes from `types` in module definition
               parentContextId : credentialApplicationContextId,
               schema          : credentialResponseSchema,
-              dataFormat      : protocolDefinition.types.credentialResponse.dataFormats[0],
+              dataFormat      : moduleDefinition.types.credentialResponse.dataFormats[0],
               data            : encodedCredentialResponse
             }
           );
@@ -3592,133 +3592,133 @@ export function testRecordsWriteHandler(): void {
           const credentialResponseReply =
             await dwn.processMessage(alice.did, credentialResponse.message, { dataStream: credentialResponse.dataStream });
           expect(credentialResponseReply.status.code).toBe(401);
-          expect(credentialResponseReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+          expect(credentialResponseReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
         });
 
-        it('should fail authorization if protocol definition cannot be found for a protocol-based RecordsWrite', async () => {
+        it('should fail authorization if module definition cannot be found for a module-based RecordsWrite', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          const protocol = 'nonExistentProtocol';
+          const module = 'nonExistentModule';
           const data = Encoder.stringToBytes('any data');
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credentialApplication/credentialResponse', // this comes from `types` in protocol definition
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credentialApplication/credentialResponse', // this comes from `types` in module definition
             data
           });
 
           const reply = await dwn.processMessage(alice.did, credentialApplication.message, { dataStream: credentialApplication.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain('unable to find protocol definition');
+          expect(reply.status.detail).toContain('unable to find module definition');
         });
 
-        it('should fail authorization if record schema is incorrect for a protocol-based RecordsWrite', async () => {
+        it('should fail authorization if record schema is incorrect for a module-based RecordsWrite', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = credentialIssuanceProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = credentialIssuanceModuleDefinition;
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           const data = Encoder.stringToBytes('any data');
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credentialApplication', // this comes from `types` in protocol definition
-            schema       : 'unexpectedSchema',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credentialApplication', // this comes from `types` in module definition
+            schema     : 'unexpectedSchema',
             data
           });
 
           const reply = await dwn.processMessage(alice.did, credentialApplication.message, { dataStream: credentialApplication.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidSchema);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationInvalidSchema);
         });
 
-        it('should fail authorization if given `protocolPath` contains an invalid record type', async () => {
+        it('should fail authorization if given `modulePath` contains an invalid record type', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = credentialIssuanceProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = credentialIssuanceModuleDefinition;
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           const data = Encoder.stringToBytes('any data');
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'invalidType',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'invalidType',
             data
           });
 
           const reply = await dwn.processMessage(alice.did, credentialApplication.message, { dataStream: credentialApplication.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationInvalidType);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationInvalidType);
         });
 
-        it('should fail authorization if given `protocolPath` is mismatching with actual path', async () => {
+        it('should fail authorization if given `modulePath` is mismatching with actual path', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = credentialIssuanceProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = credentialIssuanceModuleDefinition;
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition,
+            moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           const data = Encoder.stringToBytes('any data');
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credentialApplication/credentialResponse', // incorrect path. correct path is `credentialResponse` because this record has no parent
-            schema       : protocolDefinition.types.credentialResponse.schema,
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credentialApplication/credentialResponse', // incorrect path. correct path is `credentialResponse` because this record has no parent
+            schema     : moduleDefinition.types.credentialResponse.schema,
             data
           });
 
           const reply = await dwn.processMessage(alice.did, credentialApplication.message, { dataStream: credentialApplication.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentlessIncorrectProtocolPath);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentlessIncorrectModulePath);
           expect(reply.status.detail).toContain('is not valid for records with no parent');
         });
 
-        it('#690 - should only allow data format of a protocol-space record to be updated to any value allowed by the protocol configuration', async () => {
+        it('#690 - should only allow data format of a module-space record to be updated to any value allowed by the module configuration', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = socialMediaProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          const moduleDefinition = socialMediaModuleDefinition;
+          const module = moduleDefinition.module;
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : protocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // write image record
           const data = TestDataGenerator.randomBytes(100);
           const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'image',
-            schema       : protocolDefinition.types.image.schema,
-            dataFormat   : protocolDefinition.types.image.dataFormats[0],
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'image',
+            schema     : moduleDefinition.types.image.schema,
+            dataFormat : moduleDefinition.types.image.dataFormats[0],
             data
           });
           const writeReply = await dwn.processMessage(alice.did, imageRecordsWrite.message, { dataStream: imageRecordsWrite.dataStream });
@@ -3736,12 +3736,12 @@ export function testRecordsWriteHandler(): void {
           const newDataStream = DataStream.fromBytes(newDataBytes);
           const notAllowedUpdateWriteReply = await dwn.processMessage(alice.did, notAllowedUpdateWrite.message, { dataStream: newDataStream });
           expect(notAllowedUpdateWriteReply.status.code).toBe(400);
-          expect(notAllowedUpdateWriteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationIncorrectDataFormat);
+          expect(notAllowedUpdateWriteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationIncorrectDataFormat);
 
           // update the image to a different allowed dataFormat
           const updateWrite = await RecordsWrite.createFrom({
             recordsWriteMessage : imageRecordsWrite.message,
-            dataFormat          : protocolDefinition.types.image.dataFormats[1],
+            dataFormat          : moduleDefinition.types.image.dataFormats[1],
             signer              : Jws.createSigner(alice),
             data                : newDataBytes
           });
@@ -3756,32 +3756,32 @@ export function testRecordsWriteHandler(): void {
           });
           const recordsReadReply = await dwn.processMessage(alice.did, recordsRead.message);
           expect(recordsReadReply.status.code).toBe(200);
-          expect(recordsReadReply.entry!.recordsWrite?.descriptor.dataFormat).toBe(protocolDefinition.types.image.dataFormats[1]);
+          expect(recordsReadReply.entry!.recordsWrite?.descriptor.dataFormat).toBe(moduleDefinition.types.image.dataFormats[1]);
         });
 
-        it('#690 - should allow any data format for a record if protocol definition does not explicitly specify the list of allowed data formats', async () => {
+        it('#690 - should allow any data format for a record if module definition does not explicitly specify the list of allowed data formats', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = minimalProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          const moduleDefinition = minimalModuleDefinition;
+          const module = moduleDefinition.module;
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : protocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // write image record
           const data = TestDataGenerator.randomBytes(100);
           const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'foo',
-            schema       : 'any-schema',
-            dataFormat   : 'any-data-format',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'foo',
+            schema     : 'any-schema',
+            dataFormat : 'any-data-format',
             data
           });
           const writeReply = await dwn.processMessage(alice.did, imageRecordsWrite.message, { dataStream: imageRecordsWrite.dataStream });
@@ -3811,11 +3811,11 @@ export function testRecordsWriteHandler(): void {
           expect(recordsReadReply.entry!.recordsWrite?.descriptor.dataFormat).toBe(newDataFormat);
         });
 
-        it('should reject a plaintext RecordsWrite when the protocol type has encryptionRequired: true', async () => {
+        it('should reject a plaintext RecordsWrite when the module type has encryptionRequired: true', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://encryption-required-test.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://encryption-required-test.xyz',
             published : false,
             types     : {
               secret: {
@@ -3828,38 +3828,38 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          // Alice installs the protocol
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          // Alice installs the module
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
           expect(configReply.status.code).toBe(202);
 
           // Alice writes a record WITHOUT encryption — should be rejected
           const data = Encoder.stringToBytes('plaintext secret');
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'secret',
-            schema       : 'http://secret-schema',
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'secret',
+            schema     : 'http://secret-schema',
             data,
           });
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(400);
-          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRequired);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationEncryptionRequired);
         });
 
-        it('should accept an encrypted RecordsWrite when the protocol type has encryptionRequired: true', async () => {
+        it('should accept an encrypted RecordsWrite when the module type has encryptionRequired: true', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://encryption-required-test.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://encryption-required-test.xyz',
             published : false,
             types     : {
               secret: {
@@ -3872,16 +3872,16 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          // Alice installs the protocol
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          // Alice installs the module
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
           expect(configReply.status.code).toBe(202);
 
           const data = Encoder.stringToBytes('encrypted secret');
@@ -3890,7 +3890,7 @@ export function testRecordsWriteHandler(): void {
           const encryptedData = await Encryption.encrypt(
             ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
           );
-          const encryptionPublicKey = encryptedProtocolDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
+          const encryptionPublicKey = encryptedModuleDefinition.structure.secret.$keyAgreement!.publicKeyJwk;
 
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
@@ -3899,16 +3899,16 @@ export function testRecordsWriteHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(encryptionPublicKey),
               publicKey        : encryptionPublicKey,
-              derivationScheme : KeyDerivationScheme.ProtocolPath
+              derivationScheme : KeyDerivationScheme.ModulePath
             }]
           };
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'secret',
-            schema       : 'http://secret-schema',
-            data         : encryptedData,
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'secret',
+            schema     : 'http://secret-schema',
+            data       : encryptedData,
             encryptionInput,
           });
 
@@ -3919,8 +3919,8 @@ export function testRecordsWriteHandler(): void {
         it('should reject an encrypted role-readable RecordsWrite without a roleAudience keyEncryption entry', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-entry-required.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-entry-required.xyz',
             published : false,
             types     : {
               thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -3939,23 +3939,23 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+          expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
           const thread = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : 'http://thread-schema',
-            dataFormat   : 'application/json',
-            data         : Encoder.stringToBytes('{"title":"secret"}'),
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'thread',
+            schema     : 'http://thread-schema',
+            dataFormat : 'application/json',
+            data       : Encoder.stringToBytes('{"title":"secret"}'),
           });
           expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
@@ -3965,24 +3965,24 @@ export function testRecordsWriteHandler(): void {
           const encryptedData = await Encryption.encrypt(
             ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
           );
-          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const threadRuleSet = encryptedModuleDefinition.structure.thread;
+          const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+          const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-              publicKey        : protocolPathPublicKey,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              keyId            : await Encryption.getKeyId(modulePathPublicKey),
+              publicKey        : modulePathPublicKey,
+              derivationScheme : KeyDerivationScheme.ModulePath,
             }],
           };
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
             parentContextId : thread.message.contextId,
             schema          : 'http://chat-schema',
             dataFormat      : 'text/plain',
@@ -3992,14 +3992,14 @@ export function testRecordsWriteHandler(): void {
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(400);
-          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceEntryMissing);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceEntryMissing);
         });
 
         it('should reject an encrypted role-readable RecordsWrite whose roleAudience entry references a missing audience record', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-record-required.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-record-required.xyz',
             published : false,
             types     : {
               thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -4018,23 +4018,23 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+          expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
           const thread = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : 'http://thread-schema',
-            dataFormat   : 'application/json',
-            data         : Encoder.stringToBytes('{"title":"secret"}'),
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'thread',
+            schema     : 'http://thread-schema',
+            dataFormat : 'application/json',
+            data       : Encoder.stringToBytes('{"title":"secret"}'),
           });
           expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
@@ -4046,9 +4046,9 @@ export function testRecordsWriteHandler(): void {
             dataEncryptionInitializationVector,
             Encoder.stringToBytes('encrypted chat'),
           );
-          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const threadRuleSet = encryptedModuleDefinition.structure.thread;
+          const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+          const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
           const audiencePublicKey = alice.encryptionKeyPair.publicJwk;
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
@@ -4056,16 +4056,16 @@ export function testRecordsWriteHandler(): void {
             keyEncryptionInputs  : [
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-                publicKey        : protocolPathPublicKey,
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                keyId            : await Encryption.getKeyId(modulePathPublicKey),
+                publicKey        : modulePathPublicKey,
+                derivationScheme : KeyDerivationScheme.ModulePath,
               },
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : await Encryption.getKeyId(audiencePublicKey),
                 publicKey        : audiencePublicKey,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                protocol         : protocolDefinition.protocol,
+                module           : moduleDefinition.module,
                 rolePath         : 'thread/participant',
               },
             ],
@@ -4073,8 +4073,8 @@ export function testRecordsWriteHandler(): void {
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
             parentContextId : thread.message.contextId,
             schema          : 'http://chat-schema',
             dataFormat      : 'text/plain',
@@ -4084,15 +4084,15 @@ export function testRecordsWriteHandler(): void {
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(400);
-          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceMissing);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing);
         });
 
         it('should accept an encrypted role-readable RecordsWrite when any source roleAudience entry matches an accepted audience record', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-second-entry-accepted.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-second-entry-accepted.xyz',
             published : false,
             types     : {
               thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -4111,33 +4111,33 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+          expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
           const thread = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : 'http://thread-schema',
-            dataFormat   : 'application/json',
-            data         : Encoder.stringToBytes('{"title":"secret"}'),
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'thread',
+            schema     : 'http://thread-schema',
+            dataFormat : 'application/json',
+            data       : Encoder.stringToBytes('{"title":"secret"}'),
           });
           expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
           const rolePath = 'thread/participant';
-          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-          const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+          const threadRuleSet = encryptedModuleDefinition.structure.thread;
+          const participantRuleSet = threadRuleSet.participant as ModuleRuleSet;
           const audience = await createAudienceControlWrite({
             author      : alice,
             contextId   : thread.message.contextId,
-            protocol    : protocolDefinition.protocol,
+            module      : moduleDefinition.module,
             rolePath,
             roleRuleSet : participantRuleSet,
           });
@@ -4155,24 +4155,24 @@ export function testRecordsWriteHandler(): void {
             dataEncryptionInitializationVector,
             Encoder.stringToBytes('encrypted chat'),
           );
-          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+          const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-                publicKey        : protocolPathPublicKey,
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                keyId            : await Encryption.getKeyId(modulePathPublicKey),
+                publicKey        : modulePathPublicKey,
+                derivationScheme : KeyDerivationScheme.ModulePath,
               },
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk),
                 publicKey        : bob.encryptionKeyPair.publicJwk,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                protocol         : protocolDefinition.protocol,
+                module           : moduleDefinition.module,
                 rolePath,
               },
               {
@@ -4180,7 +4180,7 @@ export function testRecordsWriteHandler(): void {
                 keyId            : audience.keyId,
                 publicKey        : alice.encryptionKeyPair.publicJwk,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                protocol         : protocolDefinition.protocol,
+                module           : moduleDefinition.module,
                 rolePath,
               },
             ],
@@ -4188,8 +4188,8 @@ export function testRecordsWriteHandler(): void {
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
             parentContextId : thread.message.contextId,
             schema          : 'http://chat-schema',
             dataFormat      : 'text/plain',
@@ -4205,8 +4205,8 @@ export function testRecordsWriteHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-loser-key-admission.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-loser-key-admission.xyz',
             published : false,
             types     : {
               member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -4224,16 +4224,16 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await installEncryptedProtocol(alice, protocolDefinition);
-          const memberRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
-          const messageRuleSet = encryptedProtocolDefinition.structure.message as ProtocolRuleSet;
+          const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+          const memberRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
+          const messageRuleSet = encryptedModuleDefinition.structure.message as ModuleRuleSet;
           const rolePath = 'member';
-          const bobGrantId = await grantProtocolPathWriteAccess({
+          const bobGrantId = await grantModulePathWriteAccess({
             dwn,
-            grantee      : bob,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : rolePath,
-            tenant       : alice,
+            grantee    : bob,
+            module     : moduleDefinition.module,
+            modulePath : rolePath,
+            tenant     : alice,
           });
           const loserDateCreated = Time.createOffsetTimestamp({ seconds: 1 });
           const currentDateCreated = Time.createOffsetTimestamp({ seconds: 2 });
@@ -4242,7 +4242,7 @@ export function testRecordsWriteHandler(): void {
             author            : bob,
             dateCreated       : loserDateCreated,
             permissionGrantId : bobGrantId,
-            protocol          : protocolDefinition.protocol,
+            module            : moduleDefinition.module,
             rolePath,
             roleRuleSet       : memberRuleSet,
           });
@@ -4255,7 +4255,7 @@ export function testRecordsWriteHandler(): void {
           const currentAudience = await createAudienceControlWrite({
             author      : alice,
             dateCreated : currentDateCreated,
-            protocol    : protocolDefinition.protocol,
+            module      : moduleDefinition.module,
             rolePath,
             roleRuleSet : memberRuleSet,
           });
@@ -4266,13 +4266,13 @@ export function testRecordsWriteHandler(): void {
           )).status.code).toBe(202);
 
           const bobMemberRole = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            data         : Encoder.stringToBytes('bob is a member'),
-            dataFormat   : 'application/json',
-            protocol     : protocolDefinition.protocol,
-            protocolPath : rolePath,
-            recipient    : bob.did,
-            schema       : 'http://member-schema',
+            author     : alice,
+            data       : Encoder.stringToBytes('bob is a member'),
+            dataFormat : 'application/json',
+            module     : moduleDefinition.module,
+            modulePath : rolePath,
+            recipient  : bob.did,
+            schema     : 'http://member-schema',
           });
           expect((await dwn.processMessage(
             alice.did,
@@ -4289,35 +4289,35 @@ export function testRecordsWriteHandler(): void {
               dataEncryptionInitializationVector,
               Encoder.stringToBytes(plaintext),
             );
-            const protocolPathPublicKey = messageRuleSet.$keyAgreement!.publicKeyJwk;
+            const modulePathPublicKey = messageRuleSet.$keyAgreement!.publicKeyJwk;
             const encryptionInput: EncryptionInput = {
               initializationVector : dataEncryptionInitializationVector,
               key                  : dataEncryptionKey,
               keyEncryptionInputs  : [
                 {
                   algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                  keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-                  publicKey        : protocolPathPublicKey,
-                  derivationScheme : KeyDerivationScheme.ProtocolPath,
+                  keyId            : await Encryption.getKeyId(modulePathPublicKey),
+                  publicKey        : modulePathPublicKey,
+                  derivationScheme : KeyDerivationScheme.ModulePath,
                 },
                 {
                   algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                   keyId            : loserAudience.keyId,
                   publicKey        : bob.encryptionKeyPair.publicJwk,
                   derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                  protocol         : protocolDefinition.protocol,
+                  module           : moduleDefinition.module,
                   rolePath,
                 },
               ],
             };
 
             return TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'message',
-              schema       : 'http://message-schema',
-              dataFormat   : 'text/plain',
-              data         : encryptedData,
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'message',
+              schema     : 'http://message-schema',
+              dataFormat : 'text/plain',
+              data       : encryptedData,
               encryptionInput,
             });
           };
@@ -4337,7 +4337,7 @@ export function testRecordsWriteHandler(): void {
           const delivery = await createDeliveryControlWrite({
             author             : alice,
             keyId              : loserAudience.keyId,
-            protocol           : protocolDefinition.protocol,
+            module             : moduleDefinition.module,
             recipient          : bob.did,
             recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
             rolePath,
@@ -4355,8 +4355,8 @@ export function testRecordsWriteHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-key-id-bound.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-key-id-bound.xyz',
             published : false,
             types     : {
               thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -4375,33 +4375,33 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+          expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
           const thread = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : 'http://thread-schema',
-            dataFormat   : 'application/json',
-            data         : Encoder.stringToBytes('{"title":"secret"}'),
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'thread',
+            schema     : 'http://thread-schema',
+            dataFormat : 'application/json',
+            data       : Encoder.stringToBytes('{"title":"secret"}'),
           });
           expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
           const rolePath = 'thread/participant';
-          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-          const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+          const threadRuleSet = encryptedModuleDefinition.structure.thread;
+          const participantRuleSet = threadRuleSet.participant as ModuleRuleSet;
           const audience = await createAudienceControlWrite({
             author      : alice,
             contextId   : thread.message.contextId,
-            protocol    : protocolDefinition.protocol,
+            module      : moduleDefinition.module,
             rolePath,
             roleRuleSet : participantRuleSet,
           });
@@ -4419,24 +4419,24 @@ export function testRecordsWriteHandler(): void {
             dataEncryptionInitializationVector,
             Encoder.stringToBytes('encrypted chat'),
           );
-          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+          const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-                publicKey        : protocolPathPublicKey,
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                keyId            : await Encryption.getKeyId(modulePathPublicKey),
+                publicKey        : modulePathPublicKey,
+                derivationScheme : KeyDerivationScheme.ModulePath,
               },
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : await Encryption.getKeyId(bob.encryptionKeyPair.publicJwk),
                 publicKey        : bob.encryptionKeyPair.publicJwk,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                protocol         : protocolDefinition.protocol,
+                module           : moduleDefinition.module,
                 rolePath,
               },
             ],
@@ -4444,8 +4444,8 @@ export function testRecordsWriteHandler(): void {
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
             parentContextId : thread.message.contextId,
             schema          : 'http://chat-schema',
             dataFormat      : 'text/plain',
@@ -4455,15 +4455,15 @@ export function testRecordsWriteHandler(): void {
 
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(writeReply.status.code).toBe(400);
-          expect(writeReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceMissing);
+          expect(writeReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing);
         });
 
 
         it('should accept an encrypted role-readable RecordsWrite with a matching audience record', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://role-audience-entry-accepted.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://role-audience-entry-accepted.xyz',
             published : false,
             types     : {
               thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -4482,33 +4482,33 @@ export function testRecordsWriteHandler(): void {
             },
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+          expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
           const thread = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'thread',
-            schema       : 'http://thread-schema',
-            dataFormat   : 'application/json',
-            data         : Encoder.stringToBytes('{"title":"secret"}'),
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'thread',
+            schema     : 'http://thread-schema',
+            dataFormat : 'application/json',
+            data       : Encoder.stringToBytes('{"title":"secret"}'),
           });
           expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
           const rolePath = 'thread/participant';
-          const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-          const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+          const threadRuleSet = encryptedModuleDefinition.structure.thread;
+          const participantRuleSet = threadRuleSet.participant as ModuleRuleSet;
           const audience = await createAudienceControlWrite({
             author      : alice,
             contextId   : thread.message.contextId,
-            protocol    : protocolDefinition.protocol,
+            module      : moduleDefinition.module,
             rolePath,
             roleRuleSet : participantRuleSet,
           });
@@ -4524,24 +4524,24 @@ export function testRecordsWriteHandler(): void {
           const encryptedData = await Encryption.encrypt(
             ContentEncryptionAlgorithm.A256CTR, dataEncryptionKey, dataEncryptionInitializationVector, data
           );
-          const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-          const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+          const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+          const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-                publicKey        : protocolPathPublicKey,
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                keyId            : await Encryption.getKeyId(modulePathPublicKey),
+                publicKey        : modulePathPublicKey,
+                derivationScheme : KeyDerivationScheme.ModulePath,
               },
               {
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
                 keyId            : audience.keyId,
                 publicKey        : alice.encryptionKeyPair.publicJwk,
                 derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-                protocol         : protocolDefinition.protocol,
+                module           : moduleDefinition.module,
                 rolePath,
               },
             ],
@@ -4549,8 +4549,8 @@ export function testRecordsWriteHandler(): void {
 
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
             parentContextId : thread.message.contextId,
             schema          : 'http://chat-schema',
             dataFormat      : 'text/plain',
@@ -4562,11 +4562,11 @@ export function testRecordsWriteHandler(): void {
           expect(writeReply.status.code).toBe(202);
         });
 
-        it('should require plaintext for protocol types without encryptionRequired', async () => {
+        it('should require plaintext for module types without encryptionRequired', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://mixed-encryption-test.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://mixed-encryption-test.xyz',
             published : false,
             types     : {
               public : {},
@@ -4578,24 +4578,24 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
 
-          // Alice installs the protocol
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition,
+          // Alice installs the module
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition,
           });
-          const configReply = await dwn.processMessage(alice.did, protocolConfig.message);
+          const configReply = await dwn.processMessage(alice.did, moduleConfig.message);
           expect(configReply.status.code).toBe(202);
 
           // Plaintext write to the non-encrypted type — should succeed
           const data = Encoder.stringToBytes('public data');
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'public',
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'public',
             data,
           });
 
@@ -4610,7 +4610,7 @@ export function testRecordsWriteHandler(): void {
             initializationVector,
             data,
           );
-          const publicPathKey = encryptedProtocolDefinition.structure.public.$keyAgreement!.publicKeyJwk;
+          const publicPathKey = encryptedModuleDefinition.structure.public.$keyAgreement!.publicKeyJwk;
           const encryptedWrite = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             data            : encryptedData,
@@ -4619,13 +4619,13 @@ export function testRecordsWriteHandler(): void {
               key                 : dataEncryptionKey,
               keyEncryptionInputs : [{
                 algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-                derivationScheme : KeyDerivationScheme.ProtocolPath,
+                derivationScheme : KeyDerivationScheme.ModulePath,
                 keyId            : await Encryption.getKeyId(publicPathKey),
                 publicKey        : publicPathKey,
               }],
             },
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'public',
+            module     : moduleDefinition.module,
+            modulePath : 'public',
           });
 
           const encryptedReply = await dwn.processMessage(
@@ -4634,48 +4634,48 @@ export function testRecordsWriteHandler(): void {
             { dataStream: encryptedWrite.dataStream },
           );
           expect(encryptedReply.status.code).toBe(400);
-          expect(encryptedReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationEncryptionNotAllowed);
+          expect(encryptedReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationEncryptionNotAllowed);
         });
 
         it('should fail authorization if record schema is not allowed at the hierarchical level attempted for the RecordsWrite', async () => {
         // scenario: Attempt writing of records at 3 levels in the hierarchy to cover all possible cases of missing rule sets
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = credentialIssuanceProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = credentialIssuanceModuleDefinition;
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const credentialApplicationSchema = protocolDefinition.types.credentialApplication.schema;
-          const credentialResponseSchema = protocolDefinition.types.credentialResponse.schema;
+          const credentialApplicationSchema = moduleDefinition.types.credentialApplication.schema;
+          const credentialResponseSchema = moduleDefinition.types.credentialResponse.schema;
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // Try and fail to write a 'credentialResponse', which is not allowed at the top level of the record hierarchy
           const data = Encoder.stringToBytes('any data');
           const failedCredentialResponse = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credentialResponse',
-            schema       : credentialResponseSchema, // this is a known schema type, but not allowed for a protocol root record
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credentialResponse',
+            schema     : credentialResponseSchema, // this is a known schema type, but not allowed for a module root record
             data
           });
           const failedCredentialResponseReply =
             await dwn.processMessage(alice.did, failedCredentialResponse.message, { dataStream: failedCredentialResponse.dataStream });
           expect(failedCredentialResponseReply.status.code).toBe(400);
-          expect(failedCredentialResponseReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
-          expect(failedCredentialResponseReply.status.errorCode).toBe(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
+          expect(failedCredentialResponseReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
+          expect(failedCredentialResponseReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
 
           // Successfully write a 'credentialApplication' at the top level of the of the record hierarchy
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'credentialApplication', // allowed at root level
-            schema       : credentialApplicationSchema,
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'credentialApplication', // allowed at root level
+            schema     : credentialApplicationSchema,
             data
           });
           const credentialApplicationReply = await dwn.processMessage(
@@ -4686,8 +4686,8 @@ export function testRecordsWriteHandler(): void {
           const failedCredentialApplication = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             recipient       : alice.did,
-            protocol,
-            protocolPath    : 'credentialApplication/credentialApplication', // credentialApplications may not be nested below another credentialApplication
+            module,
+            modulePath      : 'credentialApplication/credentialApplication', // credentialApplications may not be nested below another credentialApplication
             schema          : credentialApplicationSchema,
             parentContextId : credentialApplication.message.contextId,
             data
@@ -4695,14 +4695,14 @@ export function testRecordsWriteHandler(): void {
           const failedCredentialApplicationReply2 =
             await dwn.processMessage(alice.did, failedCredentialApplication.message, { dataStream: failedCredentialApplication.dataStream });
           expect(failedCredentialApplicationReply2.status.code).toBe(400);
-          expect(failedCredentialApplicationReply2.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
+          expect(failedCredentialApplicationReply2.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
 
           // Successfully write a 'credentialResponse' below the 'credentialApplication'
           const credentialResponse = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             recipient       : alice.did,
-            protocol,
-            protocolPath    : 'credentialApplication/credentialResponse',
+            module,
+            modulePath      : 'credentialApplication/credentialResponse',
             schema          : credentialResponseSchema,
             parentContextId : credentialApplication.message.contextId,
             data
@@ -4716,8 +4716,8 @@ export function testRecordsWriteHandler(): void {
           const nestedCredentialApplication = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             recipient       : alice.did,
-            protocol,
-            protocolPath    : 'credentialApplication/credentialResponse/credentialApplication',
+            module,
+            modulePath      : 'credentialApplication/credentialResponse/credentialApplication',
             schema          : credentialApplicationSchema,
             parentContextId : credentialResponse.message.contextId,
             data
@@ -4725,32 +4725,32 @@ export function testRecordsWriteHandler(): void {
           const nestedCredentialApplicationReply =
             await dwn.processMessage(alice.did, nestedCredentialApplication.message, { dataStream: nestedCredentialApplication.dataStream });
           expect(nestedCredentialApplicationReply.status.code).toBe(400);
-          expect(nestedCredentialApplicationReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMissingRuleSet);
+          expect(nestedCredentialApplicationReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
         });
 
         it('should only allow DWN owner to write if record does not have an action rule defined', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          // write a protocol definition without an explicit action rule
-          const protocolDefinition = privateProtocol;
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // write a module definition without an explicit action rule
+          const moduleDefinition = privateModule;
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // test that Alice is allowed to write to her own DWN
           const data = Encoder.stringToBytes('any data');
           const aliceWriteMessageData = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'privateNote', // this comes from `types`
-            schema       : protocolDefinition.types.privateNote.schema,
-            dataFormat   : protocolDefinition.types.privateNote.dataFormats[0],
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'privateNote', // this comes from `types`
+            schema     : moduleDefinition.types.privateNote.schema,
+            dataFormat : moduleDefinition.types.privateNote.dataFormats[0],
             data
           });
 
@@ -4760,48 +4760,48 @@ export function testRecordsWriteHandler(): void {
           // test that Bob is not allowed to write to Alice's DWN
           const bob = await TestDataGenerator.generateDidKeyPersona();
           const bobWriteMessageData = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'privateNote', // this comes from `types`
-            schema       : 'private-note',
-            dataFormat   : protocolDefinition.types.privateNote.dataFormats[0],
+            author     : bob,
+            recipient  : alice.did,
+            module,
+            modulePath : 'privateNote', // this comes from `types`
+            schema     : 'private-note',
+            dataFormat : moduleDefinition.types.privateNote.dataFormats[0],
             data
           });
 
           reply = await dwn.processMessage(alice.did, bobWriteMessageData.message, { dataStream: bobWriteMessageData.dataStream });
           expect(reply.status.code).toBe(401);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionRulesNotFound);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionRulesNotFound);
         });
 
         it('should look up recipient path with ancestor depth of 2+ (excluding self) in action rule correctly', async () => {
-          // simulate a DEX protocol with at least 3 layers of message exchange: ask -> offer -> fulfillment
+          // simulate a DEX module with at least 3 layers of message exchange: ask -> offer -> fulfillment
           // make sure recipient of offer can send fulfillment
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const pfi = await TestDataGenerator.generateDidKeyPersona();
 
-          // write a DEX protocol definition
-          const protocolDefinition = dexProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          // write a DEX module definition
+          const moduleDefinition = dexModuleDefinition;
+          const module = moduleDefinition.module;
 
-          // write the DEX protocol in the PFI
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : pfi,
-            protocolDefinition : protocolDefinition
+          // write the DEX module in the PFI
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : pfi,
+            moduleDefinition : moduleDefinition
           });
 
-          const protocolConfigureReply = await dwn.processMessage(pfi.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(pfi.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // simulate Alice's ask and PFI's offer already occurred
           const data = Encoder.stringToBytes('irrelevant');
           const askMessageData = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : pfi.did,
-            schema       : protocolDefinition.types.ask.schema,
-            protocol,
-            protocolPath : 'ask',
+            author     : alice,
+            recipient  : pfi.did,
+            schema     : moduleDefinition.types.ask.schema,
+            module,
+            modulePath : 'ask',
             data
           });
 
@@ -4811,10 +4811,10 @@ export function testRecordsWriteHandler(): void {
           const offerMessageData = await TestDataGenerator.generateRecordsWrite({
             author          : pfi,
             recipient       : alice.did,
-            schema          : protocolDefinition.types.offer.schema,
+            schema          : moduleDefinition.types.offer.schema,
             parentContextId : askMessageData.message.contextId,
-            protocol,
-            protocolPath    : 'ask/offer',
+            module,
+            modulePath      : 'ask/offer',
             data
           });
 
@@ -4825,10 +4825,10 @@ export function testRecordsWriteHandler(): void {
           const fulfillmentMessageData = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             recipient       : pfi.did,
-            schema          : protocolDefinition.types.fulfillment.schema,
+            schema          : moduleDefinition.types.fulfillment.schema,
             parentContextId : offerMessageData.message.contextId,
-            protocol,
-            protocolPath    : 'ask/offer/fulfillment',
+            module,
+            modulePath      : 'ask/offer/fulfillment',
             data
           });
           reply = await dwn.processMessage(pfi.did, fulfillmentMessageData.message, { dataStream: fulfillmentMessageData.dataStream });
@@ -4849,34 +4849,34 @@ export function testRecordsWriteHandler(): void {
         });
 
         it('should fail authorization if incoming message contains `parentId` that leads to no record', async () => {
-          // 1. DEX protocol with at least 3 layers of message exchange: ask -> offer -> fulfillment
+          // 1. DEX module with at least 3 layers of message exchange: ask -> offer -> fulfillment
           // 2. Alice sends an ask to a PFI
           // 3. Alice sends a fulfillment to an non-existent offer to the PFI
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const pfi = await TestDataGenerator.generateDidKeyPersona();
 
-          // write a DEX protocol definition
-          const protocolDefinition = dexProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          // write a DEX module definition
+          const moduleDefinition = dexModuleDefinition;
+          const module = moduleDefinition.module;
 
-          // write the DEX protocol in the PFI
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-            author             : pfi,
-            protocolDefinition : protocolDefinition
+          // write the DEX module in the PFI
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+            author           : pfi,
+            moduleDefinition : moduleDefinition
           });
 
-          const protocolConfigureReply = await dwn.processMessage(pfi.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(pfi.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // simulate Alice's ask
           const data = Encoder.stringToBytes('irrelevant');
           const askMessageData = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : pfi.did,
-            schema       : protocolDefinition.types.ask.schema,
-            protocol,
-            protocolPath : 'ask',
+            author     : alice,
+            recipient  : pfi.did,
+            schema     : moduleDefinition.types.ask.schema,
+            module,
+            modulePath : 'ask',
             data
           });
 
@@ -4887,32 +4887,32 @@ export function testRecordsWriteHandler(): void {
           const fulfillmentMessageData = await TestDataGenerator.generateRecordsWrite({
             author          : alice,
             recipient       : pfi.did,
-            schema          : protocolDefinition.types.fulfillment.schema,
+            schema          : moduleDefinition.types.fulfillment.schema,
             parentContextId : 'nonExistentId', // NOTE: this will point to a non-existent parent
-            protocolPath    : 'ask/offer/fulfillment',
-            protocol,
+            modulePath      : 'ask/offer/fulfillment',
+            module,
             data
           });
 
           reply = await dwn.processMessage(pfi.did, fulfillmentMessageData.message, { dataStream: fulfillmentMessageData.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationParentRecordNotFound);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentRecordNotFound);
         });
 
         it('should 400 if expected CID of `encryption` mismatches the `encryptionCid` in `authorization`', async () => {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          // configure protocol
-          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // configure module
+          const moduleDefinition = emailModuleDefinition as ModuleDefinition;
+          const module = moduleDefinition.module;
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           const bobMessageBytes = Encoder.stringToBytes('message from bob');
           const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
@@ -4928,15 +4928,15 @@ export function testRecordsWriteHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
-              derivationScheme : KeyDerivationScheme.ProtocolPath
+              derivationScheme : KeyDerivationScheme.ModulePath
             }]
           };
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol,
-            protocolPath : 'email',
-            schema       : 'email',
-            data         : bobMessageEncryptedBytes,
+            author     : alice,
+            module,
+            modulePath : 'email',
+            schema     : 'email',
+            data       : bobMessageEncryptedBytes,
             encryptionInput
           });
 
@@ -4944,7 +4944,7 @@ export function testRecordsWriteHandler(): void {
           message.encryption!.initializationVector = Encoder.bytesToBase64Url(TestDataGenerator.randomBytes(16));
 
           const recordsWriteHandler = new RecordsWriteHandler({
-            didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+            didResolver, messageStore, dataStore, coreModules           : new CoreModuleRegistry(), eventLog,
             validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
           });
           const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -4957,15 +4957,15 @@ export function testRecordsWriteHandler(): void {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = emailModuleDefinition as ModuleDefinition;
+          const module = moduleDefinition.module;
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           const messageBytes = Encoder.stringToBytes('encrypted message');
           const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
@@ -4979,18 +4979,18 @@ export function testRecordsWriteHandler(): void {
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
             }],
           };
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            data         : encryptedBytes,
+            author     : alice,
+            data       : encryptedBytes,
             encryptionInput,
-            protocol,
-            protocolPath : 'email',
-            schema       : 'email',
+            module,
+            modulePath : 'email',
+            schema     : 'email',
           });
 
           const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
@@ -4998,7 +4998,7 @@ export function testRecordsWriteHandler(): void {
           message.authorization.signature.payload = Encoder.stringToBase64Url(JSON.stringify(signaturePayload));
 
           const recordsWriteHandler = new RecordsWriteHandler({
-            coreProtocols         : new CoreProtocolRegistry(),
+            coreModules           : new CoreModuleRegistry(),
             dataStore,
             didResolver,
             eventLog,
@@ -5015,15 +5015,15 @@ export function testRecordsWriteHandler(): void {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const moduleDefinition = emailModuleDefinition as ModuleDefinition;
+          const module = moduleDefinition.module;
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           const messageBytes = Encoder.stringToBytes('encrypted message');
           const dataEncryptionInitializationVector = TestDataGenerator.randomBytes(16);
@@ -5037,24 +5037,24 @@ export function testRecordsWriteHandler(): void {
             key                  : dataEncryptionKey,
             keyEncryptionInputs  : [{
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-              derivationScheme : KeyDerivationScheme.ProtocolPath,
+              derivationScheme : KeyDerivationScheme.ModulePath,
               keyId            : await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk),
               publicKey        : alice.encryptionKeyPair.publicJwk,
             }],
           };
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            data         : encryptedBytes,
+            author     : alice,
+            data       : encryptedBytes,
             encryptionInput,
-            protocol,
-            protocolPath : 'email',
-            schema       : 'email',
+            module,
+            modulePath : 'email',
+            schema     : 'email',
           });
 
           delete message.encryption;
 
           const recordsWriteHandler = new RecordsWriteHandler({
-            coreProtocols         : new CoreProtocolRegistry(),
+            coreModules           : new CoreModuleRegistry(),
             dataStore,
             didResolver,
             eventLog,
@@ -5067,22 +5067,22 @@ export function testRecordsWriteHandler(): void {
           expect(writeReply.status.detail).toContain(DwnErrorCode.RecordsWriteValidateIntegrityEncryptionCidMissing);
         });
 
-        it('should return 400 if protocol is not normalized', async () => {
+        it('should return 400 if module is not normalized', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = emailProtocolDefinition;
+          const moduleDefinition = emailModuleDefinition;
 
           // write a message into DB
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            data         : new TextEncoder().encode('data1'),
-            protocol     : 'example.com/',
-            protocolPath : 'email', // from email protocol
-            schema       : protocolDefinition.types.email.schema
+            author     : alice,
+            data       : new TextEncoder().encode('data1'),
+            module     : 'example.com/',
+            modulePath : 'email', // from email module
+            schema     : moduleDefinition.types.email.schema
           });
 
-          // overwrite protocol because #create auto-normalizes protocol
-          recordsWrite.message.descriptor.protocol = 'example.com/';
+          // overwrite module because #create auto-normalizes module
+          recordsWrite.message.descriptor.module = 'example.com/';
 
           // Re-create auth because we altered the descriptor after signing
           const descriptorCid = await Cid.computeCid(recordsWrite.message.descriptor);
@@ -5104,13 +5104,13 @@ export function testRecordsWriteHandler(): void {
           // Send records write message
           const reply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.UrlProtocolNotNormalized);
+          expect(reply.status.detail).toContain(DwnErrorCode.UrlModuleNotNormalized);
         });
 
-        it('#359 - should not allow access of data by referencing `dataCid` in protocol authorized `RecordsWrite`', async () => {
+        it('#359 - should not allow access of data by referencing `dataCid` in module authorized `RecordsWrite`', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // alice writes a private record
           const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded);
@@ -5126,29 +5126,29 @@ export function testRecordsWriteHandler(): void {
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
           expect(reply.status.code).toBe(202);
 
-          const protocolDefinition = socialMediaProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          const moduleDefinition = socialMediaModuleDefinition;
+          const module = moduleDefinition.module;
 
-          // alice has a social media protocol that allows anyone to write and read images
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // alice has a social media module that allows anyone to write and read images
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // bob learns of metadata (ie. dataCid) of alice's secret data,
-          // attempts to gain unauthorized access by writing to alice's DWN through open protocol referencing the dataCid without supplying the data
+          // attempts to gain unauthorized access by writing to alice's DWN through open module referencing the dataCid without supplying the data
           // which he is allowed to do, the DWN will treat the operation as an initial-write or a record that has a later and different state.
           const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
-            protocol,
-            protocolPath : 'image',
-            schema       : protocolDefinition.types.image.schema,
-            dataFormat   : 'image/jpeg',
+            author     : bob,
+            module,
+            modulePath : 'image',
+            schema     : moduleDefinition.types.image.schema,
+            dataFormat : 'image/jpeg',
             dataCid, // bob learns of, and references alice's secrete data's CID
             dataSize,
-            recipient    : alice.did
+            recipient  : alice.did
           });
           const imageReply = await dwn.processMessage(alice.did, imageRecordsWrite.message);
           expect(imageReply.status.code).toBe(204); // allows write but is not readable or queryable
@@ -5166,7 +5166,7 @@ export function testRecordsWriteHandler(): void {
           // verify the record is not part of a query
           const bobRecordsQuery= await RecordsQuery.create({
             filter: {
-              schema: protocolDefinition.types.image.schema,
+              schema: moduleDefinition.types.image.schema,
             },
             signer: Jws.createSigner(bob)
           });
@@ -5201,10 +5201,10 @@ export function testRecordsWriteHandler(): void {
           expect(bobRecordsQueryReply2.entries).toHaveLength(0);
         });
 
-        it('#359 - should not allow access of data by referencing `dataCid` in protocol authorized `RecordsWrite` with large data', async () => {
+        it('#359 - should not allow access of data by referencing `dataCid` in module authorized `RecordsWrite` with large data', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // alice writes a private record
           const dataString = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
@@ -5220,29 +5220,29 @@ export function testRecordsWriteHandler(): void {
           const reply = await dwn.processMessage(alice.did, message, { dataStream });
           expect(reply.status.code).toBe(202);
 
-          const protocolDefinition = socialMediaProtocolDefinition;
-          const protocol = protocolDefinition.protocol;
+          const moduleDefinition = socialMediaModuleDefinition;
+          const module = moduleDefinition.module;
 
-          // alice has a social media protocol that allows anyone to write and read images
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // alice has a social media module that allows anyone to write and read images
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // bob learns of metadata (ie. dataCid) of alice's secret data,
-          // attempts to gain unauthorized access by writing to alice's DWN through open protocol referencing the dataCid without supplying the data
+          // attempts to gain unauthorized access by writing to alice's DWN through open module referencing the dataCid without supplying the data
           // which he is allowed to do, the DWN will treat the operation as an initial-write or a record that has a later and different state.
           const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : bob,
-            protocol,
-            protocolPath : 'image',
-            schema       : protocolDefinition.types.image.schema,
-            dataFormat   : 'image/jpeg',
+            author     : bob,
+            module,
+            modulePath : 'image',
+            schema     : moduleDefinition.types.image.schema,
+            dataFormat : 'image/jpeg',
             dataCid, // bob learns of, and references alice's secrete data's CID
             dataSize,
-            recipient    : alice.did
+            recipient  : alice.did
           });
           const imageReply = await dwn.processMessage(alice.did, imageRecordsWrite.message);
           expect(imageReply.status.code).toBe(204); // allows write but is not readable or queryable
@@ -5260,7 +5260,7 @@ export function testRecordsWriteHandler(): void {
           // verify the record is not part of a query
           const bobRecordsQuery= await RecordsQuery.create({
             filter: {
-              schema: protocolDefinition.types.image.schema,
+              schema: moduleDefinition.types.image.schema,
             },
             signer: Jws.createSigner(bob)
           });
@@ -5295,31 +5295,31 @@ export function testRecordsWriteHandler(): void {
           expect(bobRecordsQueryReply2.entries).toHaveLength(0);
         });
 
-        it('should allow record with or without schema if protocol does not require schema for a record type', async () => {
-          // scenario: Alice's DWN has a protocol that allows anyone to write a record without schema
+        it('should allow record with or without schema if module does not require schema for a record type', async () => {
+          // scenario: Alice's DWN has a module that allows anyone to write a record without schema
 
-          // write a protocol definition that has a record type without schema
-          const protocolDefinition = anyoneCollaborateProtocolDefinition as ProtocolDefinition;
+          // write a module definition that has a record type without schema
+          const moduleDefinition = anyoneCollaborateModuleDefinition as ModuleDefinition;
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // write a `RecordsWrite` message without schema
           const data = TestDataGenerator.randomBytes(100);
           const dataStream = DataStream.fromBytes(data);
           const docWrite = await RecordsWrite.create(
             {
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'doc',
-              dataFormat   : 'application/octet-stream',
+              module     : moduleDefinition.module,
+              modulePath : 'doc',
+              dataFormat : 'application/octet-stream',
               data,
-              signer       : Jws.createSigner(alice)
+              signer     : Jws.createSigner(alice)
             }
           );
 
@@ -5331,12 +5331,12 @@ export function testRecordsWriteHandler(): void {
           const data2Stream = DataStream.fromBytes(data2);
           const doc2Write = await RecordsWrite.create(
             {
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'doc',
-              schema       : TestDataGenerator.randomString(10),
-              dataFormat   : 'application/octet-stream',
-              data         : data2,
-              signer       : Jws.createSigner(alice)
+              module     : moduleDefinition.module,
+              modulePath : 'doc',
+              schema     : TestDataGenerator.randomString(10),
+              dataFormat : 'application/octet-stream',
+              data       : data2,
+              signer     : Jws.createSigner(alice)
             }
           );
 
@@ -5345,7 +5345,7 @@ export function testRecordsWriteHandler(): void {
 
           // verify messages got written to the DB
           const recordsQuery = await RecordsQuery.create({
-            filter : { protocolPath: 'doc' },
+            filter : { modulePath: 'doc' },
             signer : Jws.createSigner(alice)
           });
           const recordsReadReply = await dwn.processMessage(alice.did, recordsQuery.message);
@@ -5353,12 +5353,12 @@ export function testRecordsWriteHandler(): void {
           expect(recordsReadReply.entries).toHaveLength(2);
         });
 
-        it('should allow authorization if protocol message size is within min and max size', async () => {
+        it('should allow authorization if module message size is within min and max size', async () => {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolDefinition = {
-            protocol  : 'http://blob-size.xyz',
+          const moduleDefinition = {
+            module    : 'http://blob-size.xyz',
             published : true,
             types     : {
               blob: {}
@@ -5373,22 +5373,22 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition,
+            moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           // test min record size
           const data = TestDataGenerator.randomBytes(1);
           const testRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
             data
           });
 
@@ -5398,11 +5398,11 @@ export function testRecordsWriteHandler(): void {
           // test max record size
           const data2 = TestDataGenerator.randomBytes(1000);
           const testRecord2 = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
-            data         : data2
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
+            data       : data2
           });
 
           const reply2 = await dwn.processMessage(alice.did, testRecord2.message, { dataStream: testRecord2.dataStream });
@@ -5411,24 +5411,24 @@ export function testRecordsWriteHandler(): void {
           // test beyond max size
           const data3 = TestDataGenerator.randomBytes(1001);
           const testRecord3 = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
-            data         : data3
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
+            data       : data3
           });
 
           const reply3 = await dwn.processMessage(alice.did, testRecord3.message, { dataStream: testRecord3.dataStream });
           expect(reply3.status.code).toBe(400);
-          expect(reply3.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMaxSizeInvalid);
+          expect(reply3.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMaxSizeInvalid);
         });
 
-        it('should fail authorization if protocol message size is less than specified minimum size', async () => {
+        it('should fail authorization if module message size is less than specified minimum size', async () => {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolDefinition = {
-            protocol  : 'http://blob-size.xyz',
+          const moduleDefinition = {
+            module    : 'http://blob-size.xyz',
             published : true,
             types     : {
               blob: {}
@@ -5442,48 +5442,48 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition,
+            moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           const data = TestDataGenerator.randomBytes(999);
           const testRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
             data
           });
 
           const reply = await dwn.processMessage(alice.did, testRecord.message, { dataStream: testRecord.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMinSizeInvalid);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMinSizeInvalid);
 
           // test valid min record size
           const data2 = TestDataGenerator.randomBytes(1000);
           const testRecord2 = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
-            data         : data2
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
+            data       : data2
           });
 
           const reply2 = await dwn.processMessage(alice.did, testRecord2.message, { dataStream: testRecord2.dataStream });
           expect(reply2.status.code).toBe(202);
         });
 
-        it('should fail authorization if protocol message size is more than specified maximum size', async () => {
+        it('should fail authorization if module message size is more than specified maximum size', async () => {
           const alice = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolDefinition = {
-            protocol  : 'http://blob-size.xyz',
+          const moduleDefinition = {
+            module    : 'http://blob-size.xyz',
             published : true,
             types     : {
               blob: {}
@@ -5497,36 +5497,36 @@ export function testRecordsWriteHandler(): void {
             }
           };
 
-          const protocol = protocolDefinition.protocol;
-          const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const module = moduleDefinition.module;
+          const moduleConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition,
+            moduleDefinition,
           });
 
-          const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfig.message);
-          expect(protocolConfigureReply.status.code).toBe(202);
+          const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfig.message);
+          expect(moduleConfigureReply.status.code).toBe(202);
 
           const data = TestDataGenerator.randomBytes(1001);
           const testRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
             data
           });
 
           const reply = await dwn.processMessage(alice.did, testRecord.message, { dataStream: testRecord.dataStream });
           expect(reply.status.code).toBe(400);
-          expect(reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMaxSizeInvalid);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMaxSizeInvalid);
 
           // test valid max record size
           const data2 = TestDataGenerator.randomBytes(1000);
           const testRecord2 = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            recipient    : alice.did,
-            protocol,
-            protocolPath : 'blob',
-            data         : data2
+            author     : alice,
+            recipient  : alice.did,
+            module,
+            modulePath : 'blob',
+            data       : data2
           });
 
           const reply2 = await dwn.processMessage(alice.did, testRecord2.message, { dataStream: testRecord2.dataStream });
@@ -5535,30 +5535,30 @@ export function testRecordsWriteHandler(): void {
 
         it('should admit a write referencing a soft-deleted parent', async () => {
           // scenario:
-          // 0. Alice installs a nested protocol foo -> bar -> baz
+          // 0. Alice installs a nested module foo -> bar -> baz
           // 1. Alice writes foo1
           // 2. Alice deletes foo1
           // 3. Alice tries to write a bar1 referencing the deleted foo and should succeed
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = nestedProtocol as ProtocolDefinition;
+          const moduleDefinition = nestedModule as ModuleDefinition;
 
-          // 0. Alice installs a nested protocol foo -> bar -> baz
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // 0. Alice installs a nested module foo -> bar -> baz
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // 1. Alice writes foo1
           const fooOptions = {
-            author       : alice,
-            protocol     : nestedProtocol.protocol,
-            protocolPath : 'foo',
-            schema       : nestedProtocol.types.foo.schema,
-            dataFormat   : nestedProtocol.types.foo.dataFormats[0],
+            author     : alice,
+            module     : nestedModule.module,
+            modulePath : 'foo',
+            schema     : nestedModule.types.foo.schema,
+            dataFormat : nestedModule.types.foo.dataFormats[0],
           };
 
           const foo1 = await TestDataGenerator.generateRecordsWrite(fooOptions);
@@ -5576,10 +5576,10 @@ export function testRecordsWriteHandler(): void {
           // 3. Alice tries to write a bar1 referencing the deleted foo and should succeed
           const barOptions = {
             author          : alice,
-            protocol        : nestedProtocol.protocol,
-            protocolPath    : 'foo/bar',
-            schema          : nestedProtocol.types.bar.schema,
-            dataFormat      : nestedProtocol.types.bar.dataFormats[0],
+            module          : nestedModule.module,
+            modulePath      : 'foo/bar',
+            schema          : nestedModule.types.bar.schema,
+            dataFormat      : nestedModule.types.bar.dataFormats[0],
             parentContextId : foo1.message.contextId
           };
           const bar1 = await TestDataGenerator.generateRecordsWrite(barOptions);
@@ -5589,29 +5589,29 @@ export function testRecordsWriteHandler(): void {
 
         it('should fail if a write references a mismatching parent that compared to the parent in the `contextId` ', async () => {
           // scenario:
-          // 0. Alice installs a nested protocol foo -> bar -> baz
+          // 0. Alice installs a nested module foo -> bar -> baz
           // 1. Alice writes foo1
           // 2. Alice tries to write a bar1 referencing the foo1 in parentId, but contextId does not reference the same parent
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = nestedProtocol as ProtocolDefinition;
+          const moduleDefinition = nestedModule as ModuleDefinition;
 
-          // 0. Alice installs a nested protocol foo -> bar -> baz
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // 0. Alice installs a nested module foo -> bar -> baz
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // 1. Alice writes foo1
           const fooOptions = {
-            author       : alice,
-            protocol     : nestedProtocol.protocol,
-            protocolPath : 'foo',
-            schema       : nestedProtocol.types.foo.schema,
-            dataFormat   : nestedProtocol.types.foo.dataFormats[0],
+            author     : alice,
+            module     : nestedModule.module,
+            modulePath : 'foo',
+            schema     : nestedModule.types.foo.schema,
+            dataFormat : nestedModule.types.foo.dataFormats[0],
           };
 
           const foo1 = await TestDataGenerator.generateRecordsWrite(fooOptions);
@@ -5621,10 +5621,10 @@ export function testRecordsWriteHandler(): void {
           // 2. Alice tries to write a bar1 referencing the foo1 in parentId, but contextId does not reference the same parent
           const barOptions = {
             author          : alice,
-            protocol        : nestedProtocol.protocol,
-            protocolPath    : 'foo/bar',
-            schema          : nestedProtocol.types.bar.schema,
-            dataFormat      : nestedProtocol.types.bar.dataFormats[0],
+            module          : nestedModule.module,
+            modulePath      : 'foo/bar',
+            schema          : nestedModule.types.bar.schema,
+            dataFormat      : nestedModule.types.bar.dataFormats[0],
             parentContextId : foo1.message.contextId
           };
           const bar1 = await TestDataGenerator.generateRecordsWrite(barOptions);
@@ -5650,38 +5650,38 @@ export function testRecordsWriteHandler(): void {
 
           const bar1WriteResponse = await dwn.processMessage(alice.did, bar1.message);
           expect(bar1WriteResponse.status.code).toBe(400);
-          expect(bar1WriteResponse.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationIncorrectContextId);
+          expect(bar1WriteResponse.status.detail).toContain(DwnErrorCode.ModuleAuthorizationIncorrectContextId);
         });
       });
 
       describe('grant based writes', () => {
-        describe('protocol records', () => {
-          it('allows writes of protocol records with matching protocol grant scopes', async () => {
-            // scenario: Alice gives Bob a grant to read all records in the protocol
-            //           Bob invokes that grant to write a protocol record.
+        describe('module records', () => {
+          it('allows writes of module records with matching module grant scopes', async () => {
+            // scenario: Alice gives Bob a grant to read all records in the module
+            //           Bob invokes that grant to write a module record.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -5692,43 +5692,43 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant in order to write a record to the protocol
+            // Bob invokes the grant in order to write a record to the module
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'foo',
+              module            : moduleDefinition.module,
+              modulePath        : 'foo',
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
           });
 
-          it('rejects writes of protocol records with mismatching protocol grant scopes', async () => {
-            // scenario: Alice gives Bob a grant to write to a protocol. Bob tries and fails to
-            //           invoke the grant to write to another protocol.
+          it('rejects writes of module records with mismatching module grant scopes', async () => {
+            // scenario: Alice gives Bob a grant to write to a module. Bob tries and fails to
+            //           invoke the grant to write to another module.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
-            // Alice gives Bob a permission grant with a different protocol than what Bob will try to write to
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            // Alice gives Bob a permission grant with a different module than what Bob will try to write to
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : 'some-other-protocol',
+                module    : 'some-other-module',
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -5739,57 +5739,57 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant, failing to write to a different protocol than the grant allows
+            // Bob invokes the grant, failing to write to a different module than the grant allows
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'foo',
+              module            : moduleDefinition.module,
+              modulePath        : 'foo',
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(401);
-            expect(recordsWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+            expect(recordsWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch);
           });
 
-          it('allows writes of protocol records with matching contextId grant scopes', async () => {
+          it('allows writes of module records with matching contextId grant scopes', async () => {
             // scenario: Alice gives Bob a grant to write to a specific contextId.
             //           Bob invokes that grant to write a record in the allowed contextId.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = emailModuleDefinition as ModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates the context that she will give Bob access to
             const alicesRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              data         : new TextEncoder().encode('data1'),
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email',
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
+              author     : alice,
+              data       : new TextEncoder().encode('data1'),
+              module     : moduleDefinition.module,
+              modulePath : 'email',
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
             });
             const alicesRecordsWriteReply =
               await dwn.processMessage(alice.did, alicesRecordsWrite.message, { dataStream: alicesRecordsWrite.dataStream });
             expect(alicesRecordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
                 contextId : alicesRecordsWrite.message.contextId,
               }
             });
@@ -5801,13 +5801,13 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant in order to write a record to the protocol
+            // Bob invokes the grant in order to write a record to the module
             const bobsRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'email/email',
-              schema            : protocolDefinition.types.email.schema,
-              dataFormat        : protocolDefinition.types.email.dataFormats![0],
+              module            : moduleDefinition.module,
+              modulePath        : 'email/email',
+              schema            : moduleDefinition.types.email.schema,
+              dataFormat        : moduleDefinition.types.email.dataFormats![0],
               parentContextId   : alicesRecordsWrite.message.contextId,
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
@@ -5815,45 +5815,45 @@ export function testRecordsWriteHandler(): void {
             expect(bobsRecordsWriteReply.status.code).toBe(202);
           });
 
-          it('rejects writes of protocol records with mismatching contextId grant scopes', async () => {
+          it('rejects writes of module records with mismatching contextId grant scopes', async () => {
             // scenario: Alice gives Bob a grant to write to a specific contextId. Bob tries and fails to
             //           invoke the grant to write to another contextId.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = emailModuleDefinition as ModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates the context that she will give Bob access to
             const alicesRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              data         : new TextEncoder().encode('data1'),
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email',
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
+              author     : alice,
+              data       : new TextEncoder().encode('data1'),
+              module     : moduleDefinition.module,
+              modulePath : 'email',
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
             });
             const alicesRecordsWriteReply =
               await dwn.processMessage(alice.did, alicesRecordsWrite.message, { dataStream: alicesRecordsWrite.dataStream });
             expect(alicesRecordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
                 contextId : await TestDataGenerator.randomCborSha256Cid(), // different contextId than what Bob will try to write to
               }
             });
@@ -5865,13 +5865,13 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant in order to write a record to the protocol
+            // Bob invokes the grant in order to write a record to the module
             const bobsRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'email/email',
-              schema            : protocolDefinition.types.email.schema,
-              dataFormat        : protocolDefinition.types.email.dataFormats![0],
+              module            : moduleDefinition.module,
+              modulePath        : 'email/email',
+              schema            : moduleDefinition.types.email.schema,
+              dataFormat        : moduleDefinition.types.email.dataFormats![0],
               parentContextId   : alicesRecordsWrite.message.contextId,
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
@@ -5880,33 +5880,33 @@ export function testRecordsWriteHandler(): void {
             expect(bobsRecordsWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch);
           });
 
-          it('allows writes of protocol records with matching protocolPath grant scopes', async () => {
-            // scenario: Alice gives Bob a grant to write to a specific protocolPath.
-            //           Bob invokes that grant to write a record in the allowed protocolPath.
+          it('allows writes of module records with matching modulePath grant scopes', async () => {
+            // scenario: Alice gives Bob a grant to write to a specific modulePath.
+            //           Bob invokes that grant to write a record in the allowed modulePath.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
-                interface    : DwnInterfaceName.Records,
-                method       : DwnMethodName.Write,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                interface  : DwnInterfaceName.Records,
+                method     : DwnMethodName.Write,
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -5917,44 +5917,44 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant in order to write a record to the protocol
+            // Bob invokes the grant in order to write a record to the module
             const bobsRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'foo',
+              module            : moduleDefinition.module,
+              modulePath        : 'foo',
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
             const bobsRecordsWriteReply = await dwn.processMessage(alice.did, bobsRecordsWrite.message, { dataStream: bobsRecordsWrite.dataStream });
             expect(bobsRecordsWriteReply.status.code).toBe(202);
           });
 
-          it('rejects writes of protocol records with mismatching protocolPath grant scopes', async () => {
-            // scenario: Alice gives Bob a grant to write to a specific protocolPath. Bob tries and fails to
-            //           invoke the grant to write to another protocolPath.
+          it('rejects writes of module records with mismatching modulePath grant scopes', async () => {
+            // scenario: Alice gives Bob a grant to write to a specific modulePath. Bob tries and fails to
+            //           invoke the grant to write to another modulePath.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
-                interface    : DwnInterfaceName.Records,
-                method       : DwnMethodName.Write,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'some-other-protocol-path',
+                interface  : DwnInterfaceName.Records,
+                method     : DwnMethodName.Write,
+                module     : moduleDefinition.module,
+                modulePath : 'some-other-module-path',
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -5965,16 +5965,16 @@ export function testRecordsWriteHandler(): void {
             );
             expect(permissionGrantWriteReply.status.code).toBe(202);
 
-            // Bob invokes the grant in order to write a record to the protocol
+            // Bob invokes the grant in order to write a record to the module
             const bobsRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author            : bob,
-              protocol          : protocolDefinition.protocol,
-              protocolPath      : 'foo',
+              module            : moduleDefinition.module,
+              modulePath        : 'foo',
               permissionGrantId : permissionGrant.recordsWrite.message.recordId,
             });
             const bobsRecordsWriteReply = await dwn.processMessage(alice.did, bobsRecordsWrite.message, { dataStream: bobsRecordsWrite.dataStream });
             expect(bobsRecordsWriteReply.status.code).toBe(401);
-            expect(bobsRecordsWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch);
+            expect(bobsRecordsWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModulePathMismatch);
           });
         });
 
@@ -5986,24 +5986,24 @@ export function testRecordsWriteHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            // Alice installs a protocol
-            const protocolDefinition = minimalProtocolDefinition;
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs a module
+            const moduleDefinition = minimalModuleDefinition;
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a grant for Bob with `published` === required
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               },
               conditions: {
                 publication: PermissionConditionPublication.Required,
@@ -6021,10 +6021,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob is able to write a published record
             const publishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : true,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : true,
               permissionGrantId
             });
             const publishedRecordsWriteReply = await dwn.processMessage(
@@ -6036,10 +6036,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob is not able to write an unpublished record
             const unpublishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : false,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : false,
               permissionGrantId
             });
             const unpublishedRecordsWriteReply =
@@ -6055,24 +6055,24 @@ export function testRecordsWriteHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            // Alice installs a protocol
-            const protocolDefinition = minimalProtocolDefinition;
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs a module
+            const moduleDefinition = minimalModuleDefinition;
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a grant for Bob with `published` === prohibited
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               },
               conditions: {
                 publication: PermissionConditionPublication.Prohibited
@@ -6090,10 +6090,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob not is able to write a published record
             const publishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : true,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : true,
               permissionGrantId
             });
             const publishedRecordsWriteReply = await dwn.processMessage(
@@ -6106,10 +6106,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob is able to write an unpublished record
             const unpublishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : false,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : false,
               permissionGrantId
             });
             const unpublishedRecordsWriteReply =
@@ -6124,24 +6124,24 @@ export function testRecordsWriteHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            // Alice installs a protocol
-            const protocolDefinition = minimalProtocolDefinition;
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs a module
+            const moduleDefinition = minimalModuleDefinition;
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a grant for Bob with `published` === prohibited
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Write,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               },
               conditions: {
                 // publication: '', // intentionally undefined
@@ -6159,10 +6159,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob is able to write a published record
             const publishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : true,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : true,
               permissionGrantId
             });
             const publishedRecordsWriteReply = await dwn.processMessage(
@@ -6174,10 +6174,10 @@ export function testRecordsWriteHandler(): void {
 
             // Bob is able to write an unpublished record
             const unpublishedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              published    : false,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              published  : false,
               permissionGrantId
             });
             const unpublishedRecordsWriteReply =
@@ -6194,7 +6194,7 @@ export function testRecordsWriteHandler(): void {
         // Pruned RecordsWrite
         // Data large enough to use the DataStore
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const prunedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -6223,7 +6223,7 @@ export function testRecordsWriteHandler(): void {
         // Pruned RecordsWrite
         // Data that would be encoded within the message
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
         const prunedRecordsWrite = await TestDataGenerator.generateRecordsWrite({
           author    : alice,
@@ -6250,7 +6250,7 @@ export function testRecordsWriteHandler(): void {
         const tenant = author.did;
 
         TestStubGenerator.stubDidResolver(didResolver, [author]);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+        await TestDataGenerator.installDefaultTestModule(dwn, author);
 
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({
           author,
@@ -6283,8 +6283,8 @@ export function testRecordsWriteHandler(): void {
       it('should not allow referencing data across tenants', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, bob);
         const data = Encoder.stringToBytes('test');
         const dataCid = await Cid.computeDagPbCidFromBytes(data);
         const encodedData = Encoder.bytesToBase64Url(data);
@@ -6337,7 +6337,7 @@ export function testRecordsWriteHandler(): void {
       describe('encodedData threshold', () => {
         it('should call cloneAndAddEncodedData if dataSize is less than or equal to the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
           const processEncoded = sinon.spy(RecordsWriteHandler.prototype as any, 'cloneAndAddEncodedData');
@@ -6349,7 +6349,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should not call cloneAndAddEncodedData if dataSize is greater than the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
           const processEncoded = sinon.spy(RecordsWriteHandler.prototype as any, 'cloneAndAddEncodedData');
@@ -6361,7 +6361,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should have encodedData field if dataSize is less than or equal to the threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -6375,7 +6375,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should not have encodedData field if dataSize greater than threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -6389,7 +6389,7 @@ export function testRecordsWriteHandler(): void {
 
         it('should retain original RecordsWrite message but without the encodedData if data is under threshold', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const dataBytes = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded);
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -6443,7 +6443,7 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          coreProtocols         : new CoreProtocolRegistry(),
+          coreModules           : new CoreModuleRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
@@ -6454,8 +6454,8 @@ export function testRecordsWriteHandler(): void {
       });
 
       it('should return 400 if `contextId` in payload of message signature mismatches with `contextId` in the message', async () => {
-        // generate a message with protocol so that computed contextId is also computed and included in message
-        const { author, message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ protocol: 'http://any.value', protocolPath: 'any/value' });
+        // generate a message with module so that computed contextId is also computed and included in message
+        const { author, message, recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ module: 'http://any.value', modulePath: 'any/value' });
 
         // replace `authorization` with mismatching `contextId`, even though signature is still valid
         const signaturePayload = { ...recordsWrite.signaturePayload };
@@ -6474,7 +6474,7 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          coreProtocols         : new CoreProtocolRegistry(),
+          coreModules           : new CoreModuleRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
@@ -6496,14 +6496,14 @@ export function testRecordsWriteHandler(): void {
         messageStoreStub.query.resolves({ messages: [] });
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        // stub protocol validation so the handler reaches authentication/authorization
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
+        // stub module validation so the handler reaches authentication/authorization
+        sinon.stub(ModuleAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          coreProtocols         : new CoreProtocolRegistry(),
+          coreModules           : new CoreModuleRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
@@ -6522,14 +6522,14 @@ export function testRecordsWriteHandler(): void {
         messageStoreStub.query.resolves({ messages: [] });
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        // stub protocol validation so the handler reaches authentication/authorization
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
+        // stub module validation so the handler reaches authentication/authorization
+        sinon.stub(ModuleAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          coreProtocols         : new CoreProtocolRegistry(),
+          coreModules           : new CoreModuleRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
@@ -6569,7 +6569,7 @@ export function testRecordsWriteHandler(): void {
           didResolver,
           messageStore          : messageStoreStub,
           dataStore             : dataStoreStub,
-          coreProtocols         : new CoreProtocolRegistry(),
+          coreModules           : new CoreModuleRegistry(),
           eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
@@ -6585,7 +6585,7 @@ export function testRecordsWriteHandler(): void {
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, attesters: [alice, bob] });
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreModules           : new CoreModuleRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -6603,7 +6603,7 @@ export function testRecordsWriteHandler(): void {
         message.attestation = anotherWrite.message.attestation;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreModules           : new CoreModuleRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -6623,7 +6623,7 @@ export function testRecordsWriteHandler(): void {
         message.attestation = attestationNotReferencedByAuthorization;
 
         const recordsWriteHandler = new RecordsWriteHandler({
-          didResolver, messageStore, dataStore, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          didResolver, messageStore, dataStore, coreModules           : new CoreModuleRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore, dataStore }),
         });
         const writeReply = await recordsWriteHandler.handle({ tenant: alice.did, message, dataStream: dataStream! });
@@ -6648,12 +6648,12 @@ export function testRecordsWriteHandler(): void {
 
         const dataStoreStub = sinon.createStubInstance(DataStoreLevel);
 
-        // stub protocol validation so the handler reaches the process methods
-        sinon.stub(ProtocolAuthorization, 'validateReferentialIntegrity').resolves({});
+        // stub module validation so the handler reaches the process methods
+        sinon.stub(ModuleAuthorization, 'validateReferentialIntegrity').resolves({});
 
         const recordsWriteHandler = new RecordsWriteHandler({
           didResolver           : didResolverStub, messageStore          : messageStoreStub,
-          dataStore             : dataStoreStub, coreProtocols         : new CoreProtocolRegistry(), eventLog,
+          dataStore             : dataStoreStub, coreModules           : new CoreModuleRegistry(), eventLog,
           validationStateReader : createTestValidationStateReader({ messageStore: messageStoreStub, dataStore: dataStoreStub }),
         });
 

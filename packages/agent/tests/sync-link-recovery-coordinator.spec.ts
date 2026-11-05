@@ -424,14 +424,14 @@ describe('SyncLinkRecoveryCoordinator', () => {
     state.authorization = {
       kind         : 'role',
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/viewer',
+      moduleRole   : 'notebook/viewer',
       roleRecordId : 'role-a',
     };
     state.scope = {
-      kind          : 'context',
-      protocol      : 'https://example.com/notebooks',
-      contextId     : 'notebook-a',
-      protocolPaths : ['notebook/page'],
+      kind        : 'context',
+      module      : 'https://example.com/notebooks',
+      contextId   : 'notebook-a',
+      modulePaths : ['notebook/page'],
     };
     const controller = activate(fixture, state);
     fixture.operations.reconcileTarget.resolves({ pullDrained: true });
@@ -448,12 +448,12 @@ describe('SyncLinkRecoveryCoordinator', () => {
     await clock.runAllAsync();
   });
 
-  it('emits protocol-scoped repair-completion events without leaking runtime internals', async () => {
+  it('emits module-scoped repair-completion events without leaking runtime internals', async () => {
     const clock = sinon.useFakeTimers();
     const fixture = createFixture();
-    const protocol = 'https://proto.example/chat';
+    const module = 'https://proto.example/chat';
     const state = link('repairing');
-    state.scope = { kind: 'protocolSet', protocols: [protocol] };
+    state.scope = { kind: 'moduleSet', modules: [module] };
     state.connectivity = 'offline';
     const controller = activate(fixture, state);
 
@@ -472,10 +472,10 @@ describe('SyncLinkRecoveryCoordinator', () => {
     )).toBe(true);
 
     for (const event of completionEvents) {
-      // The event scope is the link's protocol scope — never the runtime
+      // The event scope is the link's module scope — never the runtime
       // handle, whose enumerable internals must not reach subscribers.
-      expect(event.protocol).toBe(protocol);
-      expect(event.protocols).toEqual([protocol]);
+      expect(event.module).toBe(module);
+      expect(event.modules).toEqual([module]);
       expect('_disposed' in event).toBe(false);
       expect('_timers' in event).toBe(false);
       expect('disposed' in event).toBe(false);

@@ -104,7 +104,7 @@ export interface ObservationFactory {
   ): StoreForSource<Source, Selection>;
 }
 
-/** Protocol collections preserve their always-present native record payload. */
+/** Module collections preserve their always-present native record payload. */
 export type StoreCollectionState<Item> = (RecordViewState<Item> | Readonly<{
   status: 'idle'; records: readonly Item[]; hasMore: false; current: false; error?: never;
 }>) & Readonly<{ isLoadingMore: boolean }>;

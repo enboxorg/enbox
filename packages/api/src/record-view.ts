@@ -3,7 +3,7 @@ import type { DwnApi } from './dwn-api.js';
 import type { ObservableStore } from './observable-store.js';
 import type { Record } from './record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { ProtocolDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
@@ -13,7 +13,7 @@ import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
-import { projectReplicationCurrentness, syncEventCoversProtocol, syncRegistrationCoversProtocol, syncScopeCoversProtocol } from '@enbox/agent';
+import { projectReplicationCurrentness, syncEventCoversModule, syncRegistrationCoversModule, syncScopeCoversModule } from '@enbox/agent';
 
 type RecordViewContents<Item> = Readonly<{
   /**
@@ -81,7 +81,7 @@ type CompiledRecordQuery = ReturnType<typeof compileRecordQuery>;
 type RecordViewOptions<Item> = {
   additionalWakeFilters?: readonly RecordsFilter[];
   callerSignal?: AbortSignal;
-  definition: ProtocolDefinition;
+  definition: ModuleDefinition;
   dwn: DwnApi;
   expandBy?: number;
   materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
@@ -136,7 +136,7 @@ type PendingLoad = {
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
-  private readonly _definition: ProtocolDefinition;
+  private readonly _definition: ModuleDefinition;
   private readonly _isDirectRemote: boolean;
   private readonly _dwn: DwnApi;
   private readonly _expandBy?: number;
@@ -300,10 +300,10 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     subscriptionHandler: DwnSubscriptionHandler,
   ): Promise<void> {
     const reply = await this._dwn.records.subscribe({
-      from         : this._query.from,
+      from       : this._query.from,
       filter,
-      pagination   : { limit: 1 },
-      protocolRole : this._query.protocolRole,
+      pagination : { limit: 1 },
+      moduleRole : this._query.moduleRole,
       subscriptionHandler,
     });
 
@@ -397,7 +397,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
-    if (!syncEventCoversProtocol(event, this._query.filter.protocol)
+    if (!syncEventCoversModule(event, this._query.filter.module)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;
     }
@@ -433,9 +433,9 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     }
   }
 
-  /** A changed registration defines a new baseline for its selected protocols. */
+  /** A changed registration defines a new baseline for its selected modules. */
   private handleRegistrationChange(event: RegistrationChangeEvent): void {
-    if (syncRegistrationCoversProtocol(event.options, this._query.filter.protocol)) {
+    if (syncRegistrationCoversModule(event.options, this._query.filter.module)) {
       this.publishProvisionalReplicationCurrentness();
     }
     this.requestMaterialization();
@@ -556,7 +556,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     }));
   }
 
-  /** Resolve whether this protocol has completed its configured remote baseline. */
+  /** Resolve whether this module has completed its configured remote baseline. */
   private async resolveCurrentness(): Promise<RecordViewCurrentness> {
     if (this._isDirectRemote) {
       return { current: this._directRemoteUnavailableSubscriptions.size === 0 };
@@ -568,19 +568,19 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
 
     if (this._followedContextId === undefined) {
       const registration = await this._sync.getIdentityOptions(this._tenantDid);
-      if (!syncRegistrationCoversProtocol(registration, this._query.filter.protocol)) {
+      if (!syncRegistrationCoversModule(registration, this._query.filter.module)) {
         return { current: true };
       }
     }
 
     const links = (await this._sync.getReplicationLinks(this._tenantDid))
       .filter((link): boolean => this._followedContextId === undefined
-        ? syncScopeCoversProtocol(link.scope, this._query.filter.protocol)
+        ? syncScopeCoversModule(link.scope, this._query.filter.module)
         : link.scope.kind === 'context'
-          && link.scope.protocol === this._query.filter.protocol
+          && link.scope.module === this._query.filter.module
           && link.scope.contextId === this._followedContextId
           && link.followedSourceId === this._followedSourceId
-          && link.scope.protocolPaths.includes(this._query.filter.protocolPath));
+          && link.scope.modulePaths.includes(this._query.filter.modulePath));
     const status = projectReplicationCurrentness(links);
     if (status === 'error') {
       return this.resolveUnavailableCurrentness(true, latestPausedRecoveryLink(links));
@@ -595,8 +595,8 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   ): RecordViewCurrentness {
     if (isPaused) {
       const message = failedLink?.recovery === undefined
-        ? `RecordView: replication is paused for protocol '${this._query.filter.protocol}'.`
-        : `RecordView: replication is paused for protocol '${this._query.filter.protocol}'; `
+        ? `RecordView: replication is paused for module '${this._query.filter.module}'.`
+        : `RecordView: replication is paused for module '${this._query.filter.module}'; `
           + `source '${failedLink.remoteEndpoint}' failed: ${failedLink.recovery.error}`;
       return {
         status : 'error',
@@ -647,14 +647,14 @@ function immutableState<Item>(state: RecordViewState<Item>): RecordViewState<Ite
 
 /** Project the canonical query to the structural scope containing every dependency of its result. */
 function structuralWakeFilter(
-  definition: ProtocolDefinition,
+  definition: ModuleDefinition,
   filter: CompiledRecordQuery['filter'],
 ): RecordsFilter {
-  const recordLimit = getRuleSetAtPath(filter.protocolPath, definition.structure)?.$recordLimit;
+  const recordLimit = getRuleSetAtPath(filter.modulePath, definition.structure)?.$recordLimit;
   const contextId = recordLimitWakeContextId(recordLimit !== undefined, filter);
   return {
-    protocol     : filter.protocol,
-    protocolPath : filter.protocolPath,
+    module     : filter.module,
+    modulePath : filter.modulePath,
     ...(contextId === undefined ? {} : { contextId }),
     ...(recordLimit === undefined && filter.recordId !== undefined ? { recordId: filter.recordId } : {}),
   };
@@ -671,7 +671,7 @@ function recordLimitWakeContextId(
   }
 
   const contextSegments = contextId.split('/');
-  if (contextSegments.length !== filter.protocolPath.split('/').length) {
+  if (contextSegments.length !== filter.modulePath.split('/').length) {
     return contextId;
   }
 

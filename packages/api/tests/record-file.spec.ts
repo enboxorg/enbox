@@ -21,15 +21,15 @@ describe('File record data', () => {
       await harness.createAgentDid({ publish: false });
       const owner = await harness.createIdentity({ name: 'File owner', publish: false });
       const dwn = new DwnApi({ agent: harness.agent, connectedDid: owner.did.uri });
-      const { status: protocolStatus } = await dwn.protocols.configure({
+      const { status: moduleStatus } = await dwn.modules.configure({
         definition: {
-          protocol  : 'https://example.com/files',
+          module    : 'https://example.com/files',
           published : false,
           types     : { file: { dataFormats: ['application/json'] } },
           structure : { file: {} },
         },
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       const initial = new FileConstructor(['{"version":1}'], 'initial.json', { type: 'application/json' });
       const replacement = new FileConstructor(['{"version":2}'], 'replacement.json', { type: 'application/json' });
@@ -38,10 +38,10 @@ describe('File record data', () => {
         expect(replacement).not.toBeInstanceOf(Blob);
       }
       const { record, status } = await dwn.records.write({
-        data         : initial,
-        dataFormat   : 'application/json',
-        protocol     : 'https://example.com/files',
-        protocolPath : 'file',
+        data       : initial,
+        dataFormat : 'application/json',
+        module     : 'https://example.com/files',
+        modulePath : 'file',
       });
       expect(status.code).toBe(202);
 

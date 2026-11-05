@@ -26,9 +26,9 @@ persists messages/data through SQL-backed stores.
 
 ## Sync Model
 
-Sync is centered on DWN records and protocol scopes:
+Sync is centered on DWN records and module scopes:
 
-- Wallets and apps register the protocols they are allowed to sync.
+- Wallets and apps register the modules they are allowed to sync.
 - Live sync uses server-delivered replication messages where available.
 - Durable sync fills gaps through pull/push paths after reconnects.
 - Bounded control requests and small byte-backed replication pushes reuse an

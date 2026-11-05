@@ -3,7 +3,7 @@ import type { RecordsQueryReplyEntry } from '../../src/types/records-types.js';
 
 import { Jws } from '../../src/utils/jws.js';
 import { Message } from '../../src/core/message.js';
-import { PermissionsProtocol } from '../../src/protocols/permissions.js';
+import { PermissionsModule } from '../../src/modules/permissions.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -26,25 +26,25 @@ describe('Message', () => {
       const recordsDeleteAuthor = Message.getAuthor(recordsDeleteMessage);
       expect(recordsDeleteAuthor).toBe(bob.did);
 
-      // create a protocol configure message
-      const { message: protocolsConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: bob });
-      const protocolsConfigureAuthor = Message.getAuthor(protocolsConfigureMessage);
-      expect(protocolsConfigureAuthor).toBe(bob.did);
+      // create a module configure message
+      const { message: modulesConfigureMessage } = await TestDataGenerator.generateModulesConfigure({ author: bob });
+      const modulesConfigureAuthor = Message.getAuthor(modulesConfigureMessage);
+      expect(modulesConfigureAuthor).toBe(bob.did);
     });
 
     it('should get the author of a delegated message', async () => {
       const alice = await TestDataGenerator.generatePersona();
       const deviceX = await TestDataGenerator.generatePersona();
 
-      // create a delegation scope from alice to deviceX for writing records in a protocol
+      // create a delegation scope from alice to deviceX for writing records in a module
       const scope:PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'https://example.com/protocol/test',
+        module    : 'https://example.com/module/test',
       };
 
       // create the delegated grant message
-      const bobGrant = await PermissionsProtocol.createGrant({
+      const bobGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -58,8 +58,8 @@ describe('Message', () => {
       const { message } = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : bobGrant.dataEncodedMessage,
-        protocol       : 'https://example.com/protocol/test',
-        protocolPath   : 'test/path',
+        module         : 'https://example.com/module/test',
+        modulePath     : 'test/path',
         dataFormat     : 'application/json',
         data           : writeData,
       });
@@ -105,9 +105,9 @@ describe('Message', () => {
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'https://example.com/protocol/test',
+        module    : 'https://example.com/module/test',
       };
-      const delegatedGrant = await PermissionsProtocol.createGrant({
+      const delegatedGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -117,8 +117,8 @@ describe('Message', () => {
       const delegatedWrite = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : delegatedGrant.dataEncodedMessage,
-        protocol       : 'https://example.com/protocol/test',
-        protocolPath   : 'test/path',
+        module         : 'https://example.com/module/test',
+        modulePath     : 'test/path',
         dataFormat     : 'application/json',
         data           : TestDataGenerator.randomBytes(32),
       });

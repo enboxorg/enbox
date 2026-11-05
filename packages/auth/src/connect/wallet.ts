@@ -1,7 +1,7 @@
 /**
  * Wallet connect (Enbox Connect relay) flow.
  *
- * Connects to an external wallet via the Enbox Connect relay protocol,
+ * Connects to an external wallet via the Enbox Connect relay module,
  * importing a delegated DID with permission grants.
  * This implements the delegated path used by `AuthManager` and Enbox
  * connection stores.

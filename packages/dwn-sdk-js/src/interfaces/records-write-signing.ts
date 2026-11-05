@@ -49,9 +49,9 @@ export async function createSignerSignature(input: {
   signer: MessageSigner,
   delegatedGrantId?: string,
   permissionGrantId?: string,
-  protocolRole?: string
+  moduleRole?: string
 }): Promise<GeneralJws> {
-  const { recordId, contextId, descriptorCid, attestation, encryption, signer, delegatedGrantId, permissionGrantId, protocolRole } = input;
+  const { recordId, contextId, descriptorCid, attestation, encryption, signer, delegatedGrantId, permissionGrantId, moduleRole } = input;
 
   const attestationCid = attestation ? await Cid.computeCid(attestation) : undefined;
   const encryptionCid = encryption ? await Cid.computeCid(encryption) : undefined;
@@ -64,7 +64,7 @@ export async function createSignerSignature(input: {
     encryptionCid,
     delegatedGrantId,
     permissionGrantId,
-    protocolRole
+    moduleRole
   };
   removeUndefinedProperties(signaturePayload);
 

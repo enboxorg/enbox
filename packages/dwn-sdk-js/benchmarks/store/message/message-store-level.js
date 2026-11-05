@@ -14,9 +14,9 @@ const insertMessages = Array(items).fill().map((_,i) => {
   const schemaId = Math.floor(Math.random() * 5) + 1;
   const schema = `schema${schemaId}`;
 
-  //random protocol from 1-10
-  const protocolId = Math.floor(Math.random() * 9);
-  const protocol = `proto${protocolId}`;
+  //random module from 1-10
+  const moduleId = Math.floor(Math.random() * 9);
+  const module = `proto${moduleId}`;
 
   const bobId = i % 25;
   const recipient = `bob${bobId + 1}`;
@@ -48,7 +48,7 @@ const insertMessages = Array(items).fill().map((_,i) => {
   const indexes = {
     ...message.descriptor,
     schema,
-    protocol,
+    module,
     dateCreated,
     recipient,
     author,
@@ -95,7 +95,7 @@ const paginationStart = Date.now();
 while (page < 10) {
   page++;
   ({ messages, paginationMessageCid } = await messageStore.query(tenant, [
-    { published: true, schema: 'schema2', protocol: 'proto6' }
+    { published: true, schema: 'schema2', module: 'proto6' }
   ], ascOrder, { limit: 20, paginationMessageCid } ));
   results.push(...messages);
   if (paginationMessageCid === undefined) {
@@ -113,7 +113,7 @@ const paginationDescStart = Date.now();
 while (page < 10) {
   page++;
   ({ messages, paginationMessageCid } = await messageStore.query(tenant, [
-    { published: true, schema: 'schema2', protocol: 'proto6' }
+    { published: true, schema: 'schema2', module: 'proto6' }
   ], descOrder, { limit: 20, paginationMessageCid } ));
   results.push(...messages);
   if (paginationMessageCid === undefined) {
@@ -131,8 +131,8 @@ const paginationLargeStart = Date.now();
 while (page < 10) {
   page++;
   ({ messages, paginationMessageCid } = await messageStore.query(tenant, [
-    { published: true, schema: 'schema2', protocol: 'proto6' },
-    { published: false, schema: 'schema2', protocol: 'proto6' }
+    { published: true, schema: 'schema2', module: 'proto6' },
+    { published: false, schema: 'schema2', module: 'proto6' }
   ], ascOrder, { limit: 20, paginationMessageCid } ));
   results.push(...messages);
   if (paginationMessageCid === undefined) {
@@ -150,9 +150,9 @@ const paginationNonOwnerStart = Date.now();
 while (page < 10) {
   page++;
   ({ messages, paginationMessageCid } = await messageStore.query(tenant, [
-    { schema: 'schema2', published: false, author: 'bob1', protocol: 'proto6' },
-    { schema: 'schema2', published: true, protocol: 'proto6' },
-    { schema: 'schema2', published: false, recipient: 'bob1', protocol: 'proto6' },
+    { schema: 'schema2', published: false, author: 'bob1', module: 'proto6' },
+    { schema: 'schema2', published: true, module: 'proto6' },
+    { schema: 'schema2', published: false, recipient: 'bob1', module: 'proto6' },
   ], ascOrder, { limit: 20, paginationMessageCid } ));
   results.push(...messages);
   if (paginationMessageCid === undefined) {
@@ -170,9 +170,9 @@ const paginationDescNonOwnerStart = Date.now();
 while (page < 10) {
   page++;
   ({ messages, paginationMessageCid } = await messageStore.query(tenant, [
-    { schema: 'schema2', published: false, author: 'bob1', protocol: 'proto6' },
-    { schema: 'schema2', published: true, protocol: 'proto6' },
-    { schema: 'schema2', published: false, recipient: 'bob1', protocol: 'proto6' },
+    { schema: 'schema2', published: false, author: 'bob1', module: 'proto6' },
+    { schema: 'schema2', published: true, module: 'proto6' },
+    { schema: 'schema2', published: false, recipient: 'bob1', module: 'proto6' },
   ], descOrder, { limit: 20, paginationMessageCid } ));
   results.push(...messages);
   if (paginationMessageCid === undefined) {

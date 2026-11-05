@@ -3,9 +3,9 @@
 import type { AnonymousDwnApi, DwnPaginationCursor, DwnResponseStatus } from '@enbox/agent';
 import type {
   DateSort,
+  ModuleDefinition,
+  ModulesQueryFilter,
   Pagination,
-  ProtocolDefinition,
-  ProtocolsQueryFilter,
   RecordsFilter,
 } from '@enbox/dwn-sdk-js';
 
@@ -88,29 +88,29 @@ export type ReaderRecordsCountResponse = DwnResponseStatus & {
 };
 
 // ---------------------------------------------------------------------------
-// Request / Response types for protocols
+// Request / Response types for modules
 // ---------------------------------------------------------------------------
 
 /**
- * Request to query published protocols from a remote DWN.
+ * Request to query published modules from a remote DWN.
  *
  * @beta
  */
-export type ReaderProtocolsQueryRequest = {
-  /** The DID of the remote DWN to query protocols from (required). */
+export type ReaderModulesQueryRequest = {
+  /** The DID of the remote DWN to query modules from (required). */
   from: string;
-  /** Optional filter for the protocol query. */
-  filter?: ProtocolsQueryFilter;
+  /** Optional filter for the module query. */
+  filter?: ModulesQueryFilter;
 };
 
 /**
- * Response from a reader protocols query.
+ * Response from a reader modules query.
  *
  * @beta
  */
-export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
-  /** Array of published protocol definitions. */
-  protocols: ProtocolDefinition[];
+export type ReaderModulesQueryResponse = DwnResponseStatus & {
+  /** Array of published module definitions. */
+  modules: ModuleDefinition[];
 };
 
 // ---------------------------------------------------------------------------
@@ -120,10 +120,10 @@ export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
 /**
  * A read-only API for querying public data on remote DWNs without any identity or signing keys.
  *
- * This class mirrors the shape of {@link DwnApi}'s `records` and `protocols`
+ * This class mirrors the shape of {@link DwnApi}'s `records` and `modules`
  * namespaces, but restricts to read-path operations and requires a `from` DID
  * on every call (remote-only). All messages are unsigned, so only published
- * records and protocols are accessible.
+ * records and modules are accessible.
  *
  * Obtain an instance via {@link Enbox.anonymous | `Enbox.anonymous()`}.
  *
@@ -133,7 +133,7 @@ export type ReaderProtocolsQueryResponse = DwnResponseStatus & {
  *
  * const { records } = await dwn.records.query({
  *   from: 'did:dht:alice...',
- *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
+ *   filter: { module: 'https://blog.example/posts', modulePath: 'post' },
  * });
  *
  * for (const record of records) {
@@ -185,7 +185,7 @@ export class DwnReaderApi {
 
       /**
        * Read a specific public record from a remote DWN.
-       * Succeeds for published records and protocol records with `{ who: 'anyone', can: ['read'] }`.
+       * Succeeds for published records and module records with `{ who: 'anyone', can: ['read'] }`.
        */
       read: async (request: ReaderRecordsReadRequest): Promise<ReaderRecordsReadResponse> => {
         const reply = await this._anonymousDwn.recordsRead(request.from, {
@@ -225,26 +225,26 @@ export class DwnReaderApi {
   }
 
   /**
-   * API to query published protocol definitions from remote DWNs.
+   * API to query published module definitions from remote DWNs.
    */
-  get protocols(): {
-    query: (request: ReaderProtocolsQueryRequest) => Promise<ReaderProtocolsQueryResponse>;
+  get modules(): {
+    query: (request: ReaderModulesQueryRequest) => Promise<ReaderModulesQueryResponse>;
     } {
     return {
       /**
-       * Query published protocols from a remote DWN.
-       * Only protocol definitions with `published: true` are returned.
+       * Query published modules from a remote DWN.
+       * Only module definitions with `published: true` are returned.
        */
-      query: async (request: ReaderProtocolsQueryRequest): Promise<ReaderProtocolsQueryResponse> => {
-        const reply = await this._anonymousDwn.protocolsQuery(request.from, {
+      query: async (request: ReaderModulesQueryRequest): Promise<ReaderModulesQueryResponse> => {
+        const reply = await this._anonymousDwn.modulesQuery(request.from, {
           filter: request.filter,
         });
 
         const { entries = [], status } = reply;
 
-        const protocols = entries.map((entry) => entry.descriptor.definition);
+        const modules = entries.map((entry) => entry.descriptor.definition);
 
-        return { protocols, status };
+        return { modules, status };
       },
     };
   }

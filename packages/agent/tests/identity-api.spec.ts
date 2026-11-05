@@ -432,7 +432,7 @@ describe('AgentIdentityApi', () => {
           }]);
           expect(defaultPublish.notCalled).toBe(true);
           expect(processRequestStub.getCalls().map(call => call.args[0].messageType)).toEqual([
-            DwnInterface.ProtocolsConfigure,
+            DwnInterface.ModulesConfigure,
             DwnInterface.RecordsWrite,
           ]);
           expect(refreshSyncStub.calledOnceWithExactly(testPortableDid.uri)).toBe(true);

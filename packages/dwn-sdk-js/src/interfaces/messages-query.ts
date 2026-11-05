@@ -8,7 +8,7 @@ import { Message } from '../core/message.js';
 import { Records } from '../utils/records.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
-import { validateProtocolUrlNormalized } from '../utils/url.js';
+import { validateModuleUrlNormalized } from '../utils/url.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type MessagesQueryOptions = {
@@ -19,7 +19,7 @@ export type MessagesQueryOptions = {
   cursor?: ProgressToken;
   limit?: number;
   cidsOnly?: boolean;
-  protocolRole?: string;
+  moduleRole?: string;
   /** Delegated grant allowing the signer to act for the logical author. */
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 };
@@ -31,8 +31,8 @@ export class MessagesQuery extends AbstractMessage<MessagesQueryMessage> {
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
 
     for (const filter of message.descriptor.filters) {
-      if ('protocol' in filter && filter.protocol !== undefined) {
-        validateProtocolUrlNormalized(filter.protocol);
+      if ('module' in filter && filter.module !== undefined) {
+        validateModuleUrlNormalized(filter.module);
       }
     }
 
@@ -66,7 +66,7 @@ export class MessagesQuery extends AbstractMessage<MessagesQueryMessage> {
     const authorization = await Message.createAuthorization({
       descriptor,
       signer         : options.signer,
-      protocolRole   : options.protocolRole,
+      moduleRole     : options.moduleRole,
       delegatedGrant : options.delegatedGrant,
       ...permissionGrantInvocation,
     });

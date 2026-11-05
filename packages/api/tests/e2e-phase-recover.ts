@@ -3,7 +3,7 @@
  *
  * The recovery flow:
  * 1. Initialize agent with the original seed phrase (deterministic agent DID)
- * 2. Pull-sync from remote DWN to recover identity + key + protocol records
+ * 2. Pull-sync from remote DWN to recover identity + key + module records
  * 3. Look up the recovered identity
  * 4. Read the profile record and verify it matches
  *
@@ -19,7 +19,7 @@
 
 import { DwnApi } from '../src/dwn-api.js';
 import { EnboxUserAgent } from '@enbox/agent';
-import { ProfileProtocol } from '@enbox/protocols';
+import { ProfileModule } from '@enbox/modules';
 import { TypedEnbox } from '../src/index.js';
 
 const DWN_URL = process.env.E2E_DWN_URL!;
@@ -55,11 +55,11 @@ async function main(): Promise<void> {
   log(`Agent DID recovered: ${agent.agentDid.uri}`);
 
   // The agent DID is recovered, but the identity records are on the remote DWN.
-  // Pull-sync to retrieve identity, key, and protocol records.
+  // Pull-sync to retrieve identity, key, and module records.
   log('Pulling agent records from remote DWN...');
 
   // Register the agent DID for sync (identity records are stored under the agent DID's tenant)
-  await agent.sync.setIdentityOptions({ did: agent.agentDid.uri, options: { protocols: 'all' } });
+  await agent.sync.setIdentityOptions({ did: agent.agentDid.uri, options: { modules: 'all' } });
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
@@ -97,10 +97,10 @@ async function main(): Promise<void> {
   }
   log('Identity DID matches original');
 
-  // Now sync the identity DID's records (profile, protocols, etc.)
+  // Now sync the identity DID's records (profile, modules, etc.)
   log('Pulling identity records from remote DWN...');
 
-  await agent.sync.setIdentityOptions({ did: recoveredDid, options: { protocols: 'all' } });
+  await agent.sync.setIdentityOptions({ did: recoveredDid, options: { modules: 'all' } });
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
@@ -125,11 +125,11 @@ async function main(): Promise<void> {
   log('Verifying recovered profile data...');
 
   const dwnApi = new DwnApi({ agent, connectedDid: recoveredDid });
-  const profile = new TypedEnbox(dwnApi, ProfileProtocol);
+  const profile = new TypedEnbox(dwnApi, ProfileModule);
 
-  // The protocol was synced from the remote but TypedEnbox needs configure()
+  // The module was synced from the remote but TypedEnbox needs configure()
   // to be called to mark itself ready. This is a local-only operation since
-  // the ProtocolsConfigure record already exists in the local DWN.
+  // the ModulesConfigure record already exists in the local DWN.
   await profile.configure();
 
   const { records: recoveredProfiles } = await profile.records.query('profile');

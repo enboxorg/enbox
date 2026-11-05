@@ -1,4 +1,4 @@
-import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
+import type { DwnModuleDefinition, EnboxUserAgent } from '@enbox/agent';
 
 import type { ConnectHandler, ConnectionStatus } from '../src/types.js';
 
@@ -19,8 +19,8 @@ import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 
 const OWNER_DID = 'did:dht:owner';
 const DELEGATE_DID = 'did:dht:delegate';
-const PROTOCOLS: DwnProtocolDefinition[] = [{
-  protocol  : 'https://example.com/notes',
+const MODULES: DwnModuleDefinition[] = [{
+  module    : 'https://example.com/notes',
   published : true,
   types     : {},
   structure : {},
@@ -100,19 +100,19 @@ function createCoveringGrantMessage(): any {
       scope       : {
         interface : 'Records',
         method    : 'Write',
-        protocol  : 'https://example.com/notes',
+        module    : 'https://example.com/notes',
       },
     }).toBase64Url(),
     descriptor: {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : DELEGATE_DID,
-      dateCreated  : '2026-07-13T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : DELEGATE_DID,
+      dateCreated : '2026-07-13T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {
@@ -232,7 +232,7 @@ describe('delegated connection lifecycle', () => {
         stateAtEvent = manager.state;
       });
 
-      const session = await manager.refresh({ protocols: PROTOCOLS });
+      const session = await manager.refresh({ modules: MODULES });
 
       expect(session).not.toBe(originalSession);
       expect(manager.session).toBe(session);
@@ -273,7 +273,7 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<any> => createRefreshResult({ connectedDid: 'did:dht:other-owner' }),
         },
       });
-      await expect(ownerMismatch.refresh({ protocols: PROTOCOLS })).rejects.toThrow('expected');
+      await expect(ownerMismatch.refresh({ modules: MODULES })).rejects.toThrow('expected');
 
       const delegateMismatch = createTestManager(agent, {
         connectHandler: {
@@ -286,7 +286,7 @@ describe('delegated connection lifecycle', () => {
           }),
         },
       });
-      await expect(delegateMismatch.refresh({ protocols: PROTOCOLS })).rejects.toThrow('expected');
+      await expect(delegateMismatch.refresh({ modules: MODULES })).rejects.toThrow('expected');
     });
 
     test('preserves the active delegate identity when grant processing fails', async () => {
@@ -309,7 +309,7 @@ describe('delegated connection lifecycle', () => {
       });
       const previousSession = manager.session!;
 
-      await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('sync store unavailable');
+      await expect(manager.refresh({ modules: MODULES })).rejects.toThrow('sync store unavailable');
 
       expect(manager.session).toBe(previousSession);
       expect(previousSession.signal.aborted).toBe(false);
@@ -318,7 +318,7 @@ describe('delegated connection lifecycle', () => {
       expect(didDelete.called).toBe(false);
     });
 
-    test('rejects an empty refresh grant bundle for non-empty protocol requests', async () => {
+    test('rejects an empty refresh grant bundle for non-empty module requests', async () => {
       const identity = createMockIdentity({
         did      : { uri: DELEGATE_DID },
         metadata : { name: 'Delegate', tenant: 'did:dht:agent', connectedDid: OWNER_DID },
@@ -328,7 +328,7 @@ describe('delegated connection lifecycle', () => {
           requestAccess: async (): Promise<any> => createRefreshResult({ delegateGrants: [] }),
         },
       });
-      await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('returned no grants');
+      await expect(manager.refresh({ modules: MODULES })).rejects.toThrow('returned no grants');
     });
 
     test('rejects a denied refresh with a typed ConnectDeniedError and preserves the message', async () => {
@@ -345,7 +345,7 @@ describe('delegated connection lifecycle', () => {
 
       let caught: unknown;
       try {
-        await manager.refresh({ protocols: PROTOCOLS });
+        await manager.refresh({ modules: MODULES });
       } catch (error: unknown) {
         caught = error;
       }
@@ -387,7 +387,7 @@ describe('delegated connection lifecycle', () => {
           },
         });
 
-        const refreshPromise = manager.refresh({ protocols: PROTOCOLS });
+        const refreshPromise = manager.refresh({ modules: MODULES });
         await handlerStarted.promise;
         const refreshErrorPromise = refreshPromise.then(
           () => undefined,
@@ -421,7 +421,7 @@ describe('delegated connection lifecycle', () => {
       const sessionEnds: string[] = [];
       manager.on('session-end', ({ did }) => { sessionEnds.push(did); });
 
-      const refreshPromise = manager.refresh({ protocols: PROTOCOLS });
+      const refreshPromise = manager.refresh({ modules: MODULES });
       await storage.setStarted.promise;
       let disconnectSettled = false;
       const disconnectPromise = manager.disconnect().finally(() => { disconnectSettled = true; });
@@ -462,7 +462,7 @@ describe('delegated connection lifecycle', () => {
       await shutdownStarted.promise;
 
       await expect(manager.connect()).rejects.toThrow('shutting down');
-      await expect(manager.refresh({ protocols: PROTOCOLS })).rejects.toThrow('shutting down');
+      await expect(manager.refresh({ modules: MODULES })).rejects.toThrow('shutting down');
       expect(requestAccess.called).toBe(false);
 
       releaseShutdown.resolve();
@@ -495,22 +495,22 @@ describe('delegated connection lifecycle', () => {
       });
     }
 
-    test('requires an active delegated session, a handler, and non-empty protocols', async () => {
+    test('requires an active delegated session, a handler, and non-empty modules', async () => {
       const noSession = createTestManager(createMockAgent(), { delegatedSession: false });
-      await expect(noSession.refresh({ protocols: PROTOCOLS })).rejects.toThrow('active delegated session');
+      await expect(noSession.refresh({ modules: MODULES })).rejects.toThrow('active delegated session');
 
       const identity = createMockIdentity({
         did      : { uri: DELEGATE_DID },
         metadata : { name: 'Delegate', tenant: 'did:dht:agent', connectedDid: OWNER_DID },
       });
       const noHandler = createTestManager(createMockAgent({ identityList: async () => [identity] }));
-      await expect(noHandler.refresh({ protocols: PROTOCOLS })).rejects.toThrow('No connect handler');
+      await expect(noHandler.refresh({ modules: MODULES })).rejects.toThrow('No connect handler');
 
       const requestAccess = sinon.spy(async (): Promise<any> => createRefreshResult());
-      const emptyProtocols = createTestManager(createMockAgent({ identityList: async () => [identity] }), {
+      const emptyModules = createTestManager(createMockAgent({ identityList: async () => [identity] }), {
         connectHandler: { requestAccess },
       });
-      await expect(emptyProtocols.refresh({ protocols: [] })).rejects.toThrow('at least one protocol');
+      await expect(emptyModules.refresh({ modules: [] })).rejects.toThrow('at least one module');
       expect(requestAccess.called).toBe(false);
     });
   });
@@ -553,7 +553,7 @@ describe('delegated connection lifecycle', () => {
         const connectPromise = manager.connect({
           connectHandler : { requestAccess },
           password       : 'test-password',
-          protocols      : PROTOCOLS,
+          modules        : MODULES,
         });
         let connectSettled = false;
         void connectPromise.then(
@@ -713,7 +713,7 @@ describe('delegated connection lifecycle', () => {
 
       const stop = manager.startConnectionMonitor({
         intervalMs  : 1000,
-        autoRefresh : { protocols: PROTOCOLS },
+        autoRefresh : { modules: MODULES },
       });
       try {
         await clock.tickAsync(2000);
@@ -751,7 +751,7 @@ describe('delegated connection lifecycle', () => {
       const expired = sinon.spy();
       manager.on('connection-expired', expired);
       const refresh = sinon.stub(manager as never, '_refresh').resolves(session);
-      const stop = manager.startConnectionMonitor({ intervalMs: 1000, autoRefresh: { protocols: PROTOCOLS } });
+      const stop = manager.startConnectionMonitor({ intervalMs: 1000, autoRefresh: { modules: MODULES } });
       try {
         await clock.tickAsync(0);
         expect(pause.calledOnce).toBe(true);
@@ -782,7 +782,7 @@ describe('delegated connection lifecycle', () => {
 
       const stop = manager.startConnectionMonitor({
         intervalMs  : 1000,
-        autoRefresh : { protocols: PROTOCOLS },
+        autoRefresh : { modules: MODULES },
       });
       await clock.tickAsync(3000);
 
@@ -827,7 +827,7 @@ describe('delegated connection lifecycle', () => {
 
       const stop = manager.startConnectionMonitor({
         intervalMs  : 60_000,
-        autoRefresh : { protocols: PROTOCOLS },
+        autoRefresh : { modules: MODULES },
         onError,
       });
       await handlerStarted.promise;

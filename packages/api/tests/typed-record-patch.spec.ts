@@ -4,14 +4,14 @@ import type { Record } from '../src/record.js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { RecordConflictError } from '../src/record-conflict-error.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const definition = {
-  protocol  : 'https://example.com/protocols/typed-record-patch',
+  module    : 'https://example.com/modules/typed-record-patch',
   published : true,
   types     : {
     note: { dataFormats: ['application/json'] },
@@ -26,7 +26,7 @@ type Note = {
   body?: string;
 };
 
-const protocol = defineProtocol(definition, {
+const module = defineModule(definition, {
   note: recordCodecs.json<Note>(),
 });
 
@@ -46,14 +46,14 @@ function fakeRecord(data: Note): FakeRecord {
 
 function typedWithReads(readRecordForMutation: sinon.SinonStub): TypedEnbox<
   typeof definition,
-  typeof protocol.codecs
+  typeof module.codecs
 > {
   const dwn = { readRecordForMutation } as unknown as DwnApi;
-  return new TypedEnbox(dwn, protocol, {
+  return new TypedEnbox(dwn, module, {
     context: {
-      contextId     : 'noteid',
-      protocolPath  : 'note',
-      protocolPaths : new Set(['note']),
+      contextId   : 'noteid',
+      modulePath  : 'note',
+      modulePaths : new Set(['note']),
     },
   });
 }

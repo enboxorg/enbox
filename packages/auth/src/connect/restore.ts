@@ -271,8 +271,8 @@ async function finalizeRestoredSession(
       userAgent,
       connectedDid,
       delegateDid,
-      identitySyncProtocols : ctx.defaultIdentitySyncProtocols,
-      lifecycleOptions      : { timeout: SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS },
+      identitySyncModules : ctx.defaultIdentitySyncModules,
+      lifecycleOptions    : { timeout: SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS },
     });
   } catch {
     // Grant query or registration repair failed — don't block restore,

@@ -7,7 +7,7 @@
  */
 
 import type { BearerDid } from '@enbox/dids';
-import type { DwnProtocolDefinition, DwnPublicKeyJwk } from '@enbox/agent';
+import type { DwnModuleDefinition, DwnPublicKeyJwk } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
@@ -30,13 +30,13 @@ const testDwnUrls: string[] = [testDwnUrl];
 // delivery to this key instead of resolving the recipient's key itself.
 const VALID_X25519_KEY: DwnPublicKeyJwk = { kty: 'OKP', crv: 'X25519', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' };
 
-// Multi-party protocol with root (`admin`) and nested (`thread/participant`)
+// Multi-party module with root (`admin`) and nested (`thread/participant`)
 // `$role` paths plus a `settings` singleton. Each type requires encryption so
 // the role paths carry a `$keyAgreement` audience, which makes role-audience
 // key delivery provisioning run.
 const chatDefinitionTemplate = {
   published : true,
-  protocol  : 'https://protocol.xyz/api-chat' as string,
+  module    : 'https://module.xyz/api-chat' as string,
   types     : {
     admin       : { schema: 'https://schemas.xyz/admin', dataFormats: ['application/json'], encryptionRequired: true },
     thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'], encryptionRequired: true },
@@ -54,7 +54,7 @@ const chatDefinitionTemplate = {
     },
     settings: { $recordLimit: { max: 1 } },
   },
-} as const satisfies DwnProtocolDefinition;
+} as const satisfies DwnModuleDefinition;
 
 type ChatDefinition = typeof chatDefinitionTemplate;
 
@@ -67,11 +67,11 @@ const chatCodecs = {
   meta        : recordCodecs.json<{ note: string }>(),
 };
 
-/** Returns a fresh definition with a unique protocol URI so tests never share protocol state. */
+/** Returns a fresh definition with a unique module URI so tests never share module state. */
 function makeChatDefinition(): ChatDefinition {
   return {
     ...structuredClone(chatDefinitionTemplate),
-    protocol: `https://protocol.xyz/api-chat-${TestDataGenerator.randomString(15)}`,
+    module: `https://module.xyz/api-chat-${TestDataGenerator.randomString(15)}`,
   };
 }
 
@@ -116,21 +116,21 @@ describe('audience key delivery propagation', () => {
     await testHarness.closeStorage();
   });
 
-  /** Installs a fresh chat protocol (with `$keyAgreement` injection) and writes a parent thread record. */
-  async function installChatProtocolWithThread(): Promise<{ definition: ChatDefinition; threadContextId: string }> {
+  /** Installs a fresh chat module (with `$keyAgreement` injection) and writes a parent thread record. */
+  async function installChatModuleWithThread(): Promise<{ definition: ChatDefinition; threadContextId: string }> {
     const definition = makeChatDefinition();
 
-    const { status: configureStatus } = await dwnAlice.protocols.configure({
+    const { status: configureStatus } = await dwnAlice.modules.configure({
       definition,
     });
     expect(configureStatus.code).toBe(202);
 
     const { status: threadStatus, record: thread } = await dwnAlice.records.write({
-      data         : { title: 'Test Thread' },
-      protocol     : definition.protocol,
-      protocolPath : 'thread',
-      schema       : definition.types.thread.schema,
-      dataFormat   : 'application/json',
+      data       : { title: 'Test Thread' },
+      module     : definition.module,
+      modulePath : 'thread',
+      schema     : definition.types.thread.schema,
+      dataFormat : 'application/json',
     });
     expect(threadStatus.code).toBe(202);
 
@@ -139,16 +139,16 @@ describe('audience key delivery propagation', () => {
 
   describe('DwnApi records.write()', () => {
     it('should surface a best-effort delivery skip on the write response', async () => {
-      const { definition, threadContextId } = await installChatProtocolWithThread();
+      const { definition, threadContextId } = await installChatModuleWithThread();
 
       // Force best-effort recipient key resolution to fail so delivery is skipped.
       const roleKeyLookupStub = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new Error('recipient protocol not installed'));
+        .rejects(new Error('recipient module not installed'));
 
       const { status, record, audienceKeyDelivery } = await dwnAlice.records.write({
         data            : { name: 'Bob' },
-        protocol        : definition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : definition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         schema          : definition.types.participant.schema,
         dataFormat      : 'application/json',
@@ -162,19 +162,19 @@ describe('audience key delivery propagation', () => {
       expect(audienceKeyDelivery).toBeDefined();
       expect(audienceKeyDelivery!.delivered).toBe(false);
       expect(audienceKeyDelivery!.recipientDid).toBe(bobDid.uri);
-      expect((audienceKeyDelivery as { reason: string }).reason).toContain('recipient protocol not installed');
+      expect((audienceKeyDelivery as { reason: string }).reason).toContain('recipient module not installed');
       expect(roleKeyLookupStub.calledOnce).toBe(true);
     }, 15000);
 
     it('should pass a caller-supplied recipientRolePublicKey through to the agent and report delivered', async () => {
-      const { definition, threadContextId } = await installChatProtocolWithThread();
+      const { definition, threadContextId } = await installChatModuleWithThread();
 
       const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
 
       const { status, audienceKeyDelivery } = await dwnAlice.records.write({
         data                   : { name: 'Bob' },
-        protocol               : definition.protocol,
-        protocolPath           : 'thread/participant',
+        module                 : definition.module,
+        modulePath             : 'thread/participant',
         parentContextId        : threadContextId,
         schema                 : definition.types.participant.schema,
         dataFormat             : 'application/json',
@@ -184,25 +184,25 @@ describe('audience key delivery propagation', () => {
 
       expect(status.code).toBe(202);
       // The delivery could only have been provisioned from the supplied key:
-      // Bob has no protocol installed to resolve a role-path key from.
+      // Bob has no module installed to resolve a role-path key from.
       expect(audienceKeyDelivery).toEqual({ delivered: true, recipientDid: bobDid.uri });
 
       // The key rides the agent request at the top level, never inside `messageParams`.
       const writeCall = processSpy.getCalls().find((call): boolean =>
         call.args[0].messageType === DwnInterface.RecordsWrite &&
-        (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
+        (call.args[0] as { messageParams?: { modulePath?: string } }).messageParams?.modulePath === 'thread/participant');
       expect(writeCall).toBeDefined();
       expect((writeCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
       expect((writeCall!.args[0] as { messageParams?: Record<string, unknown> }).messageParams!.recipientRolePublicKey).toBeUndefined();
     }, 15000);
 
     it('should leave audienceKeyDelivery undefined on non-role writes', async () => {
-      const { definition, threadContextId } = await installChatProtocolWithThread();
+      const { definition, threadContextId } = await installChatModuleWithThread();
 
       const { status, audienceKeyDelivery } = await dwnAlice.records.write({
         data            : 'hello there',
-        protocol        : definition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : definition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadContextId,
         schema          : definition.types.chat.schema,
         dataFormat      : 'text/plain',
@@ -215,15 +215,15 @@ describe('audience key delivery propagation', () => {
 
   describe('Record.update()', () => {
     it('should update a role record and return the same canonical handle', async () => {
-      const { definition, threadContextId } = await installChatProtocolWithThread();
+      const { definition, threadContextId } = await installChatModuleWithThread();
 
       const roleKey = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new Error('recipient protocol not installed'));
+        .rejects(new Error('recipient module not installed'));
 
       const { status: writeStatus, record } = await dwnAlice.records.write({
         data            : { name: 'Bob' },
-        protocol        : definition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : definition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         schema          : definition.types.participant.schema,
         dataFormat      : 'application/json',
@@ -240,17 +240,17 @@ describe('audience key delivery propagation', () => {
     }, 15000);
 
     it('should retry a skipped delivery via update() with a caller-supplied recipientRolePublicKey', async () => {
-      const { definition, threadContextId } = await installChatProtocolWithThread();
+      const { definition, threadContextId } = await installChatModuleWithThread();
 
       // Best-effort resolution stays broken for the whole test, so only the
       // supplied key can produce a delivery on the retry.
       sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new Error('recipient protocol not installed'));
+        .rejects(new Error('recipient module not installed'));
 
       const { status: writeStatus, record, audienceKeyDelivery: writeOutcome } = await dwnAlice.records.write({
         data            : { name: 'Bob' },
-        protocol        : definition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : definition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         schema          : definition.types.participant.schema,
         dataFormat      : 'application/json',
@@ -270,7 +270,7 @@ describe('audience key delivery propagation', () => {
 
       const updateCall = processSpy.getCalls().find((call): boolean =>
         call.args[0].messageType === DwnInterface.RecordsWrite &&
-        (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
+        (call.args[0] as { messageParams?: { modulePath?: string } }).messageParams?.modulePath === 'thread/participant');
       expect(updateCall).toBeDefined();
       expect((updateCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
       expect((updateCall!.args[0] as { messageParams?: Record<string, unknown> }).messageParams!.recipientRolePublicKey).toBeUndefined();
@@ -279,14 +279,14 @@ describe('audience key delivery propagation', () => {
     }, 15000);
 
     it('should update a non-role record through the same value contract', async () => {
-      const { definition } = await installChatProtocolWithThread();
+      const { definition } = await installChatModuleWithThread();
 
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : { title: 'Another Thread' },
-        protocol     : definition.protocol,
-        protocolPath : 'thread',
-        schema       : definition.types.thread.schema,
-        dataFormat   : 'application/json',
+        data       : { title: 'Another Thread' },
+        module     : definition.module,
+        modulePath : 'thread',
+        schema     : definition.types.thread.schema,
+        dataFormat : 'application/json',
       });
       expect(writeStatus.code).toBe(202);
 
@@ -300,7 +300,7 @@ describe('audience key delivery propagation', () => {
   describe('TypedEnbox records.create() and Record.update()', () => {
     it('should forward recipientRolePublicKey on typed create', async () => {
       const definition = makeChatDefinition();
-      const typed = new TypedEnbox(dwnAlice, defineProtocol(definition, chatCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule(definition, chatCodecs));
 
       const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);
@@ -322,7 +322,7 @@ describe('audience key delivery propagation', () => {
       // passes it to the agent request at the top level.
       const writeCall = processSpy.getCalls().find((call): boolean =>
         call.args[0].messageType === DwnInterface.RecordsWrite &&
-        (call.args[0] as { messageParams?: { protocolPath?: string } }).messageParams?.protocolPath === 'thread/participant');
+        (call.args[0] as { messageParams?: { modulePath?: string } }).messageParams?.modulePath === 'thread/participant');
       expect(writeCall).toBeDefined();
       expect((writeCall!.args[0] as { recipientRolePublicKey?: DwnPublicKeyJwk }).recipientRolePublicKey).toEqual(VALID_X25519_KEY);
     }, 15000);

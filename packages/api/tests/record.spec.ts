@@ -1,5 +1,5 @@
 import type { BearerDid, PortableDid } from '@enbox/dids';
-import type { DwnMessage, DwnMessageParams, DwnProtocolDefinition, DwnPublicKeyJwk, DwnSigner, ProcessDwnRequest } from '@enbox/agent';
+import type { DwnMessage, DwnMessageParams, DwnModuleDefinition, DwnPublicKeyJwk, DwnSigner, ProcessDwnRequest } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -10,13 +10,13 @@ import { Stream } from '@enbox/common';
 
 import {
   createPermissionGrants, DwnConstant, DwnContentEncryptionAlgorithm, DwnInterface, DwnKeyAgreementAlgorithm,
-  DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordProtocolRole,
+  DwnKeyDerivationScheme, dwnMessageConstructors, EnboxUserAgent, getRecordAuthor, getRecordModuleRole,
 } from '@enbox/agent';
 import { Jws, Poller, Time } from '@enbox/dwn-sdk-js';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
 
-import emailProtocolDefinition from './fixtures/protocol-definitions/email.json' with { type: 'json' };
-import notesProtocolDefinition from './fixtures/protocol-definitions/notes.json' with { type: 'json' };
+import emailModuleDefinition from './fixtures/module-definitions/email.json' with { type: 'json' };
+import notesModuleDefinition from './fixtures/module-definitions/notes.json' with { type: 'json' };
 
 import { dataToBlob } from '../src/utils.js';
 import { DwnApi } from '../src/dwn-api.js';
@@ -25,7 +25,7 @@ import { Enbox } from '../src/enbox.js';
 import { Record } from '../src/record.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { publishProtocol, publishRecord, publishUnstoredRecord } from './utils/test-dwn-operations.js';
+import { publishModule, publishRecord, publishUnstoredRecord } from './utils/test-dwn-operations.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -38,7 +38,7 @@ describe('Record', () => {
   let dwnAlice: DwnApi;
   let dwnBob: DwnApi;
   let testHarness: PlatformAgentTestHarness;
-  let protocolDefinition: DwnProtocolDefinition;
+  let moduleDefinition: DwnModuleDefinition;
 
   let consoleWarn;
 
@@ -80,48 +80,48 @@ describe('Record', () => {
     await testHarness.agent.permissions.clear();
     testHarness.dwnStores.clear();
 
-    protocolDefinition = {
-      ...emailProtocolDefinition,
-      protocol  : `http://email-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`,
+    moduleDefinition = {
+      ...emailModuleDefinition,
+      module    : `http://email-module.xyz/module/${TestDataGenerator.randomString(15)}`,
       published : true
     };
 
-    // Configure the protocol on both DWNs
-    const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-      definition: protocolDefinition
+    // Configure the module on both DWNs
+    const { status: aliceModuleStatus, module: aliceModule } = await dwnAlice.modules.configure({
+      definition: moduleDefinition
     });
-    expect(aliceProtocolStatus.code).toBe(202);
-    expect(aliceProtocol).toBeDefined();
-    const { status: aliceProtocolSendStatus } = await publishProtocol(
-      testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+    expect(aliceModuleStatus.code).toBe(202);
+    expect(aliceModule).toBeDefined();
+    const { status: aliceModuleSendStatus } = await publishModule(
+      testHarness.agent, aliceModule, aliceDid.uri, aliceDid.uri
     );
-    expect(aliceProtocolSendStatus.code).toBe(202);
+    expect(aliceModuleSendStatus.code).toBe(202);
 
-    const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({ definition: protocolDefinition });
-    expect(bobProtocolStatus.code).toBe(202);
-    expect(bobProtocol).toBeDefined();
-    const { status: bobProtocolSendStatus } = await publishProtocol(
-      testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+    const { status: bobModuleStatus, module: bobModule } = await dwnBob.modules.configure({ definition: moduleDefinition });
+    expect(bobModuleStatus.code).toBe(202);
+    expect(bobModule).toBeDefined();
+    const { status: bobModuleSendStatus } = await publishModule(
+      testHarness.agent, bobModule, bobDid.uri, bobDid.uri
     );
-    expect(bobProtocolSendStatus.code).toBe(202);
+    expect(bobModuleSendStatus.code).toBe(202);
 
-    // Install free-for-all protocol for tests that write records without a specific protocol.
-    const freeForAllDefinition: DwnProtocolDefinition = {
-      protocol  : 'http://free-for-all.xyz',
+    // Install free-for-all module for tests that write records without a specific module.
+    const freeForAllDefinition: DwnModuleDefinition = {
+      module    : 'http://free-for-all.xyz',
       published : true,
       types     : { post: {}, other: {} },
       structure : { post: {}, other: {} },
     };
-    const { status: aliceFfaStatus, protocol: aliceFfaProtocol } = await dwnAlice.protocols.configure({ definition: freeForAllDefinition });
+    const { status: aliceFfaStatus, module: aliceFfaModule } = await dwnAlice.modules.configure({ definition: freeForAllDefinition });
     expect(aliceFfaStatus.code).toBe(202);
-    const { status: aliceFfaSendStatus } = await publishProtocol(
-      testHarness.agent, aliceFfaProtocol, aliceDid.uri, aliceDid.uri
+    const { status: aliceFfaSendStatus } = await publishModule(
+      testHarness.agent, aliceFfaModule, aliceDid.uri, aliceDid.uri
     );
     expect(aliceFfaSendStatus.code).toBe(202);
-    const { status: bobFfaStatus, protocol: bobFfaProtocol } = await dwnBob.protocols.configure({ definition: freeForAllDefinition });
+    const { status: bobFfaStatus, module: bobFfaModule } = await dwnBob.modules.configure({ definition: freeForAllDefinition });
     expect(bobFfaStatus.code).toBe(202);
-    const { status: bobFfaSendStatus } = await publishProtocol(
-      testHarness.agent, bobFfaProtocol, bobDid.uri, bobDid.uri
+    const { status: bobFfaSendStatus } = await publishModule(
+      testHarness.agent, bobFfaModule, bobDid.uri, bobDid.uri
     );
     expect(bobFfaSendStatus.code).toBe(202);
   });
@@ -139,7 +139,7 @@ describe('Record', () => {
     let delegateHarness: PlatformAgentTestHarness;
     let delegateDid: PortableDid;
     let delegateDwn: DwnApi;
-    let notesProtocol: DwnProtocolDefinition;
+    let notesModule: DwnModuleDefinition;
 
     beforeAll(async () => {
       delegateHarness = await PlatformAgentTestHarness.setup({
@@ -169,12 +169,12 @@ describe('Record', () => {
       // avoid seeing the security warning of no password during connect
       sinon.stub(console, 'warn');
 
-      notesProtocol = {
+      notesModule = {
         published : true,
-        protocol  : `http://notes-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`,
+        module    : `http://notes-module.xyz/module/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
-            schema      : 'https://notes-protocol.xyz/schema/note',
+            schema      : 'https://notes-module.xyz/schema/note',
             dataFormats : [ 'text/plain', 'application/json' ]
           }
         },
@@ -187,27 +187,27 @@ describe('Record', () => {
       const delegatedBearerDid = await testHarness.agent.did.create({ store: false, method: 'jwk', });
       delegateDid = await delegatedBearerDid.export();
 
-      const grantRequest = WalletConnect.createPermissionRequestForProtocol({
-        definition  : notesProtocol,
+      const grantRequest = WalletConnect.createPermissionRequestForModule({
+        definition  : notesModule,
         permissions : ['write', 'read', 'delete']
       });
 
-      // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
-        definition: notesProtocol
+      // alice and bob both configure the module
+      const { status: aliceConfigStatus, module: aliceNotesModule } = await dwnAlice.modules.configure({
+        definition: notesModule
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      const { status: aliceNotesModuleSend } = await publishModule(
+        testHarness.agent, aliceNotesModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceNotesProtocolSend.code).toBe(202);
+      expect(aliceNotesModuleSend.code).toBe(202);
 
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
+      const { status: bobConfigStatus, module: bobNotesModule } = await dwnBob.modules.configure({ definition: notesModule });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      const { status: bobNotesModuleSend } = await publishModule(
+        testHarness.agent, bobNotesModule!, bobDid.uri, bobDid.uri
       );
-      expect(bobNotesProtocolSend.code).toBe(202);
+      expect(bobNotesModuleSend.code).toBe(202);
 
       const grants = await createPermissionGrants(
         aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes
@@ -226,16 +226,16 @@ describe('Record', () => {
       } });
 
       // Process the connected grants (stores them in the delegate agent's DWN).
-      const connectedProtocols = await processConnectedGrants({
+      const connectedModules = await processConnectedGrants({
         grants, connectedDid: aliceDid.uri, delegateDid: delegateDid.uri, agent: delegateHarness.agent as EnboxUserAgent,
       });
 
-      // Register sync for Alice's DID and pull the protocol configuration.
+      // Register sync for Alice's DID and pull the module configuration.
       await (delegateHarness.agent as EnboxUserAgent).sync.setIdentityOptions({
         did     : aliceDid.uri,
         options : {
           delegateDid : delegateDid.uri,
-          protocols   : connectedProtocols,
+          modules     : connectedModules,
         }
       });
       await (delegateHarness.agent as EnboxUserAgent).sync.sync('pull');
@@ -247,11 +247,11 @@ describe('Record', () => {
 
     it('should update a record with a delegated grant', async () => {
       const { status, record } = await delegateDwn.records.write({
-        data         : 'Hello, world!',
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        data       : 'Hello, world!',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       });
 
       const dataCidBeforeDataUpdate = record!.dataCid;
@@ -266,7 +266,7 @@ describe('Record', () => {
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
         filter: {
-          protocol : notesProtocol.protocol,
+          module   : notesModule.module,
           recordId : record!.id
         }
       });
@@ -289,11 +289,11 @@ describe('Record', () => {
     it('should delete a record with a delegated grant', async () => {
       // alice writes a record
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        data       : 'Hello, world!',
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       });
 
       expect(status.code).toBe(202);
@@ -305,8 +305,8 @@ describe('Record', () => {
       const aliceDeviceRemoteQuery = await delegateDwn.records.query({
         from   : aliceDid.uri,
         filter : {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
+          module     : notesModule.module,
+          modulePath : 'note',
         }
       });
 
@@ -328,7 +328,7 @@ describe('Record', () => {
       // attempt to read the record with the delegated grant
       const readResult = await delegateDwn.records.read({
         filter: {
-          protocol : notesProtocol.protocol,
+          module   : notesModule.module,
           recordId : record!.id
         }
       });
@@ -340,7 +340,7 @@ describe('Record', () => {
       const queryResult = await delegateDwn.records.query({
         from   : aliceDid.uri,
         filter : {
-          protocol : notesProtocol.protocol,
+          module   : notesModule.module,
           recordId : record!.id
         }
       });
@@ -364,19 +364,19 @@ describe('Record', () => {
 
       // Write the large record to agent-connected DWN.
       const { record: _record, status } = await delegateDwn.records.write({
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'application/json',
-        data         : largeDataJson
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'application/json',
+        data       : largeDataJson
       });
       expect(status.code).toBe(202);
 
       // query for the record that was just created. queries don't come with the data stream so .stream() will be invoked
       const { records: queryRecords, status: queryRecordStatus } = await delegateDwn.records.query({
         filter: {
-          protocol     : notesProtocol.protocol,
-          protocolPath : 'note',
+          module     : notesModule.module,
+          modulePath : 'note',
         }
       });
       expect(queryRecordStatus.code).toBe(200);
@@ -393,27 +393,27 @@ describe('Record', () => {
     });
 
     it('should read large data payloads as a stream with from a public record without an explicit grant', async () => {
-      // install some other protocol that the delegated did does not have a grant for
-      // alice installs some other protocol
-      const { status: aliceConfigStatus, protocol: aliceOtherProtocol } = await dwnAlice.protocols.configure({ definition: {
-        ...notesProtocol,
-        protocol: `http://other-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`
+      // install some other module that the delegated did does not have a grant for
+      // alice installs some other module
+      const { status: aliceConfigStatus, module: aliceOtherModule } = await dwnAlice.modules.configure({ definition: {
+        ...notesModule,
+        module: `http://other-module.xyz/module/${TestDataGenerator.randomString(15)}`
       } });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceOtherProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceOtherProtocol, aliceDid.uri, aliceDid.uri
+      const { status: aliceOtherModuleSend } = await publishModule(
+        testHarness.agent, aliceOtherModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceOtherProtocolSend.code).toBe(202);
+      expect(aliceOtherModuleSend.code).toBe(202);
 
       // alice writes a private and public note with a large data payload
       const largeDataJson1 = TestDataGenerator.randomJson(DwnConstant.maxDataSizeAllowedToBeEncoded + 1000);
 
       const { status: aliceWritesStatus, record: aliceRecord } = await dwnAlice.records.write({
-        data         : largeDataJson1,
-        protocol     : aliceOtherProtocol.definition.protocol,
-        protocolPath : 'note',
-        schema       : aliceOtherProtocol.definition.types.note.schema,
-        dataFormat   : 'application/json',
+        data       : largeDataJson1,
+        module     : aliceOtherModule.definition.module,
+        modulePath : 'note',
+        schema     : aliceOtherModule.definition.types.note.schema,
+        dataFormat : 'application/json',
       });
       expect(aliceWritesStatus.code).toBe(202);
       await publishRecord(testHarness.agent, aliceRecord!, aliceDid.uri, aliceDid.uri);
@@ -422,12 +422,12 @@ describe('Record', () => {
       const publicRecordDataBytes = new TextEncoder().encode(JSON.stringify(largeDataJson2));
 
       const { status: aliceWritesStatus2, record: alicePublicRecord } = await dwnAlice.records.write({
-        data         : largeDataJson2,
-        published    : true,
-        protocol     : aliceOtherProtocol.definition.protocol,
-        protocolPath : 'note',
-        schema       : aliceOtherProtocol.definition.types.note.schema,
-        dataFormat   : 'application/json',
+        data       : largeDataJson2,
+        published  : true,
+        module     : aliceOtherModule.definition.module,
+        modulePath : 'note',
+        schema     : aliceOtherModule.definition.types.note.schema,
+        dataFormat : 'application/json',
       });
       expect(aliceWritesStatus2.code).toBe(202);
       await publishRecord(testHarness.agent, alicePublicRecord!, aliceDid.uri, aliceDid.uri);
@@ -436,8 +436,8 @@ describe('Record', () => {
       const { records: publicRecords, status: publicStatus } = await delegateDwn.records.query({
         from   : aliceDid.uri,
         filter : {
-          protocol     : aliceOtherProtocol.definition.protocol,
-          protocolPath : 'note',
+          module     : aliceOtherModule.definition.module,
+          modulePath : 'note',
         }
       });
       expect(publicStatus.code).toBe(200);
@@ -502,16 +502,16 @@ describe('Record', () => {
       key                  : TestDataGenerator.randomBytes(32),
       keyEncryptionInputs  : [{
         algorithm        : DwnKeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-        derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
+        derivationScheme : DwnKeyDerivationScheme.ModulePath,
         keyId            : encryptionKeyId,
         publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
       }]
     };
 
     // RecordsWriteDescriptor properties that can be pre-defined
-    const protocol = protocolDefinition.protocol;
-    const protocolPath = 'thread';
-    const schema = protocolDefinition.types.thread.schema;
+    const module = moduleDefinition.module;
+    const modulePath = 'thread';
+    const schema = moduleDefinition.types.thread.schema;
     const recipient = aliceDid.uri;
     const published = true;
 
@@ -521,8 +521,8 @@ describe('Record', () => {
     const parentRecordsWrite = await RecordsWrite.create({
       data   : new Uint8Array(await dataBlob.arrayBuffer()),
       dataFormat,
-      protocol,
-      protocolPath,
+      module,
+      modulePath,
       schema,
       signer : authorizationSigner,
     });
@@ -534,8 +534,8 @@ describe('Record', () => {
       dataFormat,
       encryptionInput,
       parentContextId : parentRecordsWrite.message.contextId,
-      protocol,
-      protocolPath,
+      module,
+      modulePath,
       published,
       recipient,
       schema,
@@ -559,13 +559,13 @@ describe('Record', () => {
     expect(record.id).toBe(recordsWrite.message.recordId);
     expect(record.encryption).toBeDefined();
     expect(record.encryption).toEqual(recordsWrite.message.encryption);
-    expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath)).toBeDefined();
+    expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ModulePath)).toBeDefined();
     expect(record.attestation).toBeDefined();
     expect(record.attestation).toHaveProperty('signatures');
 
     // Retained RecordsWriteDescriptor properties
-    expect(record.protocol).toBe(protocol);
-    expect(record.protocolPath).toBe(protocolPath);
+    expect(record.module).toBe(module);
+    expect(record.modulePath).toBe(modulePath);
     expect(record.recipient).toBe(recipient);
     expect(record.schema).toBe(schema);
     expect(record.parentId).toBe(parentRecordsWrite.message.recordId);
@@ -596,9 +596,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -620,9 +620,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -649,9 +649,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -673,9 +673,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -703,9 +703,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -736,9 +736,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -760,9 +760,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -789,9 +789,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -813,9 +813,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -843,9 +843,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataJson,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataJson,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -875,9 +875,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText500Bytes,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText500Bytes,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -897,9 +897,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText500Bytes,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText500Bytes,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -923,9 +923,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataTextExceedingMaxSize,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataTextExceedingMaxSize,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -945,9 +945,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataTextExceedingMaxSize,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataTextExceedingMaxSize,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -974,9 +974,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataTextExceedingMaxSize,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataTextExceedingMaxSize,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1005,9 +1005,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1027,9 +1027,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1054,9 +1054,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1076,9 +1076,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -1104,9 +1104,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1135,9 +1135,9 @@ describe('Record', () => {
 
         // Write the 500B record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText500Bytes,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText500Bytes,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
         expect(status.code).toBe(202);
 
@@ -1157,9 +1157,9 @@ describe('Record', () => {
 
         // Write the large record to agent-connected DWN.
         const { record, status } = await dwnAlice.records.write({
-          data         : dataText,
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
+          data       : dataText,
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
         });
 
         expect(status.code).toBe(202);
@@ -1182,10 +1182,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so lazy data must use the captured remote route.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1213,10 +1213,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so lazy data must use the captured remote route.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1247,9 +1247,9 @@ describe('Record', () => {
 
       // Write the 500B record to agent-connected DWN.
       const { record, status } = await dwnAlice.records.write({
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1277,9 +1277,9 @@ describe('Record', () => {
 
       // Write the large record to agent-connected DWN.
       const { record, status } = await dwnAlice.records.write({
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1316,9 +1316,9 @@ describe('Record', () => {
 
       // Write the large record to agent-connected DWN.
       const { record, status } = await dwnAlice.records.write({
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1341,9 +1341,9 @@ describe('Record', () => {
 
       // Write the large record to agent-connected DWN.
       const { record, status } = await dwnAlice.records.write({
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1366,10 +1366,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1406,10 +1406,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1447,10 +1447,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1490,10 +1490,10 @@ describe('Record', () => {
 
       // Keep the record out of the local DWN so repeated reads cannot fall back locally.
       const { record, status } = await dwnAlice.records.write({
-        store        : false,
-        data         : dataJson,
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
+        store      : false,
+        data       : dataJson,
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
       });
       expect(status.code).toBe(202);
 
@@ -1557,15 +1557,15 @@ describe('Record', () => {
         await testHarness.agent.permissions.clear();
         testHarnessCarol.dwnStores.clear();
 
-        const { status: carolProtocolStatus, protocol: carolProtocol } = await dwnCarol.protocols.configure({
-          definition: protocolDefinition
+        const { status: carolModuleStatus, module: carolModule } = await dwnCarol.modules.configure({
+          definition: moduleDefinition
         });
-        expect(carolProtocolStatus.code).toBe(202);
-        expect(carolProtocol).toBeDefined();
-        const { status: carolProtocolSendStatus } = await publishProtocol(
-          testHarnessCarol.agent, carolProtocol, carolDid.uri, carolDid.uri
+        expect(carolModuleStatus.code).toBe(202);
+        expect(carolModule).toBeDefined();
+        const { status: carolModuleSendStatus } = await publishModule(
+          testHarnessCarol.agent, carolModule, carolDid.uri, carolDid.uri
         );
-        expect(carolProtocolSendStatus.code).toBe(202);
+        expect(carolModuleSendStatus.code).toBe(202);
       });
 
       afterAll(async () => {
@@ -1603,10 +1603,10 @@ describe('Record', () => {
          *   1. Alice creates a record locally.
          */
         const { record, status } = await dwnAlice.records.write({
-          data         : dataTextExceedingMaxSize,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema
+          data       : dataTextExceedingMaxSize,
+          module     : moduleDefinition.module,
+          modulePath : 'thread',
+          schema     : moduleDefinition.types.thread.schema
         });
         expect(status.code).toBe(202);
         /**
@@ -1658,10 +1658,10 @@ describe('Record', () => {
          *   1. Alice creates a record locally.
          */
         const { record, status } = await dwnAlice.records.write({
-          data         : dataTextExceedingMaxSize,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
-          schema       : protocolDefinition.types.thread.schema
+          data       : dataTextExceedingMaxSize,
+          module     : moduleDefinition.module,
+          modulePath : 'thread',
+          schema     : moduleDefinition.types.thread.schema
         });
         expect(status.code).toBe(202);
         /**
@@ -1730,16 +1730,16 @@ describe('Record', () => {
         key                  : TestDataGenerator.randomBytes(32),
         keyEncryptionInputs  : [{
           algorithm        : DwnKeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-          derivationScheme : DwnKeyDerivationScheme.ProtocolPath,
+          derivationScheme : DwnKeyDerivationScheme.ModulePath,
           keyId            : encryptionKeyId,
           publicKey        : encryptionPublicKeyJwk as DwnPublicKeyJwk,
         }]
       };
 
       // RecordsWriteDescriptor properties that can be pre-defined
-      const protocol = protocolDefinition.protocol;
-      const protocolPath = 'thread';
-      const schema = protocolDefinition.types.thread.schema;
+      const module = moduleDefinition.module;
+      const modulePath = 'thread';
+      const schema = moduleDefinition.types.thread.schema;
       const recipient = aliceDid.uri;
       const published = true;
 
@@ -1749,8 +1749,8 @@ describe('Record', () => {
       const parentRecordsWrite = await RecordsWrite.create({
         data   : new Uint8Array(await dataBlob.arrayBuffer()),
         dataFormat,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         schema,
         signer : authorizationSigner,
       });
@@ -1762,8 +1762,8 @@ describe('Record', () => {
         dataFormat,
         encryptionInput,
         parentContextId : parentRecordsWrite.message.contextId,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         published,
         recipient,
         schema,
@@ -1790,13 +1790,13 @@ describe('Record', () => {
       expect(record.id).toBe(recordsWrite.message.recordId);
       expect(record.encryption).toBeDefined();
       expect(record.encryption).toEqual(recordsWrite.message.encryption);
-      expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ProtocolPath)).toBeDefined();
+      expect(record.encryption!.keyEncryption.find(r => r.derivationScheme === DwnKeyDerivationScheme.ModulePath)).toBeDefined();
       expect(record.attestation).toBeDefined();
       expect(record.attestation).toHaveProperty('signatures');
 
       // Retained RecordsWriteDescriptor properties.
-      expect(recordJson.protocol).toBe(protocol);
-      expect(recordJson.protocolPath).toBe(protocolPath);
+      expect(recordJson.module).toBe(module);
+      expect(recordJson.modulePath).toBe(modulePath);
       expect(recordJson.recipient).toBe(recipient);
       expect(recordJson.schema).toBe(schema);
       expect(recordJson.parentId).toBe(parentRecordsWrite.message.recordId);
@@ -1814,10 +1814,10 @@ describe('Record', () => {
     it('should return a string representation of the record', async () => {
       // create a record
       const { record, status } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        dataFormat : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -1834,14 +1834,14 @@ describe('Record', () => {
       expect(recordString).toContain(`Data Size: ${record.dataSize}`);
     });
 
-    it('should return a string representation of the record with protocol properties', async () => {
+    it('should return a string representation of the record with module properties', async () => {
       // create a record
       const { record, status } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema,
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        schema     : moduleDefinition.types.thread.schema,
+        dataFormat : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -1849,7 +1849,7 @@ describe('Record', () => {
       expect(typeof recordString).toBe('string');
       expect(recordString).toContain(`ID: ${record.id}`);
       expect(recordString).toContain(`Context ID: ${record.contextId}`);
-      expect(recordString).toContain(`Protocol: ${record.protocol}`);
+      expect(recordString).toContain(`Module: ${record.module}`);
       expect(recordString).toContain(`Schema: ${record.schema}`);
       expect(recordString).toContain(`Deleted: ${false}`); // record is not deleted
       expect(recordString).toContain(`Created: ${record.dateCreated}`);
@@ -1864,10 +1864,10 @@ describe('Record', () => {
     it('should return a string representation of the record in a deleted state', async () => {
       // create a record
       const { record, status } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        dataFormat : 'text/plain'
       });
       expect(status.code).toBe(202);
 
@@ -1891,14 +1891,14 @@ describe('Record', () => {
   });
 
   describe('update()', () => {
-    let notesProtocol: DwnProtocolDefinition;
+    let notesModule: DwnModuleDefinition;
 
     beforeEach(async () => {
-      const protocolUri = `http://example.com/notes-${TestDataGenerator.randomString(15)}`;
+      const moduleUri = `http://example.com/notes-${TestDataGenerator.randomString(15)}`;
 
-      notesProtocol = {
+      notesModule = {
         published : true,
-        protocol  : protocolUri,
+        module    : moduleUri,
         types     : {
           note: {
             schema: 'http://example.com/note'
@@ -1923,32 +1923,32 @@ describe('Record', () => {
         }
       };
 
-      // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
-        definition: notesProtocol
+      // alice and bob both configure the module
+      const { status: aliceConfigStatus, module: aliceNotesModule } = await dwnAlice.modules.configure({
+        definition: notesModule
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      const { status: aliceNotesModuleSend } = await publishModule(
+        testHarness.agent, aliceNotesModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceNotesProtocolSend.code).toBe(202);
+      expect(aliceNotesModuleSend.code).toBe(202);
 
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
+      const { status: bobConfigStatus, module: bobNotesModule } = await dwnBob.modules.configure({ definition: notesModule });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      const { status: bobNotesModuleSend } = await publishModule(
+        testHarness.agent, bobNotesModule!, bobDid.uri, bobDid.uri
       );
-      expect(bobNotesProtocolSend.code).toBe(202);
+      expect(bobNotesModuleSend.code).toBe(202);
 
     });
 
     it('updates a local record on the local DWN', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
 
       const dataCidBeforeDataUpdate = record!.dataCid;
@@ -1978,12 +1978,12 @@ describe('Record', () => {
     it('updates a record to be unpublished from published', async () => {
       // alice creates a record and sets it to published
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain',
-        published    : true
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain',
+        published  : true
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
@@ -2022,10 +2022,10 @@ describe('Record', () => {
     it('updates a record which has a parent reference', async () => {
       // create a parent thread
       const { status: threadStatus, record: threadRecord } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        schema       : protocolDefinition.types.thread.schema,
-        protocolPath : 'thread'
+        data       : 'Hello, world!',
+        module     : moduleDefinition.module,
+        schema     : moduleDefinition.types.thread.schema,
+        modulePath : 'thread'
       });
 
       expect(threadStatus.code).toBe(202);
@@ -2035,9 +2035,9 @@ describe('Record', () => {
       const { status: emailStatus, record: emailRecord } = await dwnAlice.records.write({
         data            : 'Hello, world!',
         parentContextId : threadRecord.contextId,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/email',
-        schema          : protocolDefinition.types.email.schema
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/email',
+        schema          : moduleDefinition.types.email.schema
       });
       expect(emailStatus.code).toBe(202);
       expect(emailRecord).toBeDefined();
@@ -2060,11 +2060,11 @@ describe('Record', () => {
     it('returns new timestamp after each update', async () => {
       // Initial write of the record.
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       const initialTimestamp = record.timestamp;
       expect(status.code).toBe(202);
@@ -2088,11 +2088,11 @@ describe('Record', () => {
 
     it('mutates the original record in-place on successful update', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data         : 'original',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'original',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
 
       expect(status.code).toBe(202);
@@ -2119,11 +2119,11 @@ describe('Record', () => {
 
     it('throws an exception when an immutable property is modified', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
 
       expect(status.code).toBe(202);
@@ -2140,11 +2140,11 @@ describe('Record', () => {
 
     it('throws if attempting to revive a deleted record', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -2166,12 +2166,12 @@ describe('Record', () => {
     it('should override tags on update', async () => {
       // create a record with tags
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain',
-        tags         : {
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain',
+        tags       : {
           tag1 : 'value1',
           tag2 : 'value2'
         }
@@ -2207,12 +2207,12 @@ describe('Record', () => {
     it('should remove tags on update if tags are set to an empty object or null', async () => {
       // create a record with tags
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain',
-        tags         : {
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain',
+        tags       : {
           tag1 : 'value1',
           tag2 : 'value2'
         }
@@ -2254,11 +2254,11 @@ describe('Record', () => {
     it('should keep dataFormat owned by the record representation', async () => {
       // alice writes a record with the data format set to text/plain
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema,
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        schema     : moduleDefinition.types.thread.schema,
+        dataFormat : 'text/plain'
       });
 
       expect(status.code).toBe(202);
@@ -2282,11 +2282,11 @@ describe('Record', () => {
 
     it('differentiates between creator and author', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, Bob!',
-        recipient    : bobDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema,
+        data       : 'Hello, Bob!',
+        recipient  : bobDid.uri,
+        module     : notesModule.module,
+        modulePath : 'request',
+        schema     : notesModule.types.request.schema,
       });
       expect(status.code).toBe(202);
       expect(record).toBeDefined();
@@ -2324,36 +2324,36 @@ describe('Record', () => {
       expect(readResultAlice.record.author).toBe(bobDid.uri);
     });
 
-    it('updates a record using a different protocolRole than the one used when querying for/reading the record', async () => {
-      // scenario: Bob has a notes protocol that has friends who can read/query/subscribe to notes, but coAuthors that can update notes.
+    it('updates a record using a different moduleRole than the one used when querying for/reading the record', async () => {
+      // scenario: Bob has a notes module that has friends who can read/query/subscribe to notes, but coAuthors that can update notes.
       // When Alice uses her friend role to query for notes, she cannot update them with that same role. Instead she uses her coAuthor role update.
 
-      const protocol = {
-        ...notesProtocolDefinition,
-        protocol: 'http://example.com/notes' + TestDataGenerator.randomString(15)
+      const module = {
+        ...notesModuleDefinition,
+        module: 'http://example.com/notes' + TestDataGenerator.randomString(15)
       };
 
-      // Bob configures the notes protocol for himself
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-        definition: protocol
+      // Bob configures the notes module for himself
+      const { status: bobModuleStatus, module: bobModule } = await dwnBob.modules.configure({
+        definition: module
       });
-      expect(bobProtocolStatus.code).toBe(202);
-      const { status: bobProtocolSendStatus } = await publishProtocol(
-        testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+      expect(bobModuleStatus.code).toBe(202);
+      const { status: bobModuleSendStatus } = await publishModule(
+        testHarness.agent, bobModule, bobDid.uri, bobDid.uri
       );
-      expect(bobProtocolSendStatus.code).toBe(202);
+      expect(bobModuleSendStatus.code).toBe(202);
 
-      // Alice must also configure the protocol to make updates.
+      // Alice must also configure the module to make updates.
       // NOTE: This is not desireable and there is an issue to address this:
       // https://github.com/enboxorg/enbox/issues/955
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        definition: protocol
+      const { status: aliceModuleStatus, module: aliceModule } = await dwnAlice.modules.configure({
+        definition: module
       });
-      expect(aliceProtocolStatus.code).toBe(202);
-      const { status: aliceProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+      expect(aliceModuleStatus.code).toBe(202);
+      const { status: aliceModuleSend } = await publishModule(
+        testHarness.agent, aliceModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceProtocolSend.code).toBe(202);
+      expect(aliceModuleSend.code).toBe(202);
 
       // Bob creates a few notes ensuring that the data is larger than the max encoded size
       // that way the data will be requested with a separate `read` request
@@ -2362,10 +2362,10 @@ describe('Record', () => {
         const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.write({
           data,
-          protocol     : protocol.protocol,
-          protocolPath : 'note',
-          schema       : protocol.types.note.schema,
-          dataFormat   : 'text/plain',
+          module     : module.module,
+          modulePath : 'note',
+          schema     : module.types.note.schema,
+          dataFormat : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
         await publishRecord(testHarness.agent, noteRecord, bobDid.uri, bobDid.uri);
@@ -2374,12 +2374,12 @@ describe('Record', () => {
 
       // Bob makes Alice a `friend` to allow her to read and comment on his notes
       const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.write({
-        data         : 'friend!',
-        recipient    : aliceDid.uri,
-        protocol     : protocol.protocol,
-        protocolPath : 'friend',
-        schema       : protocol.types.friend.schema,
-        dataFormat   : 'text/plain'
+        data       : 'friend!',
+        recipient  : aliceDid.uri,
+        module     : module.module,
+        modulePath : 'friend',
+        schema     : module.types.friend.schema,
+        dataFormat : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
       await publishRecord(testHarness.agent, friendRecord, bobDid.uri, bobDid.uri);
@@ -2390,9 +2390,9 @@ describe('Record', () => {
         data            : aliceDid.uri,
         parentContextId : aliceCoAuthorNoteId,
         recipient       : aliceDid.uri,
-        protocol        : protocol.protocol,
-        protocolPath    : 'note/coAuthor',
-        schema          : protocol.types.coAuthor.schema,
+        module          : module.module,
+        modulePath      : 'note/coAuthor',
+        schema          : module.types.coAuthor.schema,
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
@@ -2400,11 +2400,11 @@ describe('Record', () => {
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
-        from         : bobDid.uri,
-        protocolRole : 'friend',
-        filter       : {
-          protocol     : protocol.protocol,
-          protocolPath : 'note',
+        from       : bobDid.uri,
+        moduleRole : 'friend',
+        filter     : {
+          module     : module.module,
+          modulePath : 'note',
         }
       });
       expect(aliceQueryStatus.code).toBe(200);
@@ -2427,25 +2427,25 @@ describe('Record', () => {
       }
       expect(sendDwnRequestSpy.callCount).toBe(1);
       expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>)
-        .messageParams?.protocolRole).toBe('friend');
+        .messageParams?.moduleRole).toBe('friend');
 
       sendDwnRequestSpy.resetHistory();
 
       const updatedNote = await coAuthorNote!.update({
-        data         : 'updated note',
-        from         : bobDid.uri,
-        protocolRole : 'note/coAuthor',
+        data       : 'updated note',
+        from       : bobDid.uri,
+        moduleRole : 'note/coAuthor',
       });
       expect(updatedNote).toBe(coAuthorNote);
       expect(sendDwnRequestSpy.callCount).toBe(1);
-      expect(getRecordProtocolRole(updatedNote.rawMessage)).toBe('note/coAuthor');
+      expect(getRecordModuleRole(updatedNote.rawMessage)).toBe('note/coAuthor');
     });
 
     it('should auto-re-encrypt data when updating an encrypted record', async () => {
-      // Define a simple protocol for encrypted notes
-      const encProtocol: DwnProtocolDefinition = {
+      // Define a simple module for encrypted notes
+      const encModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+        module    : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
             schema             : 'https://schemas.xyz/note',
@@ -2459,19 +2459,19 @@ describe('Record', () => {
       };
 
       // Configure with encryption
-      const { status: configStatus } = await dwnAlice.protocols.configure({
-        definition: encProtocol,
+      const { status: configStatus } = await dwnAlice.modules.configure({
+        definition: encModule,
       });
       expect(configStatus.code).toBe(202);
 
       // Write initial encrypted record
       const initialPlaintext = 'Initial secret note';
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : initialPlaintext,
-        protocol     : encProtocol.protocol,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        schema       : 'https://schemas.xyz/note',
+        data       : initialPlaintext,
+        module     : encModule.module,
+        modulePath : 'note',
+        dataFormat : 'text/plain',
+        schema     : 'https://schemas.xyz/note',
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -2508,9 +2508,9 @@ describe('Record', () => {
     });
 
     it('should retain the stored data and envelope for metadata-only encrypted updates', async () => {
-      const encProtocol: DwnProtocolDefinition = {
+      const encModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://encrypted-metadata.xyz/${TestDataGenerator.randomString(15)}`,
+        module    : `http://encrypted-metadata.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
             schema             : 'https://schemas.xyz/encrypted-metadata-note',
@@ -2520,15 +2520,15 @@ describe('Record', () => {
         },
         structure: { note: {} },
       };
-      expect((await dwnAlice.protocols.configure({ definition: encProtocol })).status.code).toBe(202);
+      expect((await dwnAlice.modules.configure({ definition: encModule })).status.code).toBe(202);
 
       const plaintext = 'metadata-only encrypted update';
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : plaintext,
-        dataFormat   : 'text/plain',
-        protocol     : encProtocol.protocol,
-        protocolPath : 'note',
-        schema       : encProtocol.types.note.schema,
+        data       : plaintext,
+        dataFormat : 'text/plain',
+        module     : encModule.module,
+        modulePath : 'note',
+        schema     : encModule.types.note.schema,
       });
       expect(writeStatus.code).toBe(202);
 
@@ -2544,14 +2544,14 @@ describe('Record', () => {
       expect(await updatedRecord.data.text()).toBe(plaintext);
     });
 
-    it('should keep updates plaintext when the protocol type requires plaintext', async () => {
+    it('should keep updates plaintext when the module type requires plaintext', async () => {
       // Write a non-encrypted record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Not encrypted',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'test/plain',
-        dataFormat   : 'text/plain',
+        data       : 'Not encrypted',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'test/plain',
+        dataFormat : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -2573,10 +2573,10 @@ describe('Record', () => {
     });
 
     it('E2E: should encrypt on write and decrypt on read via API layer', async () => {
-      // Define a simple protocol for encrypted notes
-      const encProtocol: DwnProtocolDefinition = {
+      // Define a simple module for encrypted notes
+      const encModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
+        module    : `http://encrypted-notes.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
             schema             : 'https://schemas.xyz/note',
@@ -2590,19 +2590,19 @@ describe('Record', () => {
       };
 
       // Configure with encryption
-      const { status: configStatus } = await dwnAlice.protocols.configure({
-        definition: encProtocol,
+      const { status: configStatus } = await dwnAlice.modules.configure({
+        definition: encModule,
       });
       expect(configStatus.code).toBe(202);
 
       // Write an encrypted record
       const secretText = 'This is a secret note for E2E test';
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : secretText,
-        protocol     : encProtocol.protocol,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        schema       : 'https://schemas.xyz/note',
+        data       : secretText,
+        module     : encModule.module,
+        modulePath : 'note',
+        dataFormat : 'text/plain',
+        schema     : 'https://schemas.xyz/note',
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -2620,7 +2620,7 @@ describe('Record', () => {
 
       // Query back with decryption
       const { status: queryStatus, records: queryRecords } = await dwnAlice.records.query({
-        filter: { protocol: encProtocol.protocol },
+        filter: { module: encModule.module },
       });
       expect(queryStatus.code).toBe(200);
       expect(queryRecords).toHaveLength(1);
@@ -2631,14 +2631,14 @@ describe('Record', () => {
   });
 
   describe('delete()', () => {
-    let notesProtocol: DwnProtocolDefinition;
+    let notesModule: DwnModuleDefinition;
 
     beforeEach(async () => {
-      const protocolUri = `http://example.com/notes-${TestDataGenerator.randomString(15)}`;
+      const moduleUri = `http://example.com/notes-${TestDataGenerator.randomString(15)}`;
 
-      notesProtocol = {
+      notesModule = {
         published : true,
-        protocol  : protocolUri,
+        module    : moduleUri,
         types     : {
           note: {
             schema: 'http://example.com/note'
@@ -2659,32 +2659,32 @@ describe('Record', () => {
         }
       };
 
-      // alice and bob both configure the protocol
-      const { status: aliceConfigStatus, protocol: aliceNotesProtocol } = await dwnAlice.protocols.configure({
-        definition: notesProtocol
+      // alice and bob both configure the module
+      const { status: aliceConfigStatus, module: aliceNotesModule } = await dwnAlice.modules.configure({
+        definition: notesModule
       });
       expect(aliceConfigStatus.code).toBe(202);
-      const { status: aliceNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceNotesProtocol, aliceDid.uri, aliceDid.uri
+      const { status: aliceNotesModuleSend } = await publishModule(
+        testHarness.agent, aliceNotesModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceNotesProtocolSend.code).toBe(202);
+      expect(aliceNotesModuleSend.code).toBe(202);
 
-      const { status: bobConfigStatus, protocol: bobNotesProtocol } = await dwnBob.protocols.configure({ definition: notesProtocol });
+      const { status: bobConfigStatus, module: bobNotesModule } = await dwnBob.modules.configure({ definition: notesModule });
       expect(bobConfigStatus.code).toBe(202);
-      const { status: bobNotesProtocolSend } = await publishProtocol(
-        testHarness.agent, bobNotesProtocol!, bobDid.uri, bobDid.uri
+      const { status: bobNotesModuleSend } = await publishModule(
+        testHarness.agent, bobNotesModule!, bobDid.uri, bobDid.uri
       );
-      expect(bobNotesProtocolSend.code).toBe(202);
+      expect(bobNotesModuleSend.code).toBe(202);
 
     });
 
     it('deletes a local record on the local DWN', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
 
       expect(writeStatus.code).toBe(202);
@@ -2719,11 +2719,11 @@ describe('Record', () => {
 
     it('stores the initial write before deleting an unstored record', async () => {
       const { status, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        dataFormat   : 'text/plain',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        store        : false,
+        data       : 'Hello, world!',
+        dataFormat : 'text/plain',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        store      : false,
       });
       expect(status.code).toBe(202);
 
@@ -2741,11 +2741,11 @@ describe('Record', () => {
 
     it('deletes a record on the remote DWN', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
 
       expect(writeStatus.code).toBe(202);
@@ -2786,10 +2786,10 @@ describe('Record', () => {
     });
 
     it('deletes a record and prunes its children on the local DWN', async () => {
-      // Install a protocol that supports parent-child relationships.
-      const { status: protocolStatus, protocol } = await dwnAlice.protocols.configure({
+      // Install a module that supports parent-child relationships.
+      const { status: moduleStatus, module } = await dwnAlice.modules.configure({
         definition: {
-          protocol  : 'http://example.com/parent-child',
+          module    : 'http://example.com/parent-child',
           published : true,
           types     : {
             foo: {
@@ -2806,15 +2806,15 @@ describe('Record', () => {
           }
         }
       });
-      expect(protocolStatus.code).toBe(202);
+      expect(moduleStatus.code).toBe(202);
 
       // Write a parent record.
       const { status: parentWriteStatus, record: parentRecord } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocol.definition.protocol,
-        protocolPath : 'foo',
-        schema       : 'http://example.com/foo',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : module.definition.module,
+        modulePath : 'foo',
+        schema     : 'http://example.com/foo',
+        dataFormat : 'text/plain'
       });
       expect(parentWriteStatus.code).toBe(202);
       expect(parentRecord).toBeDefined();
@@ -2822,8 +2822,8 @@ describe('Record', () => {
       // Write a child record.
       const { status: child1WriteStatus, record: child1Record } = await dwnAlice.records.write({
         data            : 'Hello, world!',
-        protocol        : protocol.definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : module.definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'http://example.com/bar',
         dataFormat      : 'text/plain',
         parentContextId : parentRecord.contextId
@@ -2834,8 +2834,8 @@ describe('Record', () => {
       // Write a second child record.
       const { status: child2WriteStatus, record: child2Record } = await dwnAlice.records.write({
         data            : 'Hello, world!',
-        protocol        : protocol.definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : module.definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'http://example.com/bar',
         dataFormat      : 'text/plain',
         parentContextId : parentRecord.contextId
@@ -2846,9 +2846,9 @@ describe('Record', () => {
       // query for child records to confirm it exists
       const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
         filter: {
-          contextId    : parentRecord.contextId,
-          protocol     : protocol.definition.protocol,
-          protocolPath : 'foo/bar'
+          contextId  : parentRecord.contextId,
+          module     : module.definition.module,
+          modulePath : 'foo/bar'
         }
       });
       expect(childrenStatus.code).toBe(200);
@@ -2863,9 +2863,9 @@ describe('Record', () => {
       // query for child records to confirm it was deleted
       const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
         filter: {
-          contextId    : parentRecord.contextId,
-          protocol     : protocol.definition.protocol,
-          protocolPath : 'foo/bar'
+          contextId  : parentRecord.contextId,
+          module     : module.definition.module,
+          modulePath : 'foo/bar'
         }
       });
       expect(childrenStatusAfterDelete.code).toBe(200);
@@ -2874,10 +2874,10 @@ describe('Record', () => {
     });
 
     it('deletes a record and prunes its children on the remote DWN', async () => {
-      // Install a protocol that supports parent-child relationships.
-      const { status: protocolStatus, protocol } = await dwnAlice.protocols.configure({
+      // Install a module that supports parent-child relationships.
+      const { status: moduleStatus, module } = await dwnAlice.modules.configure({
         definition: {
-          protocol  : 'http://example.com/parent-child',
+          module    : 'http://example.com/parent-child',
           published : true,
           types     : {
             foo: {
@@ -2894,19 +2894,19 @@ describe('Record', () => {
           }
         }
       });
-      expect(protocolStatus.code).toBe(202);
-      const { status: protocolSendStatus } = await publishProtocol(
-        testHarness.agent, protocol, aliceDid.uri, aliceDid.uri
+      expect(moduleStatus.code).toBe(202);
+      const { status: moduleSendStatus } = await publishModule(
+        testHarness.agent, module, aliceDid.uri, aliceDid.uri
       );
-      expect(protocolSendStatus.code).toBe(202);
+      expect(moduleSendStatus.code).toBe(202);
 
       // Write the records locally before publishing them remotely.
       const { status: parentWriteStatus, record: parentRecord } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocol.definition.protocol,
-        protocolPath : 'foo',
-        schema       : 'http://example.com/foo',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : module.definition.module,
+        modulePath : 'foo',
+        schema     : 'http://example.com/foo',
+        dataFormat : 'text/plain'
       });
       expect(parentWriteStatus.code).toBe(202);
       expect(parentRecord).toBeDefined();
@@ -2915,8 +2915,8 @@ describe('Record', () => {
       // Write a child record.
       const { status: child1WriteStatus, record: childRecord1 } = await dwnAlice.records.write({
         data            : 'Hello, world!',
-        protocol        : protocol.definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : module.definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'http://example.com/bar',
         dataFormat      : 'text/plain',
         parentContextId : parentRecord.contextId
@@ -2928,8 +2928,8 @@ describe('Record', () => {
       // Write a second child record.
       const { status: child2WriteStatus, record: childRecord2 } = await dwnAlice.records.write({
         data            : 'Hello, world!',
-        protocol        : protocol.definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : module.definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'http://example.com/bar',
         dataFormat      : 'text/plain',
         parentContextId : parentRecord.contextId
@@ -2942,9 +2942,9 @@ describe('Record', () => {
       const { status: childrenStatus, records: childrenRecords } = await dwnAlice.records.query({
         from   : aliceDid.uri,
         filter : {
-          contextId    : parentRecord.contextId,
-          protocol     : protocol.definition.protocol,
-          protocolPath : 'foo/bar'
+          contextId  : parentRecord.contextId,
+          module     : module.definition.module,
+          modulePath : 'foo/bar'
         }
       });
       expect(childrenStatus.code).toBe(200);
@@ -2962,9 +2962,9 @@ describe('Record', () => {
       const { status: childrenStatusAfterDelete, records: childrenRecordsAfterDelete } = await dwnAlice.records.query({
         from   : aliceDid.uri,
         filter : {
-          contextId    : parentRecord.contextId,
-          protocol     : protocol.definition.protocol,
-          protocolPath : 'foo/bar'
+          contextId  : parentRecord.contextId,
+          module     : module.definition.module,
+          modulePath : 'foo/bar'
         }
       });
       expect(childrenStatusAfterDelete.code).toBe(200);
@@ -2974,11 +2974,11 @@ describe('Record', () => {
 
     it('throws if a record status is deleted and initialWrite is not set', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3000,11 +3000,11 @@ describe('Record', () => {
     it('throws a conflict for a duplicate delete with store', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3036,11 +3036,11 @@ describe('Record', () => {
     it('escalates a deleted record to a prune instead of resending the cached tombstone', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3069,11 +3069,11 @@ describe('Record', () => {
     it('re-stamps a pruned record without downgrading its tombstone class', async () => {
       // create and prune a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'foo/bar',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'foo/bar',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
       await record.delete({ prune: true });
@@ -3101,11 +3101,11 @@ describe('Record', () => {
     it('a record in a deleted state returns undefined for data related fields', async () => {
       // create a record
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : 'http://free-for-all.xyz',
-        protocolPath : 'post',
-        schema       : 'http://example.org/test-schema',
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        module     : 'http://free-for-all.xyz',
+        modulePath : 'post',
+        schema     : 'http://example.org/test-schema',
+        dataFormat : 'text/plain'
       });
       expect(writeStatus.code).toBe(202);
       expect(record).toBeDefined();
@@ -3156,12 +3156,12 @@ describe('Record', () => {
     it('deletes a record from someone else', async () => {
       // bob writes a record for alice, alice deletes it and stores it
       const { status: bobWriteStatus, record: bobWriteRecord } = await dwnBob.records.write({
-        data         : 'Hello, world!',
-        recipient    : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'request',
-        schema       : notesProtocol.types.request.schema,
-        dataFormat   : 'text/plain'
+        data       : 'Hello, world!',
+        recipient  : aliceDid.uri,
+        module     : notesModule.module,
+        modulePath : 'request',
+        schema     : notesModule.types.request.schema,
+        dataFormat : 'text/plain'
       });
       expect(bobWriteStatus.code).toBe(202);
 
@@ -3172,7 +3172,7 @@ describe('Record', () => {
       await Poller.pollUntilSuccessOrTimeout(async () => {
         const { records } = await dwnAlice.records.query({
           from   : aliceDid.uri,
-          filter : { protocol: notesProtocol.protocol, recordId: bobWriteRecord.id },
+          filter : { module: notesModule.module, recordId: bobWriteRecord.id },
         });
         bobsRecordToDelete = records[0];
         expect(bobsRecordToDelete?.id).toBe(bobWriteRecord.id);
@@ -3187,36 +3187,36 @@ describe('Record', () => {
       expect(deletedBobRecord.author).toBe(aliceDid.uri);
     });
 
-    it('deletes a record using a different protocolRole than the one used when querying for/reading the record', async () => {
-      // scenario: Bob has a notes protocol that has friends who can read/query/subscribe to notes, but coAuthors that can update/delete notes.
+    it('deletes a record using a different moduleRole than the one used when querying for/reading the record', async () => {
+      // scenario: Bob has a notes module that has friends who can read/query/subscribe to notes, but coAuthors that can update/delete notes.
       // When Alice uses her friend role to query for notes, she cannot delete them with that same role. Instead she uses her coAuthor role to delete.
 
-      const protocol = {
-        ...notesProtocolDefinition,
-        protocol: 'http://example.com/notes' + TestDataGenerator.randomString(15)
+      const module = {
+        ...notesModuleDefinition,
+        module: 'http://example.com/notes' + TestDataGenerator.randomString(15)
       };
 
-      // Bob configures the notes protocol for himself
-      const { status: bobProtocolStatus, protocol: bobProtocol } = await dwnBob.protocols.configure({
-        definition: protocol
+      // Bob configures the notes module for himself
+      const { status: bobModuleStatus, module: bobModule } = await dwnBob.modules.configure({
+        definition: module
       });
-      expect(bobProtocolStatus.code).toBe(202);
-      const { status: bobProtocolSendStatus } = await publishProtocol(
-        testHarness.agent, bobProtocol, bobDid.uri, bobDid.uri
+      expect(bobModuleStatus.code).toBe(202);
+      const { status: bobModuleSendStatus } = await publishModule(
+        testHarness.agent, bobModule, bobDid.uri, bobDid.uri
       );
-      expect(bobProtocolSendStatus.code).toBe(202);
+      expect(bobModuleSendStatus.code).toBe(202);
 
-      // Alice must also configure the protocol to make updates.
+      // Alice must also configure the module to make updates.
       // NOTE: This is not desireable and there is an issue to address this:
       // https://github.com/enboxorg/enbox/issues/955
-      const { status: aliceProtocolStatus, protocol: aliceProtocol } = await dwnAlice.protocols.configure({
-        definition: protocol
+      const { status: aliceModuleStatus, module: aliceModule } = await dwnAlice.modules.configure({
+        definition: module
       });
-      expect(aliceProtocolStatus.code).toBe(202);
-      const { status: aliceProtocolSend } = await publishProtocol(
-        testHarness.agent, aliceProtocol, aliceDid.uri, aliceDid.uri
+      expect(aliceModuleStatus.code).toBe(202);
+      const { status: aliceModuleSend } = await publishModule(
+        testHarness.agent, aliceModule, aliceDid.uri, aliceDid.uri
       );
-      expect(aliceProtocolSend.code).toBe(202);
+      expect(aliceModuleSend.code).toBe(202);
 
       // Bob creates a few notes ensuring that the data is larger than the max encoded size
       // that way the data will be requested with a separate `read` request
@@ -3225,10 +3225,10 @@ describe('Record', () => {
         const data = TestDataGenerator.randomString(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { status: noteCreateStatus, record: noteRecord } = await dwnBob.records.write({
           data,
-          protocol     : protocol.protocol,
-          protocolPath : 'note',
-          schema       : protocol.types.note.schema,
-          dataFormat   : 'text/plain',
+          module     : module.module,
+          modulePath : 'note',
+          schema     : module.types.note.schema,
+          dataFormat : 'text/plain',
         });
         expect(noteCreateStatus.code).toBe(202);
         await publishRecord(testHarness.agent, noteRecord, bobDid.uri, bobDid.uri);
@@ -3237,12 +3237,12 @@ describe('Record', () => {
 
       // Bob makes Alice a `friend` to allow her to read and comment on his notes
       const { status: friendCreateStatus, record: friendRecord } = await dwnBob.records.write({
-        data         : 'friend!',
-        recipient    : aliceDid.uri,
-        protocol     : protocol.protocol,
-        protocolPath : 'friend',
-        schema       : protocol.types.friend.schema,
-        dataFormat   : 'text/plain'
+        data       : 'friend!',
+        recipient  : aliceDid.uri,
+        module     : module.module,
+        modulePath : 'friend',
+        schema     : module.types.friend.schema,
+        dataFormat : 'text/plain'
       });
       expect(friendCreateStatus.code).toBe(202);
       await publishRecord(testHarness.agent, friendRecord, bobDid.uri, bobDid.uri);
@@ -3253,9 +3253,9 @@ describe('Record', () => {
         data            : aliceDid.uri,
         parentContextId : aliceCoAuthorNoteId,
         recipient       : aliceDid.uri,
-        protocol        : protocol.protocol,
-        protocolPath    : 'note/coAuthor',
-        schema          : protocol.types.coAuthor.schema,
+        module          : module.module,
+        modulePath      : 'note/coAuthor',
+        schema          : module.types.coAuthor.schema,
         dataFormat      : 'text/plain'
       });
       expect(coAuthorStatus.code).toBe(202);
@@ -3263,11 +3263,11 @@ describe('Record', () => {
 
       // Alice querying for bob's notes using her friend role
       const { status: aliceQueryStatus, records: bobNotesAliceQuery } = await dwnAlice.records.query({
-        from         : bobDid.uri,
-        protocolRole : 'friend',
-        filter       : {
-          protocol     : protocol.protocol,
-          protocolPath : 'note',
+        from       : bobDid.uri,
+        moduleRole : 'friend',
+        filter     : {
+          module     : module.module,
+          modulePath : 'note',
         }
       });
       expect(aliceQueryStatus.code).toBe(200);
@@ -3281,30 +3281,30 @@ describe('Record', () => {
       const sendDwnRequestSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
       const friendDelete = await dwnAlice.records.delete({
-        from         : bobDid.uri,
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        protocolRole : 'friend',
-        recordId     : coDeleteNote!.id,
+        from       : bobDid.uri,
+        module     : module.module,
+        modulePath : 'note',
+        moduleRole : 'friend',
+        recordId   : coDeleteNote!.id,
       });
       expect(friendDelete.status.code).toBe(401);
       expect(sendDwnRequestSpy.callCount).toBe(1);
       expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>)
-        .messageParams?.protocolRole).toBe('friend');
+        .messageParams?.moduleRole).toBe('friend');
 
       sendDwnRequestSpy.resetHistory();
 
       const coAuthorDelete = await dwnAlice.records.delete({
-        from         : bobDid.uri,
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        protocolRole : 'note/coAuthor',
-        recordId     : coDeleteNote!.id,
+        from       : bobDid.uri,
+        module     : module.module,
+        modulePath : 'note',
+        moduleRole : 'note/coAuthor',
+        recordId   : coDeleteNote!.id,
       });
       expect(coAuthorDelete.status.code).toBe(202);
       expect(sendDwnRequestSpy.callCount).toBe(1);
       expect((sendDwnRequestSpy.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>)
-        .messageParams?.protocolRole).toBe('note/coAuthor');
+        .messageParams?.moduleRole).toBe('note/coAuthor');
 
       const deletedRead = await dwnBob.records.read({
         from   : bobDid.uri,
@@ -3318,11 +3318,11 @@ describe('Record', () => {
     it('should wrap errors thrown during data read with a descriptive message', async () => {
       // Write a record.
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema,
-        dataFormat   : 'text/plain',
+        data       : 'Hello, world!',
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        schema     : moduleDefinition.types.thread.schema,
+        dataFormat : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
 
@@ -3350,11 +3350,11 @@ describe('Record', () => {
 
     it('should wrap non-200 status responses with error message', async () => {
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'Hello, world!',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : protocolDefinition.types.thread.schema,
-        dataFormat   : 'text/plain',
+        data       : 'Hello, world!',
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        schema     : moduleDefinition.types.thread.schema,
+        dataFormat : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
 

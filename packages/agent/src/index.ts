@@ -12,14 +12,14 @@ export {
   areReplicationLinksCurrent,
   computeAuthorizationEpoch,
   computeProjectionId,
-  normalizeSyncProtocols,
+  normalizeSyncModules,
   projectReplicationCurrentness,
-  protocolsForSyncScope,
-  singleProtocolForSyncScope,
-  syncEventCoversProtocol,
-  syncRegistrationCoversProtocol,
-  syncScopeCoversProtocol,
-  syncScopeFromProtocols,
+  modulesForSyncScope,
+  singleModuleForSyncScope,
+  syncEventCoversModule,
+  syncRegistrationCoversModule,
+  syncScopeCoversModule,
+  syncScopeFromModules,
 } from './types/sync.js';
 export { SyncRunCancelledError } from './sync-runtime-errors.js';
 export { resolveSyncConnectivityState } from './sync-connectivity-manager.js';
@@ -42,7 +42,7 @@ export * from './permissions-api.js';
 export * from './secret-store.js';
 export {
   publishServiceConfigNotice,
-  ServiceConfigProtocolDefinition,
+  ServiceConfigModuleDefinition,
   isServiceConfigNoticeDelivery,
 } from './service-config.js';
 export * from './store-data.js';
@@ -52,12 +52,12 @@ export * from './store-key.js';
 export * from './utils.js';
 export * from './connect-approval.js';
 export * from './connect-authentication.js';
-export { inspectConnectProtocol } from './connect-protocol-preparation.js';
+export { inspectConnectModule } from './connect-module-preparation.js';
 export type {
-  ConnectProtocolInspection,
-  InspectConnectProtocolParams,
-  ProtocolSetupStatus,
-} from './connect-protocol-preparation.js';
+  ConnectModuleInspection,
+  InspectConnectModuleParams,
+  ModuleSetupStatus,
+} from './connect-module-preparation.js';
 export * from './connect-status.js';
 export * from './enbox-user-agent.js';
-export { IdentityProtocolDefinition, JwkProtocolDefinition } from './store-data-protocols.js';
+export { IdentityModuleDefinition, JwkModuleDefinition } from './store-data-modules.js';

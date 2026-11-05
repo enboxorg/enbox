@@ -1,4 +1,4 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 import type { RecordQuery } from '../src/record-query.js';
 import type { DwnApi, RecordsCountRequest, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
@@ -6,13 +6,13 @@ import type { DwnApi, RecordsCountRequest, RecordsQueryRequest, RecordsQueryResp
 import { DateSort } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 import { compileRecordFilter, compileRecordQuery } from '../src/record-query.js';
 
 const QueryDefinition = {
-  protocol  : 'https://example.com/protocols/record-query',
+  module    : 'https://example.com/modules/record-query',
   published : true,
   types     : {
     note: {
@@ -35,9 +35,9 @@ const QueryDefinition = {
       $actions: [{ who: 'anyone', can: ['read'] }],
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const QueryProtocol = defineProtocol(QueryDefinition, {
+const QueryModule = defineModule(QueryDefinition, {
   attachment : recordCodecs.blob('image/png'),
   note       : recordCodecs.json<{ title: string }>(),
 });
@@ -70,8 +70,8 @@ function createCapturingDwn(queryResponses: RecordsQueryResponse[] = []): Captur
 function createTypedEnbox(
   dwn : DwnApi,
   signal?: AbortSignal,
-): TypedEnbox<typeof QueryDefinition, typeof QueryProtocol.codecs> {
-  const typed = new TypedEnbox(dwn, QueryProtocol, { signal });
+): TypedEnbox<typeof QueryDefinition, typeof QueryModule.codecs> {
+  const typed = new TypedEnbox(dwn, QueryModule, { signal });
   (typed as unknown as { _configured: boolean })._configured = true;
   return typed;
 }
@@ -84,12 +84,12 @@ describe('RecordQuery', () => {
       tags: { status: 'published' as const, priority: { gte: 2 } },
     };
     const query: RecordQuery<typeof QueryDefinition, 'note'> = {
-      from         : 'did:example:remote',
+      from       : 'did:example:remote',
       filter,
-      dateSort     : DateSort.PublishedDescending,
-      pagination   : { limit: 2 },
-      protocolRole : 'editor',
-      within       : 'root',
+      dateSort   : DateSort.PublishedDescending,
+      pagination : { limit: 2 },
+      moduleRole : 'editor',
+      within     : 'root',
     };
 
     await typed.records.query('note', query);
@@ -97,23 +97,23 @@ describe('RecordQuery', () => {
 
     const expectedFilter = {
       ...filter,
-      contextId    : query.within,
-      published    : true,
-      protocol     : QueryDefinition.protocol,
-      protocolPath : 'note',
-      schema       : QueryDefinition.types.note.schema,
+      contextId  : query.within,
+      published  : true,
+      module     : QueryDefinition.module,
+      modulePath : 'note',
+      schema     : QueryDefinition.types.note.schema,
     };
     expect(queryRequests).toEqual([{
-      from         : query.from,
-      filter       : expectedFilter,
-      dateSort     : query.dateSort,
-      pagination   : query.pagination,
-      protocolRole : query.protocolRole,
+      from       : query.from,
+      filter     : expectedFilter,
+      dateSort   : query.dateSort,
+      pagination : query.pagination,
+      moduleRole : query.moduleRole,
     }]);
     expect(countRequests).toEqual([{
-      from         : query.from,
-      filter       : expectedFilter,
-      protocolRole : query.protocolRole,
+      from       : query.from,
+      filter     : expectedFilter,
+      moduleRole : query.moduleRole,
     }]);
     expect(count).toBe(7);
     expect(filter).toEqual({ tags: { status: 'published', priority: { gte: 2 } } });
@@ -127,12 +127,12 @@ describe('RecordQuery', () => {
     ]);
     const typed = createTypedEnbox(dwn);
     const request: RecordQuery<typeof QueryDefinition, 'note'> = {
-      from         : 'did:example:remote',
-      filter       : { tags: { status: 'published' } },
-      dateSort     : DateSort.CreatedDescending,
-      pagination   : { limit: 2 },
-      protocolRole : 'editor',
-      within       : 'root',
+      from       : 'did:example:remote',
+      filter     : { tags: { status: 'published' } },
+      dateSort   : DateSort.CreatedDescending,
+      pagination : { limit: 2 },
+      moduleRole : 'editor',
+      within     : 'root',
     };
 
     const firstPagePromise = typed.records.query('note', request);
@@ -145,15 +145,15 @@ describe('RecordQuery', () => {
     const expectedRequest: RecordsQueryRequest = {
       from   : 'did:example:remote',
       filter : {
-        contextId    : 'root',
-        protocol     : QueryDefinition.protocol,
-        protocolPath : 'note',
-        schema       : QueryDefinition.types.note.schema,
-        tags         : { status: 'published' },
+        contextId  : 'root',
+        module     : QueryDefinition.module,
+        modulePath : 'note',
+        schema     : QueryDefinition.types.note.schema,
+        tags       : { status: 'published' },
       },
-      dateSort     : DateSort.CreatedDescending,
-      pagination   : { limit: 2 },
-      protocolRole : 'editor',
+      dateSort   : DateSort.CreatedDescending,
+      pagination : { limit: 2 },
+      moduleRole : 'editor',
     };
     expect(queryRequests[0]).toEqual(expectedRequest);
 
@@ -224,13 +224,13 @@ describe('RecordQuery', () => {
     expect(queryRequests).toHaveLength(2);
   });
 
-  it('should omit schema for a schema-less protocol type', () => {
+  it('should omit schema for a schema-less module type', () => {
     const filter = compileRecordFilter(QueryDefinition, 'attachment', { dataFormat: 'image/png' });
 
     expect(filter).toEqual({
-      dataFormat   : 'image/png',
-      protocol     : QueryDefinition.protocol,
-      protocolPath : 'attachment',
+      dataFormat : 'image/png',
+      module     : QueryDefinition.module,
+      modulePath : 'attachment',
     });
   });
 
@@ -246,10 +246,10 @@ describe('RecordQuery', () => {
 
   it('should validate within selectors before dispatch', () => {
     expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment'))
-      .toThrow('nested protocol path \'root/note/attachment\' requires a within selector');
+      .toThrow('nested module path \'root/note/attachment\' requires a within selector');
     expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment', {
       within: 'root/note/attachment/deeper',
-    })).toThrow('within cannot be deeper than protocol path \'root/note/attachment\'');
+    })).toThrow('within cannot be deeper than module path \'root/note/attachment\'');
 
     expect(compileRecordQuery(QueryDefinition, 'root/note/attachment', {
       within: 'root',

@@ -5,10 +5,10 @@
   "minProperties": 1,
   "additionalProperties": false,
   "properties": {
-    "protocol": {
+    "module": {
       "type": "string"
     },
-    "protocolPath": {
+    "modulePath": {
       "type": "string"
     },
     "author": {

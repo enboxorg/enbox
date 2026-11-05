@@ -1,5 +1,5 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { AdminMessageSummary, AdminProtocolSummary, GlobalStats, TenantExport, TenantStats } from './types.js';
+import type { AdminMessageSummary, AdminModuleSummary, GlobalStats, TenantExport, TenantStats } from './types.js';
 
 import { Kysely } from 'kysely';
 
@@ -132,17 +132,17 @@ export class AdminStore {
    * Returns aggregate statistics for a single tenant.
    */
   public async getTenantStats(did: string): Promise<TenantStats> {
-    const [messageCount, dataStorageBytes, protocols] = await Promise.all([
+    const [messageCount, dataStorageBytes, modules] = await Promise.all([
       this.getTenantMessageCount(did),
       this.getTenantStorageSize(did),
-      this.getTenantProtocols(did),
+      this.getTenantModules(did),
     ]);
 
     return {
       messageCount,
       dataStorageBytes,
-      protocolCount: protocols.length,
-      protocols,
+      moduleCount: modules.length,
+      modules,
     };
   }
 
@@ -178,18 +178,18 @@ export class AdminStore {
   }
 
   /**
-   * Returns the list of distinct protocols used by a tenant.
+   * Returns the list of distinct modules used by a tenant.
    */
-  public async getTenantProtocols(did: string): Promise<string[]> {
+  public async getTenantModules(did: string): Promise<string[]> {
     const results = await this.db
       .selectFrom('messageStoreMessages')
-      .select('protocol')
+      .select('module')
       .distinct()
       .where('tenant', '=', did)
-      .where('protocol', 'is not', null)
+      .where('module', 'is not', null)
       .execute();
 
-    return results.map((r: { protocol: string | null }): string => r.protocol!);
+    return results.map((r: { module: string | null }): string => r.module!);
   }
 
   // ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ export class AdminStore {
       return this.cachedGlobalStats;
     }
 
-    const [tenantCount, messageStats, dataStats, protocolStats] = await Promise.all([
+    const [tenantCount, messageStats, dataStats, moduleStats] = await Promise.all([
       this.getTenantCount(),
       this.db
         .selectFrom('messageStoreMessages')
@@ -224,9 +224,9 @@ export class AdminStore {
       this.db
         .selectFrom('messageStoreMessages')
         .select(
-          this.db.fn.count<number>('protocol').distinct().as('count')
+          this.db.fn.count<number>('module').distinct().as('count')
         )
-        .where('protocol', 'is not', null)
+        .where('module', 'is not', null)
         .executeTakeFirstOrThrow(),
     ]);
 
@@ -234,7 +234,7 @@ export class AdminStore {
       tenantCount,
       totalMessages  : Number(messageStats.count),
       totalDataBytes : Number(dataStats.totalBytes) || 0,
-      totalProtocols : Number(protocolStats.count),
+      totalModules   : Number(moduleStats.count),
     };
     this.cachedGlobalStatsTimestamp = now;
 
@@ -324,7 +324,7 @@ export class AdminStore {
   public async getTenantMessages(did: string, options?: {
     interface? : string;
     method? : string;
-    protocol? : string;
+    module? : string;
     limit? : number;
     cursor? : number;
   }): Promise<{ messages: AdminMessageSummary[]; cursor?: number }> {
@@ -333,7 +333,7 @@ export class AdminStore {
     let query = this.db
       .selectFrom('messageStoreMessages')
       .select([
-        'messageCid', 'interface', 'method', 'protocol', 'protocolPath',
+        'messageCid', 'interface', 'method', 'module', 'modulePath',
         'schema', 'dataFormat', 'dataSize', 'dateCreated', 'messageTimestamp', 'id',
       ])
       .where('tenant', '=', did)
@@ -352,8 +352,8 @@ export class AdminStore {
       query = query.where('method', '=', options.method);
     }
 
-    if (options?.protocol !== undefined) {
-      query = query.where('protocol', '=', options.protocol);
+    if (options?.module !== undefined) {
+      query = query.where('module', '=', options.module);
     }
 
     const results = await query.execute();
@@ -363,8 +363,8 @@ export class AdminStore {
       messageCid       : row.messageCid,
       interface        : row.interface,
       method           : row.method,
-      protocol         : row.protocol,
-      protocolPath     : row.protocolPath,
+      module           : row.module,
+      modulePath       : row.modulePath,
       schema           : row.schema,
       dataFormat       : row.dataFormat,
       dataSize         : row.dataSize === null ? null : Number(row.dataSize),
@@ -385,23 +385,23 @@ export class AdminStore {
   }
 
   /**
-   * Returns per-protocol message counts for a tenant.
+   * Returns per-module message counts for a tenant.
    */
-  public async getTenantProtocolCounts(did: string): Promise<AdminProtocolSummary[]> {
+  public async getTenantModuleCounts(did: string): Promise<AdminModuleSummary[]> {
     const results = await this.db
       .selectFrom('messageStoreMessages')
       .select([
-        'protocol',
+        'module',
         this.db.fn.countAll<number>().as('messageCount'),
       ])
       .where('tenant', '=', did)
-      .where('protocol', 'is not', null)
-      .groupBy('protocol')
+      .where('module', 'is not', null)
+      .groupBy('module')
       .orderBy('messageCount', 'desc')
       .execute();
 
-    return results.map((row): AdminProtocolSummary => ({
-      protocol     : row.protocol!,
+    return results.map((row): AdminModuleSummary => ({
+      module       : row.module!,
       messageCount : Number(row.messageCount),
     }));
   }
@@ -416,8 +416,8 @@ export class AdminStore {
     const messages = await this.db
       .selectFrom('messageStoreMessages')
       .select([
-        'messageCid', 'interface', 'method', 'recordId', 'protocol',
-        'protocolPath', 'schema', 'author', 'recipient', 'messageTimestamp',
+        'messageCid', 'interface', 'method', 'recordId', 'module',
+        'modulePath', 'schema', 'author', 'recipient', 'messageTimestamp',
         'dateCreated', 'datePublished', 'published', 'dataFormat', 'dataCid', 'dataSize',
       ])
       .where('tenant', '=', did)
@@ -465,8 +465,8 @@ interface MessageStoreMessages {
   interface : string | null;
   method : string | null;
   recordId : string | null;
-  protocol : string | null;
-  protocolPath : string | null;
+  module : string | null;
+  modulePath : string | null;
   schema : string | null;
   author : string | null;
   recipient : string | null;

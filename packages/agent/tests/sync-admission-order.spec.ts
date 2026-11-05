@@ -6,8 +6,8 @@ import {
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
-  EncryptionProtocol,
-  PermissionsProtocol,
+  EncryptionModule,
+  PermissionsModule,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 
@@ -56,55 +56,55 @@ describe('orderMessagesForAdmission', () => {
     expect(result).toEqual([msg]);
   });
 
-  it('should place ProtocolsConfigure before RecordsWrite that references the protocol', () => {
+  it('should place ModulesConfigure before RecordsWrite that references the module', () => {
     const configureMsg: SortEntry = {
       message: makeMessage({
-        interface  : DwnInterfaceName.Protocols,
+        interface  : DwnInterfaceName.Modules,
         method     : DwnMethodName.Configure,
-        definition : { protocol: 'https://example.com/protocol' },
+        definition : { module: 'https://example.com/module' },
       }),
     };
     const recordsWriteMsg: SortEntry = {
       message: {
         ...makeMessage({
-          protocol    : 'https://example.com/protocol',
+          module      : 'https://example.com/module',
           dateCreated : '2024-01-01T00:00:00.000000Z',
         }),
         recordId: 'rec-1',
       } as unknown as GenericMessage,
     };
 
-    // Input order: records first, protocol second — sort should reverse.
+    // Input order: records first, module second — sort should reverse.
     const result = orderMessagesForAdmission([recordsWriteMsg, configureMsg]);
     expect(result[0]).toBe(configureMsg);
     expect(result[1]).toBe(recordsWriteMsg);
   });
 
-  it('should place ProtocolsConfigure uses targets before composed ProtocolsConfigure and records', () => {
-    const baseProtocol = 'https://example.com/protocols/base';
-    const composedProtocol = 'https://example.com/protocols/composed';
+  it('should place ModulesConfigure uses targets before composed ModulesConfigure and records', () => {
+    const baseModule = 'https://example.com/modules/base';
+    const composedModule = 'https://example.com/modules/composed';
 
     const baseConfigure: SortEntry = {
       message: makeMessage({
-        interface  : DwnInterfaceName.Protocols,
+        interface  : DwnInterfaceName.Modules,
         method     : DwnMethodName.Configure,
-        definition : { protocol: baseProtocol },
+        definition : { module: baseModule },
       }),
     };
     const composedConfigure: SortEntry = {
       message: makeMessage({
-        interface  : DwnInterfaceName.Protocols,
+        interface  : DwnInterfaceName.Modules,
         method     : DwnMethodName.Configure,
         definition : {
-          protocol : composedProtocol,
-          uses     : { base: baseProtocol },
+          module : composedModule,
+          uses   : { base: baseModule },
         },
       }),
     };
     const composedRecord: SortEntry = {
       message: {
         ...makeMessage({
-          protocol         : composedProtocol,
+          module           : composedModule,
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
         }),
@@ -198,8 +198,8 @@ describe('orderMessagesForAdmission', () => {
         ...makeMessage({
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
-          protocol         : PermissionsProtocol.uri,
-          protocolPath     : PermissionsProtocol.grantPath,
+          module           : PermissionsModule.uri,
+          modulePath       : PermissionsModule.grantPath,
         }),
         recordId: 'grant-rec-id',
       } as unknown as GenericMessage,
@@ -222,8 +222,8 @@ describe('orderMessagesForAdmission', () => {
         ...makeMessage({
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
-          protocol         : PermissionsProtocol.uri,
-          protocolPath     : PermissionsProtocol.grantPath,
+          module           : PermissionsModule.uri,
+          modulePath       : PermissionsModule.grantPath,
         }),
         recordId: 'grant-rec-id',
       } as unknown as GenericMessage,
@@ -245,14 +245,14 @@ describe('orderMessagesForAdmission', () => {
   });
 
   it('should place invoked role records before role-authorized writes', () => {
-    const protocol = 'https://example.com/role-sort';
+    const module = 'https://example.com/role-sort';
     const roleMsg: SortEntry = {
       message: {
         ...makeMessage({
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
-          protocol,
-          protocolPath     : 'participant',
+          module,
+          modulePath       : 'participant',
           recipient        : 'did:example:bob',
         }),
         recordId  : 'participant-role',
@@ -265,10 +265,10 @@ describe('orderMessagesForAdmission', () => {
           {
             dateCreated      : '2024-01-01T00:00:00.000000Z',
             messageTimestamp : '2024-01-01T00:00:00.000000Z',
-            protocol,
-            protocolPath     : 'chat',
+            module,
+            modulePath       : 'chat',
           },
-          { protocolRole: 'participant' },
+          { moduleRole: 'participant' },
           'did:example:bob',
         ),
         recordId: 'chat-record',
@@ -281,15 +281,15 @@ describe('orderMessagesForAdmission', () => {
   });
 
   it('should match invoked context roles by ancestor context prefix', () => {
-    const protocol = 'https://example.com/context-role-sort';
+    const module = 'https://example.com/context-role-sort';
     const matchingRole: SortEntry = {
       message: {
         ...makeMessage({
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
           parentId         : 'thread-1',
-          protocol,
-          protocolPath     : 'thread/participant',
+          module,
+          modulePath       : 'thread/participant',
           recipient        : 'did:example:bob',
         }),
         recordId  : 'thread-1-role',
@@ -302,8 +302,8 @@ describe('orderMessagesForAdmission', () => {
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
           parentId         : 'thread-2',
-          protocol,
-          protocolPath     : 'thread/participant',
+          module,
+          modulePath       : 'thread/participant',
           recipient        : 'did:example:bob',
         }),
         recordId  : 'thread-2-role',
@@ -317,10 +317,10 @@ describe('orderMessagesForAdmission', () => {
             dateCreated      : '2024-01-01T00:00:00.000000Z',
             messageTimestamp : '2024-01-01T00:00:00.000000Z',
             parentId         : 'thread-1',
-            protocol,
-            protocolPath     : 'thread/chat',
+            module,
+            modulePath       : 'thread/chat',
           },
-          { protocolRole: 'thread/participant' },
+          { moduleRole: 'thread/participant' },
           'did:example:bob',
         ),
         recordId  : 'thread-1-chat',
@@ -334,15 +334,15 @@ describe('orderMessagesForAdmission', () => {
   });
 
 
-  it('should place source-protocol audience records before encrypted records that reference them', () => {
-    const protocol = 'https://example.com/source-audience-ordering';
+  it('should place source-module audience records before encrypted records that reference them', () => {
+    const module = 'https://example.com/source-audience-ordering';
     const audience: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-1',
             rolePath  : 'thread/member',
             keyId     : 'key-1',
@@ -355,8 +355,8 @@ describe('orderMessagesForAdmission', () => {
     const encryptedRecord: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath     : 'thread/message',
+          module,
+          modulePath       : 'thread/message',
           parentId         : 'thread-1',
           dateCreated      : '2024-01-01T00:00:00.000000Z',
           messageTimestamp : '2024-01-01T00:00:00.000000Z',
@@ -365,7 +365,7 @@ describe('orderMessagesForAdmission', () => {
         encryption : {
           keyEncryption: [{
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-            protocol,
+            module,
             rolePath         : 'thread/member',
             keyId            : 'key-1',
           }],
@@ -379,15 +379,15 @@ describe('orderMessagesForAdmission', () => {
     expect(result.indexOf(audience)).toBeLessThan(result.indexOf(encryptedRecord));
   });
 
-  it('should place source-protocol audience records before delivery records that reference them', () => {
-    const protocol = 'https://example.com/source-delivery-ordering';
+  it('should place source-module audience records before delivery records that reference them', () => {
+    const module = 'https://example.com/source-delivery-ordering';
     const audience: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-1',
             rolePath  : 'thread/member',
             keyId     : 'key-1',
@@ -399,11 +399,11 @@ describe('orderMessagesForAdmission', () => {
     const delivery: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : 'did:example:bob',
-          tags         : {
-            protocol,
+          module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : 'did:example:bob',
+          tags       : {
+            module,
             contextId : 'thread-1',
             rolePath  : 'thread/member',
             keyId     : 'key-1',
@@ -419,13 +419,13 @@ describe('orderMessagesForAdmission', () => {
   });
 
   it('should place role records before role-holder delivery records that reference them', () => {
-    const protocol = 'https://example.com/source-delivery-role-ordering';
+    const module = 'https://example.com/source-delivery-role-ordering';
     const recipient = 'did:example:bob';
     const role: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath: 'thread/member',
+          module,
+          modulePath: 'thread/member',
           recipient,
         }),
         recordId  : 'member-role-record',
@@ -435,11 +435,11 @@ describe('orderMessagesForAdmission', () => {
     const delivery: SortEntry = {
       message: {
         ...makeMessage({
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
           recipient,
-          tags         : {
-            protocol,
+          tags       : {
+            module,
             contextId : 'thread-1',
             rolePath  : 'thread/member',
             keyId     : 'key-1',
@@ -458,25 +458,25 @@ describe('orderMessagesForAdmission', () => {
     const grant: SortEntry = {
       message: {
         ...makeMessage({
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
         }),
         recordId: 'grant-rec-id',
       } as unknown as GenericMessage,
     };
-    for (const protocolPath of [EncryptionProtocol.grantKeyPath, EncryptionProtocol.wrappedGrantKeyPath]) {
+    for (const modulePath of [EncryptionModule.grantKeyPath, EncryptionModule.wrappedGrantKeyPath]) {
       const grantKey: SortEntry = {
         message: {
           ...makeMessage({
-            protocol : EncryptionProtocol.uri,
-            protocolPath,
-            tags     : {
-              grantId  : 'grant-rec-id',
-              protocol : 'https://example.com/encrypted-chat',
-              keyId    : 'key-1',
+            module : EncryptionModule.uri,
+            modulePath,
+            tags   : {
+              grantId : 'grant-rec-id',
+              module  : 'https://example.com/encrypted-chat',
+              keyId   : 'key-1',
             },
           }),
-          recordId: `grant-key-${protocolPath}`,
+          recordId: `grant-key-${modulePath}`,
         } as unknown as GenericMessage,
       };
 
@@ -534,9 +534,9 @@ describe('orderMessagesForAdmission', () => {
     const independent: SortEntry = {
       message: {
         ...makeMessage({
-          interface  : DwnInterfaceName.Protocols,
+          interface  : DwnInterfaceName.Modules,
           method     : DwnMethodName.Configure,
-          definition : { protocol: 'https://example.com/other' },
+          definition : { module: 'https://example.com/other' },
         }),
       } as unknown as GenericMessage,
     };
@@ -551,9 +551,9 @@ describe('orderMessagesForAdmission', () => {
   });
 
   it('should handle messages with no dependency relations', () => {
-    const msg1: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
-    const msg2: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
-    const msg3: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Protocols, method: DwnMethodName.Query }) };
+    const msg1: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Modules, method: DwnMethodName.Query }) };
+    const msg2: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Modules, method: DwnMethodName.Query }) };
+    const msg3: SortEntry = { message: makeMessage({ interface: DwnInterfaceName.Modules, method: DwnMethodName.Query }) };
 
     const result = orderMessagesForAdmission([msg1, msg2, msg3]);
     expect(result).toHaveLength(3);

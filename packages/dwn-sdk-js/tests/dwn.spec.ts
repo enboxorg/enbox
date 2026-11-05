@@ -3,11 +3,11 @@ import type { EventLog } from '../src/types/subscriptions.js';
 import type { Persona } from './utils/test-data-generator.js';
 import type { ActiveTenantCheckResult, TenantGate } from '../src/index.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../src/index.js';
-import type { ProtocolDefinition, ReplicationApplyResult } from '../src/index.js';
+import type { ModuleDefinition, ReplicationApplyResult } from '../src/index.js';
 
 import sinon from 'sinon';
 
-import nestedProtocol from './vectors/protocol-definitions/nested.json' with { type: 'json' };
+import nestedModule from './vectors/module-definitions/nested.json' with { type: 'json' };
 
 import { Dwn } from '../src/dwn.js';
 import { TestEventLog } from './test-event-stream.js';
@@ -26,7 +26,7 @@ import {
   RecordsWrite,
   Time
 } from '../src/index.js';
-import { defaultTestProtocolDefinition, TestDataGenerator } from './utils/test-data-generator.js';
+import { defaultTestModuleDefinition, TestDataGenerator } from './utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 export function testDwnClass(): void {
@@ -67,7 +67,7 @@ export function testDwnClass(): void {
     describe('processMessage()', () => {
       it('should process RecordsWrite message signed by a `did:key` DID', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
         const reply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -90,17 +90,17 @@ export function testDwnClass(): void {
         expect(reply.status.code).toBe(404);
       });
 
-      it('should process ProtocolsConfigure message', async () => {
+      it('should process ModulesConfigure message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { message } = await TestDataGenerator.generateProtocolsConfigure({ author: alice });
+        const { message } = await TestDataGenerator.generateModulesConfigure({ author: alice });
 
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(202);
       });
 
-      it('should process ProtocolsQuery message', async () => {
+      it('should process ModulesQuery message', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const { message } = await TestDataGenerator.generateProtocolsQuery({ author: alice });
+        const { message } = await TestDataGenerator.generateModulesQuery({ author: alice });
 
         const reply = await dwn.processMessage(alice.did, message);
         expect(reply.status.code).toBe(200);
@@ -171,7 +171,7 @@ export function testDwnClass(): void {
     describe('applyReplicatedMessage()', () => {
       it('confirms an exact current write has data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
         const initialReply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -187,7 +187,7 @@ export function testDwnClass(): void {
 
       it('keeps ordinary duplicate replay successful when the optional confirmation query fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
 
@@ -198,7 +198,7 @@ export function testDwnClass(): void {
 
       it('keeps ordinary duplicate replay successful when the optional body read fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
         expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
@@ -210,7 +210,7 @@ export function testDwnClass(): void {
 
       it('defers a body-bearing indexed update when its body probe fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const initialData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const initial = await TestDataGenerator.generateRecordsWrite({ author: alice, data: initialData });
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, {
@@ -248,7 +248,7 @@ export function testDwnClass(): void {
 
       it('does not confirm external data whose stored size differs from its descriptor', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
         expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
@@ -263,7 +263,7 @@ export function testDwnClass(): void {
 
       it('keeps ordinary duplicate replay successful when confirmation stream cancellation fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
         expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
@@ -280,7 +280,7 @@ export function testDwnClass(): void {
 
       it('marks an ordinary body-bearing duplicate materialized with one local body lookup', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
         expect((await dwn.processMessage(alice.did, message, { dataStream: DataStream.fromBytes(data) })).status.code).toBe(202);
@@ -295,14 +295,14 @@ export function testDwnClass(): void {
         expect(cancelSpy.calledOnce).toBe(true);
       });
 
-      it('deduplicates exact protocol configurations and tombstones', async () => {
+      it('deduplicates exact module configurations and tombstones', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocol = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : defaultTestProtocolDefinition,
+        const module = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : defaultTestModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocol.message)).status.code).toBe(202);
-        expect(await dwn.applyReplicatedMessage(alice.did, protocol.message)).toEqual({ kind: 'Duplicate' });
+        expect((await dwn.processMessage(alice.did, module.message)).status.code).toBe(202);
+        expect(await dwn.applyReplicatedMessage(alice.did, module.message)).toEqual({ kind: 'Duplicate' });
 
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect((await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream })).status.code).toBe(202);
@@ -316,7 +316,7 @@ export function testDwnClass(): void {
 
       it('completes a zero-byte ancestry-only initial write without changing its CID', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const dataBytes = new Uint8Array();
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: dataBytes });
 
@@ -351,7 +351,7 @@ export function testDwnClass(): void {
 
       it('uses the same completion rule for ordinary processing and replicated replay', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
         expect((await dwn.processMessage(alice.did, message)).status.code).toBe(204);
@@ -366,7 +366,7 @@ export function testDwnClass(): void {
 
       it('completes data-store-backed ancestry data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
@@ -386,7 +386,7 @@ export function testDwnClass(): void {
 
       it('does not overwrite external data already stored for an ancestry write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
@@ -418,7 +418,7 @@ export function testDwnClass(): void {
 
       it('defers a data replay after the current write loses its external data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
         const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data });
 
@@ -438,7 +438,7 @@ export function testDwnClass(): void {
 
       it('coalesces concurrent ancestry completion into one feed move', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const ancestry = await dwn.applyReplicatedMessage(alice.did, message);
         if (ancestry.kind !== 'Applied' || ancestry.position === undefined) {
@@ -456,7 +456,7 @@ export function testDwnClass(): void {
 
       it('confirms a newer materialized write without completing superseded ancestry', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message))
           .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
@@ -500,7 +500,7 @@ export function testDwnClass(): void {
 
       it('does not mistake a missing newer write for materialized supersession', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message, { dataStream: initial.dataStream }))
           .toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -519,7 +519,7 @@ export function testDwnClass(): void {
 
       it('does not complete an ancestry write after the record is deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const initial = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(alice.did, initial.message))
           .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
@@ -544,27 +544,27 @@ export function testDwnClass(): void {
 
       it('settles completion when a concurrent parent prune removes the target', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolDefinition = nestedProtocol as ProtocolDefinition;
-        const protocol = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
-        expect((await dwn.processMessage(alice.did, protocol.message)).status.code).toBe(202);
+        const moduleDefinition = nestedModule as ModuleDefinition;
+        const module = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
+        expect((await dwn.processMessage(alice.did, module.message)).status.code).toBe(202);
 
         const parent = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
-          schema       : protocolDefinition.types.foo.schema,
+          author     : alice,
+          dataFormat : moduleDefinition.types.foo.dataFormats![0],
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
+          schema     : moduleDefinition.types.foo.schema,
         });
         expect(await dwn.applyReplicatedMessage(alice.did, parent.message, { dataStream: parent.dataStream }))
           .toEqual(expect.objectContaining({ kind: 'Applied' }));
 
         const child = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          dataFormat      : protocolDefinition.types.bar.dataFormats![0],
+          dataFormat      : moduleDefinition.types.bar.dataFormats![0],
           parentContextId : parent.message.contextId,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'foo/bar',
-          schema          : protocolDefinition.types.bar.schema,
+          module          : moduleDefinition.module,
+          modulePath      : 'foo/bar',
+          schema          : moduleDefinition.types.bar.schema,
         });
         expect(await dwn.applyReplicatedMessage(alice.did, child.message))
           .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
@@ -594,7 +594,7 @@ export function testDwnClass(): void {
 
       it('rejects invalid data without completing ancestry state', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const { message, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(alice.did, message))
           .toEqual(expect.objectContaining({ ancestryOnly: true, kind: 'Applied' }));
@@ -609,11 +609,11 @@ export function testDwnClass(): void {
         })).toEqual(expect.objectContaining({ kind: 'Applied' }));
       });
 
-      it('returns resolved cross-protocol role dependencies for replicated role-authorized queries', async () => {
+      it('returns resolved cross-module role dependencies for replicated role-authorized queries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        const threadsProtocol: ProtocolDefinition = {
-          protocol  : 'https://threads.example.com',
+        const threadsModule: ModuleDefinition = {
+          module    : 'https://threads.example.com',
           published : true,
           types     : {
             participant : {},
@@ -627,11 +627,11 @@ export function testDwnClass(): void {
             },
           },
         };
-        const commentsProtocol: ProtocolDefinition = {
-          protocol  : 'https://comments.example.com',
+        const commentsModule: ModuleDefinition = {
+          module    : 'https://comments.example.com',
           published : true,
           uses      : {
-            threads: threadsProtocol.protocol,
+            threads: threadsModule.module,
           },
           types: {
             comment: {},
@@ -643,24 +643,24 @@ export function testDwnClass(): void {
             },
           },
         };
-        const threadsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : threadsProtocol,
+        const threadsConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : threadsModule,
         });
         expect((await dwn.processMessage(alice.did, threadsConfigure.message)).status.code).toBe(202);
-        const commentsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : commentsProtocol,
+        const commentsConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : commentsModule,
         });
         expect((await dwn.processMessage(alice.did, commentsConfigure.message)).status.code).toBe(202);
 
         const query = await TestDataGenerator.generateRecordsQuery({
-          author       : bob,
-          protocolRole : 'threads:thread/participant',
-          filter       : {
-            contextId    : 'threadcontext',
-            protocol     : commentsProtocol.protocol,
-            protocolPath : 'thread/comment',
+          author     : bob,
+          moduleRole : 'threads:thread/participant',
+          filter     : {
+            contextId  : 'threadcontext',
+            module     : commentsModule.module,
+            modulePath : 'thread/comment',
           },
         });
 
@@ -671,8 +671,8 @@ export function testDwnClass(): void {
           missing : [{
             type          : 'Role',
             contextPrefix : 'threadcontext',
-            protocol      : threadsProtocol.protocol,
-            protocolPath  : 'thread/participant',
+            module        : threadsModule.module,
+            modulePath    : 'thread/participant',
             recipient     : bob.did,
           }],
         });
@@ -680,8 +680,8 @@ export function testDwnClass(): void {
 
       it('classifies exact child replay as Duplicate before checking that the parent is still active', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const nestedProtocol: ProtocolDefinition = {
-          protocol  : 'https://example.com/nested-duplicate',
+        const nestedModule: ModuleDefinition = {
+          module    : 'https://example.com/nested-duplicate',
           published : false,
           types     : {
             parent : {},
@@ -693,23 +693,23 @@ export function testDwnClass(): void {
             },
           },
         };
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : nestedProtocol,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : nestedModule,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         const parent = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : nestedProtocol.protocol,
-          protocolPath : 'parent',
+          author     : alice,
+          module     : nestedModule.module,
+          modulePath : 'parent',
         });
         expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
 
         const child = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : nestedProtocol.protocol,
-          protocolPath    : 'parent/child',
+          module          : nestedModule.module,
+          modulePath      : 'parent/child',
           parentContextId : parent.message.contextId,
         });
         expect((await dwn.processMessage(alice.did, child.message, { dataStream: child.dataStream })).status.code).toBe(202);
@@ -727,8 +727,8 @@ export function testDwnClass(): void {
 
       it('classifies a replicated write older than the squash floor as Superseded', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const squashProtocol: ProtocolDefinition = {
-          protocol  : 'https://example.com/replicated-squash',
+        const squashModule: ModuleDefinition = {
+          module    : 'https://example.com/replicated-squash',
           published : true,
           types     : {
             document : {},
@@ -743,24 +743,24 @@ export function testDwnClass(): void {
             },
           },
         };
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : squashProtocol,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : squashModule,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         const document = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : squashProtocol.protocol,
-          protocolPath : 'document',
+          author     : alice,
+          module     : squashModule.module,
+          modulePath : 'document',
         });
         expect((await dwn.processMessage(alice.did, document.message, { dataStream: document.dataStream })).status.code).toBe(202);
 
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
         const squashRecord = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : squashProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : document.message.contextId,
           dateCreated      : squashTimestamp,
           messageTimestamp : squashTimestamp,
@@ -773,8 +773,8 @@ export function testDwnClass(): void {
         const olderTimestamp = Time.createOffsetTimestamp({ seconds: 5 });
         const olderPatch = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
-          protocol         : squashProtocol.protocol,
-          protocolPath     : 'document/patch',
+          module           : squashModule.module,
+          modulePath       : 'document/patch',
           parentContextId  : document.message.contextId,
           dateCreated      : olderTimestamp,
           messageTimestamp : olderTimestamp,
@@ -788,13 +788,13 @@ export function testDwnClass(): void {
       it('converges to the same deleted state when a write and an older tombstone apply in either order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // one shared ProtocolsConfigure message, processed on BOTH replicas so their
+        // one shared ModulesConfigure message, processed on BOTH replicas so their
         // state roots remain directly comparable
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : defaultTestProtocolDefinition,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : defaultTestModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         // initial write -> tombstone -> newer update, with strictly increasing timestamps
         const datePublished = '2025-01-05T00:00:00.000000Z';
@@ -842,7 +842,7 @@ export function testDwnClass(): void {
           await dataStoreB.clear();
           await resumableTaskStoreB.clear();
 
-          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect((await dwnB.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
           )).toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -882,11 +882,11 @@ export function testDwnClass(): void {
 
       it('rejects a tombstone-beaten replicated write when its data does not match its descriptor', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : defaultTestProtocolDefinition,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : defaultTestModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(
@@ -930,7 +930,7 @@ export function testDwnClass(): void {
 
       it('reports missing data for tombstone-beaten replicated writes without data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const scenarios = [
           { dataBytes: TestDataGenerator.randomBytes(32), storage: 'inline' },
@@ -963,7 +963,7 @@ export function testDwnClass(): void {
               type     : 'RecordData',
               recordId : update.message.recordId,
               dataCid  : update.message.descriptor.dataCid,
-              protocol : update.message.descriptor.protocol,
+              module   : update.message.descriptor.module,
             }],
           });
 
@@ -980,7 +980,7 @@ export function testDwnClass(): void {
 
       it('accepts a tombstone-beaten replicated write with a valid large data stream', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect(await dwn.applyReplicatedMessage(
@@ -1019,7 +1019,7 @@ export function testDwnClass(): void {
 
       it('applies the handler stale-tombstone gate on resumable-task replay', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
         expect((await dwn.processMessage(alice.did, initialWrite.message, { dataStream: initialWrite.dataStream })).status.code).toBe(202);
@@ -1049,11 +1049,11 @@ export function testDwnClass(): void {
       it('converges competing plain tombstones to one canonical winner in either order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : defaultTestProtocolDefinition,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : defaultTestModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         // two independently authored plain tombstones for the same record, d1 older than d2
         const initialWrite = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -1092,7 +1092,7 @@ export function testDwnClass(): void {
           await dataStoreB.clear();
           await resumableTaskStoreB.clear();
 
-          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect((await dwnB.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, initialWrite.message, { dataStream: DataStream.fromBytes(initialWrite.dataBytes!) },
           )).toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -1114,28 +1114,28 @@ export function testDwnClass(): void {
       it('a prune beats a newer plain delete in either order and purges descendants on both replicas', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const nestedProtocolDefinition = nestedProtocol as ProtocolDefinition;
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : nestedProtocolDefinition,
+        const nestedModuleDefinition = nestedModule as ModuleDefinition;
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : nestedModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         // parent foo with child bar, then a prune of foo and a NEWER plain delete of foo
         const foo = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : nestedProtocolDefinition.protocol,
-          protocolPath : 'foo',
-          schema       : nestedProtocolDefinition.types.foo.schema,
-          dataFormat   : nestedProtocolDefinition.types.foo.dataFormats![0],
+          author     : alice,
+          module     : nestedModuleDefinition.module,
+          modulePath : 'foo',
+          schema     : nestedModuleDefinition.types.foo.schema,
+          dataFormat : nestedModuleDefinition.types.foo.dataFormats![0],
         });
         const bar = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : nestedProtocolDefinition.protocol,
-          protocolPath    : 'foo/bar',
+          module          : nestedModuleDefinition.module,
+          modulePath      : 'foo/bar',
           parentContextId : foo.message.contextId,
-          schema          : nestedProtocolDefinition.types.bar.schema,
-          dataFormat      : nestedProtocolDefinition.types.bar.dataFormats![0],
+          schema          : nestedModuleDefinition.types.bar.schema,
+          dataFormat      : nestedModuleDefinition.types.bar.dataFormats![0],
         });
         // the prune must be strictly newer than foo: on a millisecond tie the newest-existing
         // message is decided by CID order, so the prune would only intermittently be the
@@ -1180,7 +1180,7 @@ export function testDwnClass(): void {
           await dataStoreB.clear();
           await resumableTaskStoreB.clear();
 
-          expect((await dwnB.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+          expect((await dwnB.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
           expect(await dwnB.applyReplicatedMessage(
             alice.did, foo.message, { dataStream: DataStream.fromBytes(foo.dataBytes!) },
           )).toEqual(expect.objectContaining({ kind: 'Applied' }));
@@ -1199,8 +1199,8 @@ export function testDwnClass(): void {
         }
       });
 
-      const deepNestedProtocol: ProtocolDefinition = {
-        protocol  : 'https://example.com/deep-nested',
+      const deepNestedModule: ModuleDefinition = {
+        module    : 'https://example.com/deep-nested',
         published : false,
         types     : {
           foo : {},
@@ -1221,39 +1221,39 @@ export function testDwnClass(): void {
 
       type GeneratedWrite = Awaited<ReturnType<typeof TestDataGenerator.generateRecordsWrite>>;
 
-      // Installs `deepNestedProtocol` on the local DWN and builds a foo -> bar -> baz -> qux
+      // Installs `deepNestedModule` on the local DWN and builds a foo -> bar -> baz -> qux
       // record chain under it. None of the generated records are stored; each test applies the
       // subset it needs to shape local ancestor presence.
       async function generateDeepNestedChain(
         alice: Persona,
       ): Promise<{ foo: GeneratedWrite; bar: GeneratedWrite; baz: GeneratedWrite; qux: GeneratedWrite }> {
-        const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : deepNestedProtocol,
+        const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : deepNestedModule,
         });
-        expect((await dwn.processMessage(alice.did, protocolsConfigure.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, modulesConfigure.message)).status.code).toBe(202);
 
         const foo = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : deepNestedProtocol.protocol,
-          protocolPath : 'foo',
+          author     : alice,
+          module     : deepNestedModule.module,
+          modulePath : 'foo',
         });
         const bar = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : deepNestedProtocol.protocol,
-          protocolPath    : 'foo/bar',
+          module          : deepNestedModule.module,
+          modulePath      : 'foo/bar',
           parentContextId : foo.message.contextId,
         });
         const baz = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : deepNestedProtocol.protocol,
-          protocolPath    : 'foo/bar/baz',
+          module          : deepNestedModule.module,
+          modulePath      : 'foo/bar/baz',
           parentContextId : bar.message.contextId,
         });
         const qux = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
-          protocol        : deepNestedProtocol.protocol,
-          protocolPath    : 'foo/bar/baz/qux',
+          module          : deepNestedModule.module,
+          modulePath      : 'foo/bar/baz/qux',
           parentContextId : baz.message.contextId,
         });
 
@@ -1273,9 +1273,9 @@ export function testDwnClass(): void {
         expect(result).toEqual({
           kind    : 'Incomplete',
           missing : [
-            { type: 'Ancestor', recordId: foo.message.recordId, protocol: deepNestedProtocol.protocol },
-            { type: 'Ancestor', recordId: bar.message.recordId, protocol: deepNestedProtocol.protocol },
-            { type: 'Parent', recordId: baz.message.recordId, protocol: deepNestedProtocol.protocol },
+            { type: 'Ancestor', recordId: foo.message.recordId, module: deepNestedModule.module },
+            { type: 'Ancestor', recordId: bar.message.recordId, module: deepNestedModule.module },
+            { type: 'Parent', recordId: baz.message.recordId, module: deepNestedModule.module },
           ],
         });
       });
@@ -1296,8 +1296,8 @@ export function testDwnClass(): void {
         expect(result).toEqual({
           kind    : 'Incomplete',
           missing : [
-            { type: 'Ancestor', recordId: bar.message.recordId, protocol: deepNestedProtocol.protocol },
-            { type: 'Parent', recordId: baz.message.recordId, protocol: deepNestedProtocol.protocol },
+            { type: 'Ancestor', recordId: bar.message.recordId, module: deepNestedModule.module },
+            { type: 'Parent', recordId: baz.message.recordId, module: deepNestedModule.module },
           ],
         });
       });

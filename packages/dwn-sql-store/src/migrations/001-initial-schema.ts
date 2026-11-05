@@ -27,8 +27,8 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         .addColumn('recordId', 'varchar(60)')
         .addColumn('entryId', 'varchar(60)')
         .addColumn('parentId', 'varchar(60)')
-        .addColumn('protocol', 'varchar(200)')
-        .addColumn('protocolPath', 'varchar(200)')
+        .addColumn('module', 'varchar(200)')
+        .addColumn('modulePath', 'varchar(200)')
         .addColumn('contextId', 'varchar(600)')
         .addColumn('schema', 'varchar(200)')
         .addColumn('author', 'varchar(255)')
@@ -57,7 +57,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         ['tenant', 'recordId'],
         ['tenant', 'entryId'],
         ['tenant', 'parentId'],
-        ['tenant', 'protocol', 'published', 'messageTimestamp'],
+        ['tenant', 'module', 'published', 'messageTimestamp'],
         ['tenant', 'interface'],
         ['tenant', 'permissionGrantId'],
         ['tenant', 'dateCreated'],

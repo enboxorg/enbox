@@ -36,24 +36,24 @@ describe('parseReplicationApplyResult', () => {
   });
 
   it('should accept encryption control dependency refs for both reserved paths', () => {
-    for (const protocolPath of ['$encryption/audience', '$encryption/delivery']) {
+    for (const modulePath of ['$encryption/audience', '$encryption/delivery']) {
       const result = parseReplicationApplyResult({
         kind    : 'Incomplete',
         missing : [{
-          type     : 'EncryptionControl',
-          protocol : 'https://example.com/protocol',
-          protocolPath,
-          tags     : { role: 'thread/participant' },
+          type   : 'EncryptionControl',
+          module : 'https://example.com/module',
+          modulePath,
+          tags   : { role: 'thread/participant' },
         }],
       });
 
       expect(result).toEqual({
         kind    : 'Incomplete',
         missing : [{
-          type     : 'EncryptionControl',
-          protocol : 'https://example.com/protocol',
-          protocolPath,
-          tags     : { role: 'thread/participant' },
+          type   : 'EncryptionControl',
+          module : 'https://example.com/module',
+          modulePath,
+          tags   : { role: 'thread/participant' },
         }],
       });
     }
@@ -63,45 +63,45 @@ describe('parseReplicationApplyResult', () => {
     const result = parseReplicationApplyResult({
       kind    : 'Incomplete',
       missing : [{
-        type         : 'EncryptionControl',
-        protocol     : 'https://example.com/protocol',
-        protocolPath : '$encryption/delivery',
-        recipient    : 'did:example:alice',
+        type       : 'EncryptionControl',
+        module     : 'https://example.com/module',
+        modulePath : '$encryption/delivery',
+        recipient  : 'did:example:alice',
       }],
     });
 
     expect(result.kind).toBe('Incomplete');
   });
 
-  it('should reject encryption control dependency refs missing a protocol', () => {
+  it('should reject encryption control dependency refs missing a module', () => {
     expect(() => parseReplicationApplyResult({
       kind    : 'Incomplete',
       missing : [{
-        type         : 'EncryptionControl',
-        protocolPath : '$encryption/audience',
+        type       : 'EncryptionControl',
+        modulePath : '$encryption/audience',
       }],
     })).toThrow(DwnRpcError);
   });
 
   it('should reject encryption control dependency refs with unknown paths', () => {
-    for (const protocolPath of ['grantKey', '$encryption', '$encryption/unknown', 42]) {
+    for (const modulePath of ['grantKey', '$encryption', '$encryption/unknown', 42]) {
       expect(() => parseReplicationApplyResult({
         kind    : 'Incomplete',
         missing : [{
-          type     : 'EncryptionControl',
-          protocol : 'https://example.com/protocol',
-          protocolPath,
+          type   : 'EncryptionControl',
+          module : 'https://example.com/module',
+          modulePath,
         }],
       })).toThrow(DwnRpcError);
     }
   });
 
-  it('should reject removed encryption protocol dependency refs', () => {
+  it('should reject removed encryption module dependency refs', () => {
     expect(() => parseReplicationApplyResult({
       kind    : 'Incomplete',
       missing : [{
-        type         : 'EncryptionProtocol',
-        protocolPath : 'grantKey',
+        type       : 'EncryptionModule',
+        modulePath : 'grantKey',
       }],
     })).toThrow(DwnRpcError);
   });

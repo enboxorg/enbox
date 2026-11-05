@@ -1,5 +1,5 @@
 import type { PermissionGrantEntry } from '../src/types/permissions.js';
-import type { GenericMessage, ProgressToken, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ModuleDefinition, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -12,17 +12,17 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
 
-const commentsProtocol = 'https://example.com/sync-history-comments';
-const threadsProtocol = 'https://example.com/sync-history-threads';
+const commentsModule = 'https://example.com/sync-history-comments';
+const threadsModule = 'https://example.com/sync-history-threads';
 
-type ProtocolHistoryRequest = {
+type ModuleHistoryRequest = {
   granteeDid?: string;
   messageParams?: {
     cursor?: unknown;
     filters?: Array<{
       interface?: string;
       method?: string;
-      protocol?: string;
+      module?: string;
     }>;
     limit?: number;
     permissionGrantIds?: string[];
@@ -30,14 +30,14 @@ type ProtocolHistoryRequest = {
   messageType?: DwnInterface;
 };
 
-type ProtocolHistoryPage = {
+type ModuleHistoryPage = {
   cursor?: ProgressToken;
   drained?: boolean;
   entries?: Array<{ message?: GenericMessage }>;
   status: { code: number; detail: string };
 };
 
-describe('Sync scope closure — delegated protocol history', () => {
+describe('Sync scope closure — delegated module history', () => {
   let testHarness: PlatformAgentTestHarness;
   let syncEngine: SyncEngineLevel;
   let commentsGrant: PermissionGrantEntry;
@@ -74,12 +74,12 @@ describe('Sync scope closure — delegated protocol history', () => {
     ownerDid = owner.did.uri;
     delegateDid = delegate.did.uri;
 
-    await installProtocol(ownerDid, threadsProtocolDefinition());
-    await installProtocol(ownerDid, commentsProtocolWithHistoricalDependency());
-    await installProtocol(ownerDid, commentsProtocolWithoutDependency());
+    await installModule(ownerDid, threadsModuleDefinition());
+    await installModule(ownerDid, commentsModuleWithHistoricalDependency());
+    await installModule(ownerDid, commentsModuleWithoutDependency());
 
-    commentsGrant = await storeDelegateMessagesReadGrant(ownerDid, delegateDid, commentsProtocol);
-    await storeDelegateMessagesReadGrant(ownerDid, delegateDid, threadsProtocol);
+    commentsGrant = await storeDelegateMessagesReadGrant(ownerDid, delegateDid, commentsModule);
+    await storeDelegateMessagesReadGrant(ownerDid, delegateDid, threadsModule);
   });
 
   afterAll(async () => {
@@ -88,37 +88,37 @@ describe('Sync scope closure — delegated protocol history', () => {
     await testHarness.closeStorage();
   });
 
-  it('queries delegated retained protocol history with real MessagesQuery pagination', async () => {
+  it('queries delegated retained module history with real MessagesQuery pagination', async () => {
     // This drives the DWN MessagesQuery cursor/drain path at a small page size; the production validator uses its fixed page size.
-    const { definitions: pagedDefinitions, pages } = await queryAllDelegatedProtocolHistoryPages(
+    const { definitions: pagedDefinitions, pages } = await queryAllDelegatedModuleHistoryPages(
       ownerDid,
       delegateDid,
       commentsGrant,
-      commentsProtocol,
+      commentsModule,
       1,
     );
 
     expect(pages.length).toBeGreaterThan(1);
     expect(pages[0].drained).toBe(false);
     expect(pages.at(-1)?.drained).toBe(true);
-    expect(pagedDefinitions.some(definition => definition.uses?.threads === threadsProtocol)).toBe(true);
+    expect(pagedDefinitions.some(definition => definition.uses?.threads === threadsModule)).toBe(true);
     expect(pagedDefinitions.some(definition => definition.uses === undefined)).toBe(true);
   });
 
-  it('rejects delegated sync scope when retained protocol history contains a missing dependency', async () => {
+  it('rejects delegated sync scope when retained module history contains a missing dependency', async () => {
     const processRequestSpy = sinon.spy(testHarness.agent.dwn, 'processRequest');
 
     await expect(syncEngine.setIdentityOptions({
       did     : ownerDid,
       options : {
         delegateDid,
-        protocols: [commentsProtocol],
+        modules: [commentsModule],
       },
-    })).rejects.toThrow(`${commentsProtocol} -> ${threadsProtocol}`);
+    })).rejects.toThrow(`${commentsModule} -> ${threadsModule}`);
 
     const commentsHistoryCalls = processRequestSpy.getCalls()
-      .map(call => call.args[0] as ProtocolHistoryRequest)
-      .filter(request => isProtocolHistoryQuery(request, commentsProtocol));
+      .map(call => call.args[0] as ModuleHistoryRequest)
+      .filter(request => isModuleHistoryQuery(request, commentsModule));
 
     expect(commentsHistoryCalls).toHaveLength(1);
     expect(commentsHistoryCalls[0].granteeDid).toBe(delegateDid);
@@ -127,11 +127,11 @@ describe('Sync scope closure — delegated protocol history', () => {
     expect(commentsHistoryCalls[0].messageParams?.limit).toBe(500);
   });
 
-  async function installProtocol(tenantDid: string, definition: ProtocolDefinition): Promise<void> {
+  async function installModule(tenantDid: string, definition: ModuleDefinition): Promise<void> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition },
     });
 
@@ -141,7 +141,7 @@ describe('Sync scope closure — delegated protocol history', () => {
   async function storeDelegateMessagesReadGrant(
     ownerDid: string,
     delegateDid: string,
-    protocol: string,
+    module: string,
   ): Promise<PermissionGrantEntry> {
     const grant = await testHarness.agent.permissions.createGrant({
       author      : ownerDid,
@@ -150,7 +150,7 @@ describe('Sync scope closure — delegated protocol history', () => {
       scope       : {
         interface : DwnInterfaceName.Messages,
         method    : DwnMethodName.Read,
-        protocol,
+        module,
       },
       store: true,
     });
@@ -169,26 +169,26 @@ describe('Sync scope closure — delegated protocol history', () => {
     return grant;
   }
 
-  async function queryAllDelegatedProtocolHistoryPages(
+  async function queryAllDelegatedModuleHistoryPages(
     ownerDid: string,
     delegateDid: string,
     grant: PermissionGrantEntry,
-    protocol: string,
+    module: string,
     limit: number,
   ): Promise<{
-    definitions: ProtocolDefinition[];
-    pages: ProtocolHistoryPage[];
+    definitions: ModuleDefinition[];
+    pages: ModuleHistoryPage[];
   }> {
-    const definitions: ProtocolDefinition[] = [];
-    const pages: ProtocolHistoryPage[] = [];
+    const definitions: ModuleDefinition[] = [];
+    const pages: ModuleHistoryPage[] = [];
     let cursor: ProgressToken | undefined;
 
     for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
-      const page = await queryDelegatedProtocolHistory(ownerDid, delegateDid, grant, protocol, cursor, limit);
+      const page = await queryDelegatedModuleHistory(ownerDid, delegateDid, grant, module, cursor, limit);
       expect(page.status.code).toBe(200);
       expect((page.entries?.length ?? 0) <= limit).toBe(true);
       pages.push(page);
-      definitions.push(...protocolDefinitionsFromMessages(page.entries?.map(entry => entry.message)));
+      definitions.push(...moduleDefinitionsFromMessages(page.entries?.map(entry => entry.message)));
 
       if (page.drained === true) {
         return { definitions, pages };
@@ -197,17 +197,17 @@ describe('Sync scope closure — delegated protocol history', () => {
       cursor = page.cursor;
     }
 
-    throw new Error('expected delegated protocol history query to drain within 10 pages');
+    throw new Error('expected delegated module history query to drain within 10 pages');
   }
 
-  async function queryDelegatedProtocolHistory(
+  async function queryDelegatedModuleHistory(
     ownerDid: string,
     delegateDid: string,
     grant: PermissionGrantEntry,
-    protocol: string,
+    module: string,
     cursor: ProgressToken | undefined,
     limit: number,
-  ): Promise<ProtocolHistoryPage> {
+  ): Promise<ModuleHistoryPage> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
       granteeDid    : delegateDid,
@@ -216,9 +216,9 @@ describe('Sync scope closure — delegated protocol history', () => {
       messageParams : {
         cursor,
         filters: [{
-          interface : DwnInterfaceName.Protocols,
+          interface : DwnInterfaceName.Modules,
           method    : DwnMethodName.Configure,
-          protocol,
+          module,
         }],
         limit,
         permissionGrantIds: [grant.grant.id],
@@ -229,21 +229,21 @@ describe('Sync scope closure — delegated protocol history', () => {
   }
 });
 
-function isProtocolHistoryQuery(request: ProtocolHistoryRequest, protocol: string): boolean {
+function isModuleHistoryQuery(request: ModuleHistoryRequest, module: string): boolean {
   const filter = request.messageParams?.filters?.[0];
   return request.messageType === DwnInterface.MessagesQuery &&
-    filter?.interface === DwnInterfaceName.Protocols &&
+    filter?.interface === DwnInterfaceName.Modules &&
     filter.method === DwnMethodName.Configure &&
-    filter.protocol === protocol;
+    filter.module === module;
 }
 
-function threadsProtocolDefinition(): ProtocolDefinition {
+function threadsModuleDefinition(): ModuleDefinition {
   return {
-    protocol  : threadsProtocol,
+    module    : threadsModule,
     published : true,
     types     : {
-      participant : { schema: `${threadsProtocol}/schemas/participant`, dataFormats: ['application/json'] },
-      thread      : { schema: `${threadsProtocol}/schemas/thread`, dataFormats: ['application/json'] },
+      participant : { schema: `${threadsModule}/schemas/participant`, dataFormats: ['application/json'] },
+      thread      : { schema: `${threadsModule}/schemas/thread`, dataFormats: ['application/json'] },
     },
     structure: {
       thread: {
@@ -260,13 +260,13 @@ function threadsProtocolDefinition(): ProtocolDefinition {
   };
 }
 
-function commentsProtocolWithHistoricalDependency(): ProtocolDefinition {
+function commentsModuleWithHistoricalDependency(): ModuleDefinition {
   return {
-    protocol  : commentsProtocol,
+    module    : commentsModule,
     published : true,
-    uses      : { threads: threadsProtocol },
+    uses      : { threads: threadsModule },
     types     : {
-      comment: { schema: `${commentsProtocol}/schemas/comment-v0`, dataFormats: ['application/json'] },
+      comment: { schema: `${commentsModule}/schemas/comment-v0`, dataFormats: ['application/json'] },
     },
     structure: {
       thread: {
@@ -282,23 +282,23 @@ function commentsProtocolWithHistoricalDependency(): ProtocolDefinition {
   };
 }
 
-function protocolDefinitionsFromMessages(messages: Array<GenericMessage | undefined> | undefined): ProtocolDefinition[] {
-  const definitions: ProtocolDefinition[] = [];
+function moduleDefinitionsFromMessages(messages: Array<GenericMessage | undefined> | undefined): ModuleDefinition[] {
+  const definitions: ModuleDefinition[] = [];
   for (const message of messages ?? []) {
     const definition = (message?.descriptor as { definition?: unknown } | undefined)?.definition;
-    if (typeof definition === 'object' && definition !== null && typeof (definition as { protocol?: unknown }).protocol === 'string') {
-      definitions.push(definition as ProtocolDefinition);
+    if (typeof definition === 'object' && definition !== null && typeof (definition as { module?: unknown }).module === 'string') {
+      definitions.push(definition as ModuleDefinition);
     }
   }
   return definitions;
 }
 
-function commentsProtocolWithoutDependency(): ProtocolDefinition {
+function commentsModuleWithoutDependency(): ModuleDefinition {
   return {
-    protocol  : commentsProtocol,
+    module    : commentsModule,
     published : true,
     types     : {
-      comment: { schema: `${commentsProtocol}/schemas/comment-current`, dataFormats: ['application/json'] },
+      comment: { schema: `${commentsModule}/schemas/comment-current`, dataFormats: ['application/json'] },
     },
     structure: {
       comment: {

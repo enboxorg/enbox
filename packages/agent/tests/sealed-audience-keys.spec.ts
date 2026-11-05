@@ -1,4 +1,4 @@
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -25,12 +25,12 @@ import { testDwnUrl } from './utils/test-config.js';
 import { buildFixedPrivateKeyDecrypter, createAudienceDeliveryRecord, resolveAudienceDecryptionKey } from '../src/dwn-encryption.js';
 
 const testDwnUrls = [testDwnUrl];
-const PROTOCOL_URI = 'https://example.org/protocols/sealed-audience-test';
+const MODULE_URI = 'https://example.org/modules/sealed-audience-test';
 
-function definition(): ProtocolDefinition {
+function definition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : PROTOCOL_URI,
+    module    : MODULE_URI,
     types     : {
       admin : { dataFormats: ['application/json'] },
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
@@ -42,10 +42,10 @@ function definition(): ProtocolDefinition {
   };
 }
 
-function nestedRootDefinition(): ProtocolDefinition {
+function nestedRootDefinition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : 'https://example.org/protocols/sealed-audience-context-test',
+    module    : 'https://example.org/modules/sealed-audience-context-test',
     types     : {
       chat   : { dataFormats: ['text/plain'], encryptionRequired: true },
       member : { dataFormats: ['application/json'] },
@@ -59,10 +59,10 @@ function nestedRootDefinition(): ProtocolDefinition {
   };
 }
 
-function selfAnchoredNestedDefinition(): ProtocolDefinition {
+function selfAnchoredNestedDefinition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : 'https://example.org/protocols/sealed-audience-self-anchor-test',
+    module    : 'https://example.org/modules/sealed-audience-self-anchor-test',
     types     : {
       chat   : { dataFormats: ['text/plain'] },
       mod    : { dataFormats: ['application/json'] },
@@ -84,18 +84,18 @@ describe('AgentDwnApi sealed audience keys', () => {
   let testHarness: PlatformAgentTestHarness;
   let ownerDid: string;
 
-  async function installProtocol(tenantDid: string, protocolDefinition: ProtocolDefinition): Promise<void> {
+  async function installModule(tenantDid: string, moduleDefinition: ModuleDefinition): Promise<void> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocolDefinition },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: moduleDefinition },
     });
     expect(reply.status.code).toBe(202);
   }
 
   async function queryAudienceRecords(params: {
-    protocol?: string;
+    module?: string;
     rolePath?: string;
     contextId?: string;
   } = {}): Promise<RecordsWriteMessage[]> {
@@ -105,10 +105,10 @@ describe('AgentDwnApi sealed audience keys', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : params.protocol ?? PROTOCOL_URI,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol  : params.protocol ?? PROTOCOL_URI,
+          module     : params.module ?? MODULE_URI,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module    : params.module ?? MODULE_URI,
             rolePath  : params.rolePath ?? 'admin',
             contextId : params.contextId ?? '',
           },
@@ -141,7 +141,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       agent        : testHarness.agent,
       sourceDid    : ownerDid,
       recipientDid : ownerDid,
-      protocol     : PROTOCOL_URI,
+      module       : MODULE_URI,
       contextId    : '',
       rolePath     : 'admin',
       keyId        : audiencePayload.keyId,
@@ -149,28 +149,28 @@ describe('AgentDwnApi sealed audience keys', () => {
     expect(resolvedOwnerKey).toBeDefined();
 
     const recipient = await testHarness.createIdentity({ name: 'Role Holder Recipient', testDwnUrls });
-    await installProtocol(recipient.did.uri, definition());
+    await installModule(recipient.did.uri, definition());
     const { reply: roleReply } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : PROTOCOL_URI,
-        protocolPath : 'admin',
-        recipient    : recipient.did.uri,
-        dataFormat   : 'application/json',
+        module     : MODULE_URI,
+        modulePath : 'admin',
+        recipient  : recipient.did.uri,
+        dataFormat : 'application/json',
       },
       dataStream: new Blob(['{}']),
     });
     expect(roleReply.status.code).toBe(202);
 
-    const { reply: recipientProtocolReply } = await testHarness.agent.dwn.processRequest({
+    const { reply: recipientModuleReply } = await testHarness.agent.dwn.processRequest({
       author        : recipient.did.uri,
       target        : recipient.did.uri,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: PROTOCOL_URI } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: MODULE_URI } },
     });
-    const recipientDefinition = recipientProtocolReply.entries![0].descriptor.definition;
+    const recipientDefinition = recipientModuleReply.entries![0].descriptor.definition;
     const recipientRolePublicKey = getRuleSetAtPath('admin', recipientDefinition.structure)!.$keyAgreement!.publicKeyJwk;
 
     const deliveryRecord = await createAudienceDeliveryRecord({
@@ -179,7 +179,7 @@ describe('AgentDwnApi sealed audience keys', () => {
         contextId   : '',
         keyId       : audiencePayload.keyId,
         keyMaterial : resolvedOwnerKey!.keyMaterial,
-        protocol    : PROTOCOL_URI,
+        module      : MODULE_URI,
         rolePath    : 'admin',
       },
       authorDid              : ownerDid,
@@ -201,10 +201,10 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : PROTOCOL_URI,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(data),
+        module     : MODULE_URI,
+        modulePath : 'note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(data),
       },
     });
 
@@ -220,7 +220,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     const owner = await testHarness.createIdentity({ name: 'Owner', testDwnUrls });
     ownerDid = owner.did.uri;
 
-    await installProtocol(ownerDid, definition());
+    await installModule(ownerDid, definition());
   });
 
   afterAll(async () => {
@@ -236,16 +236,16 @@ describe('AgentDwnApi sealed audience keys', () => {
     const audienceRecord = audienceRecords[0];
     const payload = Encoder.base64UrlToObject(audienceRecord.encodedData!) as any;
 
-    expect(audienceRecord.descriptor.protocol).toBe(PROTOCOL_URI);
-    expect(audienceRecord.descriptor.protocolPath).toBe(ENCRYPTION_CONTROL_AUDIENCE_PATH);
+    expect(audienceRecord.descriptor.module).toBe(MODULE_URI);
+    expect(audienceRecord.descriptor.modulePath).toBe(ENCRYPTION_CONTROL_AUDIENCE_PATH);
     expect(audienceRecord.descriptor.tags).toMatchObject({
-      protocol  : PROTOCOL_URI,
+      module    : MODULE_URI,
       rolePath  : 'admin',
       contextId : '',
       keyId     : payload.keyId,
     });
     expect(payload).toMatchObject({
-      protocol  : PROTOCOL_URI,
+      module    : MODULE_URI,
       rolePath  : 'admin',
       contextId : '',
       keyId     : payload.keyId,
@@ -256,7 +256,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       (entry: any): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME,
     ) as any;
     expect(roleAudienceEntry).toMatchObject({
-      protocol         : PROTOCOL_URI,
+      module           : MODULE_URI,
       rolePath         : 'admin',
       keyId            : payload.keyId,
       derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
@@ -280,19 +280,19 @@ describe('AgentDwnApi sealed audience keys', () => {
   });
 
   it('mints a pending audience before writing an encrypted root context for a nested read role', async () => {
-    const protocolDefinition = nestedRootDefinition();
-    await installProtocol(ownerDid, protocolDefinition);
+    const moduleDefinition = nestedRootDefinition();
+    await installModule(ownerDid, moduleDefinition);
 
     const { reply, message } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'chat',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode('root chat'),
-        published    : true,
+        module     : moduleDefinition.module,
+        modulePath : 'chat',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode('root chat'),
+        published  : true,
       },
     });
 
@@ -300,7 +300,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     const chatWrite = message as RecordsWriteMessage;
     const audienceRecords = await queryAudienceRecords({
       contextId : chatWrite.recordId,
-      protocol  : protocolDefinition.protocol,
+      module    : moduleDefinition.module,
       rolePath  : 'chat/member',
     });
     expect(audienceRecords).toHaveLength(1);
@@ -312,24 +312,24 @@ describe('AgentDwnApi sealed audience keys', () => {
     expect(audiencePayload.contextId).toBe(chatWrite.recordId);
     expect(roleAudienceEntry).toMatchObject({
       keyId    : audiencePayload.keyId,
-      protocol : protocolDefinition.protocol,
+      module   : moduleDefinition.module,
       rolePath : 'chat/member',
     });
   });
 
   it('mints and reuses an audience for a nested self-anchoring role context', async () => {
-    const protocolDefinition = selfAnchoredNestedDefinition();
-    await installProtocol(ownerDid, protocolDefinition);
+    const moduleDefinition = selfAnchoredNestedDefinition();
+    await installModule(ownerDid, moduleDefinition);
 
     const { reply: chatReply, message: chatMessage } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'chat',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode('chat root'),
+        module     : moduleDefinition.module,
+        modulePath : 'chat',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode('chat root'),
       },
     });
     expect([202, 204]).toContain(chatReply.status.code);
@@ -340,8 +340,8 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'chat/thread',
+        module          : moduleDefinition.module,
+        modulePath      : 'chat/thread',
         parentContextId : chatWrite.recordId,
         dataFormat      : 'text/plain',
         data            : new TextEncoder().encode('thread body'),
@@ -353,7 +353,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     const contextId = `${chatWrite.recordId}/${threadWrite.recordId}`;
     const audienceRecords = await queryAudienceRecords({
       contextId,
-      protocol : protocolDefinition.protocol,
+      module   : moduleDefinition.module,
       rolePath : 'chat/thread/mod',
     });
     expect(audienceRecords).toHaveLength(1);
@@ -365,7 +365,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     expect(audiencePayload.contextId).toBe(contextId);
     expect(roleAudienceEntry).toMatchObject({
       keyId    : audiencePayload.keyId,
-      protocol : protocolDefinition.protocol,
+      module   : moduleDefinition.module,
       rolePath : 'chat/thread/mod',
     });
 
@@ -375,8 +375,8 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'chat/thread',
+        module          : moduleDefinition.module,
+        modulePath      : 'chat/thread',
         parentContextId : chatWrite.recordId,
         recordId        : threadWrite.recordId,
         dateCreated     : threadWrite.descriptor.dateCreated,
@@ -394,7 +394,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     expect(updatedRoleAudienceEntry.keyId).toBe(audiencePayload.keyId);
     expect(await queryAudienceRecords({
       contextId,
-      protocol : protocolDefinition.protocol,
+      module   : moduleDefinition.module,
       rolePath : 'chat/thread/mod',
     })).toHaveLength(1);
   });
@@ -406,7 +406,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       agent        : testHarness.agent,
       contextId    : '',
       keyId        : audiencePayload.keyId,
-      protocol     : PROTOCOL_URI,
+      module       : MODULE_URI,
       recipientDid : recipientDid,
       rolePath     : 'admin',
       sourceDid    : ownerDid,
@@ -422,7 +422,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       agent        : testHarness.agent,
       sourceDid    : ownerDid,
       recipientDid : ownerDid,
-      protocol     : PROTOCOL_URI,
+      module       : MODULE_URI,
       contextId    : '',
       rolePath     : 'admin',
       keyId        : audiencePayload.keyId,
@@ -435,10 +435,10 @@ describe('AgentDwnApi sealed audience keys', () => {
       target        : ownerDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : PROTOCOL_URI,
-        protocolPath : 'admin',
-        recipient    : recipient.did.uri,
-        dataFormat   : 'application/json',
+        module     : MODULE_URI,
+        modulePath : 'admin',
+        recipient  : recipient.did.uri,
+        dataFormat : 'application/json',
       },
       dataStream: new Blob(['{}']),
     });
@@ -453,7 +453,7 @@ describe('AgentDwnApi sealed audience keys', () => {
         contextId   : '',
         keyId       : audiencePayload.keyId,
         keyMaterial : resolvedOwnerKey!.keyMaterial,
-        protocol    : PROTOCOL_URI,
+        module      : MODULE_URI,
         rolePath    : 'admin',
       },
       authorDid              : ownerDid,
@@ -466,7 +466,7 @@ describe('AgentDwnApi sealed audience keys', () => {
     const decryptedStream = await Records.decrypt(
       deliveryRecord,
       buildFixedPrivateKeyDecrypter({
-        derivationScheme : KeyDerivationScheme.ProtocolPath,
+        derivationScheme : KeyDerivationScheme.ModulePath,
         keyId            : suppliedKeyId,
         privateKeyJwk    : suppliedPrivateKey as any,
         publicKeyJwk     : suppliedPublicKey as any,
@@ -476,14 +476,14 @@ describe('AgentDwnApi sealed audience keys', () => {
     const deliveryPayload = Encoder.bytesToObject(await DataStream.toBytes(decryptedStream)) as any;
 
     expect(deliveryRecord.descriptor.tags).toMatchObject({
-      protocol           : PROTOCOL_URI,
+      module             : MODULE_URI,
       rolePath           : 'admin',
       contextId          : '',
       keyId              : audiencePayload.keyId,
       recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
     });
     expect(deliveryPayload).toMatchObject({
-      protocol  : PROTOCOL_URI,
+      module    : MODULE_URI,
       rolePath  : 'admin',
       contextId : '',
       keyId     : audiencePayload.keyId,
@@ -494,11 +494,11 @@ describe('AgentDwnApi sealed audience keys', () => {
   it('fails closed when a delegated writer without seal coverage needs to mint an audience', async () => {
     // dedicated URI: the fails-closed premise is that no audience exists yet, so the shared
     // URI's audience records from earlier tests must not be in scope
-    const mintDefinition: ProtocolDefinition = {
+    const mintDefinition: ModuleDefinition = {
       ...definition(),
-      protocol: 'https://example.org/protocols/sealed-audience-mint-test',
+      module: 'https://example.org/modules/sealed-audience-mint-test',
     };
-    await installProtocol(ownerDid, mintDefinition);
+    await installModule(ownerDid, mintDefinition);
     const delegate = await testHarness.createIdentity({ name: 'Audience Delegate', testDwnUrls });
     const writeGrant = await testHarness.agent.permissions.createGrant({
       author      : ownerDid,
@@ -508,7 +508,7 @@ describe('AgentDwnApi sealed audience keys', () => {
       scope       : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : mintDefinition.protocol,
+        module    : mintDefinition.module,
       },
       store: true,
     });
@@ -520,28 +520,28 @@ describe('AgentDwnApi sealed audience keys', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         delegatedGrant : writeGrant.message,
-        protocol       : mintDefinition.protocol,
-        protocolPath   : 'note',
+        module         : mintDefinition.module,
+        modulePath     : 'note',
         dataFormat     : 'text/plain',
         data           : new TextEncoder().encode('delegate sealed note'),
       },
     })).rejects.toThrow('without seal coverage');
   });
 
-  it('returns raw source-protocol delivery records in broad queries', async () => {
+  it('returns raw source-module delivery records in broad queries', async () => {
     const { deliveryRecord } = await createRoleHolderDelivery();
-    await writeEncryptedNote('query with source-protocol delivery');
+    await writeEncryptedNote('query with source-module delivery');
 
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : ownerDid,
       target        : ownerDid,
       messageType   : DwnInterface.RecordsQuery,
-      messageParams : { filter: { protocol: PROTOCOL_URI } },
+      messageParams : { filter: { module: MODULE_URI } },
     });
 
     expect(reply.status.code).toBe(200);
     const deliveryEntry = reply.entries?.find((entry): boolean => entry.recordId === deliveryRecord.recordId);
-    expect(deliveryEntry?.descriptor.protocolPath).toBe(ENCRYPTION_CONTROL_DELIVERY_PATH);
+    expect(deliveryEntry?.descriptor.modulePath).toBe(ENCRYPTION_CONTROL_DELIVERY_PATH);
     expect(deliveryEntry?.encodedData).toBe(deliveryRecord.encodedData);
   });
 });

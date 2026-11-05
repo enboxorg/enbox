@@ -4,7 +4,7 @@
  * `ConnectProvider` covers the kernel's share of the wallet flow: opening and
  * validating a sealed request, sealing the approval ceremony's output into a
  * response addressed to the request's `responseKey`, and producing the deny
- * token. The approval ceremony itself (delegate minting, protocol
+ * token. The approval ceremony itself (delegate minting, module
  * installation, grant creation, revocation grants) is agent territory — its
  * output plugs in here as a {@link ConnectApproval}.
  *

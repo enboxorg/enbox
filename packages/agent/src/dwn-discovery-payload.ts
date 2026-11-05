@@ -1,5 +1,5 @@
 /**
- * Shared types and utilities for the `dwn://connect` discovery protocol.
+ * Shared types and utilities for the `dwn://connect` discovery module.
  *
  * The payload is the JSON data exchanged between the local DWN server
  * (electrobun-dwn) and the requesting app during the `dwn://connect`
@@ -37,8 +37,8 @@ export type DwnConnectUrlParams = {
 
 // ─── Constants ────────────────────────────────────────────────────
 
-/** The URL scheme for DWN discovery protocol handlers. */
-export const DWN_PROTOCOL_SCHEME = 'dwn';
+/** The URL scheme for DWN discovery module handlers. */
+export const DWN_MODULE_SCHEME = 'dwn';
 
 /** The `dwn://connect` path that triggers the discovery handshake. */
 export const DWN_CONNECT_PATH = 'connect';
@@ -68,7 +68,7 @@ export const DWN_CONNECT_PATH = 'connect';
  * ```
  */
 export function buildDwnConnectUrl(callbackUrl: string): string {
-  return `${DWN_PROTOCOL_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callbackUrl)}`;
+  return `${DWN_MODULE_SCHEME}://${DWN_CONNECT_PATH}?callback=${encodeURIComponent(callbackUrl)}`;
 }
 
 // ─── Payload encoding/decoding ───────────────────────────────────
@@ -119,7 +119,7 @@ export function parseDwnConnectUrl(url: string): DwnConnectUrlParams | undefined
   try {
     // dwn://connect?callback=... is not a standard hierarchical URL, so
     // we parse it manually to avoid URL constructor quirks with custom schemes.
-    const schemePrefix = `${DWN_PROTOCOL_SCHEME}://`;
+    const schemePrefix = `${DWN_MODULE_SCHEME}://`;
     if (!url.startsWith(schemePrefix)) {
       return undefined;
     }

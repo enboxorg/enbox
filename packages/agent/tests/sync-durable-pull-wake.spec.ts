@@ -30,22 +30,22 @@ function roleTarget(): SyncTarget {
     authorization: {
       kind         : 'role',
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/collaborator',
+      moduleRole   : 'notebook/collaborator',
       roleRecordId : 'role-record',
     },
     scope: {
-      kind          : 'context',
-      contextId     : 'context',
-      protocol      : 'https://example.com/notebook',
-      protocolPaths : ['notebook/page'],
+      kind        : 'context',
+      contextId   : 'context',
+      module      : 'https://example.com/notebook',
+      modulePaths : ['notebook/page'],
     },
   };
 }
 
-function protocolMessage(messageTimestamp: string): GenericMessage {
+function moduleMessage(messageTimestamp: string): GenericMessage {
   return {
     descriptor: {
-      interface : DwnInterfaceName.Protocols,
+      interface : DwnInterfaceName.Modules,
       method    : DwnMethodName.Configure,
       messageTimestamp,
     },
@@ -103,7 +103,7 @@ describe('SyncEngineLevel durable pull admission', () => {
     const messageCid = 'cid-pushed';
     internal._echoSuppressor.trackPushed(DID, messageCid, REMOTE);
     sinon.stub(internal, 'getLocalMessageForTarget').resolves({
-      message: protocolMessage('2026-07-21T00:00:00.000000Z'),
+      message: moduleMessage('2026-07-21T00:00:00.000000Z'),
     });
     const hydrate = sinon.stub(internal, 'syncEntriesFromFeedEntry').rejects(new Error('must not hydrate'));
 
@@ -186,8 +186,8 @@ describe('SyncEngineLevel durable pull admission', () => {
     const engine = new SyncEngineLevel({ agent: {} as never, db: {} as never });
     const internal = engine as any;
     const syncTarget = target();
-    const root = protocolMessage('2026-07-21T00:00:00.000000Z');
-    const dependency = protocolMessage('2026-07-20T00:00:00.000000Z');
+    const root = moduleMessage('2026-07-21T00:00:00.000000Z');
+    const dependency = moduleMessage('2026-07-20T00:00:00.000000Z');
     sinon.stub(internal, 'admitRemoteFeedEntry').resolves({
       kind           : 'admitted',
       handledCids    : ['cid-root', 'cid-dependency'],
@@ -212,7 +212,7 @@ describe('SyncEngineLevel durable pull admission', () => {
         type       : 'delivery:applied',
         messageCid : 'cid-root',
         descriptor : expect.objectContaining({
-          interface : DwnInterfaceName.Protocols,
+          interface : DwnInterfaceName.Modules,
           method    : DwnMethodName.Configure,
         }),
       }),
@@ -260,7 +260,7 @@ describe('SyncEngineLevel durable pull admission', () => {
   });
 
   it('records a terminal admission failure as a dead letter at the engine seam', async () => {
-    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const message = moduleMessage('2026-07-21T00:00:00.000000Z');
     const messageCid = await Message.getCid(message);
     const applyReplicatedMessage = sinon.stub().resolves({ kind: 'Invalid', reason: 'bad signature' });
     const engine = new SyncEngineLevel({
@@ -289,7 +289,7 @@ describe('SyncEngineLevel durable pull admission', () => {
   });
 
   it('settles a pruned-parent rejection without recording a dead letter', async () => {
-    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const message = moduleMessage('2026-07-21T00:00:00.000000Z');
     const messageCid = await Message.getCid(message);
     const engine = new SyncEngineLevel({
       agent: {
@@ -311,7 +311,7 @@ describe('SyncEngineLevel durable pull admission', () => {
   });
 
   it('leaves terminal role admission failures retryable instead of persisting a dead letter', async () => {
-    const message = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const message = moduleMessage('2026-07-21T00:00:00.000000Z');
     const messageCid = await Message.getCid(message);
     const engine = new SyncEngineLevel({
       agent: {
@@ -336,7 +336,7 @@ describe('SyncEngineLevel durable pull admission', () => {
     const entry: MessagesQueryReplyEntry = {
       encodedData       : Encoder.bytesToBase64Url(bytes),
       isLatestBaseState : true,
-      message           : protocolMessage('2026-07-21T00:00:00.000000Z'),
+      message           : moduleMessage('2026-07-21T00:00:00.000000Z'),
       messageCid        : 'cid-inline',
       seq               : '1',
     };
@@ -349,7 +349,7 @@ describe('SyncEngineLevel durable pull admission', () => {
   });
 
   it('fetches a durable-query entry by CID when the query omits its message', async () => {
-    const fetchedMessage = protocolMessage('2026-07-21T00:00:00.000000Z');
+    const fetchedMessage = moduleMessage('2026-07-21T00:00:00.000000Z');
     const fetchedMessageCid = await Message.getCid(fetchedMessage);
     const processDwnRequest = sinon.stub().resolves({ message: { descriptor: {} } });
     const sendDwnRequest = sinon.stub().resolves({

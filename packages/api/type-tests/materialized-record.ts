@@ -1,4 +1,4 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   MaterializedRecord,
   Record,
@@ -11,10 +11,10 @@ import type {
   TypedRecord,
 } from '@enbox/api';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs } from '@enbox/api';
 
 const LibraryDefinition = {
-  protocol  : 'https://example.com/protocols/library',
+  module    : 'https://example.com/modules/library',
   published : true,
   types     : {
     library    : { dataFormats: ['application/json'] },
@@ -34,23 +34,23 @@ const LibraryDefinition = {
     },
     preference: { $recordLimit: { max: 1 } },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 void LibraryDefinition;
 
 type LibraryData = { name: string };
 type MetadataData = { color: string };
 type PreferenceData = { theme: string };
 
-const LibraryProtocol = defineProtocol(LibraryDefinition, {
+const LibraryModule = defineModule(LibraryDefinition, {
   attachment : recordCodecs.blob('application/octet-stream'),
   library    : recordCodecs.json<LibraryData>(),
   metadata   : recordCodecs.json<MetadataData>(),
   preference : recordCodecs.json<PreferenceData>(),
   title      : recordCodecs.text(),
 });
-void LibraryProtocol;
+void LibraryModule;
 
-declare const typed: TypedEnbox<typeof LibraryDefinition, typeof LibraryProtocol.codecs>;
+declare const typed: TypedEnbox<typeof LibraryDefinition, typeof LibraryModule.codecs>;
 
 async function assertTypedMaterialization(): Promise<void> {
   const plainPage = await typed.records.query('library');
@@ -60,7 +60,7 @@ async function assertTypedMaterialization(): Promise<void> {
   void compatiblePage;
 
   const plainRequest: RecordObserveRequest<typeof LibraryDefinition, 'library'> = { pagination: { limit: 20 } };
-  const plainView: RecordView<RecordRepresentation<typeof LibraryDefinition, typeof LibraryProtocol.codecs, 'library'>> =
+  const plainView: RecordView<RecordRepresentation<typeof LibraryDefinition, typeof LibraryModule.codecs, 'library'>> =
     await typed.records.observe('library', plainRequest);
   void plainView;
 
@@ -147,7 +147,7 @@ async function assertTypedMaterialization(): Promise<void> {
   const selectedView = await typed.records.observe('library', request);
   type SelectedItem = RecordRepresentation<
     typeof LibraryDefinition,
-    typeof LibraryProtocol.codecs,
+    typeof LibraryModule.codecs,
     'library',
     typeof childSelection
   >;
@@ -193,8 +193,8 @@ async function assertTypedMaterialization(): Promise<void> {
   // @ts-expect-error singleton set operates on the connected tenant's authoritative local scope.
   await typed.records.set('preference', { data: { theme: 'dark' }, from: 'did:example:bob' });
 
-  // @ts-expect-error connected-tenant singleton replacement does not invoke protocol roles.
-  await typed.records.set('preference', { data: { theme: 'dark' }, protocolRole: 'member' });
+  // @ts-expect-error connected-tenant singleton replacement does not invoke module roles.
+  await typed.records.set('preference', { data: { theme: 'dark' }, moduleRole: 'member' });
 
   // @ts-expect-error set() only accepts paths with a literal $recordLimit.max of 1.
   await typed.records.set('library/attachment', {

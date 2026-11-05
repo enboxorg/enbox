@@ -32,15 +32,15 @@ Enbox is a Bun/TypeScript monorepo for building apps on
 [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/)
 (DWNs). It includes:
 
-- A high-level app SDK with typed protocols, record operations, and DID helpers.
+- A high-level app SDK with typed modules, record operations, and DID helpers.
 - A headless auth layer for local vaults, wallet connect, session restore, and sync startup.
 - An agent runtime with encrypted identity/key stores and live/durable DWN sync.
 - A self-hostable DWN server with HTTP/WebSocket APIs and SQL-backed persistence.
-- Shared DID, crypto, protocol, browser, CLI, and codegen packages.
+- Shared DID, crypto, module, browser, CLI, and codegen packages.
 
-The model is protocol-first: apps define portable record schemas and access
+The model is module-first: apps define portable record schemas and access
 rules, users control their DIDs and DWN endpoints, and encrypted data can move
-between apps that understand the same protocol.
+between apps that understand the same module.
 
 ## Quick Start
 
@@ -52,12 +52,12 @@ bun add @enbox/api
 import {
   createConnectionStore,
   defineApplicationManifest,
-  defineProtocol,
+  defineModule,
   recordCodecs,
 } from '@enbox/api';
 
-const BookmarkProtocol = defineProtocol({
-  protocol  : 'https://example.com/bookmarks',
+const BookmarkModule = defineModule({
+  module  : 'https://example.com/bookmarks',
   published : false,
   types     : {
     bookmark: {
@@ -76,7 +76,7 @@ const BookmarkProtocol = defineProtocol({
 });
 
 const application = defineApplicationManifest({
-  protocols: [BookmarkProtocol],
+  modules: [BookmarkModule],
 } as const);
 
 const store = createConnectionStore({
@@ -93,7 +93,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-const bookmarks = snapshot.enbox.using(BookmarkProtocol);
+const bookmarks = snapshot.enbox.using(BookmarkModule);
 
 const record = await bookmarks.records.create('bookmark', {
   data : { url: 'https://example.com', title: 'Example' },
@@ -134,7 +134,7 @@ See [packages/api/README.md](./packages/api/README.md) and the
 4. Other devices and authorized apps converge through the same remote DWN feed.
 
 Encryption has two layers: the local vault protects identity material, and
-protocol types with `encryptionRequired: true` encrypt record data at the DWN
+module types with `encryptionRequired: true` encrypt record data at the DWN
 layer using the tenant's key agreement key.
 
 ## DWN Servers
@@ -162,12 +162,12 @@ configuration, storage backends, and registration options.
 
 | Package | Role |
 |---|---|
-| [`@enbox/api`](./packages/api) | High-level SDK: connection lifecycle, typed protocols, and records |
+| [`@enbox/api`](./packages/api) | High-level SDK: connection lifecycle, typed modules, and records |
 | [`@enbox/auth`](./packages/auth) | Headless auth, local vault connect, wallet connect, session restore |
 | [`@enbox/browser`](./packages/browser) | Browser helpers and polyfills |
 | [`@enbox/cli`](./packages/cli) | CLI helpers and relay/PIN wallet connect handler |
-| [`@enbox/protocols`](./packages/protocols) | Shared protocol definitions and JSON Schemas |
-| [`@enbox/protocol-codegen`](./packages/protocol-codegen) | TypeScript generation from protocol definitions and schemas |
+| [`@enbox/modules`](./packages/modules) | Shared module definitions and JSON Schemas |
+| [`@enbox/module-codegen`](./packages/module-codegen) | TypeScript generation from module definitions and schemas |
 | [`@enbox/agent`](./packages/agent) | Identity vault, key management, local DWN, sync engine |
 | [`@enbox/dids`](./packages/dids) | DID creation and resolution |
 | [`@enbox/crypto`](./packages/crypto) | Crypto primitives, JWE, local key management |

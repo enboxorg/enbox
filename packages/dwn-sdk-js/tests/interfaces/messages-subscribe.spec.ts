@@ -20,15 +20,15 @@ describe('MessagesSubscribe', () => {
       expect(message.descriptor.messageTimestamp).toBe(timestamp);
     });
 
-    it('should reject a filter with exact and prefix protocol paths', async () => {
+    it('should reject a filter with exact and prefix module paths', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
       await expect(MessagesSubscribe.create({
         signer  : Jws.createSigner(alice),
         filters : [{
-          protocol           : 'http://example.com/protocol',
-          protocolPath       : 'post/attachment',
-          protocolPathPrefix : 'post',
+          module           : 'http://example.com/module',
+          modulePath       : 'post/attachment',
+          modulePathPrefix : 'post',
         }],
       })).rejects.toThrow(DwnErrorCode.SchemaValidatorFailure);
     });

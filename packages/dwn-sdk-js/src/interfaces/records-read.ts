@@ -5,7 +5,7 @@ import type { DataEncodedRecordsWriteMessage, RecordsFilter , RecordsReadDescrip
 import { AbstractMessage } from '../core/abstract-message.js';
 import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
@@ -20,10 +20,10 @@ export type RecordsReadOptions = {
   signer?: MessageSigner;
   permissionGrantId?: string;
   /**
-   * Used when authorizing protocol records.
-   * The protocol path to the role record type whose recipient is the author of this RecordsRead
+   * Used when authorizing module records.
+   * The module path to the role record type whose recipient is the author of this RecordsRead
    */
-  protocolRole?: string;
+  moduleRole?: string;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
@@ -67,7 +67,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
    * @throws {DwnError} when a combination of required RecordsReadOptions are missing
    */
   public static async create(options: RecordsReadOptions): Promise<RecordsRead> {
-    const { filter, signer, protocolRole, dateSort } = options;
+    const { filter, signer, moduleRole, dateSort } = options;
     const currentTime = Time.getCurrentTimestamp();
     const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
       permissionGrantId: options.permissionGrantId
@@ -101,7 +101,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
         descriptor,
         signer,
         ...permissionGrantInvocation,
-        protocolRole,
+        moduleRole,
         delegatedGrant: options.delegatedGrant
       });
     }

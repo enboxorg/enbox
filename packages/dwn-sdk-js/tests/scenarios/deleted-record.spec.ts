@@ -2,9 +2,9 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, RecordsReadReply, ResumableTaskStore } from '../../src/index.js';
 
-import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllModuleDefinition from '../vectors/module-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -12,7 +12,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 
-import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, PermissionsProtocol, ProtocolsConfigure, RecordsRead, Time } from '../../src/index.js';
+import { DataStream, Dwn, DwnErrorCode, DwnInterfaceName, DwnMethodName, Jws, ModulesConfigure, PermissionsModule, RecordsRead, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { Encoder, RecordsDelete, RecordsWrite } from '../../src/index.js';
 
@@ -58,28 +58,28 @@ export function testDeletedRecordScenarios(): void {
       // 2. Alice attempts to read the deleted record.
       // Expected outcome: Alice should get a 404 error with the reply containing the deleted record and the initial write of the record.
 
-      // 0. Setting up a protocol and write a record
+      // 0. Setting up a module and write a record
       const alice = await TestDataGenerator.generatePersona();
       TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-      const protocolDefinition = freeForAllProtocolDefinition;
-      const protocolsConfigure = await ProtocolsConfigure.create({
+      const moduleDefinition = freeForAllModuleDefinition;
+      const modulesConfigure = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureForAliceReply = await dwn.processMessage(
+      const modulesConfigureForAliceReply = await dwn.processMessage(
         alice.did,
-        protocolsConfigure.message
+        modulesConfigure.message
       );
-      expect(protocolsConfigureForAliceReply.status.code).toBe(202);
+      expect(modulesConfigureForAliceReply.status.code).toBe(202);
 
       const data = Encoder.stringToBytes('some post content');
       const { message: recordsWriteMessage } = await RecordsWrite.create({
-        signer       : Jws.createSigner(alice),
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'post',
-        schema       : protocolDefinition.types.post.schema,
-        dataFormat   : protocolDefinition.types.post.dataFormats[0],
+        signer     : Jws.createSigner(alice),
+        module     : moduleDefinition.module,
+        modulePath : 'post',
+        schema     : moduleDefinition.types.post.schema,
+        dataFormat : moduleDefinition.types.post.dataFormats[0],
         data,
       });
       const writeReply = await dwn.processMessage(alice.did, recordsWriteMessage, { dataStream: DataStream.fromBytes(data) });
@@ -118,22 +118,22 @@ export function testDeletedRecordScenarios(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Install the free-for-all protocol on Alice's DWN
-        const protocolDefinition = freeForAllProtocolDefinition;
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        // Install the free-for-all module on Alice's DWN
+        const moduleDefinition = freeForAllModuleDefinition;
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition
+          definition : moduleDefinition
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Bob writes a record to Alice's DWN (via 'anyone' can 'create')
         const data = Encoder.stringToBytes('bob writes a post');
         const { message: writeMessage } = await RecordsWrite.create({
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          schema       : protocolDefinition.types.post.schema,
-          dataFormat   : protocolDefinition.types.post.dataFormats[0],
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          schema     : moduleDefinition.types.post.schema,
+          dataFormat : moduleDefinition.types.post.dataFormats[0],
           data,
         });
         const writeReply = await dwn.processMessage(alice.did, writeMessage, { dataStream: DataStream.fromBytes(data) });
@@ -163,9 +163,9 @@ export function testDeletedRecordScenarios(): void {
         const bob = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-        // Install a protocol where recipient can read (requires `of` property)
-        const protocolDefinition = {
-          protocol  : 'http://recipient-read.xyz',
+        // Install a module where recipient can read (requires `of` property)
+        const moduleDefinition = {
+          module    : 'http://recipient-read.xyz',
           published : true,
           types     : {
             note: {
@@ -183,21 +183,21 @@ export function testDeletedRecordScenarios(): void {
           },
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice writes a record with Bob as recipient
         const data = Encoder.stringToBytes('secret note for bob');
         const { message: writeMessage } = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          recipient    : bob.did,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'note',
-          dataFormat   : 'application/json',
+          signer     : Jws.createSigner(alice),
+          recipient  : bob.did,
+          module     : moduleDefinition.module,
+          modulePath : 'note',
+          schema     : 'note',
+          dataFormat : 'application/json',
           data,
         });
         await dwn.processMessage(alice.did, writeMessage, { dataStream: DataStream.fromBytes(data) });
@@ -224,22 +224,22 @@ export function testDeletedRecordScenarios(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Install protocol
-        const protocolDefinition = freeForAllProtocolDefinition;
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        // Install module
+        const moduleDefinition = freeForAllModuleDefinition;
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice writes a record
         const data = Encoder.stringToBytes('some post');
         const { message: writeMessage } = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          schema       : protocolDefinition.types.post.schema,
-          dataFormat   : protocolDefinition.types.post.dataFormats[0],
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          schema     : moduleDefinition.types.post.schema,
+          dataFormat : moduleDefinition.types.post.dataFormats[0],
           data,
         });
         await dwn.processMessage(alice.did, writeMessage, { dataStream: DataStream.fromBytes(data) });
@@ -252,14 +252,14 @@ export function testDeletedRecordScenarios(): void {
         await dwn.processMessage(alice.did, recordsDelete.message);
 
         // Alice creates a read grant for Bob
-        const permissionGrant = await PermissionsProtocol.createGrant({
+        const permissionGrant = await PermissionsModule.createGrant({
           signer      : Jws.createSigner(alice),
           grantedTo   : bob.did,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 }),
           scope       : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
         });
         const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -277,23 +277,23 @@ export function testDeletedRecordScenarios(): void {
         expect(readReply.entry!.initialWrite).toBeDefined();
       });
 
-      it('should allow a protocol role holder to read a deleted record', async () => {
+      it('should allow a module role holder to read a deleted record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Install thread-role protocol
-        const protocolDefinition = threadRoleProtocolDefinition;
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        // Install thread-role module
+        const moduleDefinition = threadRoleModuleDefinition;
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice creates a thread
         const threadWrite = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread',
+          author     : alice,
+          module     : moduleDefinition.module,
+          modulePath : 'thread',
         });
         await dwn.processMessage(alice.did, threadWrite.message, { dataStream: threadWrite.dataStream });
         const threadContextId = threadWrite.message.contextId!;
@@ -302,8 +302,8 @@ export function testDeletedRecordScenarios(): void {
         const participantWrite = await TestDataGenerator.generateRecordsWrite({
           author          : alice,
           recipient       : bob.did,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'thread/participant',
+          module          : moduleDefinition.module,
+          modulePath      : 'thread/participant',
           parentContextId : threadContextId,
         });
         await dwn.processMessage(alice.did, participantWrite.message, { dataStream: participantWrite.dataStream });
@@ -311,9 +311,9 @@ export function testDeletedRecordScenarios(): void {
         // Bob creates a chat message (via participant role)
         const chatWrite = await TestDataGenerator.generateRecordsWrite({
           author          : bob,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'thread/chat',
-          protocolRole    : 'thread/participant',
+          module          : moduleDefinition.module,
+          modulePath      : 'thread/chat',
+          moduleRole      : 'thread/participant',
           parentContextId : threadContextId,
         });
         await dwn.processMessage(alice.did, chatWrite.message, { dataStream: chatWrite.dataStream });
@@ -327,9 +327,9 @@ export function testDeletedRecordScenarios(): void {
 
         // Bob reads the deleted chat message using his participant role
         const bobRead = await RecordsRead.create({
-          signer       : Jws.createSigner(bob),
-          protocolRole : 'thread/participant',
-          filter       : {
+          signer     : Jws.createSigner(bob),
+          moduleRole : 'thread/participant',
+          filter     : {
             recordId: chatWrite.message.recordId,
           },
         });
@@ -342,23 +342,23 @@ export function testDeletedRecordScenarios(): void {
       it('should allow anonymous read of a deleted record that was published', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // Install protocol
-        const protocolDefinition = freeForAllProtocolDefinition;
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        // Install module
+        const moduleDefinition = freeForAllModuleDefinition;
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice writes a published record
         const data = Encoder.stringToBytes('public post');
         const { message: writeMessage } = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          schema       : protocolDefinition.types.post.schema,
-          dataFormat   : protocolDefinition.types.post.dataFormats[0],
-          published    : true,
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          schema     : moduleDefinition.types.post.schema,
+          dataFormat : moduleDefinition.types.post.dataFormats[0],
+          published  : true,
           data,
         });
         await dwn.processMessage(alice.did, writeMessage, { dataStream: DataStream.fromBytes(data) });
@@ -386,9 +386,9 @@ export function testDeletedRecordScenarios(): void {
         const carol = await TestDataGenerator.generatePersona();
         TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-        // Install a protocol where only author and recipient can read (no 'anyone' can 'read')
-        const protocolDefinition = {
-          protocol  : 'http://restricted-read.xyz',
+        // Install a module where only author and recipient can read (no 'anyone' can 'read')
+        const moduleDefinition = {
+          module    : 'http://restricted-read.xyz',
           published : true,
           types     : {
             note: {
@@ -406,21 +406,21 @@ export function testDeletedRecordScenarios(): void {
           },
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice writes a record with Bob as recipient
         const data = Encoder.stringToBytes('private note');
         const { message: writeMessage } = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          recipient    : bob.did,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'note',
-          schema       : 'note',
-          dataFormat   : 'application/json',
+          signer     : Jws.createSigner(alice),
+          recipient  : bob.did,
+          module     : moduleDefinition.module,
+          modulePath : 'note',
+          schema     : 'note',
+          dataFormat : 'application/json',
           data,
         });
         await dwn.processMessage(alice.did, writeMessage, { dataStream: DataStream.fromBytes(data) });
@@ -439,7 +439,7 @@ export function testDeletedRecordScenarios(): void {
         });
         const readReply = await dwn.processMessage(alice.did, carolRead.message) as RecordsReadReply;
         expect(readReply.status.code).toBe(401);
-        expect(readReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(readReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
       });
 
       it('should authorize against the newest write when a record was updated before deletion', async () => {
@@ -447,22 +447,22 @@ export function testDeletedRecordScenarios(): void {
         // An anonymous reader should be able to get the 404 + metadata because the newest write was published.
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        // Install protocol
-        const protocolDefinition = freeForAllProtocolDefinition;
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        // Install module
+        const moduleDefinition = freeForAllModuleDefinition;
+        const modulesConfigure = await ModulesConfigure.create({
           signer     : Jws.createSigner(alice),
-          definition : protocolDefinition,
+          definition : moduleDefinition,
         });
-        await dwn.processMessage(alice.did, protocolsConfigure.message);
+        await dwn.processMessage(alice.did, modulesConfigure.message);
 
         // Alice writes an unpublished record
         const data = Encoder.stringToBytes('initially unpublished');
         const recordsWrite = await RecordsWrite.create({
-          signer       : Jws.createSigner(alice),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          schema       : protocolDefinition.types.post.schema,
-          dataFormat   : protocolDefinition.types.post.dataFormats[0],
+          signer     : Jws.createSigner(alice),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          schema     : moduleDefinition.types.post.schema,
+          dataFormat : moduleDefinition.types.post.dataFormats[0],
           data,
         });
         await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(data) });

@@ -59,8 +59,8 @@ function createRecordOptions(overrides: globalThis.Record<string, unknown> = {})
       datePublished    : '2024-01-01T00:00:00.000000Z',
       messageTimestamp : '2024-01-01T00:00:00.000000Z',
       published        : false,
-      protocol         : 'https://example.com/protocol',
-      protocolPath     : 'post',
+      module           : 'https://example.com/module',
+      modulePath       : 'post',
       recipient        : 'did:example:bob',
       schema           : 'https://example.com/schemas/post',
     },
@@ -216,7 +216,7 @@ describe('Record — coverage gaps (stubbed)', () => {
   });
 
   describe('delegated mutation grant scope', () => {
-    it('should resolve a grant with the record protocol path and context', async () => {
+    it('should resolve a grant with the record module path and context', async () => {
       const delegatedGrant = { recordId: 'delegated-write-grant' };
       const permissionsApi = {
         getPermissionForRequest: sinon.stub().resolves({ message: delegatedGrant }),
@@ -237,8 +237,8 @@ describe('Record — coverage gaps (stubbed)', () => {
       expect(permissionsApi.getPermissionForRequest.calledOnceWithExactly({
         connectedDid : 'did:example:alice',
         delegateDid  : 'did:example:delegate',
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'post',
+        module       : 'https://example.com/module',
+        modulePath   : 'post',
         contextId    : 'ctx-001',
         delegate     : true,
         messageType  : DwnInterface.RecordsWrite,
@@ -249,9 +249,9 @@ describe('Record — coverage gaps (stubbed)', () => {
   describe('readRecordData() — envelope-driven decryption', () => {
     it('should keep the low-level read raw and decrypt only when data is consumed', async () => {
       const options = createRecordOptions({
-        encryption   : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
-        protocolRole : 'post/editor',
-        storedData   : undefined,
+        encryption : { algorithm: 'A256GCM', initializationVector: 'iv', keyEncryption: [] },
+        moduleRole : 'post/editor',
+        storedData : undefined,
       });
 
       const record = new Record(agentStub as unknown as EnboxAgent, options);
@@ -278,7 +278,7 @@ describe('Record — coverage gaps (stubbed)', () => {
       const call = agentStub.processDwnRequest.firstCall;
       expect(call.args[0].encryption).toBeUndefined();
       expect(agentStub.decryptRecordData.calledOnce).toBe(true);
-      expect(agentStub.decryptRecordData.firstCall.args[0].protocolRole).toBe('post/editor');
+      expect(agentStub.decryptRecordData.firstCall.args[0].moduleRole).toBe('post/editor');
       expect(agentStub.decryptRecordData.firstCall.args[0].recordsWrite.encryption).toEqual(options.encryption);
     });
   });
@@ -440,8 +440,8 @@ describe('Record — coverage gaps (stubbed)', () => {
           remote : false,
           target : 'did:example:original-target',
         },
-        protocolRole : 'post/original-role',
-        storedData   : undefined,
+        moduleRole : 'post/original-role',
+        storedData : undefined,
       });
       const record = new Record(agentStub as unknown as EnboxAgent, options);
 
@@ -450,7 +450,7 @@ describe('Record — coverage gaps (stubbed)', () => {
         remote : true,
         target : 'did:example:updated-target',
       };
-      record['_protocolRole'] = 'post/updated-role';
+      record['_moduleRole'] = 'post/updated-role';
 
       agentStub.processDwnRequest.resolves({
         messageCid : 'cid-1',
@@ -468,7 +468,7 @@ describe('Record — coverage gaps (stubbed)', () => {
       expect(agentStub.processDwnRequest.firstCall.args[0]).toMatchObject({
         author        : 'did:example:original-author',
         target        : 'did:example:original-target',
-        messageParams : { protocolRole: 'post/original-role' },
+        messageParams : { moduleRole: 'post/original-role' },
       });
     });
   });
@@ -507,9 +507,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       });
 
       const result = await dwnApi.records.write({
-        data         : { test: true },
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'test',
+        data       : { test: true },
+        module     : 'https://example.com/module',
+        modulePath : 'test',
       });
 
       expect(result.status.code).toBe(400);
@@ -521,8 +521,8 @@ describe('Record — coverage gaps (stubbed)', () => {
       const validDescriptor = {
         interface        : DwnInterface.RecordsWrite,
         method           : 'Write',
-        protocol         : 'https://example.com/protocol',
-        protocolPath     : 'test',
+        module           : 'https://example.com/module',
+        modulePath       : 'test',
         schema           : 'https://example.com/schema',
         dataFormat       : 'application/json',
         dataCid          : 'bafyreicid',
@@ -548,9 +548,9 @@ describe('Record — coverage gaps (stubbed)', () => {
       });
 
       const result = await dwnApi.records.write({
-        data         : { test: true },
-        protocol     : 'https://example.com/protocol',
-        protocolPath : 'test',
+        data       : { test: true },
+        module     : 'https://example.com/module',
+        modulePath : 'test',
       });
 
       expect(result.status.code).toBe(202);
@@ -585,8 +585,8 @@ describe('Record — coverage gaps (stubbed)', () => {
       const validDescriptor = {
         interface        : DwnInterface.RecordsWrite,
         method           : 'Write',
-        protocol         : 'https://example.com/protocol',
-        protocolPath     : 'test',
+        module           : 'https://example.com/module',
+        modulePath       : 'test',
         schema           : 'https://example.com/schema',
         dataFormat       : 'application/json',
         dataCid          : 'bafyreicid',

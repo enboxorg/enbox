@@ -14,7 +14,7 @@ import { PermissionGrantNotFoundError } from './permissions-api.js';
 export async function resolveDelegatePermissionGrantId(
   deps: { did: string; delegateDid?: string; permissionsApi?: PermissionsApi },
   messageType: DwnInterface,
-  protocol: string,
+  module: string,
 ): Promise<string | undefined> {
   if (deps.delegateDid === undefined || deps.permissionsApi === undefined) {
     return undefined;
@@ -24,7 +24,7 @@ export async function resolveDelegatePermissionGrantId(
     const { grant } = await deps.permissionsApi.getPermissionForRequest({
       connectedDid : deps.did,
       delegateDid  : deps.delegateDid,
-      protocol,
+      module,
       messageType,
     });
     return grant.id;

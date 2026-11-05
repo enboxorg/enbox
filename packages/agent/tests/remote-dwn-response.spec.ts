@@ -3,9 +3,9 @@ import type {
   GenericMessage,
   GenericMessageReply,
   MessageSigner,
-  ProtocolDefinition,
-  ProtocolsConfigureMessage,
-  ProtocolsQueryReply,
+  ModuleDefinition,
+  ModulesConfigureMessage,
+  ModulesQueryReply,
   RecordsQueryReply,
   RecordsReadReply,
   RecordsSubscribeReply,
@@ -18,8 +18,8 @@ import {
   DataStream,
   DateSort,
   Encoder,
-  ProtocolsConfigure,
-  ProtocolsQuery,
+  ModulesConfigure,
+  ModulesQuery,
   RecordsDelete,
   RecordsQuery,
   RecordsRead,
@@ -33,8 +33,8 @@ import { verifyRemoteDwnResponse } from '../src/remote-dwn-response.js';
 
 import { deferred } from './utils/deferred.js';
 
-const protocolUri = 'https://example.com/remote-response';
-const otherProtocolUri = 'https://example.com/other-protocol';
+const moduleUri = 'https://example.com/remote-response';
+const otherModuleUri = 'https://example.com/other-module';
 const recordSchema = 'https://example.com/schemas/note';
 const textEncoder = new TextEncoder();
 
@@ -56,24 +56,24 @@ describe('verifyRemoteDwnResponse', () => {
   }
 
   it('preserves unsuccessful query responses that contain no artifacts', async () => {
-    const [protocolsQuery, recordsQuery] = await Promise.all([
-      ProtocolsQuery.create({ filter: { protocol: protocolUri } }),
-      RecordsQuery.create({ filter: { protocol: protocolUri }, signer: targetSigner }),
+    const [modulesQuery, recordsQuery] = await Promise.all([
+      ModulesQuery.create({ filter: { module: moduleUri } }),
+      RecordsQuery.create({ filter: { module: moduleUri }, signer: targetSigner }),
     ]);
     const reply = { status: { code: 500, detail: 'Internal Server Error' } };
 
-    await expect(verifyResponse(protocolsQuery.message, reply)).resolves.toBeUndefined();
+    await expect(verifyResponse(modulesQuery.message, reply)).resolves.toBeUndefined();
     await expect(verifyResponse(recordsQuery.message, reply)).resolves.toBeUndefined();
   });
 
-  describe('ProtocolsQuery', () => {
+  describe('ModulesQuery', () => {
     it('accepts a configuration signed directly by the target DID', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(protocolUri),
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(moduleUri),
         signer     : targetSigner,
       });
-      const reply: ProtocolsQueryReply = {
+      const reply: ModulesQueryReply = {
         entries : [configure.message],
         status  : { code: 200, detail: 'OK' },
       };
@@ -82,72 +82,72 @@ describe('verifyRemoteDwnResponse', () => {
     });
 
     it('rejects a configuration signed by an attacker', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(protocolUri),
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(moduleUri),
         signer     : attackerSigner,
       });
 
-      await expect(verifyResponse(query.message, protocolReply(configure.message)))
+      await expect(verifyResponse(query.message, moduleReply(configure.message)))
         .rejects.toThrow(`instead of '${target.uri}'`);
     });
 
     it('rejects a signed configuration whose definition was changed in transit', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(protocolUri),
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(moduleUri),
         signer     : targetSigner,
       });
       const tampered = structuredClone(configure.message);
       tampered.descriptor.definition.published = false;
 
-      await expect(verifyResponse(query.message, protocolReply(tampered))).rejects.toThrow();
+      await expect(verifyResponse(query.message, moduleReply(tampered))).rejects.toThrow();
     });
 
-    it('rejects a valid configuration for a different requested protocol', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(otherProtocolUri),
+    it('rejects a valid configuration for a different requested module', async () => {
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(otherModuleUri),
         signer     : targetSigner,
       });
 
-      await expect(verifyResponse(query.message, protocolReply(configure.message)))
-        .rejects.toThrow(`while '${protocolUri}' was requested`);
+      await expect(verifyResponse(query.message, moduleReply(configure.message)))
+        .rejects.toThrow(`while '${moduleUri}' was requested`);
     });
 
-    it('rejects multiple configurations for one exact protocol query', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(protocolUri),
+    it('rejects multiple configurations for one exact module query', async () => {
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(moduleUri),
         signer     : targetSigner,
       });
-      const reply = protocolReply(configure.message);
+      const reply = moduleReply(configure.message);
       reply.entries!.push(configure.message);
 
       await expect(verifyResponse(query.message, reply)).rejects.toThrow('multiple configurations');
     });
 
     it('rejects entries attached to an unsuccessful response', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : protocolDefinition(protocolUri),
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : moduleDefinition(moduleUri),
         signer     : targetSigner,
       });
-      const reply = protocolReply(configure.message);
+      const reply = moduleReply(configure.message);
       reply.status = { code: 500, detail: 'Internal Server Error' };
 
       await expect(verifyResponse(query.message, reply)).rejects.toThrow('status 500 with entries');
     });
 
     it('rejects an unpublished configuration returned to an anonymous query', async () => {
-      const query = await ProtocolsQuery.create({ filter: { protocol: protocolUri } });
-      const configure = await ProtocolsConfigure.create({
-        definition : { ...protocolDefinition(protocolUri), published: false },
+      const query = await ModulesQuery.create({ filter: { module: moduleUri } });
+      const configure = await ModulesConfigure.create({
+        definition : { ...moduleDefinition(moduleUri), published: false },
         signer     : targetSigner,
       });
 
-      await expect(verifyResponse(query.message, protocolReply(configure.message)))
-        .rejects.toThrow('anonymous query returned unpublished protocol');
+      await expect(verifyResponse(query.message, moduleReply(configure.message)))
+        .rejects.toThrow('anonymous query returned unpublished module');
     });
   });
 
@@ -213,8 +213,8 @@ describe('verifyRemoteDwnResponse', () => {
       const data = textEncoder.encode('visibility checks');
       const unpublishedWrite = await createRecordsWrite(data, targetSigner);
       const publishedWrite = await createRecordsWrite(data, targetSigner, true);
-      const anonymousQuery = await RecordsQuery.create({ filter: { protocol: protocolUri } });
-      const unpublishedQuery = await RecordsQuery.create({ filter: { protocol: protocolUri, published: false } });
+      const anonymousQuery = await RecordsQuery.create({ filter: { module: moduleUri } });
+      const unpublishedQuery = await RecordsQuery.create({ filter: { module: moduleUri, published: false } });
 
       await expect(verifyResponse(anonymousQuery.message, recordsQueryReply(unpublishedWrite.message, data)))
         .rejects.toThrow('anonymous query returned unpublished');
@@ -270,7 +270,7 @@ describe('verifyRemoteDwnResponse', () => {
     it('accepts an authenticated matching initial snapshot', async () => {
       const data = textEncoder.encode('snapshot record');
       const recordsWrite = await createRecordsWrite(data, targetSigner, true);
-      const subscribe = await RecordsSubscribe.create({ filter: { protocol: protocolUri } });
+      const subscribe = await RecordsSubscribe.create({ filter: { module: moduleUri } });
       const reply: RecordsSubscribeReply = {
         entries      : [{ ...recordsWrite.message, encodedData: Encoder.bytesToBase64Url(data) }],
         status       : { code: 200, detail: 'OK' },
@@ -286,7 +286,7 @@ describe('verifyRemoteDwnResponse', () => {
       const tamperedWrite = structuredClone(recordsWrite.message);
       const signature = tamperedWrite.authorization!.signature.signatures[0].signature;
       tamperedWrite.authorization!.signature.signatures[0].signature = replaceLastCharacter(signature);
-      const subscribe = await RecordsSubscribe.create({ filter: { protocol: protocolUri } });
+      const subscribe = await RecordsSubscribe.create({ filter: { module: moduleUri } });
       let closed = false;
       const reply: RecordsSubscribeReply = {
         entries      : [{ ...tamperedWrite, encodedData: Encoder.bytesToBase64Url(data) }],
@@ -552,16 +552,16 @@ async function signerForDid(did: BearerDid): Promise<MessageSigner> {
   };
 }
 
-function protocolDefinition(protocol: string): ProtocolDefinition {
+function moduleDefinition(module: string): ModuleDefinition {
   return {
-    protocol,
+    module,
     published : true,
     structure : {},
     types     : {},
   };
 }
 
-function protocolReply(message: ProtocolsConfigureMessage): ProtocolsQueryReply {
+function moduleReply(message: ModulesConfigureMessage): ModulesQueryReply {
   return {
     entries : [message],
     status  : { code: 200, detail: 'OK' },
@@ -571,10 +571,10 @@ function protocolReply(message: ProtocolsConfigureMessage): ProtocolsQueryReply 
 async function createRecordsWrite(data: Uint8Array, signer: MessageSigner, published?: boolean): Promise<RecordsWrite> {
   return RecordsWrite.create({
     data,
-    dataFormat   : 'text/plain',
-    protocol     : protocolUri,
-    protocolPath : 'note',
-    schema       : recordSchema,
+    dataFormat : 'text/plain',
+    module     : moduleUri,
+    modulePath : 'note',
+    schema     : recordSchema,
     signer,
     published,
   });

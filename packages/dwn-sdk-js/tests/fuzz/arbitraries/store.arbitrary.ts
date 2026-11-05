@@ -20,7 +20,7 @@ function hexString(opts: { minLength: number; maxLength: number }): Arbitrary<st
 
 /** Property names commonly indexed in DWN messages. */
 const indexPropertyNames = [
-  'protocol', 'protocolPath', 'schema', 'contextId',
+  'module', 'modulePath', 'schema', 'contextId',
   'recordId', 'parentId', 'recipient', 'author',
   'dataFormat', 'attester',
 ];
@@ -50,7 +50,7 @@ export function dwnTimestamp(): Arbitrary<string> {
  * Always includes a sortable timestamp property.
  *
  * All non-timestamp index values are strings, matching real-world DWN behaviour
- * where protocol, protocolPath, schema, etc. are always URIs or path strings.
+ * where module, modulePath, schema, etc. are always URIs or path strings.
  */
 export function indexKeyValues(): Arbitrary<KeyValues> {
   return fc.record({
@@ -113,7 +113,7 @@ export function recordId(): Arbitrary<string> {
 }
 
 /** DWN interface names. */
-const dwnInterfaces = ['Records', 'Protocols', 'Messages', 'Events', 'Permissions'] as const;
+const dwnInterfaces = ['Records', 'Modules', 'Messages', 'Events', 'Permissions'] as const;
 
 /** DWN method names. */
 const dwnMethods = ['Write', 'Query', 'Read', 'Delete', 'Configure', 'Subscribe', 'Request', 'Revoke', 'Grant'] as const;

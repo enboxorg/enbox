@@ -1,0 +1,21 @@
+{
+  "module": "http://anyone-collaborate-module.xyz",
+  "published": true,
+  "types": {
+    "doc": {}
+  },
+  "structure": {
+    "doc": {
+      "$actions": [
+        {
+          "who": "anyone",
+          "can": [
+            "read",
+            "co-update",
+            "co-delete"
+          ]
+        }
+      ]
+    }
+  }
+}

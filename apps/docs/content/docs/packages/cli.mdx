@@ -20,12 +20,12 @@ import {
   CliConnectHandler,
   createConnectionStore,
   defineApplicationManifest,
-  defineProtocol,
+  defineModule,
   recordCodecs,
 } from '@enbox/cli';
 
 const NotesDefinition = {
-  protocol  : 'https://example.com/protocols/notes',
+  module  : 'https://example.com/modules/notes',
   published : true,
   types     : {
     note: {
@@ -38,12 +38,12 @@ const NotesDefinition = {
   },
 } as const;
 
-const NotesProtocol = defineProtocol(NotesDefinition, {
+const NotesModule = defineModule(NotesDefinition, {
   note: recordCodecs.json<{ body: string }>(),
 });
 
 const application = defineApplicationManifest({
-  protocols: [{ protocol: NotesProtocol, permissions: ['write'] }],
+  modules: [{ module: NotesModule, permissions: ['write'] }],
 } as const);
 const store = createConnectionStore({
   application,
@@ -61,7 +61,7 @@ if (snapshot.phase !== 'connected') {
   throw snapshot.error ?? new Error('Connection was not established.');
 }
 
-await snapshot.enbox.using(NotesProtocol).records.create('note', {
+await snapshot.enbox.using(NotesModule).records.create('note', {
   data: { body: `Connected as ${snapshot.session.did}` },
 });
 
@@ -88,7 +88,7 @@ approval link in the local default browser instead of printing a QR code.
 |---|---|
 | `Enbox` | High-level app API from `@enbox/api` |
 | `createConnectionStore()` | Application connection lifecycle and observable snapshots |
-| `defineProtocol()` | Type-safe protocol definition helper |
+| `defineModule()` | Type-safe module definition helper |
 | `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
 | `CliConnectHandler` | Terminal relay/PIN wallet connect handler |

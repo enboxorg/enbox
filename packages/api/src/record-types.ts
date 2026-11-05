@@ -33,7 +33,7 @@ export type RecordExecutionContext = Readonly<{
   /** Role record backing this followed context. */
   followedSourceId?: string;
   /** Role invoked for every operation when this is a followed context. */
-  protocolRole?: string;
+  moduleRole?: string;
   /** Hosted endpoint accepted for authoritative followed-context mutations. */
   remoteEndpoint?: string;
   /** Tenant that owns the context. */
@@ -81,7 +81,7 @@ export type StoredRecordData = string | Blob | ReadableStream<Uint8Array> | Stor
  * @beta
  * */
 export type ImmutableRecordProperties =
-  Pick<DwnMessageDescriptor[DwnInterface.RecordsWrite], 'dateCreated' | 'parentId' | 'protocol' | 'protocolPath' | 'recipient' | 'schema'>;
+  Pick<DwnMessageDescriptor[DwnInterface.RecordsWrite], 'dateCreated' | 'parentId' | 'module' | 'modulePath' | 'recipient' | 'schema'>;
 
 /**
  * Represents Optional Record properties that depend on the Record's current state.
@@ -101,7 +101,7 @@ type RecordMetadata = ImmutableRecordProperties & OptionalRecordProperties;
  * @beta
  */
 export type RecordModel = Pick<RecordMetadata, 'dateCreated' | 'authorization'> & {
-  // Handles also represent tombstones and non-protocol records. Their getters
+  // Handles also represent tombstones and non-module records. Their getters
   // and toJSON() expose undefined for metadata absent in that record state.
   [Property in Exclude<keyof RecordMetadata, 'dateCreated' | 'authorization'>]?: RecordMetadata[Property] | undefined;
 } & {
@@ -115,10 +115,10 @@ export type RecordModel = Pick<RecordMetadata, 'dateCreated' | 'authorization'> 
   /** The message timestamp (time of creation, most recent update, or deletion). */
   timestamp?: string;
 
-  /** The protocol role under which this record is written. */
-  protocolRole?: RecordOptions['protocolRole'];
+  /** The module role under which this record is written. */
+  moduleRole?: RecordOptions['moduleRole'];
 
-  /** Whether the initial write carried the protocol squash directive. */
+  /** Whether the initial write carried the module squash directive. */
   squash?: boolean;
 };
 
@@ -162,8 +162,8 @@ export type RecordOptions = DwnMessage[DwnInterface.RecordsWrite | DwnInterface.
   /** The initial `RecordsWriteMessage` that represents the initial state/version of the record. */
   initialWrite?: DwnMessage[DwnInterface.RecordsWrite];
 
-  /** The protocol role under which this record is written. */
-  protocolRole?: string;
+  /** The module role under which this record is written. */
+  moduleRole?: string;
 
 };
 
@@ -192,7 +192,7 @@ export type RecordUpdateParams<T = unknown> = {
    * tenant's DWN (via the agent's `sendDwnRequest`) only when `from` is set
    * and differs from the connected DID. The author stays the connected
    * (grantee) DID — the grantee signs as themselves, and the remote DWN
-   * authorizes the write via `protocolRole` or grant parameters. A record
+   * authorizes the write via `moduleRole` or grant parameters. A record
    * that was merely *read* from a remote tenant still updates **locally**
    * unless `from` is passed explicitly.
    *
@@ -220,8 +220,8 @@ export type RecordUpdateParams<T = unknown> = {
   /** The timestamp indicating when the record was published. */
   datePublished?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['datePublished'];
 
-  /** The protocol role under which this record is written. */
-  protocolRole?: RecordOptions['protocolRole'];
+  /** The module role under which this record is written. */
+  moduleRole?: RecordOptions['moduleRole'];
 
   /** The published status of the record. */
   published?: DwnMessageDescriptor[DwnInterface.RecordsWrite]['published'];
@@ -253,6 +253,6 @@ export type RecordDeleteParams = {
   /** The timestamp of the delete message. */
   timestamp?: DwnMessageDescriptor[DwnInterface.RecordsDelete]['messageTimestamp'];
 
-  /** The protocol role under which this record will be deleted. */
-  protocolRole?: string;
+  /** The module role under which this record will be deleted. */
+  moduleRole?: string;
 };

@@ -1,10 +1,10 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record, RecordCodecValue, RecordQuery, RecordView, TypedEnbox } from '@enbox/api';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs } from '@enbox/api';
 
 const QueryDefinition = {
-  protocol  : 'https://example.com/protocols/query-types',
+  module    : 'https://example.com/modules/query-types',
   published : true,
   types     : {
     note: {
@@ -50,9 +50,9 @@ const QueryDefinition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const QueryProtocol = defineProtocol(QueryDefinition, {
+const QueryModule = defineModule(QueryDefinition, {
   arrayTagged : recordCodecs.json<{ value: string }>(),
   attachment  : recordCodecs.blob('image/png'),
   comment     : recordCodecs.text(),
@@ -60,8 +60,8 @@ const QueryProtocol = defineProtocol(QueryDefinition, {
   note        : recordCodecs.json<{ title: string }>(),
 });
 
-type QueryCodecs = typeof QueryProtocol.codecs;
-void QueryProtocol;
+type QueryCodecs = typeof QueryModule.codecs;
+void QueryModule;
 
 declare const typed: TypedEnbox<typeof QueryDefinition, QueryCodecs>;
 declare const callerSignal: AbortSignal;
@@ -99,16 +99,16 @@ void typed.records.query('note/comment', {
 void typed.records.query('flexible', { filter: { tags: { known: 'value' } } });
 void typed.records.query('note', { filter: { author: authors } });
 
-// @ts-expect-error protocol paths are exact.
+// @ts-expect-error module paths are exact.
 void typed.records.query('missing');
 
-// @ts-expect-error count uses the same exact protocol paths.
+// @ts-expect-error count uses the same exact module paths.
 void typed.records.count('missing');
 
 void typed.records.observe('note', {
-  from         : 'did:example:remote',
-  pagination   : { limit: 20 },
-  protocolRole : 'member',
+  from       : 'did:example:remote',
+  pagination : { limit: 20 },
+  moduleRole : 'member',
 });
 
 // @ts-expect-error typed pagination continuations are private to RecordPage.next().
@@ -149,7 +149,7 @@ void typed.records.query('note', { filter: { tags: { pinned: { gt: false } } } }
 // @ts-expect-error array-valued tags use the raw DWN API in this scalar surface.
 void typed.records.query('arrayTagged', { filter: { tags: { labels: 'work' } } });
 
-// @ts-expect-error undefined protocol tags remain an explicit raw-API escape hatch.
+// @ts-expect-error undefined module tags remain an explicit raw-API escape hatch.
 void typed.records.query('flexible', { filter: { tags: { custom: 'value' } } });
 
 // @ts-expect-error paths without scalar tag definitions do not accept typed tag filters.
@@ -160,16 +160,16 @@ void typed.records.query('attachment', { filter: { dataFormat: 'image/jpeg' } })
 
 void typed.records.query('note/comment', { within: 'notecontext' });
 void typed.records.read('note/comment', {
-  filter       : { recordId: 'comment-id' },
-  from         : 'did:example:remote',
-  protocolRole : 'note/participant',
-  within       : 'notecontext',
+  filter     : { recordId: 'comment-id' },
+  from       : 'did:example:remote',
+  moduleRole : 'note/participant',
+  within     : 'notecontext',
 });
 void typed.records.delete('note/comment', {
-  from         : 'did:example:remote',
-  protocolRole : 'note/participant',
-  recordId     : 'comment-id',
-  within       : 'notecontext',
+  from       : 'did:example:remote',
+  moduleRole : 'note/participant',
+  recordId   : 'comment-id',
+  within     : 'notecontext',
 });
 
 // @ts-expect-error contextId is a raw DWN filter; typed queries use within.
@@ -187,8 +187,8 @@ void typed.records.query('note/comment', { filter: { parentContextId: 'root/note
 // @ts-expect-error parentId is a raw structural edge, not a typed context selector.
 void typed.records.query('note/comment', { filter: { parentId: 'note' } });
 
-const InlineProtocol = defineProtocol({
-  protocol  : 'https://example.com/protocols/inline-query-types',
+const InlineModule = defineModule({
+  module    : 'https://example.com/modules/inline-query-types',
   published : true,
   types     : {
     item: { dataFormats: ['application/json'] },
@@ -203,9 +203,9 @@ const InlineProtocol = defineProtocol({
 }, {
   item: recordCodecs.json<{ id: string }>(),
 });
-void InlineProtocol;
+void InlineModule;
 
-declare const inlineTyped: TypedEnbox<typeof InlineProtocol.definition, typeof InlineProtocol.codecs>;
+declare const inlineTyped: TypedEnbox<typeof InlineModule.definition, typeof InlineModule.codecs>;
 void inlineTyped.records.query('item', { filter: { tags: { state: 'open' } } });
 
 // @ts-expect-error const generic inference preserves inline tag enums.

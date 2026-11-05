@@ -1,11 +1,11 @@
 import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { BearerDid, DidResolver } from '@enbox/dids';
-import type { MessageSigner, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { MessageSigner, ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidJwk, UniversalResolver } from '@enbox/dids';
-import { Encoder, ProtocolsConfigure, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { Encoder, ModulesConfigure, RecordsWrite } from '@enbox/dwn-sdk-js';
 
 import { AnonymousDwnApi } from '../src/anonymous-dwn-api.js';
 
@@ -20,11 +20,11 @@ describe('AnonymousDwnApi', () => {
   let targetSigner: MessageSigner;
 
   const dwnEndpoint = 'https://dwn.example.com';
-  const protocolUri = 'https://blog.example/posts';
+  const moduleUri = 'https://blog.example/posts';
   const textEncoder = new TextEncoder();
 
-  const protocolDefinition: ProtocolDefinition = {
-    protocol  : protocolUri,
+  const moduleDefinition: ModuleDefinition = {
+    module    : moduleUri,
     published : true,
     types     : {
       post: {
@@ -108,7 +108,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       const reply = await anonymousDwn.recordsQuery(targetDid, {
-        filter: { protocol: protocolUri },
+        filter: { module: moduleUri },
       });
 
       expect(reply.status.code).toBe(200);
@@ -132,7 +132,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       await anonymousDwn.recordsQuery(targetDid, {
-        filter     : { protocol: 'https://example.com' },
+        filter     : { module: 'https://example.com' },
         dateSort   : 'createdDescending' as any,
         pagination : { limit: 10 },
       });
@@ -199,7 +199,7 @@ describe('AnonymousDwnApi', () => {
       });
 
       const reply = await anonymousDwn.recordsCount(targetDid, {
-        filter: { protocol: 'https://blog.example/posts' },
+        filter: { module: 'https://blog.example/posts' },
       });
 
       expect(reply.status.code).toBe(200);
@@ -210,20 +210,20 @@ describe('AnonymousDwnApi', () => {
     });
   });
 
-  describe('protocolsQuery()', () => {
-    it('should create an unsigned ProtocolsQuery and send it via RPC', async () => {
-      const protocolsConfigure = await ProtocolsConfigure.create({
-        definition : protocolDefinition,
+  describe('modulesQuery()', () => {
+    it('should create an unsigned ModulesQuery and send it via RPC', async () => {
+      const modulesConfigure = await ModulesConfigure.create({
+        definition : moduleDefinition,
         signer     : targetSigner,
       });
 
       rpcStub.sendDwnRequest.resolves({
         status  : { code: 200, detail: 'OK' },
-        entries : [protocolsConfigure.message],
+        entries : [modulesConfigure.message],
       });
 
-      const reply = await anonymousDwn.protocolsQuery(targetDid, {
-        filter: { protocol: protocolUri },
+      const reply = await anonymousDwn.modulesQuery(targetDid, {
+        filter: { module: moduleUri },
       });
 
       expect(reply.status.code).toBe(200);
@@ -240,7 +240,7 @@ describe('AnonymousDwnApi', () => {
         entries : [],
       });
 
-      const reply = await anonymousDwn.protocolsQuery(targetDid);
+      const reply = await anonymousDwn.modulesQuery(targetDid);
 
       expect(reply.status.code).toBe(200);
       expect(reply.entries!).toHaveLength(0);
@@ -263,7 +263,7 @@ describe('AnonymousDwnApi', () => {
 
       await anonymousDwn.recordsSubscribe(
         targetDid,
-        { filter: { protocol: protocolUri } },
+        { filter: { module: moduleUri } },
         handler,
       );
 
@@ -284,7 +284,7 @@ describe('AnonymousDwnApi', () => {
       await expect(
         anonymousDwn.recordsSubscribe(
           targetDid,
-          { filter: { protocol: 'https://blog.example/posts' } },
+          { filter: { module: 'https://blog.example/posts' } },
           () => {},
         )
       ).rejects.toThrow('AnonymousDwnApi: Failed to send request');
@@ -342,17 +342,17 @@ describe('AnonymousDwnApi', () => {
       const attacker = await DidJwk.create();
       const [attackerSigner, validConfigure] = await Promise.all([
         signerForDid(attacker),
-        ProtocolsConfigure.create({ definition: protocolDefinition, signer: targetSigner }),
+        ModulesConfigure.create({ definition: moduleDefinition, signer: targetSigner }),
       ]);
-      const invalidConfigure = await ProtocolsConfigure.create({
-        definition : protocolDefinition,
+      const invalidConfigure = await ModulesConfigure.create({
+        definition : moduleDefinition,
         signer     : attackerSigner,
       });
       rpcStub.sendDwnRequest
         .onFirstCall().resolves({ status: { code: 200, detail: 'OK' }, entries: [invalidConfigure.message] })
         .onSecondCall().resolves({ status: { code: 200, detail: 'OK' }, entries: [validConfigure.message] });
 
-      const reply = await anonymousDwn.protocolsQuery(targetDid, { filter: { protocol: protocolUri } });
+      const reply = await anonymousDwn.modulesQuery(targetDid, { filter: { module: moduleUri } });
 
       expect(reply.entries).toEqual([validConfigure.message]);
       expect(rpcStub.sendDwnRequest.calledTwice).toBe(true);
@@ -362,12 +362,12 @@ describe('AnonymousDwnApi', () => {
   async function createPublishedRecord(data: Uint8Array): Promise<RecordsWrite> {
     return RecordsWrite.create({
       data,
-      dataFormat   : 'text/plain',
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'post',
-      published    : true,
-      schema       : protocolDefinition.types.post.schema,
-      signer       : targetSigner,
+      dataFormat : 'text/plain',
+      module     : moduleDefinition.module,
+      modulePath : 'post',
+      published  : true,
+      schema     : moduleDefinition.types.post.schema,
+      signer     : targetSigner,
     });
   }
 });

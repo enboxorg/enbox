@@ -53,16 +53,16 @@ function followedSource(id = 'role-a'): FollowedSyncSource {
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    protocol       : 'https://example.com/notebooks',
+    module         : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    protocolRole   : 'notebook/viewer',
-    protocolPaths  : ['notebook', 'notebook/page'],
+    moduleRole     : 'notebook/viewer',
+    modulePaths    : ['notebook', 'notebook/page'],
     roles          : ['notebook/collaborator', 'notebook/viewer'],
   };
 }
 
 function validEntry(did: string): SyncIdentityStoreEntry {
-  return { status: 'valid', did, options: { protocols: 'all' } };
+  return { status: 'valid', did, options: { modules: 'all' } };
 }
 
 function createPlanner({
@@ -105,15 +105,15 @@ function createPlanner({
     dwnUrl : 'https://owner.example.com',
     delegateDid,
     scope  : {
-      kind          : 'context',
-      protocol      : source.protocol,
-      contextId     : source.contextId,
-      protocolPaths : source.protocolPaths,
+      kind        : 'context',
+      module      : source.module,
+      contextId   : source.contextId,
+      modulePaths : source.modulePaths,
     },
     authorization: {
       kind         : 'role',
       actorDid     : source.actorDid,
-      protocolRole : source.protocolRole,
+      moduleRole   : source.moduleRole,
       roleRecordId : source.id,
     },
     authorizationEpoch : 'role-epoch',
@@ -169,7 +169,7 @@ describe('SyncTargetPlanner', () => {
   it('should plan ordinary identities and followed context sources together', async () => {
     const source = followedSource();
     const { buildTargetForSource, planner } = createPlanner({
-      identityOptions : { [source.actorDid]: { protocols: 'all' } },
+      identityOptions : { [source.actorDid]: { modules: 'all' } },
       sourceEntries   : [{ status: 'valid', source }],
     });
 
@@ -185,7 +185,7 @@ describe('SyncTargetPlanner', () => {
     const delegateDid = 'did:example:new-delegate';
     const { buildTargetForSource, getIdentity, planner } = createPlanner({
       entries         : [],
-      identityOptions : { [source.actorDid]: { protocols: 'all', delegateDid } },
+      identityOptions : { [source.actorDid]: { modules: 'all', delegateDid } },
       sourceEntries   : [{ status: 'valid', source }],
     });
 
@@ -202,7 +202,7 @@ describe('SyncTargetPlanner', () => {
     const source = followedSource('role-b');
     const { planner, warn } = createPlanner({
       entries         : [],
-      identityOptions : { [source.actorDid]: { protocols: 'all' } },
+      identityOptions : { [source.actorDid]: { modules: 'all' } },
       sourceEntries   : [
         { status: 'corrupt', id: 'role-a', error: corruptError },
         { status: 'valid', source },

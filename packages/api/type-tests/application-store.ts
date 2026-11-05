@@ -1,18 +1,18 @@
 import type { StoreInstance } from '@enbox/api';
 
-import { createApplication, createConnectionStore, defineProtocol, defineStore, recordCodecs } from '@enbox/api';
+import { createApplication, createConnectionStore, defineModule, defineStore, recordCodecs } from '@enbox/api';
 
-const Protocol = defineProtocol({
-  protocol  : 'https://example.com/protocols/application-store-types',
+const Module = defineModule({
+  module    : 'https://example.com/modules/application-store-types',
   published : false,
   types     : { note: { dataFormats: ['application/json'] } },
   structure : { note: {} },
 } as const, { note: recordCodecs.json<{ title: string }>() });
 
 const Notes = defineStore({
-  protocols: { notes: Protocol },
-  create({ protocols, command }) {
-    const notes = protocols.notes.collection('note');
+  modules: { notes: Module },
+  create({ modules, command }) {
+    const notes = modules.notes.collection('note');
     return {
       notes,
       add            : command((title: string) => notes.create.run({ title })),
@@ -26,8 +26,8 @@ const Notes = defineStore({
 });
 
 const Dashboard = defineStore({
-  protocols : {},
-  stores    : { notes: Notes },
+  modules : {},
+  stores  : { notes: Notes },
   create({ stores }) {
     const add: StoreInstance<typeof Notes>['add'] = stores.notes.add;
     return { add };
@@ -77,13 +77,13 @@ feature.optionalTitle.run(false);
 feature.count.run('extra');
 
 // @ts-expect-error a feature factory is synchronous, not an asynchronous initialization workflow.
-defineStore({ protocols: {}, create: async () => ({ ready: true }) });
+defineStore({ modules: {}, create: async () => ({ ready: true }) });
 
 declare const needsInitialization: boolean;
 // @ts-expect-error a synchronous branch does not make an asynchronous factory branch valid.
-defineStore({ protocols: {}, create: () => needsInitialization ? { ready: true } : Promise.resolve({ ready: true }) });
+defineStore({ modules: {}, create: () => needsInitialization ? { ready: true } : Promise.resolve({ ready: true }) });
 
-defineStore({ protocols: {}, create({ command }) {
+defineStore({ modules: {}, create({ command }) {
   // @ts-expect-error commands accept one input; group several values in one object.
   command((title: string, amount?: number) => `${title}:${amount}`);
   // @ts-expect-error a defaulted second parameter is still a second command input.
@@ -98,7 +98,7 @@ declare const optionalOrRequired: ((title?: string) => string) | ((title: string
 declare const disjointInputs: ((title: string) => string) | ((count: number) => number);
 declare const matchingInputs: ((title: string) => string) | ((title: string) => Promise<number>);
 
-defineStore({ protocols: {}, create({ command }) {
+defineStore({ modules: {}, create({ command }) {
   const mixedArity = command(zeroOrRequired);
   const mixedOptionality = command(optionalOrRequired);
   const mixedInputs = command(disjointInputs);

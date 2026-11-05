@@ -14,7 +14,7 @@ import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, Jws, ProtocolsConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
 describe('Registration scenarios', () => {
@@ -126,8 +126,8 @@ describe('Registration scenarios', () => {
     expect(registrationResponse.status).toBe(200);
 
     // 6. Alice can now write to the DWN.
-    // Install the default test protocol first so RecordsWrite messages are accepted.
-    await installDefaultTestProtocolViaHttp(dwnMessageEndpoint, alice);
+    // Install the default test module first so RecordsWrite messages are accepted.
+    await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
 
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
@@ -435,8 +435,8 @@ describe('Registration scenarios', () => {
       termsOfServiceHash : ProofOfWork.hashAsHexString([registrationManager.getTermsOfService()])
     });
 
-    // Install the default test protocol so RecordsWrite messages are accepted.
-    await installDefaultTestProtocolViaHttp(dwnMessageEndpoint, alice);
+    // Install the default test module so RecordsWrite messages are accepted.
+    await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
 
     // Sanity test that Alice can write to the DWN after registration.
     const write1 = await generateRecordsWriteJsonRpcRequest(alice);
@@ -565,9 +565,9 @@ describe('Registration scenarios', () => {
     dwnServer = new DwnServer({ config: configClone, didResolver });
     await dwnServer.start();
 
-    // Install the default test protocol so RecordsWrite messages are accepted.
+    // Install the default test module so RecordsWrite messages are accepted.
     const noRegEndpoint = `http://localhost:${dwnServer.httpServer.port}`;
-    await installDefaultTestProtocolViaHttp(noRegEndpoint, alice);
+    await installDefaultTestModuleViaHttp(noRegEndpoint, alice);
 
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
 
@@ -586,13 +586,13 @@ describe('Registration scenarios', () => {
 });
 
 /**
- * Installs the default test protocol (`http://test-protocol.xyz`) for the given persona
- * by sending a ProtocolsConfigure message via HTTP.
+ * Installs the default test module (`http://test-module.xyz`) for the given persona
+ * by sending a ModulesConfigure message via HTTP.
  */
-async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Persona): Promise<void> {
-  const protocolsConfigure = await ProtocolsConfigure.create({
+async function installDefaultTestModuleViaHttp(endpoint: string, persona: Persona): Promise<void> {
+  const modulesConfigure = await ModulesConfigure.create({
     definition: {
-      protocol  : 'http://test-protocol.xyz',
+      module    : 'http://test-module.xyz',
       published : false,
       types     : { testRecord: {} },
       structure : { testRecord: {} }
@@ -602,7 +602,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
 
   const requestId = crypto.randomUUID();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-    message : protocolsConfigure.toJSON(),
+    message : modulesConfigure.toJSON(),
     target  : persona.did,
   });
 
@@ -615,7 +615,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
   if (code !== 202 && code !== 409) {
-    throw new Error(`Failed to install default test protocol via HTTP: ${code} ${detail}`);
+    throw new Error(`Failed to install default test module via HTTP: ${code} ${detail}`);
   }
 }
 

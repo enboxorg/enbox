@@ -27,7 +27,7 @@ describe('SyncIdentityStoreLevel', () => {
   it('should preserve the existing Level representation when setting and getting options', async () => {
     const did = 'did:example:alice';
     const options = {
-      protocols   : ['https://example.com/protocol'] as [string, ...string[]],
+      modules     : ['https://example.com/module'] as [string, ...string[]],
       delegateDid : 'did:example:delegate',
     };
 
@@ -41,7 +41,7 @@ describe('SyncIdentityStoreLevel', () => {
     const did = 'did:example:alice';
 
     expect(await store.get(did)).toBeUndefined();
-    await store.set(did, { protocols: 'all' });
+    await store.set(did, { modules: 'all' });
     await store.delete(did);
     expect(await store.get(did)).toBeUndefined();
   });
@@ -55,7 +55,7 @@ describe('SyncIdentityStoreLevel', () => {
   it('should isolate corrupt entries without hiding later valid registrations', async () => {
     const identities = db.sublevel('registeredIdentities');
     await identities.put('did:example:a-corrupt', '{');
-    await identities.put('did:example:b-valid', JSON.stringify({ protocols: 'all' }));
+    await identities.put('did:example:b-valid', JSON.stringify({ modules: 'all' }));
 
     const entries: SyncIdentityStoreEntry[] = [];
     for await (const entry of store.entries()) {
@@ -64,11 +64,11 @@ describe('SyncIdentityStoreLevel', () => {
 
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ status: 'corrupt', did: 'did:example:a-corrupt' });
-    expect(entries[1]).toEqual({ status: 'valid', did: 'did:example:b-valid', options: { protocols: 'all' } });
+    expect(entries[1]).toEqual({ status: 'valid', did: 'did:example:b-valid', options: { modules: 'all' } });
   });
 
   it('should clear registrations without clearing sibling sync state', async () => {
-    await store.set('did:example:alice', { protocols: 'all' });
+    await store.set('did:example:alice', { modules: 'all' });
     await db.sublevel('syncMetadata').put('cursor', 'retained');
 
     await store.clear();

@@ -15,7 +15,7 @@
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { WebSocketDwnRpcClient } from '@enbox/dwn-clients';
@@ -29,9 +29,9 @@ import { testDwnUrl } from '../utils/test-config.js';
 
 const testDwnUrls = [testDwnUrl];
 
-const todoProtocol: ProtocolDefinition = {
+const todoModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://e2e-reconnect.xyz/todo',
+  module    : 'https://e2e-reconnect.xyz/todo',
   types     : {
     task: {
       schema      : 'https://e2e-reconnect.xyz/schemas/task',
@@ -78,23 +78,23 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
     });
     did = identity.did.uri;
 
-    // Install protocol locally and on remote.
+    // Install module locally and on remote.
     await harness.agent.dwn.processRequest({
       author        : did,
       target        : did,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: todoProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: todoModule },
     });
     await harness.agent.dwn.sendRequest({
       author        : did,
       target        : did,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: todoProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: todoModule },
     });
 
     await harness.agent.sync.setIdentityOptions({
       did,
-      options: { protocols: [todoProtocol.protocol] },
+      options: { modules: [todoModule.module] },
     });
 
     // Start live sync and establish the pull WebSocket subscription.
@@ -117,10 +117,10 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
       target        : did,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : todoProtocol.protocol,
-        protocolPath : 'task',
-        schema       : todoProtocol.types.task.schema,
-        dataFormat   : 'text/plain',
+        module     : todoModule.module,
+        modulePath : 'task',
+        schema     : todoModule.types.task.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([data1]),
     });
@@ -135,7 +135,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: preDropRecordId } },
+        messageParams : { filter: { module: todoModule.module, recordId: preDropRecordId } },
       });
       if (local.reply.entries?.length) { found = true; break; }
       await new Promise(r => setTimeout(r, 250));
@@ -155,10 +155,10 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
       target        : did,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : todoProtocol.protocol,
-        protocolPath : 'task',
-        schema       : todoProtocol.types.task.schema,
-        dataFormat   : 'text/plain',
+        module     : todoModule.module,
+        modulePath : 'task',
+        schema     : todoModule.types.task.schema,
+        dataFormat : 'text/plain',
       },
       dataStream: new Blob([data2]),
     });
@@ -173,7 +173,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
+        messageParams : { filter: { module: todoModule.module, recordId: postDropRecordId } },
       });
       expect(local.reply.entries?.length ?? 0).toBe(0);
       await new Promise(r => setTimeout(r, 100));
@@ -189,7 +189,7 @@ describe('E2E: pull subscription recovery after WebSocket drop', () => {
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: todoProtocol.protocol, recordId: postDropRecordId } },
+        messageParams : { filter: { module: todoModule.module, recordId: postDropRecordId } },
       });
       if (local.reply.entries?.length) { found = true; break; }
       await new Promise(r => setTimeout(r, 500));

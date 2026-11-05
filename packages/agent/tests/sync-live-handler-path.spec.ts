@@ -5,7 +5,7 @@
  *
  * These tests assert actual durable-feed behavior, not just "link is live."
  */
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -38,9 +38,9 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
   let tenant: string;
   let remoteMessageQueries = 0;
 
-  const testProtocol: ProtocolDefinition = {
+  const testModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://example.com/handler-test',
+    module    : 'https://example.com/handler-test',
     types     : {
       note: {
         schema      : 'https://schemas.example.com/note',
@@ -99,8 +99,8 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: testProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: testModule },
     });
     expect(protoReply.status.code).toBe(202);
 
@@ -109,10 +109,10 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
       target        : tenant,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : testProtocol.protocol,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        schema       : 'https://schemas.example.com/note',
+        module     : testModule.module,
+        modulePath : 'note',
+        dataFormat : 'text/plain',
+        schema     : 'https://schemas.example.com/note',
       },
       dataStream: new Blob([new TextEncoder().encode('feed query through shim')]),
     });
@@ -121,7 +121,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const reply = await queryRemoteMessageFeed({
       did      : tenant,
       dwnUrl   : 'http://localhost:9999',
-      filters  : [{ protocol: testProtocol.protocol }],
+      filters  : [{ module: testModule.module }],
       limit    : 10,
       cidsOnly : true,
       agent    : testHarness.agent,
@@ -139,7 +139,7 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const syncEngine = testHarness.agent.sync as SyncEngineLevel;
     await syncEngine.setIdentityOptions({
       did     : tenant,
-      options : { protocols: 'all' },
+      options : { modules: 'all' },
     });
 
     // Start live sync first so the initial durable baseline has settled.
@@ -149,8 +149,8 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
     const { reply: protoReply } = await testHarness.agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: testProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: testModule },
     });
     expect(protoReply.status.code).toBe(202);
 
@@ -161,10 +161,10 @@ describe('sync live handler path — real subscriptions via LocalDwnRpcShim', ()
       target        : tenant,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : testProtocol.protocol,
-        protocolPath : 'note',
-        dataFormat   : 'text/plain',
-        schema       : 'https://schemas.example.com/note',
+        module     : testModule.module,
+        modulePath : 'note',
+        dataFormat : 'text/plain',
+        schema     : 'https://schemas.example.com/note',
       },
       dataStream: new Blob([new TextEncoder().encode('Handler path test')]),
     });

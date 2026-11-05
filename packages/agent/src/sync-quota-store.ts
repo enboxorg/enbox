@@ -18,7 +18,7 @@ export type SyncQuotaBlockState = {
   messageCid: string;
   nextProbeAt: string;
   projectionId: string;
-  protocol?: string;
+  module?: string;
   remoteEndpoint: string;
   source: SyncQuotaBlockSource;
   /** Retained only to explain an intentional feed omission. Never probed or surfaced as blocked. */

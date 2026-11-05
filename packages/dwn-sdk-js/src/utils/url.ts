@@ -1,21 +1,21 @@
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
-export function validateProtocolUrlNormalized(url: string): void {
+export function validateModuleUrlNormalized(url: string): void {
   let normalized: string | undefined;
   try {
-    normalized = normalizeProtocolUrl(url);
+    normalized = normalizeModuleUrl(url);
   } catch {
     normalized = undefined;
   }
 
   if (url !== normalized) {
-    throw new DwnError(DwnErrorCode.UrlProtocolNotNormalized, `Protocol URI ${url} must be normalized.`);
+    throw new DwnError(DwnErrorCode.UrlModuleNotNormalized, `Module URI ${url} must be normalized.`);
   }
 }
 
-export function normalizeProtocolUrl(url: string): string {
-  // Keeping protocol normalization as a separate function in case
-  // protocol and schema normalization diverge in the future
+export function normalizeModuleUrl(url: string): string {
+  // Keeping module normalization as a separate function in case
+  // module and schema normalization diverge in the future
   return normalizeUrl(url);
 }
 
@@ -34,7 +34,7 @@ export function validateSchemaUrlNormalized(url: string): void {
 
 export function normalizeSchemaUrl(url: string): string {
   // Keeping schema normalization as a separate function in case
-  // protocol and schema normalization diverge in the future
+  // module and schema normalization diverge in the future
   return normalizeUrl(url);
 }
 
@@ -52,7 +52,7 @@ function normalizeUrl(url: string): string {
     result.hash = '';
     return removeTrailingSlash(result.href);
   } catch {
-    throw new DwnError(DwnErrorCode.UrlProtocolNotNormalizable, 'Could not normalize protocol URI');
+    throw new DwnError(DwnErrorCode.UrlModuleNotNormalizable, 'Could not normalize module URI');
   }
 }
 

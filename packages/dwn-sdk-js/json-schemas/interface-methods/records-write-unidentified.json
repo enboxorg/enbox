@@ -50,7 +50,7 @@
                     "pattern": "^[A-Za-z0-9_-]{43}$"
                   },
                   "derivationScheme": {
-                    "const": "protocolPath"
+                    "const": "modulePath"
                   },
                   "ephemeralPublicKey": {
                     "allOf": [
@@ -105,7 +105,7 @@
                   "derivationScheme": {
                     "const": "roleAudience"
                   },
-                  "protocol": {
+                  "module": {
                     "type": "string"
                   },
                   "rolePath": {
@@ -144,7 +144,7 @@
                   "algorithm",
                   "keyId",
                   "derivationScheme",
-                  "protocol",
+                  "module",
                   "rolePath",
                   "ephemeralPublicKey",
                   "encryptedKey"
@@ -179,10 +179,10 @@
         "recipient": {
           "$ref": "https://identity.foundation/dwn/json-schemas/defs.json#/$defs/did"
         },
-        "protocol": {
+        "module": {
           "type": "string"
         },
-        "protocolPath": {
+        "modulePath": {
           "type": "string",
           "pattern": "^(?:[a-zA-Z]+(\/[a-zA-Z]+)*|\\$encryption\/(?:audience|delivery))$"
         },
@@ -259,8 +259,8 @@
       "required": [
         "interface",
         "method",
-        "protocol",
-        "protocolPath",
+        "module",
+        "modulePath",
         "dataCid",
         "dataSize",
         "dateCreated",
@@ -269,7 +269,7 @@
       ],
       "dependencies": {
         "parentId": [
-          "protocol"
+          "module"
         ]
       },
       "allOf": [

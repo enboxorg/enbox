@@ -1,10 +1,10 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
 
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { mergeRecordPatch } from '../src/record-patch.js';
 import { recordCodecs } from '../src/record-codec.js';
 
@@ -35,7 +35,7 @@ describe('TypedEnbox.records.patch() integration', () => {
   it('stores the complete shallow-merged value through a real local DWN', async () => {
     const definition = {
       published : false,
-      protocol  : 'https://example.com/protocols/record-patch-integration',
+      module    : 'https://example.com/modules/record-patch-integration',
       types     : {
         note: {
           schema      : 'https://example.com/schemas/record-patch-integration-note',
@@ -43,20 +43,20 @@ describe('TypedEnbox.records.patch() integration', () => {
         },
       },
       structure: { note: {} },
-    } as const satisfies ProtocolDefinition;
+    } as const satisfies ModuleDefinition;
     type Note = {
       body: string;
       meta: { a: number; b?: number };
       subtitle?: string;
       title: string;
     };
-    const protocol = defineProtocol(definition, { note: recordCodecs.json<Note>() });
+    const module = defineModule(definition, { note: recordCodecs.json<Note>() });
     const context = await createEnboxTestContext({
-      application: defineApplicationManifest({ protocols: [protocol] }),
+      application: defineApplicationManifest({ modules: [module] }),
     });
 
     try {
-      const notes = context.enbox.using(protocol);
+      const notes = context.enbox.using(module);
       const created = await notes.records.create('note', {
         data: {
           body     : 'kept',
@@ -84,7 +84,7 @@ describe('TypedEnbox.records.patch() integration', () => {
   it('re-encrypts the complete merged value through a real local DWN', async () => {
     const definition = {
       published : false,
-      protocol  : 'https://example.com/protocols/encrypted-record-patch-integration',
+      module    : 'https://example.com/modules/encrypted-record-patch-integration',
       types     : {
         secret: {
           schema             : 'https://example.com/schemas/encrypted-record-patch-integration-secret',
@@ -93,15 +93,15 @@ describe('TypedEnbox.records.patch() integration', () => {
         },
       },
       structure: { secret: {} },
-    } as const satisfies ProtocolDefinition;
+    } as const satisfies ModuleDefinition;
     type Secret = { pin: string; title: string };
-    const protocol = defineProtocol(definition, { secret: recordCodecs.json<Secret>() });
+    const module = defineModule(definition, { secret: recordCodecs.json<Secret>() });
     const context = await createEnboxTestContext({
-      application: defineApplicationManifest({ protocols: [protocol] }),
+      application: defineApplicationManifest({ modules: [module] }),
     });
 
     try {
-      const secrets = context.enbox.using(protocol);
+      const secrets = context.enbox.using(module);
       const created = await secrets.records.create('secret', {
         data: { pin: '1234', title: 'before' },
       });

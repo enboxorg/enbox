@@ -25,6 +25,7 @@ import type { InsertObject, Kysely, Selectable, SelectQueryBuilder, Transaction,
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
 
+import { assertModuleStoreFormat } from './module-store-format.js';
 import { executeWithTransaction } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
@@ -80,9 +81,9 @@ const MESSAGE_STORE_INDEX_COLUMN_COVERAGE = {
   recordId          : true,
   entryId           : true,
   datePublished     : true,
-  protocol          : true,
+  module            : true,
   attester          : true,
-  protocolPath      : true,
+  modulePath        : true,
   recipient         : true,
   contextId         : true,
   parentId          : true,
@@ -136,9 +137,15 @@ export class MessageStoreSql implements MessageStore {
 
     this.#db = new KyselyDatabase<DwnDatabaseType>({ dialect: this.#dialect });
 
-    await this.assertTablesExist();
-    await this.assertNoPreSubstrateRows();
-    await this.epoch();
+    try {
+      await assertModuleStoreFormat(this.#db);
+      await this.assertTablesExist();
+      await this.assertNoPreSubstrateRows();
+      await this.epoch();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
   }
 
   public async close(): Promise<void> {
@@ -458,8 +465,8 @@ export class MessageStoreSql implements MessageStore {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : recordLimit.protocol,
-      protocolPath      : recordLimit.protocolPath,
+      module            : recordLimit.module,
+      modulePath        : recordLimit.modulePath,
     };
     if (recordLimit.contextId !== undefined) {
       candidateFilter.contextId = { subtree: recordLimit.contextId };

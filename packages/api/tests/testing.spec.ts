@@ -1,15 +1,15 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { describe, expect, it } from 'bun:test';
 
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 
 const NotesDefinition = {
-  protocol  : 'https://example.com/protocols/api-test-context',
+  module    : 'https://example.com/modules/api-test-context',
   published : false,
   types     : {
     note: {
@@ -19,19 +19,19 @@ const NotesDefinition = {
     },
   },
   structure: { note: {} },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const NotesProtocol = defineProtocol(NotesDefinition, {
+const NotesModule = defineModule(NotesDefinition, {
   note: recordCodecs.json<{ text: string }>(),
 });
-const Application = defineApplicationManifest({ protocols: [NotesProtocol] } as const);
+const Application = defineApplicationManifest({ modules: [NotesModule] } as const);
 
 describe('createEnboxTestContext()', () => {
-  it('installs typed protocols and round-trips encrypted records through a real local DWN', async () => {
+  it('installs typed modules and round-trips encrypted records through a real local DWN', async () => {
     const context = await createEnboxTestContext({ application: Application });
 
     try {
-      const notes = context.enbox.using(NotesProtocol);
+      const notes = context.enbox.using(NotesModule);
       expect(await notes.verifyInstalled()).toMatchObject({
         installed                : true,
         missingKeyAgreementPaths : [],
@@ -57,8 +57,8 @@ describe('createEnboxTestContext()', () => {
 
     try {
       expect(left.session.did).not.toBe(right.session.did);
-      const leftNotes = left.enbox.using(NotesProtocol);
-      const rightNotes = right.enbox.using(NotesProtocol);
+      const leftNotes = left.enbox.using(NotesModule);
+      const rightNotes = right.enbox.using(NotesModule);
       await Promise.all([
         leftNotes.records.create('note', { data: { text: 'left' } }),
         rightNotes.records.create('note', { data: { text: 'right' } }),
@@ -84,7 +84,7 @@ describe('createEnboxTestContext()', () => {
     const stopSync = sinon.spy(context.enbox.agent.sync, 'stopSync');
 
     try {
-      const view = await context.enbox.using(NotesProtocol).records.observe('note', {
+      const view = await context.enbox.using(NotesModule).records.observe('note', {
         pagination: { limit: 10 },
       });
 

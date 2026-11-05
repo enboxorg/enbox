@@ -1,5 +1,5 @@
 import type { Jwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry, Status } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsQueryReplyEntry, RecordsReadReplyEntry, Status } from '@enbox/dwn-sdk-js';
 
 import { Convert, parseDurationInMilliseconds, Stream, TtlCache } from '@enbox/common';
 
@@ -45,8 +45,8 @@ export interface AgentDataStore<TStoreObject> {
 export class DwnDataStoreReadError extends Error {
   public readonly status: Readonly<Status>;
 
-  public constructor(storeName: string, recordOrProtocol: string, status: Status) {
-    super(`${storeName}: Failed to read data from DWN for: ${recordOrProtocol} (${status.code}): ${status.detail}`);
+  public constructor(storeName: string, recordOrModule: string, status: Status) {
+    super(`${storeName}: Failed to read data from DWN for: ${recordOrModule} (${status.code}): ${status.detail}`);
     this.name = 'DwnDataStoreReadError';
     this.status = { ...status };
   }
@@ -72,29 +72,29 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
   protected _index = new TtlCache<string, string>({ ttl: parseDurationInMilliseconds('21 days'), max: 1000 });
 
   /**
-   * Cache of tenant DIDs that have been initialized with the protocol.
-   * This is used to avoid redundant protocol initialization requests.
+   * Cache of tenant DIDs that have been initialized with the module.
+   * This is used to avoid redundant module initialization requests.
    *
    * Uses TtlCache with a 1-hour TTL rather than a permanent Set so that
-   * protocol state changes by another agent/process (protocol upgrade,
+   * module state changes by another agent/process (module upgrade,
    * reinstall, or tenant clear) are eventually re-detected.
    */
-  protected _protocolInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: parseDurationInMilliseconds('1 hour'), max: 1000 });
+  protected _moduleInitializedCache: TtlCache<string, boolean> = new TtlCache({ ttl: parseDurationInMilliseconds('1 hour'), max: 1000 });
 
   /**
-   * The protocol assigned to this storage instance.
+   * The module assigned to this storage instance.
    */
-  protected abstract _recordProtocolDefinition: ProtocolDefinition;
+  protected abstract _recordModuleDefinition: ModuleDefinition;
 
   /**
    * Properties to use when writing and querying records with the DWN store.
-   * Includes the protocol and protocol path owned by the concrete store.
+   * Includes the module and module path owned by the concrete store.
    */
   protected abstract _recordProperties: {
     dataFormat: string;
-    protocol: string;
-    protocolPath: string;
-    schema?: ProtocolDefinition['types'][string]['schema'];
+    module: string;
+    modulePath: string;
+    schema?: ModuleDefinition['types'][string]['schema'];
   };
 
   public async delete({ id, agent, tenant }: DataStoreDeleteParams): Promise<boolean> {
@@ -156,7 +156,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
     // Determine the tenant identifier (DID) for the set operation.
     const tenantDid = await getDataStoreTenant({ agent, tenant, didUri: id });
 
-    // initialize the storage protocol if not already done
+    // initialize the storage module if not already done
     await this.initialize({ tenant: tenantDid, agent });
 
     const messageParams: DwnMessageParams[DwnInterface.RecordsWrite] = { ...this._recordProperties };
@@ -184,7 +184,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
     // Convert the store object to a byte array, which will be the data payload of the DWN record.
     const dataBytes = Convert.object(data).toUint8Array();
 
-    // Store the record in the DWN. The installed protocol definition determines
+    // Store the record in the DWN. The installed module definition determines
     // whether the agent encrypts the payload.
     const { message, reply: { status } } = await agent.dwn.processRequest({
       author        : tenantDid,
@@ -209,36 +209,36 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
   }
 
   /**
-   * Initialize the relevant protocol for the given tenant.
-   * This confirms that the storage protocol is configured, otherwise it will be installed.
+   * Initialize the relevant module for the given tenant.
+   * This confirms that the storage module is configured, otherwise it will be installed.
    */
   public async initialize({ tenant, agent }: DataStoreTenantParams): Promise<void> {
     const tenantDid = await getDataStoreTenant({ agent, tenant });
-    if (this._protocolInitializedCache.has(tenantDid)) {
+    if (this._moduleInitializedCache.has(tenantDid)) {
       return;
     }
 
     const { reply: { status, entries } } = await agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsQuery,
+      messageType   : DwnInterface.ModulesQuery,
       messageParams : {
         filter: {
-          protocol: this._recordProtocolDefinition.protocol
+          module: this._recordModuleDefinition.module
         }
       },
     });
 
     if (status.code !== 200) {
-      throw new Error(`Failed to query for protocols: ${status.code} - ${status.detail}`);
+      throw new Error(`Failed to query for modules: ${status.code} - ${status.detail}`);
     }
 
     if (entries?.length === 0) {
-      // protocol is not installed, install it
-      await this.installProtocol(tenantDid, agent);
+      // module is not installed, install it
+      await this.installModule(tenantDid, agent);
     }
 
-    this._protocolInitializedCache.set(tenantDid, true);
+    this._moduleInitializedCache.set(tenantDid, true);
   }
 
   /**
@@ -259,7 +259,7 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
     });
 
     if (queryReply.status.code !== 200) {
-      throw new DwnDataStoreReadError(this.name, this._recordProperties.protocol, queryReply.status);
+      throw new DwnDataStoreReadError(this.name, this._recordProperties.module, queryReply.status);
     }
 
     // A failed query must not erase the last successfully built index.
@@ -363,22 +363,22 @@ export abstract class DwnDataStore<TStoreObject extends Record<string, any> = Jw
   }
 
   /**
-   * Install the protocol for the given tenant using a `ProtocolsConfigure` message.
-   * When any type in the protocol definition has `encryptionRequired: true`,
-   * `$keyAgreement` keys are derived and injected into the protocol definition.
+   * Install the module for the given tenant using a `ModulesConfigure` message.
+   * When any type in the module definition has `encryptionRequired: true`,
+   * `$keyAgreement` keys are derived and injected into the module definition.
    * If the tenant DID lacks an X25519 keyAgreement key, the error propagates
    * — plaintext fallback is not allowed.
    */
-  private async installProtocol(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
+  private async installModule(tenant: string, agent: EnboxPlatformAgent): Promise<void> {
     const { reply : { status } } = await agent.dwn.processRequest({
       author        : tenant,
       target        : tenant,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: this._recordProtocolDefinition },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: this._recordModuleDefinition },
     });
 
     if (status.code !== 202) {
-      throw new Error(`Failed to install protocol: ${status.code} - ${status.detail}`);
+      throw new Error(`Failed to install module: ${status.code} - ${status.detail}`);
     }
   }
 

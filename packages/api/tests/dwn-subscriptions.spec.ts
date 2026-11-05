@@ -1,5 +1,5 @@
 import type { BearerDid } from '@enbox/dids';
-import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { DwnModuleDefinition } from '@enbox/agent';
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
 
 import sinon from 'sinon';
@@ -54,42 +54,42 @@ describe('DwnApi raw subscriptions', () => {
     await testHarness.closeStorage();
   });
 
-  async function configureNoteProtocol(): Promise<DwnProtocolDefinition> {
-    const protocol = `https://example.com/protocols/raw-subscription-${TestDataGenerator.randomString(15)}`;
-    const definition: DwnProtocolDefinition = {
-      protocol,
+  async function configureNoteModule(): Promise<DwnModuleDefinition> {
+    const module = `https://example.com/modules/raw-subscription-${TestDataGenerator.randomString(15)}`;
+    const definition: DwnModuleDefinition = {
+      module,
       published : true,
       types     : {
         note: {
           dataFormats : ['text/plain'],
-          schema      : `${protocol}/note`,
+          schema      : `${module}/note`,
         },
       },
       structure: { note: {} },
     };
 
-    expect((await dwnAlice.protocols.configure({ definition })).status.code).toBe(202);
+    expect((await dwnAlice.modules.configure({ definition })).status.code).toBe(202);
     return definition;
   }
 
-  async function writeNote(definition: DwnProtocolDefinition, data: string): Promise<string> {
+  async function writeNote(definition: DwnModuleDefinition, data: string): Promise<string> {
     const { status, record } = await dwnAlice.records.write({
       data,
-      dataFormat   : 'text/plain',
-      protocol     : definition.protocol,
-      protocolPath : 'note',
-      schema       : definition.types.note.schema,
+      dataFormat : 'text/plain',
+      module     : definition.module,
+      modulePath : 'note',
+      schema     : definition.types.note.schema,
     });
     expect(status.code).toBe(202);
     return record!.id;
   }
 
-  it('should return the raw MessagesSubscribe reply and deliver raw protocol events', async () => {
-    const definition = await configureNoteProtocol();
+  it('should return the raw MessagesSubscribe reply and deliver raw module events', async () => {
+    const definition = await configureNoteModule();
     const messages: DwnSubscriptionMessage[] = [];
 
     const reply = await dwnAlice.messages.subscribe({
-      filters             : [{ protocol: definition.protocol }],
+      filters             : [{ module: definition.module }],
       subscriptionHandler : (message): void => { messages.push(message); },
     });
 
@@ -113,10 +113,10 @@ describe('DwnApi raw subscriptions', () => {
   });
 
   it('should install the handler before synchronous cursor catch-up begins', async () => {
-    const definition = await configureNoteProtocol();
+    const definition = await configureNoteModule();
     const baselineMessages: DwnSubscriptionMessage[] = [];
     const baseline = await dwnAlice.messages.subscribe({
-      filters             : [{ protocol: definition.protocol }],
+      filters             : [{ module: definition.module }],
       subscriptionHandler : (message): void => { baselineMessages.push(message); },
     });
 
@@ -136,7 +136,7 @@ describe('DwnApi raw subscriptions', () => {
     const resumedMessages: DwnSubscriptionMessage[] = [];
     const resumed = await dwnAlice.messages.subscribe({
       cursor              : firstEvent.cursor,
-      filters             : [{ protocol: definition.protocol }],
+      filters             : [{ module: definition.module }],
       subscriptionHandler : (message): void => { resumedMessages.push(message); },
     });
 
@@ -147,12 +147,12 @@ describe('DwnApi raw subscriptions', () => {
   });
 
   it('should return the raw RecordsSubscribe snapshot and deliver later record events', async () => {
-    const definition = await configureNoteProtocol();
+    const definition = await configureNoteModule();
     const initialRecordId = await writeNote(definition, 'initial');
     const messages: DwnSubscriptionMessage[] = [];
 
     const reply = await dwnAlice.records.subscribe({
-      filter              : { protocol: definition.protocol, protocolPath: 'note' },
+      filter              : { module: definition.module, modulePath: 'note' },
       subscriptionHandler : (message): void => { messages.push(message); },
     });
 
@@ -169,12 +169,12 @@ describe('DwnApi raw subscriptions', () => {
   });
 
   it('should pass the exact handler through to the agent request', async () => {
-    const definition = await configureNoteProtocol();
+    const definition = await configureNoteModule();
     const processSpy = sinon.spy(testHarness.agent, 'processDwnRequest');
     const subscriptionHandler = (_message: DwnSubscriptionMessage): void => {};
 
     const reply = await dwnAlice.records.subscribe({
-      filter: { protocol: definition.protocol, protocolPath: 'note' },
+      filter: { module: definition.module, modulePath: 'note' },
       subscriptionHandler,
     });
 
@@ -193,8 +193,8 @@ describe('DwnApi raw subscriptions', () => {
     });
 
     await expect(delegated.messages.subscribe({
-      filters             : [{ protocol: 'http://a.example' }, { protocol: 'http://b.example' }],
+      filters             : [{ module: 'http://a.example' }, { module: 'http://b.example' }],
       subscriptionHandler : (): void => {},
-    })).rejects.toThrow('single-protocol filter set or explicit permissionGrantIds');
+    })).rejects.toThrow('single-module filter set or explicit permissionGrantIds');
   });
 });

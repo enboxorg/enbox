@@ -20,9 +20,9 @@ import { MemoryStorage } from '../src/storage/storage.js';
 import { persistSessionBinding } from '../src/connect/session-state.js';
 import { retryOrphanedRevocations } from '../src/index.js';
 import { runAuthSessionLifecycle } from '../src/connect/lifecycle.js';
-import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+import { setStoredRetryContext, setStoredSession } from './helpers/session.js';
 
 function createTestManager(
   agent: any,
@@ -136,7 +136,7 @@ async function seedInterruptedDisconnect(
   revocations = [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
 ): Promise<void> {
   await seedDelegatedSession(storage, revocations);
-  await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+  await setStoredRetryContext(storage, JSON.stringify([{
     delegateDid  : 'did:jwk:delegate123',
     connectedDid : 'did:dht:owner456',
     revocations,
@@ -150,19 +150,19 @@ function mockGrantRecord(grantId: string): any {
     contextId   : grantId,
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Records', method: 'Read', protocol: 'https://test.xyz' },
+      scope       : { interface: 'Records', method: 'Read', module: 'https://test.xyz' },
       delegated   : true,
     })),
     descriptor: {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:jwk:delegate123',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:jwk:delegate123',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {
@@ -678,7 +678,7 @@ describe('grant revocation on disconnect', () => {
     const activeDelegateDid = 'did:jwk:active-delegate';
     const activeConnectedDid = 'did:dht:owner456';
     await setStoredSession(storage, activeConnectedDid, activeDelegateDid);
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:delegate123',
       connectedDid : 'did:dht:owner456',
       revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
@@ -733,7 +733,7 @@ describe('grant revocation on disconnect', () => {
       connectedDid : 'did:dht:owner456',
       revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
     }]);
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, pendingJournal);
+    await setStoredRetryContext(storage, pendingJournal);
 
     let syncStopped = false;
     const agent = buildRevocationAgent({
@@ -767,7 +767,7 @@ describe('grant revocation on disconnect', () => {
   test('retry maintenance and session restore coexist', async () => {
     const storage = new MemoryStorage();
     // Both the retry journal and a restorable session exist.
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:old-delegate',
       connectedDid : 'did:dht:old-owner',
       revocations  : [{ grantId: 'grant-old', revocationGrantId: 'rev-grant-old' }],
@@ -800,7 +800,7 @@ describe('grant revocation on disconnect', () => {
   // 9. Successful retry clears context
   test('successful retry clears context without affecting session', async () => {
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:delegate123',
       connectedDid : 'did:dht:owner456',
       revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
@@ -845,7 +845,7 @@ describe('grant revocation on disconnect', () => {
     };
 
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:delegate123',
       connectedDid : 'did:dht:owner456',
       revocations  : [
@@ -872,7 +872,7 @@ describe('grant revocation on disconnect', () => {
   test('old retry context survives new connect', async () => {
     const storage = new MemoryStorage();
     // Old retry context from a previous failed disconnect
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:old-delegate',
       connectedDid : 'did:dht:old-owner',
       revocations  : [{ grantId: 'grant-old', revocationGrantId: 'rev-grant-old' }],
@@ -894,7 +894,7 @@ describe('grant revocation on disconnect', () => {
 
   test('concurrent retry cannot overwrite a newly staged disconnect', async () => {
     const storage = new MemoryStorage();
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+    await setStoredRetryContext(storage, JSON.stringify([{
       delegateDid  : 'did:jwk:old-delegate-A',
       connectedDid : 'did:dht:owner-A',
       revocations  : [{ grantId: 'grant-A1', revocationGrantId: 'rev-A1' }],
@@ -1015,7 +1015,7 @@ describe('grant revocation on disconnect', () => {
     const storage = new MemoryStorage();
 
     // Pre-existing retry context from a previous partial disconnect
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([
+    await setStoredRetryContext(storage, JSON.stringify([
       { delegateDid  : 'did:jwk:delegate123', connectedDid : 'did:dht:owner456', revocations  : [
         { grantId: 'old-grant', revocationGrantId: 'old-rev' },
       ] },
@@ -1047,7 +1047,7 @@ describe('grant revocation on disconnect', () => {
     const storage = new MemoryStorage();
 
     // Only entry is for the same delegate that's disconnecting
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([
+    await setStoredRetryContext(storage, JSON.stringify([
       { delegateDid  : 'did:jwk:delegate123', connectedDid : 'did:dht:owner456', revocations  : [
         { grantId: 'old-grant', revocationGrantId: 'old-rev' },
       ] },

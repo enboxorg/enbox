@@ -26,9 +26,9 @@ export type RecordValidator = ((value: unknown) => boolean) & {
   readonly errors?: readonly RecordValidationFailure[] | null;
 };
 
-/** Metadata available when a protocol codec processes one record value. */
+/** Metadata available when a module codec processes one record value. */
 export type RecordCodecContext = Readonly<{
-  protocolPath?: string;
+  modulePath?: string;
   recordId?: string;
   schema?: string;
 }>;
@@ -43,7 +43,7 @@ export type JsonRecordCodecOptions = {
 export class RecordValidationError extends Error {
   /** Validator diagnostics, or an empty array when the validator supplied none. */
   public readonly failures: readonly RecordValidationFailure[];
-  public readonly protocolPath?: string;
+  public readonly modulePath?: string;
   public readonly recordId?: string;
   public readonly schema?: string;
 
@@ -52,7 +52,7 @@ export class RecordValidationError extends Error {
     context: RecordCodecContext = {},
   ) {
     const subject = context.recordId === undefined ? 'Record data' : `Record '${context.recordId}' data`;
-    const path = context.protocolPath === undefined ? '' : ` at protocol path '${context.protocolPath}'`;
+    const path = context.modulePath === undefined ? '' : ` at module path '${context.modulePath}'`;
     const schema = context.schema === undefined ? '' : ` against schema '${context.schema}'`;
     const firstFailure = failures[0];
     const detail = firstFailure === undefined
@@ -62,14 +62,14 @@ export class RecordValidationError extends Error {
     super(`${subject}${path} failed JSON Schema validation${schema}.${detail}`);
     this.name = 'RecordValidationError';
     this.failures = [...failures];
-    this.protocolPath = context.protocolPath;
+    this.modulePath = context.modulePath;
     this.recordId = context.recordId;
     this.schema = context.schema;
   }
 }
 
 /**
- * Converts one protocol record type between its application value and stored
+ * Converts one module record type between its application value and stored
  * plaintext representation. Encryption remains below this boundary.
  */
 export interface RecordCodec<T> {
@@ -80,7 +80,7 @@ export interface RecordCodec<T> {
   decode(data: RecordData, dataFormat: string, context?: RecordCodecContext): Promise<T>;
 }
 
-/** Runtime codecs keyed by protocol type name. */
+/** Runtime codecs keyed by module type name. */
 export type RecordCodecMap = globalThis.Record<string, RecordCodec<unknown>>;
 
 /** Extract the application value type accepted by a record codec. */
@@ -188,7 +188,7 @@ export const recordCodecs = {
 
   /**
    * A private-file envelope with filename and media type inside the payload.
-   * Use it with a protocol type declaring `encryptionRequired: true`.
+   * Use it with a module type declaring `encryptionRequired: true`.
    */
   fileEnvelope(options: FileEnvelopeCodecOptions): FileEnvelopeCodec {
     return createFileEnvelopeCodec(options);
@@ -203,7 +203,7 @@ type RecordCodecBinding<T> = {
 
 const codecByRecord = new WeakMap<object, RecordCodecBinding<unknown>>();
 
-/** @internal Bind a protocol codec to one canonical Record handle. */
+/** @internal Bind a module codec to one canonical Record handle. */
 export function bindRecordCodec<T, Existing = unknown>(
   record : Record<Existing>,
   codec : RecordCodec<T>,
@@ -215,7 +215,7 @@ export function bindRecordCodec<T, Existing = unknown>(
   return record as unknown as Record<T>;
 }
 
-/** @internal Return the protocol codec binding for a canonical Record handle. */
+/** @internal Return the module codec binding for a canonical Record handle. */
 export function getRecordCodecBinding<T>(record: Record<T>): RecordCodecBinding<T> | undefined {
   return codecByRecord.get(record) as RecordCodecBinding<T> | undefined;
 }
@@ -233,7 +233,7 @@ export async function encodeRecordValue<T>(
   }
   if (dataFormats !== undefined && !dataFormats.includes(encoded.dataFormat)) {
     throw new TypeError(
-      `RecordCodec: dataFormat '${encoded.dataFormat}' is not declared by this protocol type.`,
+      `RecordCodec: dataFormat '${encoded.dataFormat}' is not declared by this module type.`,
     );
   }
   return encoded;

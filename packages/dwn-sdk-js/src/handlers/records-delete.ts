@@ -9,7 +9,7 @@ import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
-import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { ModuleAuthorization } from '../core/module-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
@@ -138,7 +138,7 @@ export class RecordsDeleteHandler implements MethodHandler {
         validationStateReader : this.deps.validationStateReader,
       });
     } else {
-      await ProtocolAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader);
+      await ModuleAuthorization.authorizeDelete(tenant, recordsDelete, recordsWrite, this.deps.validationStateReader);
     }
   }
 

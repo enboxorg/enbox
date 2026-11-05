@@ -1,5 +1,5 @@
 import { DateSort } from '../../src/types/records-types.js';
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexModuleDefinition from '../vectors/module-definitions/dex.json' with { type: 'json' };
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/index.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
@@ -37,7 +37,7 @@ describe('RecordsRead', () => {
       expect(recordsRead.message.descriptor.permissionGrantId).toBe(grantId);
     });
 
-    it('should auto-normalize protocol URL', async () => {
+    it('should auto-normalize module URL', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options = {
@@ -45,14 +45,14 @@ describe('RecordsRead', () => {
         data       : TestDataGenerator.randomBytes(10),
         dataFormat : 'application/json',
         signer     : Jws.createSigner(alice),
-        filter     : { protocol: 'example.com/' },
-        definition : dexProtocolDefinition
+        filter     : { module: 'example.com/' },
+        definition : dexModuleDefinition
       };
       const recordsQuery = await RecordsRead.create(options);
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.protocol).toBe('http://example.com');
+      expect(message.descriptor.filter!.module).toBe('http://example.com');
     });
 
     it('should auto-normalize schema URL', async () => {
@@ -64,7 +64,7 @@ describe('RecordsRead', () => {
         dataFormat : 'application/json',
         signer     : Jws.createSigner(alice),
         filter     : { schema: 'example.com/' },
-        definition : dexProtocolDefinition
+        definition : dexModuleDefinition
       };
       const recordsQuery = await RecordsRead.create(options);
 
