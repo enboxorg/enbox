@@ -1597,11 +1597,14 @@ export class AgentDwnApi {
     if (signerDid === params.sourceDid) {
       return { authorDid: params.sourceDid };
     }
+    const isDelegate = params.granteeDid !== undefined && params.granteeDid !== params.authorDid;
+    const hasGrantContext = isDelegate || params.delegatedGrant !== undefined || params.permissionGrantId !== undefined;
 
     // Match the invoked role by identity, then use the provider's own lexical
-    // reference only when that provider grants it role-creation authority.
+    // reference only for grant-free role authorization. A grant-authorized
+    // consumer write may carry an irrelevant role header that its DWN bypasses.
     let moduleRole: string | undefined;
-    if (params.moduleRole !== undefined) {
+    if (!hasGrantContext && params.moduleRole !== undefined) {
       const invoked = params.resolvedGraph.resolveInvokedRole(params.moduleRole);
       const definition = params.resolvedGraph.definitionsByUri.get(role.owningModuleUri)!;
       const provider = resolveModuleGraph(definition, uri => params.resolvedGraph.definitionsByUri.get(uri));
@@ -1612,8 +1615,7 @@ export class AgentDwnApi {
       )?.rule.role;
     }
 
-    const isDelegate = params.granteeDid !== undefined && params.granteeDid !== params.authorDid;
-    if (!isDelegate && moduleRole !== undefined) {
+    if (moduleRole !== undefined) {
       return { moduleRole };
     }
     // Provider control administration belongs to the source tenant, even when

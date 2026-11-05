@@ -149,6 +149,69 @@ describe('fresh composed role audience authority', () => {
     expect(await audiences(provider.module)).toHaveLength(1);
   });
 
+  it('does not resolve an irrelevant consumer role when provider delegated authority is used', async () => {
+    const installedProvider = await install(provider);
+    await install(consumer);
+    const consumerWrite = await grant(consumer.module, 'Write');
+    const providerRead = await grant(provider.module, 'Read', 'member');
+    await deliverSealCoverage(providerRead, installedProvider);
+    const providerWrite = await grant(provider.module, 'Write', 'member');
+
+    const written = await delegate.agent.processDwnRequest({
+      author        : alice, target        : alice, granteeDid    : bob, messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        module         : consumer.module, modulePath     : 'note', dataFormat     : 'text/plain',
+        delegatedGrant : consumerWrite.message, moduleRole     : 'unknown:issuer',
+      },
+      dataStream: new Blob(['grant-authorized note']),
+    });
+    expect(written.reply.status.code).toBe(202);
+    const controls = await audiences(provider.module);
+    expect(controls).toHaveLength(1);
+    expect(controls[0].authorization.authorDelegatedGrant!.recordId).toBe(providerWrite.grant.id);
+    expect(Jws.decodePlainObjectPayload(controls[0].authorization.signature).moduleRole).toBeUndefined();
+  });
+
+  it('selects a direct provider grant before an issuer role the signer does not hold', async () => {
+    const issuerProvider: ModuleDefinition = {
+      ...provider,
+      types     : { issuer: {}, reader: {} },
+      structure : {
+        issuer : { $role: true },
+        reader : { $role: true, $actions: [{ role: 'issuer', can: ['create'] }] },
+      },
+    };
+    const issuerConsumer: ModuleDefinition = {
+      ...consumer,
+      uses      : { a: provider.module },
+      structure : { note: { $actions: [{ role: 'a:issuer', can: ['create'] }, { role: 'a:reader', can: ['read'] }] } },
+    };
+    await install(issuerProvider);
+    await install(issuerConsumer);
+    // The wallet holds the owner seal key and Bob's signer, but Bob has no issuer role record.
+    await owner.agent.did.import({ portableDid: await delegate.agent.agentDid.export(), tenant: alice });
+    const consumerWrite = await grant(consumer.module, 'Write');
+    const providerWrite = await grant(provider.module, 'Write', 'reader');
+
+    const written = await owner.agent.processDwnRequest({
+      author        : bob, target        : alice, messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        module            : consumer.module, modulePath        : 'note', dataFormat        : 'text/plain',
+        permissionGrantId : consumerWrite.grant.id, moduleRole        : 'a:issuer',
+      },
+      dataStream: new Blob(['direct grant-authorized note']),
+    });
+    expect(written.reply.status.code).toBe(202);
+    const controls = await audiences(provider.module);
+    expect(controls).toHaveLength(1);
+    expect(Message.getAuthor(controls[0])).toBe(bob);
+    expect(controls[0].authorization.authorDelegatedGrant).toBeUndefined();
+    const payload = Jws.decodePlainObjectPayload(controls[0].authorization.signature);
+    expect(payload.permissionGrantId).toBe(providerWrite.grant.id);
+    expect(payload.moduleRole).toBeUndefined();
+    expect(Jws.decodePlainObjectPayload(written.message!.authorization.signature).permissionGrantId).toBe(consumerWrite.grant.id);
+  });
+
   it('requires source-tenant administration instead of a foreign consumer author provider grant', async () => {
     const installedProvider = await install(provider);
     const publicCreate = structuredClone(consumer);
