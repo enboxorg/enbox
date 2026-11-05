@@ -371,7 +371,28 @@ export class ModuleAuthorization {
     }
     const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage, actionRules);
 
-    const invokedRole = incomingMessage.signaturePayload?.moduleRole;
+    const rawInvokedRole = incomingMessage.signaturePayload?.moduleRole;
+    let invokedRole;
+    if (rawInvokedRole !== undefined) {
+      try {
+        invokedRole = graph.resolveInvokedRole(rawInvokedRole);
+      } catch (error) {
+        // The complete governing graph is already loaded. These errors prove the
+        // signed role is invalid under that configuration, rather than unavailable
+        // because a live dependency or storage read is missing.
+        if (error instanceof DwnError && [
+          DwnErrorCode.ModulesConfigureInvalidRefAlias,
+          DwnErrorCode.ModulesConfigureInvalidRefModulePath,
+          DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+        ].includes(error.code as DwnErrorCode)) {
+          throw new DwnError(
+            DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
+            `stored RecordsWrite invokes role '${rawInvokedRole}' which is invalid under the governing module config`
+          );
+        }
+        throw error;
+      }
+    }
     for (const actionRule of actionRules) {
       if (!actionRule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ModuleAction))) {
         continue;
@@ -380,8 +401,7 @@ export class ModuleAuthorization {
       if (invokedRole !== undefined) {
         if (actionRule.role !== undefined) {
           const expected = graph.resolveInvokedRole(actionRule.role);
-          const invoked = graph.resolveInvokedRole(invokedRole);
-          if (expected.owningModuleUri === invoked.owningModuleUri && expected.owningModulePath === invoked.owningModulePath) {
+          if (expected.owningModuleUri === invokedRole.owningModuleUri && expected.owningModulePath === invokedRole.owningModulePath) {
             return;
           }
         }

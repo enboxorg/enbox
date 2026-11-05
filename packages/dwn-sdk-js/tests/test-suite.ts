@@ -15,6 +15,7 @@ import { testModuleComposition } from './features/module-composition.spec.js';
 import { testModuleCreateAction } from './features/module-create-action.spec.js';
 import { testModuleDeleteAction } from './features/module-delete-action.spec.js';
 import { testModuleExampleApps } from './features/module-example-apps.spec.js';
+import { testModuleHistoryRevalidation } from './features/module-history-revalidation.spec.js';
 import { testModulesConfigureHandler } from './handlers/modules-configure.spec.js';
 import { testModulesQueryHandler } from './handlers/modules-query.spec.js';
 import { testModuleUpdateAction } from './features/module-update-action.spec.js';
@@ -91,6 +92,7 @@ export class TestSuite {
     testPermissions();
     testModuleComposition();
     testModuleExampleApps();
+    testModuleHistoryRevalidation();
     testModuleUpgrades();
     testModuleCreateAction();
     testModuleDeleteAction();
