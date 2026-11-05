@@ -456,7 +456,7 @@ export function testModulesConfigureHandler(): void {
         expect(removedRecord.messages).toHaveLength(1);
       });
 
-      it('should reject changing a policy imported by a composing module with existing records', async () => {
+      it('should reject changing an imported policy before any consumer records exist', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const referencedModule = 'http://config-validity.example/referenced-encryption-policy';
         const composingModule = 'http://config-validity.example/composing-encryption-policy';
@@ -498,21 +498,6 @@ export function testModulesConfigureHandler(): void {
         });
         expect((await dwn.processMessage(alice.did, composingConfigure.message)).status.code).toBe(202);
 
-        const composedWrite = await TestDataGenerator.generateRecordsWrite({
-          author           : alice,
-          data             : Encoder.stringToBytes('composed thread'),
-          dataFormat       : 'text/plain',
-          dateCreated      : '2025-04-03T00:00:00.000000Z',
-          messageTimestamp : '2025-04-03T00:00:00.000000Z',
-          module           : composingModule,
-          modulePath       : 'thread',
-        });
-        expect((await dwn.processMessage(
-          alice.did,
-          composedWrite.message,
-          { dataStream: composedWrite.dataStream },
-        )).status.code).toBe(202);
-
         const encryptedReferencedDefinition = await Modules.deriveAndInjectPublicEncryptionKeys({
           ...referencedDefinition,
           types: { thread: { dataFormats: ['text/plain'], encryptionRequired: true } },
@@ -524,8 +509,8 @@ export function testModulesConfigureHandler(): void {
         });
         const changedReferencedReply = await dwn.processMessage(alice.did, changedReferencedConfigure.message);
         expect(changedReferencedReply.status.code).toBe(400);
-        expect(changedReferencedReply.status.detail).toContain(DwnErrorCode.ModulesConfigureEncryptionPolicyImmutable);
-        expect(changedReferencedReply.status.detail).toContain(`imported by module '${composingModule}'`);
+        expect(changedReferencedReply.status.detail).toContain(DwnErrorCode.ModulesConfigureIncompatibleContractUpdate);
+        expect(changedReferencedReply.status.detail).toContain(composingModule);
       });
 
       it('should store all module versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {

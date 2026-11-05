@@ -9,6 +9,7 @@ import type { RecordsCountMessage, RecordsDeleteMessage, RecordsFilter, RecordsQ
 import { Cid } from './cid.js';
 import { DataStream } from './data-stream.js';
 import { DateSort } from '../types/records-types.js';
+import { DwnConstant } from '../core/dwn-constant.js';
 import { Encoder } from './encoder.js';
 import { FilterUtility } from './filter.js';
 import { Jws } from './jws.js';
@@ -304,6 +305,9 @@ export class Records {
     allowBoundedPathWideSelection = false,
   ): void {
     const { contextId, parentId, modulePath } = filter;
+    if (contextId !== undefined && contextId.split('/').length > DwnConstant.maxRecordNestingDepth) {
+      throw new DwnError(errorCode, `${operationName} contextId exceeds ${DwnConstant.maxRecordNestingDepth} physical levels`);
+    }
     if (!modulePath?.includes('/')) {
       return;
     }
@@ -320,11 +324,10 @@ export class Records {
       return;
     }
 
-    const modulePathDepth = modulePath.split('/').length;
     const contextIdSegments = contextId?.split('/');
     if (
       contextIdSegments !== undefined &&
-      contextIdSegments.length <= modulePathDepth &&
+      contextIdSegments.length <= DwnConstant.maxRecordNestingDepth &&
       contextIdSegments.every(segment => segment.length > 0)
     ) {
       return;

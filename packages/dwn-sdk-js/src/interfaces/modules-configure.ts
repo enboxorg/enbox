@@ -10,14 +10,16 @@ import type {
 import { AbstractMessage } from '../core/abstract-message.js';
 import { DwnConstant } from '../core/dwn-constant.js';
 import { FilterUtility } from '../utils/filter.js';
+import { getRoleAudienceContextId } from '../core/module-role-records.js';
 import { Message } from '../core/message.js';
 import { ModulesGrantAuthorization } from '../core/modules-grant-authorization.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
 import { Time } from '../utils/time.js';
+import { validateJsonSchema } from '../schema-validator.js';
 import { validateModuleTagSchemaDefinition } from '../utils/module-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRoleAudienceContextId, getRuleSetAtPath, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
+import { getRuleSetAtPath, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
 import { ModuleAction, ModuleActor } from '../types/modules-types.js';
 import { normalizeModuleUrl, normalizeSchemaUrl, validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 
@@ -43,7 +45,7 @@ type RuleSetValidationInput = {
 };
 
 export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
-  private static readonly maxRecordNestingDepth = 10;
+  private static readonly maxRecordNestingDepth = DwnConstant.maxRecordNestingDepth;
 
   public static async parse(message: ModulesConfigureMessage): Promise<ModulesConfigure> {
     ModulesConfigure.validateReservedEncryptionControlPath(message.descriptor?.definition);
@@ -103,7 +105,12 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
   /**
    * Performs validation on the given module definition that are not easy to do using a JSON schema.
    */
-  private static validateModuleDefinition(definition: ModuleDefinition): void {
+  public static validateModuleDefinition(
+    definition: ModuleDefinition,
+    options: { requireKeyAgreement?: boolean } = {},
+  ): void {
+    validateJsonSchema('ModuleDefinition', definition);
+    ModulesConfigure.validateReservedEncryptionControlPath(definition);
     const { module, types, uses } = definition;
 
     // validate module url
@@ -123,7 +130,7 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     }
 
     // validate `structure`
-    ModulesConfigure.validateStructure(definition);
+    ModulesConfigure.validateStructure(definition, options.requireKeyAgreement !== false);
   }
 
   /**
@@ -185,6 +192,7 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
    */
   private static validateUses(uses: ModuleUses, ownModuleUri: string): void {
     const aliasPattern = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+    const targetUris = new Set<string>();
 
     for (const alias in uses) {
       if (!aliasPattern.test(alias)) {
@@ -211,17 +219,24 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
           `a module cannot compose itself.`
         );
       }
+      if (targetUris.has(uses[alias])) {
+        throw new DwnError(
+          DwnErrorCode.ModulesConfigureDuplicateUsesModule,
+          `multiple aliases reference module '${uses[alias]}'; use one alias per module URI`
+        );
+      }
+      targetUris.add(uses[alias]);
     }
   }
 
-  private static validateStructure(definition: ModuleDefinition): void {
+  private static validateStructure(definition: ModuleDefinition, requireKeyAgreement: boolean): void {
     const { uses } = definition;
 
     // gather all declared record types
     const recordTypeNames = Object.keys(definition.types);
 
     const hasEncryptedTypes = Object.values(definition.types).some((type): boolean => type.encryptionRequired === true);
-    if (hasEncryptedTypes && definition.$keyAgreement === undefined) {
+    if (requireKeyAgreement && hasEncryptedTypes && definition.$keyAgreement === undefined) {
       throw new DwnError(
         DwnErrorCode.ModulesConfigureMissingTopLevelKeyAgreement,
         `Module '${definition.module}' declares encrypted types but has no top-level $keyAgreement.`
@@ -231,6 +246,29 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     // gather all roles (local roles only — cross-module roles are validated by alias existence)
     const rolePaths = ModulesConfigure.collectRolePaths('', definition.structure as ModuleRuleSet, []);
 
+    const localTypeNames = new Set<string>();
+    const collectLocalTypes = (structure: ModuleRuleSet): void => {
+      for (const [name, value] of Object.entries(structure)) {
+        if (name.startsWith('$')) {
+          continue;
+        }
+        const node = value as ModuleRuleSet;
+        if (node.$ref === undefined) {
+          localTypeNames.add(name);
+        }
+        collectLocalTypes(node);
+      }
+    };
+    collectLocalTypes(definition.structure);
+    for (const [name, node] of Object.entries(definition.structure)) {
+      if (node.$ref !== undefined && Object.hasOwn(definition.types, name) && !localTypeNames.has(name)) {
+        throw new DwnError(
+          DwnErrorCode.ModulesConfigureInvalidRefTypeCollision,
+          `attachment '${name}' cannot declare a local type unless a local record node also uses that type`
+        );
+      }
+    }
+
     // validate the entire rule set structure recursively
     ModulesConfigure.validateRuleSetRecursively({
       ruleSet       : definition.structure as ModuleRuleSet,
@@ -238,8 +276,9 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
       recordTypeNames,
       rolePaths,
       uses,
-      types         : definition.types,
-      rootStructure : definition.structure,
+      types             : definition.types,
+      rootStructure     : definition.structure,
+      requireKeyAgreement,
     });
   }
 
@@ -276,8 +315,18 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
   /**
    * Validates the given rule set structure then recursively validates its nested child rule sets.
    */
-  private static validateRuleSetRecursively(input: RuleSetValidationInput): void {
-    const { ruleSet, modulePath, recordTypeNames } = input;
+  private static validateRuleSetRecursively(
+    input: {
+      ruleSet: ModuleRuleSet, ruleSetModulePath: string, recordTypes: string[],
+      roles: string[], uses?: ModuleUses, types: ModuleTypes, rootStructure: { [key: string]: ModuleRuleSet },
+      requireKeyAgreement: boolean
+    }
+  ): void {
+    const { ruleSet, ruleSetModulePath, recordTypes, roles, uses, types, rootStructure, requireKeyAgreement } = input;
+    const crossesAttachment = (path: string): boolean => rootStructure[path.split('/')[0]]?.$ref !== undefined;
+
+    // Validate $ref constraints: $ref is only supported at root level (no `/` in module path),
+    // and a $ref node is a pure attachment point with no other directives.
     if (ruleSet.$ref !== undefined) {
       ModulesConfigure.validateRefNode(ruleSet, modulePath, input.uses);
     }
@@ -379,22 +428,24 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     }
   }
 
-  private static validateActionRole(
-    actionRule: ModuleActionRule, modulePath: string, rolePaths: string[], uses?: ModuleUses,
-  ): void {
-    // Validate the `role` property of an `action` if exists.
-    if (actionRule.role !== undefined) {
-      if (isCrossModuleRef(actionRule.role)) {
-        // Cross-module role reference: validate alias exists in `uses`
-        const parsedRole = ModulesConfigure.validateCrossModuleAlias(actionRule.role, uses, modulePath, 'role');
-        ModulesConfigure.validateRoleParentContextDepth(parsedRole.modulePath, modulePath, actionRule);
-      } else {
-        // Local role: make sure the role contains a valid module path to a role record
-        if (!rolePaths.includes(actionRule.role)) {
-          throw new DwnError(
-            DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
-            `Role in action ${JSON.stringify(actionRule)} for rule set ${modulePath} does not exist.`
-          );
+    for (let i = 0; i < actionRules.length; i++) {
+      const actionRule = actionRules[i];
+
+      // Validate the `role` property of an `action` if exists.
+      if (actionRule.role !== undefined) {
+        if (isCrossModuleRef(actionRule.role)) {
+          // Cross-module role reference: validate alias exists in `uses`
+          ModulesConfigure.validateCrossModuleAlias(actionRule.role, uses, ruleSetModulePath, 'role');
+        } else if (!crossesAttachment(ruleSetModulePath) && !crossesAttachment(actionRule.role)) {
+          // Local role: make sure the role contains a valid module path to a role record
+          if (!roles.includes(actionRule.role)) {
+            throw new DwnError(
+              DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+              `Role in action ${JSON.stringify(actionRule)} for rule set ${ruleSetModulePath} does not exist.`
+            );
+          }
+
+          ModulesConfigure.validateRoleParentContextDepth(actionRule.role, ruleSetModulePath, actionRule);
         }
 
         ModulesConfigure.validateRoleParentContextDepth(actionRule.role, modulePath, actionRule);
@@ -449,23 +500,104 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
         const isSelfOrAncestor = FilterUtility.matchesSubtree(actionRule.of, modulePath);
         if (!isSelfOrAncestor) {
           throw new DwnError(
-            DwnErrorCode.ModulesConfigureInvalidActionOfNotAnAncestor,
-            `'of' value '${actionRule.of}' is not an ancestor of module path '${modulePath}' ` +
-            `in action rule ${JSON.stringify(actionRule)}.`
+            DwnErrorCode.ModulesConfigureInvalidRecipientOfAction,
+            'Rules for `recipient` without `of` property must have `can` containing only `co-update`, `co-delete`, and `co-prune`.'
+          );
+        }
+      }
+
+      // Validate that if `who` is set to `author` then `of` is set
+      if (actionRule.who === ModuleActor.Author && !actionRule.of) {
+        throw new DwnError(
+          DwnErrorCode.ModulesConfigureInvalidActionMissingOf,
+          `'of' is required when 'author' is specified as 'who'`
+        );
+      }
+
+      // Validate that `of` points to the current module path or an ancestor of it.
+      // At runtime, `checkActor()` searches the record chain for a matching `modulePath` equal to `actionRule.of`.
+      // If `of` is not the current path or one of its ancestors, the action rule would silently never authorize anyone.
+      if (actionRule.of !== undefined && ruleSetModulePath !== '') {
+        if (isCrossModuleRef(actionRule.of)) {
+          // Cross-module `of` reference: validate alias exists in `uses`
+          ModulesConfigure.validateCrossModuleAlias(actionRule.of, uses, ruleSetModulePath, 'of');
+        } else if (!crossesAttachment(ruleSetModulePath) && !crossesAttachment(actionRule.of)) {
+          // Local `of`: must be self or ancestor
+          const isSelfOrAncestor = FilterUtility.matchesSubtree(actionRule.of, ruleSetModulePath);
+          if (!isSelfOrAncestor) {
+            throw new DwnError(
+              DwnErrorCode.ModulesConfigureInvalidActionOfNotAnAncestor,
+              `'of' value '${actionRule.of}' is not an ancestor of module path '${ruleSetModulePath}' ` +
+              `in action rule ${JSON.stringify(actionRule)}.`
+            );
+          }
+        }
+      }
+
+      // validate that if `can` contains `update`, `delete`, or `prune`, it must also contain `create`
+      // because these are author-only actions, and you can only be the author if you can create
+      if (actionRule.can !== undefined) {
+        if (actionRule.can.includes(ModuleAction.Update) && !actionRule.can.includes(ModuleAction.Create)) {
+          throw new DwnError(
+            DwnErrorCode.ModulesConfigureInvalidActionUpdateWithoutCreate,
+            `Action rule ${JSON.stringify(actionRule)} contains 'update' action but missing the required 'create' action.`
+          );
+        }
+
+        if (actionRule.can.includes(ModuleAction.Delete) && !actionRule.can.includes(ModuleAction.Create)) {
+          throw new DwnError(
+            DwnErrorCode.ModulesConfigureInvalidActionDeleteWithoutCreate,
+            `Action rule ${JSON.stringify(actionRule)} contains 'delete' action but missing the required 'create' action.`
+          );
+        }
+
+        if (actionRule.can.includes(ModuleAction.Prune) && !actionRule.can.includes(ModuleAction.Create)) {
+          throw new DwnError(
+            DwnErrorCode.ModulesConfigureInvalidActionPruneWithoutCreate,
+            `Action rule ${JSON.stringify(actionRule)} contains 'prune' action but missing the required 'create' action.`
+          );
+        }
+      }
+
+      // Validate that there are no duplicate actors or roles in the remaining action rules:
+      // ie. no two action rules can have the same combination of `who` + `of` or `role`.
+      // NOTE: we only need to check the remaining action rules that have yet to go through action rule validation loop, as a perf shortcut.
+      for (let j = i + 1; j < actionRules.length; j++) {
+        const otherActionRule = actionRules[j];
+
+        if (actionRule.who === undefined) {
+          // implicitly a role-based action rule
+
+          if (actionRule.role === otherActionRule.role) {
+            throw new DwnError(
+              DwnErrorCode.ModulesConfigureDuplicateRoleInRuleSet,
+              `More than one action rule per role ${actionRule.role} not allowed within a rule set: ${JSON.stringify(actionRule)}`
+            );
+          }
+        } else if (actionRule.who === otherActionRule.who && actionRule.of === otherActionRule.of) {
+          throw new DwnError(
+            DwnErrorCode.ModulesConfigureDuplicateActorInRuleSet,
+            `More than one action rule per actor ${actionRule.who} of ${actionRule.of} ` +
+            `not allowed within a rule set: ${JSON.stringify(actionRule)}`
           );
         }
       }
     }
   }
 
-  private static validateAuthorActionPrerequisites(actionRule: ModuleActionRule): void {
-    // validate that if `can` contains `update`, `delete`, or `prune`, it must also contain `create`
-    // because these are author-only actions, and you can only be the author if you can create
-    if (actionRule.can !== undefined) {
-      if (actionRule.can.includes(ModuleAction.Update) && !actionRule.can.includes(ModuleAction.Create)) {
-        throw new DwnError(
-          DwnErrorCode.ModulesConfigureInvalidActionUpdateWithoutCreate,
-          `Action rule ${JSON.stringify(actionRule)} contains 'update' action but missing the required 'create' action.`
+    if (ruleSetModulePath !== '' && ruleSet.$ref === undefined) {
+      const typeName = ruleSetModulePath.split('/').pop()!;
+      const moduleType = types[typeName];
+      if (moduleType?.encryptionRequired === true) {
+        if (requireKeyAgreement && ruleSet.$keyAgreement === undefined) {
+          throw new DwnError(
+            DwnErrorCode.ModulesConfigureMissingEncryptedPathKeyAgreement,
+            `Encrypted module path '${ruleSetModulePath}' has no $keyAgreement.`
+          );
+        }
+
+        const anyoneCanRead = actionRules.some(
+          (rule: ModuleActionRule): boolean => rule.who === ModuleActor.Anyone && rule.can.includes(ModuleAction.Read)
         );
       }
 
@@ -476,11 +608,19 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
         );
       }
 
-      if (actionRule.can.includes(ModuleAction.Prune) && !actionRule.can.includes(ModuleAction.Create)) {
-        throw new DwnError(
-          DwnErrorCode.ModulesConfigureInvalidActionPruneWithoutCreate,
-          `Action rule ${JSON.stringify(actionRule)} contains 'prune' action but missing the required 'create' action.`
-        );
+          if (!requireKeyAgreement || isCrossModuleRef(actionRule.role) ||
+              crossesAttachment(ruleSetModulePath) || crossesAttachment(actionRule.role)) {
+            continue;
+          }
+
+          const roleRuleSet = getRuleSetAtPath(actionRule.role, rootStructure);
+          if (roleRuleSet?.$keyAgreement === undefined) {
+            throw new DwnError(
+              DwnErrorCode.ModulesConfigureInvalidEncryptedRoleMissingKeyAgreement,
+              `Encrypted module path '${ruleSetModulePath}' references role '${actionRule.role}' with no $keyAgreement.`
+            );
+          }
+        }
       }
     }
   }
@@ -593,6 +733,42 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
         );
       }
     }
+
+    // Validate nested rule sets
+    for (const recordType in ruleSet) {
+      if (recordType.startsWith('$')) {
+        continue;
+      }
+
+      const childRuleSet = ruleSet[recordType] as ModuleRuleSet;
+
+      // A structure key whose rule set has `$ref` does not need to be in the local `types` map —
+      // the type comes from the referenced module. All other keys must be in `types`.
+      if (childRuleSet.$ref === undefined && !recordTypes.includes(recordType)) {
+        throw new DwnError(
+          DwnErrorCode.ModulesConfigureInvalidRuleSetRecordType,
+          `Rule set ${recordType} is not declared as an allowed type in the module definition.`
+        );
+      }
+
+      let childRuleSetModulePath;
+      if (ruleSetModulePath === '') {
+        childRuleSetModulePath = recordType; // case of initial definition structure
+      } else {
+        childRuleSetModulePath = `${ruleSetModulePath}/${recordType}`;
+      }
+
+      ModulesConfigure.validateRuleSetRecursively({
+        ruleSet           : childRuleSet,
+        ruleSetModulePath : childRuleSetModulePath,
+        recordTypes,
+        roles,
+        uses,
+        types,
+        rootStructure,
+        requireKeyAgreement,
+      });
+    }
   }
 
   /** Rejects role paths that let any unrestricted caller issue a role. */
@@ -619,7 +795,9 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
 
   /**
    * Validates that a `$ref` node is a pure attachment point: it must NOT have
-   * `$actions`, `$role`, `$size`, `$tags`, or `$keyAgreement`.
+   * record policy directives such as `$role`, `$size`, `$tags`, or `$keyAgreement`.
+   * Explicit `$actions` are syntactically allowed but do not create a local record
+   * or grant authority over the referenced module's record.
    * Also validates that the `$ref` alias exists in the `uses` map.
    */
   private static validateRefNode(ruleSet: ModuleRuleSet, modulePath: string, uses: ModuleUses | undefined): void {
@@ -649,7 +827,7 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     }
 
     // validate that `$ref` nodes do not have other directives
-    const forbiddenDirectives = ['$actions', '$role', '$size', '$tags', '$keyAgreement', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
+    const forbiddenDirectives = ['$role', '$size', '$tags', '$keyAgreement', '$encryption', '$recordLimit', '$immutable', '$delivery', '$squash'] as const;
     for (const directive of forbiddenDirectives) {
       if (ruleSet[directive] !== undefined) {
         throw new DwnError(
@@ -658,6 +836,12 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
           `$ref nodes are pure attachment points — directives belong on child rule sets.`
         );
       }
+    }
+    if (!Object.keys(ruleSet).some(name => !name.startsWith('$'))) {
+      throw new DwnError(
+        DwnErrorCode.ModulesConfigureInvalidRefWithoutChildren,
+        `attachment '${ruleSetModulePath}' requires at least one local child record`
+      );
     }
   }
 
@@ -668,7 +852,9 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
   private static validateRoleParentContextDepth(rolePath: string, modulePath: string, actionRule: ModuleActionRule): void {
     const syntheticContextId = ModulesConfigure.getSyntheticContextIdForModulePath(modulePath);
 
-    if (getRoleAudienceContextId(rolePath, syntheticContextId) === undefined) {
+    // This check is only called for entirely local paths; attached paths defer to graph resolution.
+    const localRole = { parentPhysicalDepth: rolePath.split('/').length - 1 };
+    if (getRoleAudienceContextId(localRole, syntheticContextId) === undefined) {
       throw new DwnError(
         DwnErrorCode.ModulesConfigureRoleParentContextDepthExceeded,
         `role '${rolePath}' in action ${JSON.stringify(actionRule)} at module path '${modulePath}' ` +

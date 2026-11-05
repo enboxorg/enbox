@@ -1,11 +1,9 @@
-import type { DataStore } from '../types/data-store.js';
-import type { Filter } from '../types/query-types.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet, ModulesConfigureMessage } from '../types/modules-types.js';
+import type { ModuleDefinition, ModulesConfigureMessage } from '../types/modules-types.js';
 
 import { authenticate } from '../core/auth.js';
 import { isEncryptionControlPath } from '../core/constants.js';
@@ -14,12 +12,14 @@ import { messageReplyFromError } from '../core/message-reply.js';
 import { ModuleAuthorization } from '../core/module-authorization.js';
 import { ModulesConfigure } from '../interfaces/modules-configure.js';
 import { ModulesGrantAuthorization } from '../core/modules-grant-authorization.js';
+import { preloadModuleDefinitions } from '../core/module-graph-loader.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
-import { resolveModuleTypesForPath } from '../core/module-authorization-validation.js';
+import { resolveModuleGraph } from '../core/module-graph.js';
 import { StorageController } from '../store/storage-controller.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRuleSetAtPath, getTypeName, parseCrossModuleRef } from '../utils/modules.js';
+import { getRuleSetAtPath, getTypeName } from '../utils/modules.js';
+import { validateImportedModuleContracts, validateModuleUpgrade } from '../core/module-upgrade.js';
 
 type StoredInitialWriteConfigValidity = 'valid' | 'invalid' | 'unknown';
 
@@ -73,6 +73,7 @@ export class ModulesConfigureHandler implements MethodHandler {
         tenant,
         message.descriptor.definition,
         this.deps.validationStateReader,
+        message.descriptor.messageTimestamp,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
@@ -102,17 +103,22 @@ export class ModulesConfigureHandler implements MethodHandler {
       prefetchedRecordsWrites = await this.validateEncryptionPolicyIsImmutable(
         tenant,
         message.descriptor.definition,
-        message.descriptor.messageTimestamp,
         newestMessage,
       );
     } catch (e) {
       return messageReplyFromError(e, 400);
     }
 
-    // find newest message, and if the incoming message is the newest
-    let incomingMessageIsNewest = false;
-    if (newestMessage === undefined || await Message.isNewer(message, newestMessage)) {
-      incomingMessageIsNewest = true;
+    // Historical imports validate their own governing-time graph, never today's dependents.
+    const incomingMessageIsNewest = newestMessage === undefined || await Message.isNewer(message, newestMessage);
+    if (incomingMessageIsNewest) {
+      try {
+        if (newestMessage !== undefined) {
+          await this.validateCompositionUpgradeCompatibility(tenant, newestMessage.descriptor.definition, message.descriptor.definition);
+        }
+      } catch (error) {
+        return messageReplyFromError(error, 400);
+      }
       newestMessage = message;
     }
 
@@ -219,7 +225,6 @@ export class ModulesConfigureHandler implements MethodHandler {
   private async validateEncryptionPolicyIsImmutable(
     tenant: string,
     incomingDefinition: ModuleDefinition,
-    incomingTimestamp: string,
     previousConfiguration: ModulesConfigureMessage | undefined,
   ): Promise<RecordsWriteMessage[] | undefined> {
     if (previousConfiguration === undefined || !ModulesConfigureHandler.hasEncryptionPolicyChange(
@@ -250,14 +255,7 @@ export class ModulesConfigureHandler implements MethodHandler {
 
       let incomingEncryptionRequired = incomingPolicyByPath.get(modulePath);
       if (incomingEncryptionRequired === undefined) {
-        const incomingTypes = await resolveModuleTypesForPath( // NOSONAR: S9382 — stop before reading later paths after a policy mismatch.
-          tenant,
-          modulePath,
-          incomingDefinition,
-          this.deps.validationStateReader,
-          incomingTimestamp,
-        );
-        incomingEncryptionRequired = incomingTypes[getTypeName(modulePath)]?.encryptionRequired === true;
+        incomingEncryptionRequired = incomingDefinition.types[getTypeName(modulePath)]?.encryptionRequired === true;
         incomingPolicyByPath.set(modulePath, incomingEncryptionRequired);
       }
 
@@ -272,102 +270,7 @@ export class ModulesConfigureHandler implements MethodHandler {
       );
     }
 
-    await this.validateComposedEncryptionPolicyIsImmutable(tenant, incomingDefinition);
     return recordsWrites;
-  }
-
-  /** Prevents a referenced module from changing the representation of records stored by composing modules. */
-  private async validateComposedEncryptionPolicyIsImmutable(
-    tenant: string,
-    incomingDefinition: ModuleDefinition,
-  ): Promise<void> {
-    const { messages: configurationMessages } = await this.deps.messageStore.query(tenant, [{
-      interface         : DwnInterfaceName.Modules,
-      isLatestBaseState : true,
-      method            : DwnMethodName.Configure,
-    }]);
-    const policiesByModule = ModulesConfigureHandler.getComposedPathPolicies(
-      configurationMessages as ModulesConfigureMessage[],
-      incomingDefinition,
-    );
-    if (policiesByModule.size === 0) {
-      return;
-    }
-
-    const { messages: dependentRecordsWrites } = await this.deps.messageStore.query(
-      tenant,
-      [...policiesByModule.keys()].map((module): Filter => ({
-        interface : DwnInterfaceName.Records,
-        method    : DwnMethodName.Write,
-        module,
-      })),
-    );
-    for (const message of dependentRecordsWrites) {
-      const recordsWrite = message as RecordsWriteMessage;
-      const { module, modulePath } = recordsWrite.descriptor;
-      if (module === undefined) {
-        continue;
-      }
-
-      const encryptionRequired = policiesByModule.get(module)?.get(modulePath);
-      if (encryptionRequired === undefined || (recordsWrite.encryption !== undefined) === encryptionRequired) {
-        continue;
-      }
-
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureEncryptionPolicyImmutable,
-        `cannot change encryption policy for module path '${modulePath}' imported by module '${module}' ` +
-        `after records exist; install the changed definition under a new module URI.`
-      );
-    }
-  }
-
-  /** Maps each installed composing module to root `$ref` paths whose policy comes from the incoming definition. */
-  private static getComposedPathPolicies(
-    configurations: ModulesConfigureMessage[],
-    incomingDefinition: ModuleDefinition,
-  ): Map<string, Map<string, boolean>> {
-    const policiesByModule = new Map<string, Map<string, boolean>>();
-    for (const configuration of configurations) {
-      const composingDefinition = configuration.descriptor.definition;
-      const pathPolicies = ModulesConfigureHandler.getImportedPathPolicies(
-        composingDefinition,
-        incomingDefinition,
-      );
-      if (pathPolicies.size > 0) {
-        policiesByModule.set(composingDefinition.module, pathPolicies);
-      }
-    }
-
-    return policiesByModule;
-  }
-
-  /** Resolves the effective policy for root `$ref` paths that import one definition. */
-  private static getImportedPathPolicies(
-    composingDefinition: ModuleDefinition,
-    incomingDefinition: ModuleDefinition,
-  ): Map<string, boolean> {
-    const pathPolicies = new Map<string, boolean>();
-    const importedAliases = new Set(
-      Object.entries(composingDefinition.uses ?? {})
-        .filter(([, module]): boolean => module === incomingDefinition.module)
-        .map(([alias]): string => alias),
-    );
-    if (importedAliases.size === 0) {
-      return pathPolicies;
-    }
-
-    for (const [modulePath, ruleSet] of Object.entries(composingDefinition.structure)) {
-      const reference = ruleSet.$ref === undefined ? undefined : parseCrossModuleRef(ruleSet.$ref);
-      if (reference === undefined || !importedAliases.has(reference.alias)) {
-        continue;
-      }
-
-      const typeName = getTypeName(modulePath);
-      pathPolicies.set(modulePath, incomingDefinition.types[typeName]?.encryptionRequired === true);
-    }
-
-    return pathPolicies;
   }
 
   /** Returns true when a configure can change a path's stored representation. */
@@ -387,33 +290,7 @@ export class ModulesConfigureHandler implements MethodHandler {
       }
     }
 
-    return ModulesConfigureHandler.getCompositionEncryptionPolicySignature(previousDefinition) !==
-      ModulesConfigureHandler.getCompositionEncryptionPolicySignature(incomingDefinition);
-  }
-
-  /** Captures only composition fields that can redirect a path to another type policy. */
-  private static getCompositionEncryptionPolicySignature(definition: ModuleDefinition): string {
-    const references: string[] = [];
-    const visit = (ruleSet: ModuleRuleSet, parentPath: string): void => {
-      for (const [typeName, value] of Object.entries(ruleSet)) {
-        if (typeName.startsWith('$')) {
-          continue;
-        }
-
-        const childRuleSet = value as ModuleRuleSet;
-        const modulePath = parentPath === '' ? typeName : `${parentPath}/${typeName}`;
-        if (childRuleSet.$ref !== undefined) {
-          references.push(`${modulePath}=${childRuleSet.$ref}`);
-        }
-        visit(childRuleSet, modulePath);
-      }
-    };
-    visit(definition.structure as ModuleRuleSet, '');
-
-    const uses = Object.entries(definition.uses ?? {})
-      .sort(([left], [right]): number => left.localeCompare(right));
-    references.sort((left, right): number => left.localeCompare(right));
-    return JSON.stringify({ references, uses });
+    return false;
   }
 
   private async purgeRecordsInvalidatedByModuleConfig(
@@ -495,76 +372,110 @@ export class ModulesConfigureHandler implements MethodHandler {
     return error instanceof DwnError && STORED_INITIAL_WRITE_CONFIG_INVALID_CODES.has(error.code);
   }
 
-  /**
-   * Validates composition dependencies at install time:
-   * 1. All `uses` modules must already be installed for the tenant.
-   * 2. Each `$ref` path must exist in the referenced module's structure.
-   * 3. Cross-module role references must point to valid role paths in the referenced module.
-   *
-   * This is a no-op if the module definition has no `uses` map.
-   */
+  /** Load the governing-time closure, then validate its complete graph synchronously. */
   private static async validateCompositionDependencies(
     tenant: string,
     definition: ModuleDefinition,
     validationStateReader: ValidationStateReader,
-    messageTimestamp?: string,
+    messageTimestamp: string,
   ): Promise<void> {
-    const { uses } = definition;
-    if (uses === undefined) {
-      return;
-    }
-
-    // Fetch all referenced module definitions
-    const referencedDefinitions = new Map<string, ModuleDefinition>();
-    for (const alias in uses) {
-      const moduleUri = uses[alias];
+    const definitions = await preloadModuleDefinitions(definition, async (uri): Promise<ModuleDefinition> => {
       try {
-        const refDefinition = await validationStateReader.fetchModuleDefinition( // NOSONAR: S9382 — bound reads and preserve first-alias failure.
-          tenant, moduleUri, messageTimestamp,
-        );
-        referencedDefinitions.set(alias, refDefinition);
+        return await validationStateReader.fetchModuleDefinition(tenant, uri, messageTimestamp);
       } catch (error) {
         if (!(error instanceof DwnError) || error.code !== DwnErrorCode.ModuleAuthorizationModuleNotFound) {
           throw error;
         }
-
         throw new DwnError(
           DwnErrorCode.ModulesConfigureComposedModuleNotInstalled,
-          `composed module '${moduleUri}' (alias '${alias}') is not installed for tenant '${tenant}'.`
+          `composed module '${uri}' is not installed for tenant '${tenant}' at ${messageTimestamp}`
         );
       }
-    }
-
-    // Walk the structure and validate all $ref paths and cross-module role references
-    ModulesConfigureHandler.validateRefsAndRolesRecursively(
-      definition,
-      definition.structure as ModuleRuleSet,
-      '',
-      referencedDefinitions,
-    );
+    });
+    resolveModuleGraph(definition, uri => definitions.get(uri), { requireKeyAgreement: true });
   }
 
-  /** Walk each declared node and validate its attachment and explicit action references. */
-  private static validateRefsAndRolesRecursively(
-    definition: ModuleDefinition,
-    ruleSet: ModuleRuleSet,
-    modulePath: string,
-    referencedDefinitions: Map<string, ModuleDefinition>,
-  ): void {
-    for (const key in ruleSet) {
-      if (key.startsWith('$')) {
-        continue;
-      }
-      const childRuleSet = ruleSet[key] as ModuleRuleSet;
-      const childModulePath = modulePath === '' ? key : `${modulePath}/${key}`;
-      ModulesConfigureHandler.validateReferenceTarget(childRuleSet.$ref, childModulePath, referencedDefinitions);
+  /** Compare active old/new snapshots without substituting historical configurations. */
+  private async validateCompositionUpgradeCompatibility(
+    tenant: string,
+    previous: ModuleDefinition,
+    incoming: ModuleDefinition,
+  ): Promise<void> {
+    const { messages } = await this.deps.messageStore.query(tenant, [{
+      interface         : DwnInterfaceName.Modules,
+      method            : DwnMethodName.Configure,
+      isLatestBaseState : true,
+    }]);
+    const oldDefinitions = new Map((messages as ModulesConfigureMessage[])
+      .map((configuration): [string, ModuleDefinition] => [configuration.descriptor.definition.module, configuration.descriptor.definition]));
+    oldDefinitions.set(previous.module, previous);
+    const newDefinitions = new Map(oldDefinitions);
+    newDefinitions.set(incoming.module, incoming);
 
-      const isEncryptedPath = definition.types[getTypeName(childModulePath)]?.encryptionRequired === true;
-      for (const action of childRuleSet.$actions ?? []) {
-        ModulesConfigureHandler.validateCrossModuleRoleReference(action, childModulePath, isEncryptedPath, referencedDefinitions);
-        ModulesConfigureHandler.validateCrossModuleActorReference(action.of, childModulePath, referencedDefinitions);
+    const graph = async (definition: ModuleDefinition, snapshot: Map<string, ModuleDefinition>): Promise<ReturnType<typeof resolveModuleGraph>> => {
+      const closure = await preloadModuleDefinitions(definition, async (uri): Promise<ModuleDefinition> => {
+        const installed = snapshot.get(uri) ?? await this.deps.validationStateReader.fetchModuleDefinition(tenant, uri);
+        snapshot.set(uri, installed);
+        return installed;
+      });
+      return resolveModuleGraph(definition, uri => closure.get(uri), { requireKeyAgreement: true });
+    };
+    const oldGraph = await graph(previous, oldDefinitions);
+    const newGraph = await graph(incoming, newDefinitions);
+    const removesAttachment = [...oldGraph.nodesByDeclaredPath].some(([path, node]): boolean =>
+      node.kind === 'ref' && !newGraph.nodesByDeclaredPath.has(path)
+    );
+    const writes = removesAttachment ? (await this.deps.messageStore.query(tenant, [{
+      interface : DwnInterfaceName.Records,
+      method    : DwnMethodName.Write,
+      module    : incoming.module,
+    }])).messages : [];
+    const storedPaths = new Set((writes as RecordsWriteMessage[]).map(write => write.descriptor.modulePath));
+    validateModuleUpgrade(previous, incoming, oldGraph, newGraph, storedPaths);
+
+    // A changed module affects every current dependent reachable under either snapshot.
+    const affected = new Set([incoming.module]);
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const definition of [...oldDefinitions.values(), ...newDefinitions.values()]) {
+        if (!affected.has(definition.module) && Object.values(definition.uses ?? {}).some(uri => affected.has(uri))) {
+          affected.add(definition.module);
+          expanded = true;
+        }
       }
-      ModulesConfigureHandler.validateRefsAndRolesRecursively(definition, childRuleSet, childModulePath, referencedDefinitions);
+    }
+    const visited = new Set<string>();
+    const validateDependent = async (uri: string): Promise<void> => {
+      if (visited.has(uri)) {
+        return;
+      }
+      visited.add(uri);
+      const definition = newDefinitions.get(uri)!;
+      for (const dependency of Object.values(definition.uses ?? {})) {
+        if (affected.has(dependency)) {
+          await validateDependent(dependency);
+        }
+      }
+      if (uri === incoming.module) {
+        return;
+      }
+      try {
+        const before = await graph(oldDefinitions.get(uri)!, oldDefinitions);
+        const after = await graph(definition, newDefinitions);
+        validateImportedModuleContracts(before, after);
+      } catch (error) {
+        if (!(error instanceof DwnError)) {
+          throw error;
+        }
+        throw new DwnError(
+          DwnErrorCode.ModulesConfigureIncompatibleContractUpdate,
+          `module '${incoming.module}' update breaks dependent '${uri}': ${error.message}`
+        );
+      }
+    };
+    for (const uri of [...affected].sort()) {
+      await validateDependent(uri);
     }
   }
 

@@ -17,6 +17,7 @@ import { testModuleDeleteAction } from './features/module-delete-action.spec.js'
 import { testModulesConfigureHandler } from './handlers/modules-configure.spec.js';
 import { testModulesQueryHandler } from './handlers/modules-query.spec.js';
 import { testModuleUpdateAction } from './features/module-update-action.spec.js';
+import { testModuleUpgrades } from './features/module-upgrades.spec.js';
 import { testNestedRoleScenarios } from './scenarios/nested-roles.spec.js';
 import { testOwnerDelegatedGrant } from './features/owner-delegated-grant.spec.js';
 import { testOwnerSignature } from './features/owner-signature.spec.js';
@@ -88,6 +89,7 @@ export class TestSuite {
     testOwnerSignature();
     testPermissions();
     testModuleComposition();
+    testModuleUpgrades();
     testModuleCreateAction();
     testModuleDeleteAction();
     testModuleUpdateAction();
