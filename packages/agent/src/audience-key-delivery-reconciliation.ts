@@ -13,7 +13,6 @@ import {
   DwnInterfaceName,
   DwnMethodName,
   getGrantKeyDeliveryScopes,
-  getRoleAudienceContextId,
   Records,
 } from '@enbox/dwn-sdk-js';
 
@@ -142,7 +141,7 @@ function roleDeliveryIntent(
     return undefined;
   }
 
-  const contextId = getRoleAudienceContextId(modulePath, message.contextId);
+  const contextId = message.contextId === undefined ? undefined : Records.getParentContextFromOfContextId(message.contextId) ?? '';
   if (recipient === undefined || contextId === undefined) {
     throw new Error(`AgentDwnApi: active role record '${message.recordId}' has no delivery recipient or audience context.`);
   }

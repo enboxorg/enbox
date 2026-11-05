@@ -1,3 +1,5 @@
+import type { ResolvedRoleReference } from '@enbox/dwn-sdk-js';
+
 import { lexicographicalCompare } from './types/sync.js';
 
 /** Durable description of one foreign context accepted through a role record. */
@@ -143,24 +145,28 @@ export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: Followed
   return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorityEqual(a, b);
 }
 
-/** Resolve and validate the context root addressed by one role candidate. */
+/** Resolve the immediate parent from canonical metadata, or validate a native local context request. */
 export function resolveFollowedSyncRoleRoot(
   contextId: string,
   role: string,
-): { modulePath: string } {
-  const roleSegments = role.split('/');
+  resolvedRole?: ResolvedRoleReference,
+): { modulePath: string; module?: string } {
   const contextSegments = contextId.split('/');
-  if (
-    roleSegments.length < 2 ||
-    roleSegments.some(segment => segment.length === 0) ||
-    contextSegments.length !== roleSegments.length - 1 ||
-    contextSegments.some(segment => segment.length === 0)
-  ) {
-    throw new TypeError('FollowedSyncSource: followed contexts require a nested role and its exact parent context ID.');
+  if (resolvedRole !== undefined) {
+    const parent = resolvedRole.parentAncestor;
+    if (parent === undefined || contextSegments.length !== resolvedRole.parentPhysicalDepth ||
+        contextSegments.some(segment => segment === '')) {
+      throw new TypeError('FollowedSyncSource: followed contexts require the role\'s exact physical parent context ID.');
+    }
+    return { module: parent.owningModuleUri, modulePath: parent.owningModulePath };
   }
 
-  const modulePath = roleSegments.slice(0, -1).join('/');
-  return { modulePath };
+  const roleSegments = role.split('/');
+  if (role.includes(':') || roleSegments.length < 2 || roleSegments.some(segment => segment === '') ||
+      contextSegments.length !== roleSegments.length - 1 || contextSegments.some(segment => segment === '')) {
+    throw new TypeError('FollowedSyncSource: followed contexts require a native nested role and its exact parent context ID.');
+  }
+  return { modulePath: roleSegments.slice(0, -1).join('/') };
 }
 
 function normalizeFollowedSyncRole(role: string): string {

@@ -7,15 +7,15 @@ import type {
   EventLog,
   GenericMessage,
   MessageStore,
-  ModuleActionRule,
   ModuleDefinition,
   ModuleRuleSet,
-  ModuleType,
   ProgressToken,
   RecordsWriteDescriptor,
   RecordsWriteMessage,
   ReplicationApplyOptions,
   ReplicationApplyResult,
+  ResolvedModuleNode,
+  ResolvedRoleReference,
   SourceRoleAudienceKeyEncryptionInput,
 } from '@enbox/dwn-sdk-js';
 import type { DwnSubscriptionHandler, ResubscribeFactory } from '@enbox/dwn-clients';
@@ -36,16 +36,16 @@ import {
   EncryptionModule,
   getRoleAudienceContextId,
   getRuleSetAtPath,
-  getTypeName,
-  isCrossModuleRef,
   isEncryptionControlPath,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
   Modules,
-  parseCrossModuleRef,
   PermissionsModule,
+  preloadModuleDefinitions,
+  Records,
   RecordsWrite,
+  resolveModuleGraph,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
 } from '@enbox/dwn-sdk-js';
@@ -76,6 +76,7 @@ import type {
 } from './types/dwn.js';
 
 import { DwnDiscoveryFile } from './dwn-discovery-file.js';
+import { loadAgentModuleGraph } from './dwn-module-graph.js';
 import { resolveDelegatePermissionGrantId } from './delegate-permission-grant.js';
 import { scanActiveAudienceKeyDeliveryIntents } from './audience-key-delivery-reconciliation.js';
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
@@ -133,6 +134,7 @@ type DwnMessageWithRpcData<T extends DwnInterface> = {
 
 type PendingAudienceRecord = {
   audienceKey: AudienceKeyPayload;
+  resolvedRole: ResolvedRoleReference;
   rolePath: string;
   sealingPublicKey: PublicKeyJwk;
 };
@@ -140,6 +142,7 @@ type PendingAudienceRecord = {
 type RecordEncryptionPolicy = {
   encryptionRequired: boolean;
   moduleDefinition: ModuleDefinition;
+  resolvedNode: ResolvedModuleNode;
   ruleSet: ModuleRuleSet;
 };
 
@@ -863,7 +866,7 @@ export class AgentDwnApi {
     outcome: AudienceKeyDeliveryOutcome,
   ): Promise<void> {
     const { module, modulePath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
-    const contextId = rolePath === undefined ? undefined : getRoleAudienceContextId(rolePath, recordsWrite.contextId);
+    const contextId = recordsWrite.contextId === undefined ? undefined : Records.getParentContextFromOfContextId(recordsWrite.contextId) ?? '';
     if (module === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
       return;
     }
@@ -1221,7 +1224,7 @@ export class AgentDwnApi {
     }
     const { module, modulePath, recipient } = resolved;
 
-    const contextId = getRoleAudienceContextId(modulePath, recordsWrite.contextId);
+    const contextId = recordsWrite.contextId === undefined ? undefined : Records.getParentContextFromOfContextId(recordsWrite.contextId) ?? '';
     if (contextId === undefined) {
       throw new Error(`AgentDwnApi: Unable to determine role audience context for '${modulePath}'.`);
     }
@@ -1376,10 +1379,17 @@ export class AgentDwnApi {
    */
   public async reprovisionAudienceKeyDelivery(params: ReprovisionAudienceKeyDeliveryParams): Promise<AudienceKeyDeliveryOutcome> {
     const { target, module, rolePath, recipientDid } = params;
-    const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('reprovisionAudienceKeyDelivery', rolePath, params.contextId);
     if (params.recipientRolePublicKey !== undefined) {
       await assertX25519RolePublicKey(params.recipientRolePublicKey);
     }
+    let role: ResolvedRoleReference;
+    try {
+      const graph = await loadAgentModuleGraph({ agent: this.agent, authorDid: target, granteeDid: params.granteeDid, module, targetDid: target });
+      role = graph.resolveInvokedRole(rolePath);
+    } catch (error) {
+      return audienceKeyDeliveryFailure(error, recipientDid);
+    }
+    const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('reprovisionAudienceKeyDelivery', role, params.contextId);
     let recipientRolePublicKey: PublicKeyJwk;
     let recipientRoleKeyId: string;
     try {
@@ -1482,10 +1492,10 @@ export class AgentDwnApi {
    * Normalizes a caller-supplied context id (role record `contextId` or audience context id) to
    * the role-audience context id for `rolePath`; throws when a nested role path lacks a deep-enough context.
    */
-  private static getRoleAudienceContextIdOrThrow(method: string, rolePath: string, contextId?: string): string {
-    const audienceContextId = getRoleAudienceContextId(rolePath, contextId);
+  private static getRoleAudienceContextIdOrThrow(method: string, role: ResolvedRoleReference, contextId?: string): string {
+    const audienceContextId = getRoleAudienceContextId(role, contextId);
     if (audienceContextId === undefined) {
-      throw new Error(`AgentDwnApi: ${method} requires a contextId that reaches the parent context of nested role path '${rolePath}'.`);
+      throw new Error(`AgentDwnApi: ${method} requires a contextId that reaches the parent context of nested role path '${role.owningModulePath}'.`);
     }
     return audienceContextId;
   }
@@ -1501,19 +1511,25 @@ export class AgentDwnApi {
     parentContextId?: string;
     moduleRole?: string;
     moduleDefinition: ModuleDefinition;
-    sourceRuleSet: ModuleRuleSet;
+    resolvedNode: ResolvedModuleNode;
   }): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: SourceRoleAudienceKeyEncryptionInput[] = [];
     const pendingAudienceRecords: PendingAudienceRecord[] = [];
-    const readRules = params.sourceRuleSet.$actions?.filter((rule: ModuleActionRule): boolean =>
-      rule.role !== undefined && rule.can?.includes('read')
-    ) ?? [];
+    const readRules = params.resolvedNode.actions.filter(action =>
+      action.resolvedRole !== undefined && action.rule.can.includes('read')
+    );
 
-    for (const rule of readRules) {
-      const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.moduleDefinition, params.parentContextId);
-      const pendingRoleAudience = roleAudience === undefined &&
-        this.canPreparePendingAudienceRecord(rule.role!, params.parentContextId)
-        ? await this.preparePendingAudienceRecord(rule.role!, params.moduleDefinition)
+    for (const { rule, resolvedRole } of readRules) {
+      const role = resolvedRole!;
+      const contextId = getRoleAudienceContextId(role, params.parentContextId);
+      const roleAudience = contextId === undefined ? undefined : {
+        module   : role.owningModuleUri,
+        rolePath : role.owningModulePath,
+        contextId,
+      };
+      const pendingContextId = params.parentContextId === undefined ? 'pending-record' : `${params.parentContextId}/pending-record`;
+      const pendingRoleAudience = roleAudience === undefined && getRoleAudienceContextId(role, pendingContextId) !== undefined
+        ? await this.preparePendingAudienceRecord(role)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
         throw new Error(
@@ -1555,54 +1571,18 @@ export class AgentDwnApi {
     return { inputs, pendingAudienceRecords };
   }
 
-  private canPreparePendingAudienceRecord(
-    roleRef: string,
-    parentContextId: string | undefined,
-  ): boolean {
-    if (isCrossModuleRef(roleRef)) {
-      return false;
-    }
-
-    const pendingContextId = parentContextId === undefined ? 'pending-record' : `${parentContextId}/pending-record`;
-    return getRoleAudienceContextId(roleRef, pendingContextId) !== undefined;
-  }
-
-  private async preparePendingAudienceRecord(
-    roleRef: string,
-    moduleDefinition: ModuleDefinition,
-  ): Promise<PendingAudienceRecord | undefined> {
-    if (isCrossModuleRef(roleRef)) {
-      return undefined;
-    }
-
-    const ruleSet = getRuleSetAtPath(roleRef, moduleDefinition.structure);
-    const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
-    if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
-      return undefined;
-    }
-
+  private async preparePendingAudienceRecord(resolvedRole: ResolvedRoleReference): Promise<PendingAudienceRecord> {
+    const sealingPublicKey = resolvedRole.ruleSet.$keyAgreement!.publicKeyJwk as PublicKeyJwk;
     return {
       audienceKey: await generateAudienceKeyFn({
         contextId : '',
-        module    : moduleDefinition.module,
-        rolePath  : roleRef,
+        module    : resolvedRole.owningModuleUri,
+        rolePath  : resolvedRole.owningModulePath,
       }),
-      rolePath: roleRef,
+      resolvedRole,
+      rolePath: resolvedRole.owningModulePath,
       sealingPublicKey,
     };
-  }
-
-  private resolveRoleAudienceRule(
-    roleRef: string,
-    moduleDefinition: ModuleDefinition,
-    parentContextId: string | undefined,
-  ): { module: string; rolePath: string; contextId: string } | undefined {
-    if (isCrossModuleRef(roleRef)) {
-      return undefined;
-    }
-
-    const contextId = getRoleAudienceContextId(roleRef, parentContextId);
-    return contextId === undefined ? undefined : { module: moduleDefinition.module, rolePath: roleRef, contextId };
   }
 
   private getRoleAudienceSourceContextId(params: {
@@ -1946,56 +1926,32 @@ export class AgentDwnApi {
       return undefined;
     }
 
+    // A member writing to a foreign tenant has only its own signing key. Query
+    // every installed definition with that actual signer and its query grants.
+    const querySigner = request.granteeDid ?? (request.author === request.target ? undefined : request.author);
     const moduleDefinition = await this.resolveTargetModuleDefinition({
-      granteeDid : request.granteeDid,
+      granteeDid : querySigner,
       module,
       source     : moduleDefinitionSource,
       targetDid  : request.target,
     });
-    const ruleSet = getRuleSetAtPath(modulePath, moduleDefinition.structure);
-    if (ruleSet === undefined) {
-      throw new Error(
-        `AgentDwnApi: Module '${module}' installed for '${request.target}' ` +
-        `does not define module path '${modulePath}'.`
-      );
-    }
-
-    let moduleTypes = moduleDefinition.types;
-    const segments = modulePath.split('/');
-    const rootRuleSet = moduleDefinition.structure[segments[0]];
-    if (segments.length === 1 && rootRuleSet?.$ref !== undefined) {
-      const reference = parseCrossModuleRef(rootRuleSet.$ref);
-      const referencedModule = reference === undefined
-        ? undefined
-        : moduleDefinition.uses?.[reference.alias];
-      if (referencedModule === undefined) {
-        throw new Error(
-          `AgentDwnApi: Module '${module}' has an unresolved $ref at path '${modulePath}'.`
-        );
-      }
-
-      const referencedDefinition = await this.resolveTargetModuleDefinition({
-        granteeDid : request.granteeDid,
-        module     : referencedModule,
-        source     : moduleDefinitionSource,
-        targetDid  : request.target,
-      });
-      moduleTypes = referencedDefinition.types;
-    }
-
-    const typeName = getTypeName(modulePath);
-    const moduleType = moduleTypes[typeName];
-    if (moduleType === undefined) {
-      throw new Error(
-        `AgentDwnApi: Module '${module}' installed for '${request.target}' ` +
-        `does not define type '${typeName}' for path '${modulePath}'.`
-      );
+    const definitions = await preloadModuleDefinitions(moduleDefinition, uri => this.resolveTargetModuleDefinition({
+      granteeDid : querySigner,
+      module     : uri,
+      source     : moduleDefinitionSource,
+      targetDid  : request.target,
+    }));
+    const graph = resolveModuleGraph(moduleDefinition, uri => definitions.get(uri));
+    const resolvedNode = graph.nodesByDeclaredPath.get(modulePath);
+    if (resolvedNode === undefined || resolvedNode.kind === 'ref') {
+      throw new Error(`AgentDwnApi: Module '${module}' does not define writable record path '${modulePath}'.`);
     }
 
     return {
-      encryptionRequired: moduleType.encryptionRequired === true,
+      encryptionRequired : resolvedNode.recordType.encryptionRequired === true,
       moduleDefinition,
-      ruleSet,
+      resolvedNode,
+      ruleSet            : resolvedNode.ruleSet,
     };
   }
 
@@ -2077,7 +2033,7 @@ export class AgentDwnApi {
       moduleDefinition  : policy.moduleDefinition,
       sourceDid         : request.target,
       sourceModulePath  : messageParams.modulePath,
-      sourceRuleSet     : policy.ruleSet,
+      resolvedNode      : policy.resolvedNode,
     });
     encryptionInput.keyEncryptionInputs.push(...roleAudienceInputs.inputs);
 
@@ -2178,7 +2134,7 @@ export class AgentDwnApi {
     const sourceContextId = messageParams.parentContextId === undefined
       ? messageParams.recordId
       : `${messageParams.parentContextId}/${messageParams.recordId}`;
-    const contextId = getRoleAudienceContextId(pending.rolePath, sourceContextId);
+    const contextId = getRoleAudienceContextId(pending.resolvedRole, sourceContextId);
     if (contextId === undefined) {
       throw new Error(`AgentDwnApi: Unable to determine role audience context for '${pending.rolePath}'.`);
     }
@@ -2258,9 +2214,7 @@ export class AgentDwnApi {
       return;
     }
 
-    const hasEncryptedTypes = Object.values(messageParams.definition.types)
-      .some((type: ModuleType): boolean => type.encryptionRequired === true);
-    if (!hasEncryptedTypes) {
+    if (!Modules.requiresKeyAgreement(messageParams.definition)) {
       return;
     }
 

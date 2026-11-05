@@ -36,7 +36,7 @@ import type { EncryptionKeyDeriver, ModulesQueryMessage } from '@enbox/dwn-sdk-j
 
 import { computeJwkThumbprint } from '@enbox/crypto';
 import { logger } from '@enbox/common';
-import { authoredModuleDefinitionsEqual, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { authoredModuleDefinitionsEqual, KeyDerivationScheme, Modules } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from './types/dwn.js';
 import { mapConcurrentSettled } from './utils.js';
@@ -136,9 +136,7 @@ function isNormalizedModuleUri(module: string): boolean {
 
 /** Whether any type in the definition declares `encryptionRequired: true`. */
 export function hasEncryptedModuleTypes(moduleDefinition: DwnModuleDefinition): boolean {
-  return Object.values(moduleDefinition.types ?? {}).some(
-    (type) => (type as { encryptionRequired?: boolean })?.encryptionRequired === true,
-  );
+  return Modules.requiresKeyAgreement(moduleDefinition);
 }
 
 async function publicKeysMatch(left: unknown, right: unknown): Promise<boolean> {

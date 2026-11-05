@@ -1417,6 +1417,12 @@ export class SyncEngineLevel implements SyncEngine {
           moduleRole     : role,
           shouldContinue,
         });
+        const resolvedRole = batch.resolvedGraph.resolveInvokedRole(role);
+        const parent = resolveFollowedSyncRoleRoot(input.contextId, role, resolvedRole);
+        if (resolvedRole.owningModuleUri !== input.module || parent.module !== input.module ||
+            resolvedRole.physicalAncestors.some(ancestor => ancestor.owningModuleUri !== input.module)) {
+          throw new TypeError('FollowedSyncSource: managed following requires a native context in the role-owning module.');
+        }
         const modulePaths = resolveModuleRoleContextScope(
           batch.moduleDefinition,
           role,

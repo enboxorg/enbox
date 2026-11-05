@@ -45,6 +45,65 @@ function makeAuthorizedMessage(
 }
 
 describe('orderMessagesForAdmission', () => {
+  it('preserves records with unresolved invoked or encrypted roles for normal receiver admission', () => {
+    const module = 'https://example.com/order/current';
+    const configure: SortEntry = { message: makeMessage({
+      interface  : DwnInterfaceName.Modules,
+      method     : DwnMethodName.Configure,
+      definition : { module, published: true, types: { note: {} }, structure: { note: {} } },
+    }) };
+    const invoked: SortEntry = { message: makeAuthorizedMessage(
+      { module, modulePath: 'note' }, { moduleRole: 'removedRole' },
+    ) };
+    const encrypted: SortEntry = { message: {
+      ...makeMessage({ module, modulePath: 'note' }),
+      encryption: { keyEncryption: [{
+        derivationScheme: ROLE_AUDIENCE_DERIVATION_SCHEME, module, rolePath: 'removedRole', keyId: 'old-key',
+      }] },
+    } as GenericMessage };
+
+    const ordered = orderMessagesForAdmission([invoked, encrypted, configure]);
+    expect(ordered).toHaveLength(3);
+    expect(ordered[0]).toBe(configure);
+    expect(ordered).toContain(invoked);
+    expect(ordered).toContain(encrypted);
+  });
+
+  it('orders local roles under a deep foreign attachment by their physical parent context', () => {
+    const base = 'https://example.com/order/base';
+    const extension = 'https://example.com/order/extension';
+    const baseConfigure: SortEntry = { message: makeMessage({
+      interface  : DwnInterfaceName.Modules, method     : DwnMethodName.Configure,
+      definition : {
+        module    : base, published : true, types     : { workspace: {}, thread: {} },
+        structure : { workspace: { thread: {} } },
+      },
+    }) };
+    const configure: SortEntry = { message: makeMessage({
+      interface  : DwnInterfaceName.Modules, method     : DwnMethodName.Configure,
+      definition : {
+        module    : extension, published : true, uses      : { base }, types     : { participant: {}, note: {} },
+        structure : { thread: {
+          $ref        : 'base:workspace/thread',
+          participant : { $role: true },
+          note        : { $actions: [{ role: 'thread/participant', can: ['create', 'read'] }] },
+        } },
+      },
+    }) };
+    const role: SortEntry = { message: {
+      ...makeMessage({ module: extension, modulePath: 'thread/participant', recipient: 'did:example:bob' }),
+      recordId: 'role', contextId: 'workspace/thread/role',
+    } as GenericMessage };
+    const note: SortEntry = { message: {
+      ...makeAuthorizedMessage({ module: extension, modulePath: 'thread/note' }, { moduleRole: 'thread/participant' }, 'did:example:bob'),
+      recordId: 'note', contextId: 'workspace/thread/note',
+    } as GenericMessage };
+
+    const ordered = orderMessagesForAdmission([note, role, configure, baseConfigure]);
+    expect(ordered.indexOf(baseConfigure)).toBeLessThan(ordered.indexOf(configure));
+    expect(ordered.indexOf(role)).toBeLessThan(ordered.indexOf(note));
+  });
+
   it('should return empty array for empty input', () => {
     const result = orderMessagesForAdmission([]);
     expect(result).toEqual([]);

@@ -6,6 +6,8 @@ import type {
   RecordsReadReplicationSupportEntry,
   RecordsReadReply,
   RecordsWriteMessage,
+  ResolvedModuleGraph,
+  ResolvedRoleReference,
   RoleRecordIdentity,
 } from '@enbox/dwn-sdk-js';
 
@@ -26,10 +28,10 @@ import {
   getRecordsWriteRoleIdentity,
   getRoleAudienceContextId,
   getRoleRecordIdentity,
-  getRuleSetAtPath,
   Message,
   Records,
   RecordsWrite,
+  resolveModuleGraph,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 
@@ -44,6 +46,7 @@ import { getRecordAuthor, getRecordModuleRole, resolveDwnSubscriptionUrl as reso
 /** A role-authorized read, its current module definition, and its local-replication prerequisites. */
 export type RoleReplicationSupportBatch = {
   dependencies: SyncMessageEntry[];
+  resolvedGraph: ResolvedModuleGraph;
   moduleDefinition: ModuleDefinition;
   roleRecordId: string;
   root: SyncMessageEntry;
@@ -84,13 +87,20 @@ type SupportValidationParams = {
   modulePath: string;
   moduleRole: string;
   replyRoleId: string | undefined;
-  roleIdentity: RoleRecordIdentity;
   root: RecordsWriteMessage;
   rootDelete: RecordsDeleteMessage | undefined;
   rootInitialWrite: RecordsWriteMessage | undefined;
   sourceDid: string;
   support: readonly RecordsReadReplicationSupportEntry[];
 };
+
+type ResolvedSupportValidationParams = SupportValidationParams & {
+  graph: ResolvedModuleGraph;
+  resolvedRole: ResolvedRoleReference;
+  roleIdentity: RoleRecordIdentity;
+};
+
+type ExpectedAncestor = { contextId: string; module: string; modulePath: string };
 
 type SupportScan = {
   audienceKeyIds: Set<string>;
@@ -298,19 +308,13 @@ async function consumeRoleReplicationSupportReply(
   }
 
   const support = reply.support ?? [];
-  const { moduleDefinition, roleRecordId } = await validateSupport({
-    actorDid     : params.actorDid,
-    contextId    : params.contextId,
-    module       : params.module,
-    modulePath   : params.modulePath,
-    moduleRole   : params.moduleRole,
-    replyRoleId  : reply.roleRecordId,
-    roleIdentity : getRoleRecordIdentity({
-      contextId  : params.contextId,
-      module     : params.module,
-      modulePath : params.moduleRole,
-      recipient  : params.actorDid,
-    }),
+  const { moduleDefinition, roleRecordId, resolvedGraph } = await validateSupport({
+    actorDid         : params.actorDid,
+    contextId        : params.contextId,
+    module           : params.module,
+    modulePath       : params.modulePath,
+    moduleRole       : params.moduleRole,
+    replyRoleId      : reply.roleRecordId,
     root             : rootWrite,
     rootDelete       : expectsDelete ? rootMessage as RecordsDeleteMessage : undefined,
     rootInitialWrite : reply.entry?.initialWrite,
@@ -332,6 +336,7 @@ async function consumeRoleReplicationSupportReply(
 
   return {
     dependencies,
+    resolvedGraph,
     moduleDefinition,
     roleRecordId,
     root: {
@@ -398,23 +403,60 @@ function assertRoot(
 
 async function validateSupport(
   params: SupportValidationParams,
-): Promise<{ moduleDefinition: ModuleDefinition; roleRecordId: string }> {
+): Promise<{ moduleDefinition: ModuleDefinition; roleRecordId: string; resolvedGraph: ResolvedModuleGraph }> {
+  const currentDefinitions = new Map<string, ModuleDefinition>();
+  for (const entry of params.support) {
+    const message = entry.message as ModulesConfigureMessage;
+    if (message.descriptor.interface !== DwnInterfaceName.Modules || message.descriptor.method !== DwnMethodName.Configure) {
+      continue;
+    }
+    const definition = message.descriptor.definition;
+    if (!isTenantModuleConfig(params.sourceDid, definition.module)(message) ||
+        typeof entry.isLatestBaseState !== 'boolean' || entry.encodedData !== undefined) {
+      throw unsupportedEntry(entry);
+    }
+    if (entry.isLatestBaseState) {
+      if (currentDefinitions.has(definition.module)) {
+        throw new RoleReplicationSupportError(`the response must contain exactly one current module configuration for '${definition.module}'.`);
+      }
+      currentDefinitions.set(definition.module, definition);
+    }
+  }
+  const definition = currentDefinitions.get(params.module);
+  if (definition === undefined) {
+    throw new RoleReplicationSupportError('the response must contain exactly one current module configuration.');
+  }
+  const graph = resolveModuleGraph(definition, uri => currentDefinitions.get(uri));
+  const rootNode = graph.nodesByDeclaredPath.get(params.modulePath);
+  if (rootNode === undefined || rootNode.kind !== 'record') {
+    throw new RoleReplicationSupportError('the requested root is not a concrete module record.');
+  }
   const contextSegments = params.contextId.split('/');
-  const pathSegments = params.modulePath.split('/');
-  const ancestorIds = new Map(contextSegments.slice(0, -1).map((recordId, index) => [
-    recordId,
+  if (contextSegments.length !== rootNode.physicalDepth) {
+    throw new RoleReplicationSupportError('the requested context does not match its physical module ancestry.');
+  }
+  const ancestorIds = new Map<string, ExpectedAncestor>(rootNode.physicalAncestors.map((ancestor, index) => [
+    contextSegments[index],
     {
       contextId  : contextSegments.slice(0, index + 1).join('/'),
-      modulePath : pathSegments.slice(0, index + 1).join('/'),
+      module     : ancestor.owningModuleUri,
+      modulePath : ancestor.owningModulePath,
     },
   ]));
-  const audienceContextId = getRoleAudienceContextId(params.moduleRole, params.contextId);
+  const resolvedRole = graph.resolveInvokedRole(params.moduleRole);
+  const resolvedParams: ResolvedSupportValidationParams = {
+    ...params,
+    graph,
+    resolvedRole,
+    roleIdentity: getRoleRecordIdentity({ role: resolvedRole, contextId: params.contextId, recipient: params.actorDid }),
+  };
+  const audienceContextId = getRoleAudienceContextId(resolvedRole, params.contextId);
   const wrappedKeyIds = new Set(params.root.encryption?.keyEncryption
     .filter(entry => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-      'module' in entry && entry.module === params.module && entry.rolePath === params.moduleRole)
+      'module' in entry && entry.module === resolvedRole.owningModuleUri && entry.rolePath === resolvedRole.owningModulePath)
     .map(entry => entry.keyId) ?? []);
-  const authorRoles = expectedAuthorRoleProofs(params, ancestorIds);
-  const scan = await scanSupport(params, ancestorIds, audienceContextId, authorRoles);
+  const authorRoles = expectedAuthorRoleProofs(resolvedParams, ancestorIds);
+  const scan = await scanSupport(resolvedParams, ancestorIds, audienceContextId, authorRoles);
 
   if (params.replyRoleId === undefined) {
     throw new RoleReplicationSupportError('the response did not identify its active role record.');
@@ -426,16 +468,17 @@ async function validateSupport(
     throw new RoleReplicationSupportError('the response must contain exactly one current module configuration.');
   }
 
-  assertRoleAudienceReady(params, scan.currentModuleConfigure, wrappedKeyIds, scan);
+  assertRoleAudienceReady(resolvedParams, wrappedKeyIds, scan);
   return {
+    resolvedGraph    : graph,
     moduleDefinition : scan.currentModuleConfigure.descriptor.definition,
     roleRecordId     : params.replyRoleId,
   };
 }
 
 async function scanSupport(
-  params: SupportValidationParams,
-  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
+  params: ResolvedSupportValidationParams,
+  ancestorIds: ReadonlyMap<string, ExpectedAncestor>,
   audienceContextId: string | undefined,
   authorRoles: ReadonlySet<string>,
 ): Promise<SupportScan> {
@@ -444,14 +487,16 @@ async function scanSupport(
     currentModuleConfigureMatches : 0,
     deliveredKeyIds               : new Set(),
   };
-  const isExpectedModuleConfigure = isTenantModuleConfig(params.sourceDid, params.module);
+
 
   for (const entry of params.support) {
-    if (isExpectedModuleConfigure(entry.message)) {
+    const definition = (entry.message as ModulesConfigureMessage).descriptor.definition;
+    if (definition !== undefined && params.graph.definitionsByUri.has(definition.module) &&
+        isTenantModuleConfig(params.sourceDid, definition.module)(entry.message)) {
       if (typeof entry.isLatestBaseState !== 'boolean' || entry.encodedData !== undefined) {
         throw unsupportedEntry(entry);
       }
-      if (entry.isLatestBaseState === true) {
+      if (entry.isLatestBaseState === true && definition.module === params.module) {
         scan.currentModuleConfigure = entry.message;
         scan.currentModuleConfigureMatches++;
       }
@@ -467,14 +512,14 @@ async function scanSupport(
 
 async function scanRecordsWriteSupport(
   scan: SupportScan,
-  params: SupportValidationParams,
+  params: ResolvedSupportValidationParams,
   entry: RecordsReadReplicationSupportEntry,
   message: RecordsWriteMessage,
-  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
+  ancestorIds: ReadonlyMap<string, ExpectedAncestor>,
   audienceContextId: string | undefined,
   authorRoles: ReadonlySet<string>,
 ): Promise<void> {
-  const isAncestor = isExpectedAncestor(entry, message, params.module, ancestorIds);
+  const isAncestor = isExpectedAncestor(entry, message, ancestorIds);
   const identity = getRecordsWriteRoleIdentity(message);
   const isRoleVersion = message.recordId === params.replyRoleId && identity?.key === params.roleIdentity.key;
   const isRole = isRoleVersion &&
@@ -491,18 +536,18 @@ async function scanRecordsWriteSupport(
   const isRoleAudience = isTaggedEncryptionControl(
     message,
     ENCRYPTION_CONTROL_AUDIENCE_PATH,
-    params.module,
-    params.moduleRole,
+    params.resolvedRole.owningModuleUri,
+    params.resolvedRole.owningModulePath,
     audienceContextId,
   );
-  const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.module);
+  const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.graph);
   const isUsableAudience = isAudience &&
     entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
   const isDelivery = isTaggedEncryptionControl(
     message,
     ENCRYPTION_CONTROL_DELIVERY_PATH,
-    params.module,
-    params.moduleRole,
+    params.resolvedRole.owningModuleUri,
+    params.resolvedRole.owningModulePath,
     audienceContextId,
   ) && message.descriptor.recipient === params.actorDid &&
     entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
@@ -522,43 +567,43 @@ async function scanRecordsWriteSupport(
 }
 
 function expectedAuthorRoleProofs(
-  params: SupportValidationParams,
-  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
+  params: ResolvedSupportValidationParams,
+  ancestorIds: ReadonlyMap<string, ExpectedAncestor>,
 ): Set<string> {
   const records = [params.root];
   if (params.rootInitialWrite !== undefined) {
     records.push(params.rootInitialWrite);
   }
   for (const entry of params.support) {
-    if (Records.isRecordsWrite(entry.message) && isExpectedAncestor(entry, entry.message, params.module, ancestorIds)) {
+    if (Records.isRecordsWrite(entry.message) && isExpectedAncestor(entry, entry.message, ancestorIds)) {
       records.push(entry.message);
     }
   }
 
   const proofs = new Set<string>();
-  const addProof = (modulePath: string | undefined, recipient: string | undefined, contextId: string | undefined): void => {
+  const addProof = (module: string, modulePath: string | undefined, recipient: string | undefined, contextId: string | undefined): void => {
     if (modulePath === undefined) {
       return;
     }
     if (recipient === undefined) {
       throw new RoleReplicationSupportError('a role-authored record has no logical author.');
     }
-    const identity = getRoleRecordIdentity({
-      contextId,
-      module: params.module,
-      modulePath,
-      recipient,
-    });
+    const definition = params.graph.definitionsByUri.get(module);
+    if (definition === undefined) {
+      throw new RoleReplicationSupportError(`missing author-role module '${module}'.`);
+    }
+    const authorGraph = resolveModuleGraph(definition, uri => params.graph.definitionsByUri.get(uri));
+    const identity = getRoleRecordIdentity({ role: authorGraph.resolveInvokedRole(modulePath), contextId, recipient });
     if (identity.key === params.roleIdentity.key) {
       return;
     }
     proofs.add(identity.key);
   };
   for (const record of records) {
-    addProof(getRecordModuleRole(record), getRecordAuthor(record), record.contextId);
+    addProof(record.descriptor.module, getRecordModuleRole(record), getRecordAuthor(record), record.contextId);
   }
   if (params.rootDelete !== undefined) {
-    addProof(getRecordModuleRole(params.rootDelete), getRecordAuthor(params.rootDelete), params.root.contextId);
+    addProof(params.root.descriptor.module, getRecordModuleRole(params.rootDelete), getRecordAuthor(params.rootDelete), params.root.contextId);
   }
   return proofs;
 }
@@ -573,25 +618,23 @@ function isRecordsDeleteMessage(
 function isExpectedAncestor(
   entry: RecordsReadReplicationSupportEntry,
   message: RecordsWriteMessage,
-  module: string,
-  ancestorIds: ReadonlyMap<string, { contextId: string; modulePath: string }>,
+  ancestorIds: ReadonlyMap<string, ExpectedAncestor>,
 ): boolean {
   const ancestor = ancestorIds.get(message.recordId);
   return ancestor !== undefined &&
     message.contextId === ancestor.contextId &&
-    message.descriptor.module === module &&
+    message.descriptor.module === ancestor.module &&
     message.descriptor.modulePath === ancestor.modulePath &&
     entry.isLatestBaseState === false &&
     entry.encodedData === undefined;
 }
 
 function assertRoleAudienceReady(
-  params: SupportValidationParams,
-  currentModuleConfigure: ModulesConfigureMessage,
+  params: ResolvedSupportValidationParams,
   wrappedKeyIds: ReadonlySet<string>,
   scan: SupportScan,
 ): void {
-  const roleRuleSet = getRuleSetAtPath(params.moduleRole, currentModuleConfigure.descriptor.definition.structure);
+  const roleRuleSet = params.resolvedRole.ruleSet;
   const deliveryRequired = roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined;
   const missingAudience = (params.rootDelete === undefined && deliveryRequired && scan.audienceKeyIds.size === 0) ||
     [...wrappedKeyIds].some(keyId => !scan.audienceKeyIds.has(keyId));
@@ -620,27 +663,24 @@ function isTaggedEncryptionControl(
 function isRootAudienceControl(
   message: RecordsWriteMessage,
   root: RecordsWriteMessage,
-  module: string,
+  graph: ResolvedModuleGraph,
 ): boolean {
   const tags = message.descriptor.tags;
-  if (
-    message.descriptor.module !== module ||
-    message.descriptor.modulePath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
-    tags?.module !== module ||
-    typeof tags.rolePath !== 'string' ||
-    typeof tags.contextId !== 'string' ||
-    typeof tags.keyId !== 'string'
-  ) {
+  if (message.descriptor.modulePath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
+      tags?.module !== message.descriptor.module || typeof tags.rolePath !== 'string' ||
+      typeof tags.contextId !== 'string' || typeof tags.keyId !== 'string') {
     return false;
   }
-
-  return root.encryption?.keyEncryption.some((entry): boolean =>
-    entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-    'module' in entry &&
-    entry.module === module &&
-    entry.rolePath === tags.rolePath &&
-    entry.keyId === tags.keyId &&
-    getRoleAudienceContextId(entry.rolePath, root.contextId) === tags.contextId
+  const definition = graph.definitionsByUri.get(message.descriptor.module);
+  if (definition === undefined) {
+    return false;
+  }
+  const roleGraph = resolveModuleGraph(definition, uri => graph.definitionsByUri.get(uri));
+  const role = roleGraph.resolveInvokedRole(tags.rolePath);
+  return root.encryption?.keyEncryption.some(entry =>
+    entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'module' in entry &&
+    entry.module === role.owningModuleUri && entry.rolePath === role.owningModulePath && entry.keyId === tags.keyId &&
+    getRoleAudienceContextId(role, root.contextId) === tags.contextId
   ) === true;
 }
 
