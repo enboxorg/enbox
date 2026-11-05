@@ -589,15 +589,19 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('reports when the recipient has not installed the module', async () => {
+      const chat = chatModuleDefinition();
+      await installModule(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
       const dwnApi = testHarness.agent.dwn as any;
-      sinon.stub(dwnApi, 'getModuleDefinition').resolves(undefined);
+      sinon.stub(dwnApi, 'getModuleDefinition').callThrough()
+        .withArgs('did:example:recipient', chat.module).resolves(undefined);
       sinon.stub(dwnApi, 'fetchRemoteModuleDefinition').rejects(
         new RemoteModuleDefinitionError('module not installed', 'not-found'),
       );
 
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
-        contextId    : 'thread-context',
-        module       : 'https://module.example/chat',
+        contextId    : threadContextId,
+        module       : chat.module,
         recipientDid : 'did:example:recipient',
         rolePath     : ROLE_PATH,
         target       : alice.did.uri,
@@ -642,9 +646,15 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('does not coalesce delegated calls so each authorization attempt is evaluated', async () => {
+      const chat = chatModuleDefinition();
+      await installModule(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
+      const delegate = await testHarness.agent.identity.create({
+        didMethod: 'jwk', metadata: { name: 'Delegated Flight Actor' },
+      });
       const recipientRolePublicKey = await randomX25519PublicKey();
       const recipientDid = 'did:jwk:delegated-flight-recipient';
-      const delegateDid = 'did:jwk:delegated-flight-actor';
+      const delegateDid = delegate.did.uri;
       const dwnApi = testHarness.agent.dwn as any;
       let releaseFirstExecution: (outcome: AudienceKeyDeliveryOutcome) => void = () => {};
       let signalFirstExecution: () => void = () => {};
@@ -670,9 +680,9 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           });
         });
       const request = {
-        contextId  : 'delegated-flight-context',
+        contextId  : threadContextId,
         granteeDid : delegateDid,
-        module     : `https://module.test/delegated-flight/${crypto.randomUUID()}`,
+        module     : chat.module,
         recipientDid,
         recipientRolePublicKey,
         rolePath   : ROLE_PATH,
@@ -794,6 +804,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
     it('resolves delegated authorization on every repair attempt', async () => {
       const chat = chatModuleDefinition();
+      await installModule(alice.did.uri, chat);
+      const threadContextId = await writeThread(chat);
       const delegate = await testHarness.agent.identity.create({
         didMethod : 'jwk',
         metadata  : { name: 'Coverage-less Delegate' },
@@ -801,7 +813,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       const permissionLookup = sinon.spy(testHarness.agent.permissions, 'getPermissionForRequest');
       const request = {
-        contextId              : 'thread-context',
+        contextId              : threadContextId,
         granteeDid             : delegate.did.uri,
         module                 : chat.module,
         moduleRole             : ROLE_PATH,
@@ -817,11 +829,13 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(!first.delivered && first.failure).toBe('terminal');
       expect(!first.delivered && first.reason).toMatch(/no matching permission grant/i);
       expect(second.delivered).toBe(false);
-      expect(permissionLookup.callCount).toBe(2);
+      const writeLookups = permissionLookup.getCalls().filter(call => call.args[0].messageType === DwnInterface.RecordsWrite);
+      expect(writeLookups).toHaveLength(2);
     }, 30000);
 
     it('throws on caller misuse instead of reporting a failed outcome', async () => {
       const chat = chatModuleDefinition();
+      await installModule(alice.did.uri, chat);
 
       // A nested role path with no contextId cannot address an audience tuple.
       await expect(testHarness.agent.dwn.reprovisionAudienceKeyDelivery({

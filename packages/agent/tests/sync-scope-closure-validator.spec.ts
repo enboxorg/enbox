@@ -226,18 +226,20 @@ function composedModuleDefinition(): ModuleDefinition {
     published : true,
     structure : {
       profile: {
-        $ref: 'profiles:profile',
+        $ref       : 'profiles:profile',
+        annotation : {},
       },
       thread: {
-        $ref: 'threads:thread',
+        $ref    : 'threads:thread',
+        comment : {},
       },
     },
     types: {
-      profile: {
+      annotation: {
         dataFormats : ['application/json'],
         schema      : `${commentsModule}/profile`,
       },
-      thread: {
+      comment: {
         dataFormats : ['application/json'],
         schema      : `${commentsModule}/thread`,
       },

@@ -21,7 +21,7 @@ import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { X25519 } from '@enbox/crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnErrorCode, Message, ModulesConfigure, RecordsCount, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe, Time } from '../../src/index.js';
+import { DwnErrorCode, ModulesConfigure, RecordsCount, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe, Time } from '../../src/index.js';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 
 /**
@@ -138,32 +138,12 @@ export function testModuleComposition(): void {
         });
       });
 
-      it('should reject `uses` alias that does not match naming pattern (bypassing JSON schema)', async () => {
-        const alice = await TestDataGenerator.generateDidKeyPersona();
-
-        // The JSON schema enforces alias naming via `patternProperties` + `additionalProperties: false`,
-        // which means invalid aliases like '123invalid' are caught by JSON schema before the code-level
-        // `validateUses()` check. To exercise the code-level `ModulesConfigureInvalidUsesAlias` error,
-        // we must stub `Message.validateJsonSchema` to bypass JSON schema validation.
-        sinon.stub(Message, 'validateJsonSchema');
-
-        const badDefinition: ModuleDefinition = {
-          module    : 'https://bad.example.com',
-          published : true,
-          uses      : { '123invalid': 'https://foo.example.com' } as any,
-          types     : {},
-          structure : {},
+      it('should reject invalid uses aliases in the syntax validator independently of JSON schema', () => {
+        const validator = ModulesConfigure as unknown as {
+          validateUses(uses: Record<string, string>, ownModuleUri: string): void;
         };
-
-        try {
-          await ModulesConfigure.create({
-            definition : badDefinition,
-            signer     : Jws.createSigner(alice),
-          });
-          throw new Error('Expected an error to be thrown');
-        } catch (error: any) {
-          expect(error.message).toContain(DwnErrorCode.ModulesConfigureInvalidUsesAlias);
-        }
+        expect(() => validator.validateUses({ '123invalid': 'https://foo.example.com' }, 'https://bad.example.com'))
+          .toThrow(DwnErrorCode.ModulesConfigureInvalidUsesAlias);
       });
 
       it('should reject `$ref` with alias not in `uses`', async () => {
@@ -197,10 +177,10 @@ export function testModuleComposition(): void {
         }
       });
 
-      it('should reject `$ref` node with `$actions`', async () => {
+      it('should allow explicit `$actions` on a structural attachment', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const badDefinition: ModuleDefinition = {
+        const definition: ModuleDefinition = {
           module    : 'https://bad.example.com',
           published : true,
           uses      : { threads: 'https://threads.example.com' },
@@ -208,7 +188,7 @@ export function testModuleComposition(): void {
           structure : {
             thread: {
               $ref     : 'threads:thread',
-              $actions : [{ who: 'anyone', can: ['read'] }], // not allowed on $ref node
+              $actions : [{ who: 'anyone', can: ['read'] }], // never inherited by the provider record
               comment  : {
                 $actions: [{ who: 'anyone', can: ['create'] }],
               },
@@ -216,15 +196,10 @@ export function testModuleComposition(): void {
           },
         };
 
-        try {
-          await ModulesConfigure.create({
-            definition : badDefinition,
-            signer     : Jws.createSigner(alice),
-          });
-          throw new Error('Expected an error to be thrown');
-        } catch (error: any) {
-          expect(error.message).toContain(DwnErrorCode.ModulesConfigureInvalidRefNodeHasDirectives);
-        }
+        await expect(ModulesConfigure.create({
+          definition,
+          signer: Jws.createSigner(alice),
+        })).resolves.toBeDefined();
       });
 
       it('should reject `$ref` node with `$role`', async () => {
@@ -483,7 +458,7 @@ export function testModuleComposition(): void {
         });
         const reply = await dwn.processMessage(alice.did, badConfigure.message);
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidCrossModuleOf);
+        expect(reply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefModulePath);
       });
 
       it('should reject composing module if cross-module role does not exist in referenced module', async () => {
@@ -521,7 +496,7 @@ export function testModuleComposition(): void {
         });
         const reply = await dwn.processMessage(alice.did, badConfigure.message);
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidCrossModuleRole);
+        expect(reply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefModulePath);
       });
     });
 
@@ -640,7 +615,7 @@ export function testModuleComposition(): void {
     // =========================================================================
 
     describe('writing at the $ref position', () => {
-      it('should reject a non-tenant writing at the `$ref` position because `$ref` nodes have no `$actions`', async () => {
+      it('should reject a non-tenant writing at a structural `$ref` attachment', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
@@ -658,8 +633,7 @@ export function testModuleComposition(): void {
         await dwn.processMessage(alice.did, commentsConfigure.message);
 
         // Bob tries to write a record at the `$ref` position (modulePath: 'thread')
-        // through the composing module. The `$ref` node has no `$actions`, so this should
-        // be rejected for any non-tenant author.
+        // through the composing module. An attachment never represents a local record.
         const threadWriteAtRef = await TestDataGenerator.generateRecordsWrite({
           author     : bob,
           module     : commentsModule.module,
@@ -670,11 +644,11 @@ export function testModuleComposition(): void {
         const reply = await dwn.processMessage(
           alice.did, threadWriteAtRef.message, { dataStream: threadWriteAtRef.dataStream }
         );
-        expect(reply.status.code).toBe(401);
-        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionRulesNotFound);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationRefNodeWriteNotAllowed);
       });
 
-      it('should resolve type from the referenced module for records at the `$ref` position', async () => {
+      it('should reject the tenant writing at a `$ref` even with the correct provider representation', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         // Install both modules on Alice's DWN
@@ -690,21 +664,19 @@ export function testModuleComposition(): void {
         });
         await dwn.processMessage(alice.did, commentsConfigure.message);
 
-        // Alice (tenant) writes at the `$ref` position using the WRONG schema.
-        // The type at position 'thread' should resolve from the threads module, which expects
-        // schema 'https://threads.example.com/schemas/thread'. Using a different schema should fail.
-        const wrongSchemaWrite = await TestDataGenerator.generateRecordsWrite({
+        // Tenant authority cannot turn a structural attachment into a local record.
+        const writeAtRef = await TestDataGenerator.generateRecordsWrite({
           author     : alice,
           module     : commentsModule.module,
           modulePath : 'thread',
-          schema     : 'https://comments.example.com/schemas/comment', // wrong schema
+          schema     : 'https://threads.example.com/schemas/thread',
           dataFormat : 'application/json',
         });
         const reply = await dwn.processMessage(
-          alice.did, wrongSchemaWrite.message, { dataStream: wrongSchemaWrite.dataStream }
+          alice.did, writeAtRef.message, { dataStream: writeAtRef.dataStream }
         );
         expect(reply.status.code).toBe(400);
-        // Type verification should fail because the schema doesn't match the referenced module's type
+        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationRefNodeWriteNotAllowed);
       });
     });
 
@@ -1411,7 +1383,7 @@ export function testModuleComposition(): void {
           alice.did, commentWrite.message, { dataStream: commentWrite.dataStream }
         );
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound);
+        expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentRecordNotFound);
       });
 
       it('should reject `$ref` at non-root module path', async () => {
@@ -1467,11 +1439,11 @@ export function testModuleComposition(): void {
     });
 
     // =========================================================================
-    // Multi-level composition rejection (#299)
+    // Multi-level composition
     // =========================================================================
 
-    describe('multi-level composition rejection', () => {
-      it('should reject `$ref` that targets a node which is itself a `$ref` composition point', async () => {
+    describe('multi-level composition', () => {
+      it('should accept `$ref` that resolves through another attachment without adding a context segment', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         // Module B uses Module A (threads)
@@ -1502,7 +1474,7 @@ export function testModuleComposition(): void {
           },
           structure: {
             thread: {
-              $ref : 'b:thread', // 'thread' in module B IS a $ref node — multi-level, should be rejected
+              $ref : 'b:thread', // This resolves to the original thread record.
               tag  : {
                 $actions: [{ who: 'anyone', can: ['create', 'read'] }],
               },
@@ -1525,17 +1497,28 @@ export function testModuleComposition(): void {
         const bReply = await dwn.processMessage(alice.did, bConfigure.message);
         expect(bReply.status.code).toBe(202);
 
-        // Install module C (depends on B) — should be REJECTED
+        // Install module C with its explicit transitive binding.
         const cConfigure = await ModulesConfigure.create({
           definition : moduleC,
           signer     : Jws.createSigner(alice),
         });
         const cReply = await dwn.processMessage(alice.did, cConfigure.message);
-        expect(cReply.status.code).toBe(400);
-        expect(cReply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefTargetThroughRef);
+        expect(cReply.status.code).toBe(202);
+
+        const root = await TestDataGenerator.generateRecordsWrite({
+          author     : alice, module     : threadsModule.module, modulePath : 'thread',
+          schema     : threadsModule.types.thread.schema, dataFormat : 'application/json',
+        });
+        expect((await dwn.processMessage(alice.did, root.message, { dataStream: root.dataStream })).status.code).toBe(202);
+        const tag = await TestDataGenerator.generateRecordsWrite({
+          author          : alice, module          : moduleC.module, modulePath      : 'thread/tag',
+          parentContextId : root.message.contextId, schema          : moduleC.types.tag.schema, dataFormat      : 'application/json',
+        });
+        expect((await dwn.processMessage(alice.did, tag.message, { dataStream: tag.dataStream })).status.code).toBe(202);
+        expect(tag.message.contextId).toBe(`${root.message.contextId}/${tag.message.recordId}`);
       });
 
-      it('should reject `$ref` that targets a multi-segment path traversing through an intermediate `$ref` node', async () => {
+      it('should accept an extension of a local child beneath another attachment', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
         // Module B uses threads — has $ref at 'thread' and local children under it
@@ -1557,7 +1540,7 @@ export function testModuleComposition(): void {
         };
 
         // Module C references a path that traverses through B's $ref node: 'thread/annotation'
-        // 'thread' is a $ref node in module B, so this should be rejected even though 'annotation' is a real node
+        // B owns annotation; its parent remains the original thread in A.
         const moduleC: ModuleDefinition = {
           module    : 'https://module-c.example.com',
           published : true,
@@ -1590,14 +1573,30 @@ export function testModuleComposition(): void {
         const bReply = await dwn.processMessage(alice.did, bConfigure.message);
         expect(bReply.status.code).toBe(202);
 
-        // Install module C — should be REJECTED because 'thread' (intermediate) is a $ref node
+        // Install C and create its local child under B's annotation.
         const cConfigure = await ModulesConfigure.create({
           definition : moduleC,
           signer     : Jws.createSigner(alice),
         });
         const cReply = await dwn.processMessage(alice.did, cConfigure.message);
-        expect(cReply.status.code).toBe(400);
-        expect(cReply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefTargetThroughRef);
+        expect(cReply.status.code).toBe(202);
+
+        const root = await TestDataGenerator.generateRecordsWrite({
+          author     : alice, module     : threadsModule.module, modulePath : 'thread',
+          schema     : threadsModule.types.thread.schema, dataFormat : 'application/json',
+        });
+        expect((await dwn.processMessage(alice.did, root.message, { dataStream: root.dataStream })).status.code).toBe(202);
+        const annotation = await TestDataGenerator.generateRecordsWrite({
+          author          : alice, module          : moduleB.module, modulePath      : 'thread/annotation',
+          parentContextId : root.message.contextId, schema          : moduleB.types.annotation.schema, dataFormat      : 'application/json',
+        });
+        expect((await dwn.processMessage(alice.did, annotation.message, { dataStream: annotation.dataStream })).status.code).toBe(202);
+        const tag = await TestDataGenerator.generateRecordsWrite({
+          author          : alice, module          : moduleC.module, modulePath      : 'annotation/tag',
+          parentContextId : annotation.message.contextId, schema          : moduleC.types.tag.schema, dataFormat      : 'application/json',
+        });
+        expect((await dwn.processMessage(alice.did, tag.message, { dataStream: tag.dataStream })).status.code).toBe(202);
+        expect(tag.message.contextId).toBe(`${root.message.contextId}/${annotation.message.recordId}/${tag.message.recordId}`);
       });
 
       it('should accept `$ref` to a node that does NOT have a `$ref` directive', async () => {
@@ -2227,7 +2226,7 @@ export function testModuleComposition(): void {
         // 1. Install threads V1 (participant has $role: true)
         // 2. Install comments module (uses threads, references threads:thread/participant role)
         // 3. Create thread, assign Bob as participant, create comment — all under V1
-        // 4. Update threads to V2 where participant is no longer a role ($role removed)
+        // 4. Detach the consumer role action, then remove the provider role marker
         // 5. Bob reads the comment using the cross-module role
         //    → should fail because the read's message timestamp resolves threads V2
 
@@ -2327,7 +2326,17 @@ export function testModuleComposition(): void {
         });
         await dwn.processMessage(alice.did, commentWrite.message, { dataStream: commentWrite.dataStream });
 
-        // Wait to ensure V2 gets a later timestamp
+        // Preserve a signed read made while the imported role contract was valid.
+        const historicalRead = await RecordsRead.create({
+          signer     : Jws.createSigner(bob),
+          moduleRole : 'threads:thread/participant',
+          filter     : { module: commentsVersioned.module, modulePath: 'thread/comment', contextId: threadContextId },
+        });
+        await Time.minimalSleep();
+        const detached = structuredClone(commentsVersioned);
+        detached.structure.thread.comment = { $actions: [{ who: 'anyone', can: ['create'] }] };
+        const detachedConfigure = await ModulesConfigure.create({ definition: detached, signer: Jws.createSigner(alice) });
+        expect((await dwn.processMessage(alice.did, detachedConfigure.message)).status.code).toBe(202);
         await Time.minimalSleep();
 
         // threads V2: participant is NO LONGER a role ($role removed)
@@ -2375,6 +2384,9 @@ export function testModuleComposition(): void {
         const bobReadReply = await dwn.processMessage(alice.did, bobRead.message);
         expect(bobReadReply.status.code).toBe(404);
         expect(bobReadReply.entry).toBeUndefined();
+
+        const historicalReply = await dwn.processMessage(alice.did, historicalRead.message);
+        expect(historicalReply.status.code).toBe(200);
       });
     });
 

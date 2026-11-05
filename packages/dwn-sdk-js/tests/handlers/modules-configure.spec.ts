@@ -621,9 +621,17 @@ export function testModulesConfigureHandler(): void {
         const historicalConfig = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           moduleDefinition : validHistoricalDefinition,
-          messageTimestamp : '2025-05-01T00:00:00.000000Z'
+          messageTimestamp : '2025-04-30T00:00:00.000000Z'
         });
-        const historicalIndexes = ModulesConfigureHandler.constructIndexes(historicalConfig.modulesConfigure, true);
+        // Only a valid graph can be an active head after the fresh-format cutover.
+        // The deliberately malformed row is retained historical input, not active authority.
+        const activeConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : validHistoricalDefinition,
+          messageTimestamp : '2025-05-01T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, activeConfig.message)).status.code).toBe(202);
+        const historicalIndexes = ModulesConfigureHandler.constructIndexes(historicalConfig.modulesConfigure, false);
         historicalConfig.message.descriptor.definition = invalidHistoricalDefinition;
         await messageStore.put(alice.did, historicalConfig.message, historicalIndexes);
 
@@ -651,8 +659,10 @@ export function testModulesConfigureHandler(): void {
           module,
           isLatestBaseState : false
         }]);
-        expect(historicalConfigs.messages).toHaveLength(1);
-        expect(await Message.getCid(historicalConfigs.messages[0])).toBe(await Message.getCid(historicalConfig.message));
+        expect(historicalConfigs.messages).toHaveLength(2);
+        const historicalCids = await Promise.all(historicalConfigs.messages.map(message => Message.getCid(message)));
+        expect(historicalCids).toContain(await Message.getCid(historicalConfig.message));
+        expect(historicalCids).toContain(await Message.getCid(activeConfig.message));
       });
 
       it('should purge records invalidated by a newly learned module config', async () => {

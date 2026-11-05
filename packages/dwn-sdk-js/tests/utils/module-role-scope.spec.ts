@@ -109,9 +109,31 @@ describe('resolveModuleContextRoles', () => {
     const composed: ModuleDefinition = {
       ...definition,
       uses      : { other: 'https://example.com/other' },
-      structure : { attachment: { $ref: 'other:context' } },
+      structure : { attachment: { $ref: 'other:context', note: {} } },
     };
     expect(resolveModuleContextRoles(composed, 'attachment')).toEqual([]);
+  });
+
+  it('keeps reference actions out of managed contexts while preserving local descendant contexts', () => {
+    const composed: ModuleDefinition = {
+      ...definition,
+      uses      : { other: 'https://example.com/other' },
+      structure : {
+        attachment: {
+          $ref     : 'other:context',
+          $actions : [{ role: 'attachment/member', can: ['read'] }],
+          member   : { $role: true },
+          note     : {
+            $actions : [{ role: 'attachment/note/member', can: ['read'] }],
+            member   : { $role: true },
+          },
+        },
+      },
+    };
+    expect(resolveModuleContextRoles(composed, 'attachment')).toEqual([]);
+    expect(() => resolveModuleRoleContextScope(composed, 'attachment/member')).toThrow(TypeError);
+    expect(resolveModuleContextRoles(composed, 'attachment/note')).toEqual(['attachment/note/member']);
+    expect(resolveModuleRoleContextScope(composed, 'attachment/note/member').readablePaths).toEqual(['attachment/note']);
   });
 
   for (const path of ['', '/context', 'context/', 'context//note', 'context/$actions', 'missing', 'context/member']) {

@@ -302,11 +302,12 @@ describe('validation read closure', () => {
           base: baseDefinition.module,
         },
         types: {
-          mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
+          annotation: { schema: 'annotation', dataFormats: ['text/plain'] },
         },
         structure: {
           mirror: {
-            $ref: 'base:profile',
+            $ref       : 'base:profile',
+            annotation : {},
           },
         },
       };

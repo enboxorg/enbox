@@ -729,7 +729,7 @@ describe('ModulesConfigure', () => {
           .rejects.toThrow(DwnErrorCode.ModulesConfigureRoleParentContextDepthExceeded);
       });
 
-      it('should reject cross-module role rules whose role parent is deeper than the rule path context', async () => {
+      it('should defer cross-module role parent depth to graph resolution', async () => {
         const definition = {
           published : true,
           module    : 'http://example.com',
@@ -757,7 +757,7 @@ describe('ModulesConfigure', () => {
         });
 
         await expect(createModulesConfigurePromise)
-          .rejects.toThrow(DwnErrorCode.ModulesConfigureRoleParentContextDepthExceeded);
+          .resolves.toBeDefined();
       });
 
       it('rejects module definitions with actions that contain `of` and  `who` is `anyone`', async () => {
@@ -1135,7 +1135,7 @@ describe('ModulesConfigure', () => {
           expect(capturedWarnings).toHaveLength(0);
         });
 
-        it('should reject encryptionRequired: true when read roles resolve through uses', async () => {
+        it('should defer foreign encrypted read-role validation until the installed graph is available', async () => {
           originalWarn = console.warn;
           console.warn = (...args: unknown[]): void => { capturedWarnings.push(String(args[0])); };
 
@@ -1168,7 +1168,7 @@ describe('ModulesConfigure', () => {
           await expect(ModulesConfigure.create({
             signer     : Jws.createSigner(alice),
             definition : encryptedDefinition,
-          })).rejects.toThrow(DwnErrorCode.ModulesConfigureInvalidEncryptedCrossModuleRole);
+          })).resolves.toBeDefined();
           expect(capturedWarnings).toHaveLength(0);
         });
       });

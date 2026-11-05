@@ -213,6 +213,8 @@ Do not open public issues for vulnerabilities. Email
 ## Resources
 
 - [Documentation](https://enbox-docs.pages.dev)
+- [Module composition](./docs/MODULE-COMPOSITION.md)
+- [Module format cutover](./docs/MODULE-CUTOVER.md)
 - [DWN Specification](https://identity.foundation/decentralized-web-node/spec/)
 - [DID Core Specification](https://www.w3.org/TR/did-core/)
 

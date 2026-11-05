@@ -253,8 +253,8 @@ export function testRecordsNestedQueryScope(): void {
       };
 
       await expectInvalidScope();
-      await expectInvalidScope('community/channel/message/tooDeep');
-      await expectInvalidScope('community/channel/message/tooDeep', 'selected-parent');
+      await expectInvalidScope('a/b/c/d/e/f/g/h/i/j/k');
+      await expectInvalidScope('a/b/c/d/e/f/g/h/i/j/k', 'selected-parent');
 
       const boundedPathWideSubscribe = await TestDataGenerator.generateRecordsSubscribe({
         author : alice,
