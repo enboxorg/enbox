@@ -274,6 +274,23 @@ function getOrderingRole(graph: ResolvedModuleGraph, rawRole: string): ResolvedR
   }
 }
 
+/** Match retained audience metadata when this admission batch has no governing module definition. */
+function findIndexedAudienceKeys(
+  selector: { moduleUri: string; rolePath: string; keyId: string; contextId: string | undefined },
+  audienceKeys: Iterable<string>,
+): string[] {
+  const matches: string[] = [];
+  for (const key of audienceKeys) {
+    const [moduleUri, rolePath, audienceContextId, keyId] = JSON.parse(key) as [string, string, string, string];
+    if (moduleUri === selector.moduleUri && rolePath === selector.rolePath && keyId === selector.keyId &&
+        (audienceContextId === '' || selector.contextId === audienceContextId ||
+          selector.contextId?.startsWith(`${audienceContextId}/`) === true)) {
+      matches.push(key);
+    }
+  }
+  return matches;
+}
+
 function getSourceAudienceKeysFromEncryption<T>(message: GenericMessage, indexes: DependencyIndexes<T>): string[] {
   const keyEncryption = (message as {
     encryption?: {
@@ -297,14 +314,12 @@ function getSourceAudienceKeysFromEncryption<T>(message: GenericMessage, indexes
 
     const graph = getOrderingGraph(entry.module, indexes);
     if (graph === undefined) {
-      const recordContext = getContextId(message);
-      for (const key of indexes.sourceAudienceIndex.keys()) {
-        const [module, path, parent, keyId] = JSON.parse(key) as [string, string, string, string];
-        if (module === entry.module && path === entry.rolePath && keyId === entry.keyId &&
-            (parent === '' || recordContext === parent || recordContext?.startsWith(`${parent}/`) === true)) {
-          keys.push(key);
-        }
-      }
+      keys.push(...findIndexedAudienceKeys({
+        moduleUri : entry.module,
+        rolePath  : entry.rolePath,
+        keyId     : entry.keyId,
+        contextId : getContextId(message),
+      }, indexes.sourceAudienceIndex.keys()));
       continue;
     }
     const role = getOrderingRole(graph, entry.rolePath);

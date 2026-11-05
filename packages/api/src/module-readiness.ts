@@ -92,53 +92,46 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
   }
 
   public async ensureReady(options: EnsureModulesReadyOptions): Promise<void> {
-    const requested = options.application.modules.map(entry => entry.module);
-    const requestedUris = new Set(requested.map(module => module.definition.module));
-    const local = new Map<string, DwnMessage[DwnInterface.ModulesConfigure]>();
-    for (const module of requested) {
-      try {
-        const configured = await this.using(module).configure();
-        requireDwnSuccess(`Configure module '${module.definition.module}'`, configured);
-        if (this.delegateDid !== undefined || options.publish === false) {
-          continue;
-        }
-        if (configured.module === undefined) {
-          throw new Error(`Configure module '${module.definition.module}' returned no signed message.`);
-        }
-        local.set(module.definition.module, configured.module.toJSON());
-      } catch (cause: unknown) {
-        throw new ModuleReadinessError({ cause, operation: 'install', module: module.definition.module, targetDid: this.connectedDid });
+    const requestedModules = options.application.modules.map(entry => entry.module);
+    const requestedModuleUris = new Set(requestedModules.map(module => module.definition.module));
+    const localConfigurations = new Map<string, DwnMessage[DwnInterface.ModulesConfigure]>();
+    const shouldPublish = this.delegateDid === undefined && options.publish !== false;
+    for (const moduleArtifact of requestedModules) {
+      // Complete each dependency-aware install before advancing; a failure stops later writes.
+      const configuration = await this.configureRequestedModule(moduleArtifact, shouldPublish); // NOSONAR: S9382 — ordered installs.
+      if (configuration !== undefined) {
+        localConfigurations.set(moduleArtifact.definition.module, configuration);
       }
     }
-    if (this.delegateDid !== undefined || options.publish === false) {
+    if (!shouldPublish) {
       return;
     }
 
     const targetDid = options.targetDid ?? this.connectedDid;
-    const selected = new Map([...local].map(([uri, message]) => [uri, message.descriptor.definition]));
-    const existingProviders = new Set<string>();
-    const loadLocal = async (uri: string): Promise<ModuleDefinition | undefined> => {
-      let message = local.get(uri);
+    const selectedDefinitions = new Map([...localConfigurations].map(([uri, message]) => [uri, message.descriptor.definition]));
+    const existingProviderUris = new Set<string>();
+    const loadLocalDefinition = async (uri: string): Promise<ModuleDefinition | undefined> => {
+      let message = localConfigurations.get(uri);
       if (message === undefined) {
         message = await this.queryLocalConfiguration(uri);
         if (message !== undefined) {
-          local.set(uri, message);
+          localConfigurations.set(uri, message);
         }
       }
       return message?.descriptor.definition;
     };
-    const selectProvider = async (uri: string): Promise<ModuleDefinition | undefined> => {
-      const previous = selected.get(uri);
+    const selectProviderDefinition = async (uri: string): Promise<ModuleDefinition | undefined> => {
+      const previous = selectedDefinitions.get(uri);
       if (previous !== undefined) {
         return previous;
       }
       const hosted = await this.queryHostedDefinition(targetDid, uri);
       if (hosted !== undefined) {
-        existingProviders.add(uri);
+        existingProviderUris.add(uri);
       }
-      const definition = hosted ?? await loadLocal(uri);
+      const definition = hosted ?? await loadLocalDefinition(uri);
       if (definition !== undefined) {
-        selected.set(uri, definition);
+        selectedDefinitions.set(uri, definition);
       }
       return definition;
     };
@@ -146,10 +139,10 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
     // Select and validate the entire target graph before publishing any metadata.
     // Existing target providers win; missing providers use actual local metadata,
     // including dependencies added after the application's artifact was authored.
-    for (const module of requested) {
+    for (const module of requestedModules) {
       try {
-        const definition = selected.get(module.definition.module)!;
-        const definitions = await preloadModuleDefinitions(definition, selectProvider);
+        const definition = selectedDefinitions.get(module.definition.module)!;
+        const definitions = await preloadModuleDefinitions(definition, selectProviderDefinition); // NOSONAR: S9382 — shared provider selection cache.
         const graph = resolveModuleGraph(definition, uri => definitions.get(uri));
         validateImportedModuleContracts(resolveTypedModuleGraph(module), graph);
       } catch (cause: unknown) {
@@ -159,34 +152,34 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
     // New providers retain the contracts of their actual local policy when an
     // existing target dependency is reused. Stale packaged provider paths do not
     // participate in this check.
-    for (const [uri, definition] of selected) {
-      if (existingProviders.has(uri) || requestedUris.has(uri)) {
+    for (const [uri, definition] of selectedDefinitions) {
+      if (existingProviderUris.has(uri) || requestedModuleUris.has(uri)) {
         continue;
       }
       try {
-        const localDefinitions = await preloadModuleDefinitions(definition, loadLocal);
+        const localDefinitions = await preloadModuleDefinitions(definition, loadLocalDefinition); // NOSONAR: S9382 — ordered provider checks.
         const localGraph = resolveModuleGraph(definition, target => localDefinitions.get(target));
-        const targetGraph = resolveModuleGraph(definition, target => selected.get(target));
+        const targetGraph = resolveModuleGraph(definition, target => selectedDefinitions.get(target));
         validateImportedModuleContracts(localGraph, targetGraph);
       } catch (cause: unknown) {
         throw new ModuleReadinessError({ cause, operation: 'query', module: uri, targetDid });
       }
     }
 
-    const published = new Set<string>();
+    const publishedModuleUris = new Set<string>();
     const publish = async (uri: string): Promise<void> => {
-      if (published.has(uri) || existingProviders.has(uri)) {
+      if (publishedModuleUris.has(uri) || existingProviderUris.has(uri)) {
         return;
       }
-      const definition = selected.get(uri)!;
+      const definition = selectedDefinitions.get(uri)!;
       for (const dependency of Object.values(definition.uses ?? {})) {
-        await publish(dependency);
+        await publish(dependency); // NOSONAR: S9382 — publish prerequisites before their dependent.
       }
       let operation: ModuleReadinessOperation = 'publish';
       try {
         // A different owned tenant receives freshly derived target key metadata.
         const message = targetDid === this.connectedDid
-          ? local.get(uri)!
+          ? localConfigurations.get(uri)!
           : await this.createTargetConfiguration(targetDid, definition);
         const { reply } = await this.agent.sendDwnRequest({
           author      : targetDid,
@@ -203,13 +196,34 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
           operation = 'publish';
           throw new Error('The hosted DWN retained a different active module definition.');
         }
-        published.add(uri);
+        publishedModuleUris.add(uri);
       } catch (cause: unknown) {
         throw new ModuleReadinessError({ cause, operation, module: uri, targetDid });
       }
     };
-    for (const module of requested) {
-      await publish(module.definition.module);
+    for (const module of requestedModules) {
+      await publish(module.definition.module); // NOSONAR: S9382 — shared dependency writes must finish before reuse.
+    }
+  }
+
+  /** Install one requested module and retain its signed configuration only when publication is requested. */
+  private async configureRequestedModule(
+    moduleArtifact: TypedModule,
+    shouldPublish: boolean,
+  ): Promise<DwnMessage[DwnInterface.ModulesConfigure] | undefined> {
+    const moduleUri = moduleArtifact.definition.module;
+    try {
+      const configuration = await this.using(moduleArtifact).configure();
+      requireDwnSuccess(`Configure module '${moduleUri}'`, configuration);
+      if (!shouldPublish) {
+        return undefined;
+      }
+      if (configuration.module === undefined) {
+        throw new Error(`Configure module '${moduleUri}' returned no signed message.`);
+      }
+      return configuration.module.toJSON();
+    } catch (cause: unknown) {
+      throw new ModuleReadinessError({ cause, operation: 'install', module: moduleUri, targetDid: this.connectedDid });
     }
   }
 

@@ -248,66 +248,61 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     const ruleSet = getRuleSetAtPath(descriptor.modulePath, moduleDefinition.structure);
-    if (!ruleSet?.$delivery) {
+    // Subscription delivery is driven by participants; only direct delivery pushes from this node.
+    if (ruleSet?.$delivery !== 'direct') {
       return;
     }
 
-    // For 'direct' strategy: resolve targets and push.
-    if (ruleSet.$delivery === 'direct') {
-      const definitions = await preloadModuleDefinitions(moduleDefinition, uri => this.#getModuleDefinition(tenant, uri));
-      const graph = resolveModuleGraph(moduleDefinition, uri => definitions.get(uri));
-      const node = graph.nodesByDeclaredPath.get(descriptor.modulePath);
-      if (node === undefined || node.kind !== 'record') {
-        return;
-      }
-      const contextId = (message as RecordsWriteMessage).contextId;
-      const targets = await this.#resolveDeliveryTargets(
-        tenant, node, contextId, descriptor.recipient,
-      );
+    const definitions = await preloadModuleDefinitions(moduleDefinition, uri => this.#getModuleDefinition(tenant, uri));
+    const graph = resolveModuleGraph(moduleDefinition, uri => definitions.get(uri));
+    const node = graph.nodesByDeclaredPath.get(descriptor.modulePath);
+    if (node === undefined || node.kind !== 'record') {
+      return;
+    }
+    const contextId = (message as RecordsWriteMessage).contextId;
+    const targets = await this.#resolveDeliveryTargets(
+      tenant, node, contextId, descriptor.recipient,
+    );
 
-      if (targets.length === 0) {
-        return;
-      }
-
-      // Filter out the tenant itself (they already have the record).
-      const externalTargets = targets.filter((t: DeliveryTarget): boolean => t.did !== tenant);
-      if (externalTargets.length === 0) {
-        return;
-      }
-
-      const concurrency = this.#config.deliveryMaxConcurrency;
-      const allEndpoints: DwnEndpoint[] = [];
-      const endpointTargetMap = new Map<string, string>(); // url -> target DID
-
-      for (const target of externalTargets) {
-        for (const ep of target.endpoints) {
-          allEndpoints.push(ep);
-          endpointTargetMap.set(ep.url, target.did);
-        }
-      }
-
-      // Deduplicate per-target.
-      const uniqueEndpoints = allEndpoints.filter((ep: DwnEndpoint): boolean => {
-        const targetDid = endpointTargetMap.get(ep.url)!;
-        const dedupKey = `dlv:${targetDid}:${messageCid}`;
-        if (this.#isRecentlyForwarded(dedupKey)) {
-          return false;
-        }
-        this.#markForwarded(dedupKey);
-        return true;
-      });
-
-      if (uniqueEndpoints.length === 0) {
-        return;
-      }
-
-      // For delivery, the target is the participant DID (not the tenant).
-      // We need to send to each participant's DWN with the *participant* as the target.
-      await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, tenant, message, concurrency);
+    if (targets.length === 0) {
+      return;
     }
 
-    // 'subscribe' strategy: no outbound push needed from the origin.
-    // Participant providers are responsible for establishing RecordsSubscribe connections.
+    // Filter out the tenant itself (they already have the record).
+    const externalTargets = targets.filter((t: DeliveryTarget): boolean => t.did !== tenant);
+    if (externalTargets.length === 0) {
+      return;
+    }
+
+    const concurrency = this.#config.deliveryMaxConcurrency;
+    const allEndpoints: DwnEndpoint[] = [];
+    const endpointTargetMap = new Map<string, string>(); // url -> target DID
+
+    for (const target of externalTargets) {
+      for (const ep of target.endpoints) {
+        allEndpoints.push(ep);
+        endpointTargetMap.set(ep.url, target.did);
+      }
+    }
+
+    // Deduplicate per-target.
+    const uniqueEndpoints = allEndpoints.filter((ep: DwnEndpoint): boolean => {
+      const targetDid = endpointTargetMap.get(ep.url)!;
+      const dedupKey = `dlv:${targetDid}:${messageCid}`;
+      if (this.#isRecentlyForwarded(dedupKey)) {
+        return false;
+      }
+      this.#markForwarded(dedupKey);
+      return true;
+    });
+
+    if (uniqueEndpoints.length === 0) {
+      return;
+    }
+
+    // For delivery, the target is the participant DID (not the tenant).
+    // We need to send to each participant's DWN with the *participant* as the target.
+    await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, tenant, message, concurrency);
   }
 
   // -------------------------------------------------------------------------
@@ -362,23 +357,31 @@ export class DeliveryService implements MessageProcessedHook {
     contextId: string | undefined,
     targetDids: Set<string>,
   ): Promise<void> {
-    for (const { resolvedRole, resolvedActor } of node.actions) {
-      if (resolvedRole !== undefined) {
-        const roleDids = await this.#queryRoleRecipients(tenant, resolvedRole, contextId);
-        for (const did of roleDids) {
-          targetDids.add(did);
-        }
-      }
-      if (resolvedActor !== undefined) {
-        const actorDid = await this.#queryActorFromAncestor(
-          tenant, resolvedActor.owningModuleUri, resolvedActor.owningModulePath,
-          resolvedActor.who, resolvedActor.physicalDepth, contextId,
-        );
-        if (actorDid !== undefined) {
-          targetDids.add(actorDid);
-        }
+    for (const action of node.actions) {
+      const recipients = await this.#queryActionRecipients(tenant, action, contextId); // NOSONAR: S9382 — one DWN lookup at a time.
+      for (const did of recipients) {
+        targetDids.add(did);
       }
     }
+  }
+
+  /** Resolve one action's role holders and ancestor actor without changing action-order target precedence. */
+  async #queryActionRecipients(
+    tenant: string,
+    { resolvedRole, resolvedActor }: ResolvedModuleNode['actions'][number],
+    contextId: string | undefined,
+  ): Promise<string[]> {
+    const recipients = resolvedRole === undefined ? [] : await this.#queryRoleRecipients(tenant, resolvedRole, contextId);
+    if (resolvedActor !== undefined) {
+      const actorDid = await this.#queryActorFromAncestor(
+        tenant, resolvedActor.owningModuleUri, resolvedActor.owningModulePath,
+        resolvedActor.who, resolvedActor.physicalDepth, contextId,
+      );
+      if (actorDid !== undefined) {
+        recipients.push(actorDid);
+      }
+    }
+    return recipients;
   }
 
   /**

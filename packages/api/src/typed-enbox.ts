@@ -3246,7 +3246,7 @@ export class TypedEnbox<
     for (const dependency of Object.values(this._dependencies)) {
       const api = this.dependencyApi(dependency);
       if (!api.isConfigured) {
-        await api.ensureInstalled();
+        await api.ensureInstalled(); // NOSONAR: S9382 — complete shared prerequisite installs before advancing.
       }
     }
     await this.verifyDependencyContracts();
@@ -3356,7 +3356,7 @@ export class TypedEnbox<
         return previous;
       }
       for (const target of Object.values(module.definition.uses ?? {})) {
-        await importModule(remoteModulesByUri.get(target)!);
+        await importModule(remoteModulesByUri.get(target)!); // NOSONAR: S9382 — import prerequisite metadata before its dependent.
       }
       const result = await this._dwn.importModuleConfiguration(module.toJSON());
       if ((result.status.code < 200 || result.status.code > 299) && result.status.code !== 409) {

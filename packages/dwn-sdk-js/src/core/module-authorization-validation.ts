@@ -187,11 +187,12 @@ async function verifyRoleAudienceEncryptionIfNeeded(
       throw new DwnError(DwnErrorCode.ModuleAuthorizationMissingContextId,
         `could not resolve the encryption audience context for '${role.rawRole}'.`);
     }
-    await verifyResolvedRoleAudienceEncryption(tenant, inboundMessage, {
-      module   : role.owningModuleUri,
-      rolePath : role.owningModulePath,
-      contextId,
-    }, validationStateReader);
+    await verifyResolvedRoleAudienceEncryption( // NOSONAR: S9382 — bound storage reads and stop at the first invalid role.
+      tenant, inboundMessage, {
+        module   : role.owningModuleUri,
+        rolePath : role.owningModulePath,
+        contextId,
+      }, validationStateReader);
   }
 }
 

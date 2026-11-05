@@ -13,6 +13,7 @@ export type ResolveModuleGraphOptions = {
   requireKeyAgreement?: boolean;
 };
 
+/** The module and path that define the concrete record or role. Runtime callers supply the tenant DID separately. */
 export type ResolvedModuleAddress = {
   readonly owningModuleUri: string;
   readonly owningModulePath: string;
@@ -214,63 +215,9 @@ class ModuleGraphResolver {
     }
     this._resolving.add(key);
     const declaredRuleSet = this.declaredRuleSet(moduleUri, path);
-    let node: MutableResolvedNode;
-    if (declaredRuleSet.$ref !== undefined) {
-      if (path.includes('/')) {
-        throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRefNotAtRoot,
-          `reference at '${moduleUri}' path '${path}' is not at the structure root.`);
-      }
-      const target = this.resolveReference(moduleUri, declaredRuleSet.$ref);
-      if (target.ruleSet.$squash === true || target.physicalAncestors.some(step => step.ruleSet.$squash === true)) {
-        throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRefTargetSquash,
-          `reference '${declaredRuleSet.$ref}' at '${moduleUri}' path '${path}' has squashable physical ancestry.`);
-      }
-      const targets = this._refTargets.get(moduleUri) ?? new Map<string, string>();
-      const targetKey = JSON.stringify([target.owningModuleUri, target.owningModulePath]);
-      const previousPath = targets.get(targetKey);
-      if (previousPath !== undefined) {
-        throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateRefTarget,
-          `references '${previousPath}' and '${path}' in '${moduleUri}' resolve to the same target '${targetKey}'.`);
-      }
-      targets.set(targetKey, path);
-      this._refTargets.set(moduleUri, targets);
-      node = {
-        ...target,
-        declaringModuleUri  : moduleUri,
-        declaringModulePath : path,
-        kind                : 'ref',
-        declaredRuleSet,
-        rolesByRawRef       : new Map(),
-        actions             : [],
-      };
-    } else {
-      const typeName = path.split('/').at(-1)!;
-      const definition = this._definitions.get(moduleUri)!;
-      if (!Object.hasOwn(definition.types, typeName)) {
-        throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRuleSetRecordType,
-          `record path '${path}' in '${moduleUri}' has no local type '${typeName}'.`);
-      }
-      const separator = path.lastIndexOf('/');
-      const parent = separator === -1 ? undefined : this.resolveNode(moduleUri, path.slice(0, separator));
-      const physicalAncestors = parent === undefined ? [] : [...parent.physicalAncestors, this.ancestorStep(parent)];
-      node = {
-        declaringModuleUri  : moduleUri,
-        declaringModulePath : path,
-        kind                : 'record',
-        owningModuleUri     : moduleUri,
-        owningModulePath    : path,
-        typeName,
-        recordType          : definition.types[typeName],
-        ruleSet             : declaredRuleSet,
-        declaredRuleSet,
-        physicalAncestors   : Object.freeze(physicalAncestors),
-        physicalDepth       : physicalAncestors.length + 1,
-        parentPhysicalDepth : physicalAncestors.length,
-        expectedParent      : parent === undefined ? undefined : this.address(parent),
-        rolesByRawRef       : new Map(),
-        actions             : [],
-      };
-    }
+    const node = declaredRuleSet.$ref === undefined
+      ? this.createRecordNode(moduleUri, path, declaredRuleSet)
+      : this.createReferenceNode(moduleUri, path, declaredRuleSet);
     if (node.physicalDepth > DwnConstant.maxRecordNestingDepth) {
       throw new DwnError(DwnErrorCode.ModulesConfigureMaxDepthExceeded,
         `resolved record '${moduleUri}' path '${path}' exceeds ${DwnConstant.maxRecordNestingDepth} physical levels.`);
@@ -278,6 +225,65 @@ class ModuleGraphResolver {
     this._nodes.set(key, node);
     this._resolving.delete(key);
     return node;
+  }
+
+  private createReferenceNode(moduleUri: string, path: string, declaredRuleSet: ModuleRuleSet): MutableResolvedNode {
+    if (path.includes('/')) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRefNotAtRoot,
+        `reference at '${moduleUri}' path '${path}' is not at the structure root.`);
+    }
+    const target = this.resolveReference(moduleUri, declaredRuleSet.$ref!);
+    if (target.ruleSet.$squash === true || target.physicalAncestors.some(step => step.ruleSet.$squash === true)) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRefTargetSquash,
+        `reference '${declaredRuleSet.$ref}' at '${moduleUri}' path '${path}' has squashable physical ancestry.`);
+    }
+    const targets = this._refTargets.get(moduleUri) ?? new Map<string, string>();
+    const targetKey = JSON.stringify([target.owningModuleUri, target.owningModulePath]);
+    const previousPath = targets.get(targetKey);
+    if (previousPath !== undefined) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateRefTarget,
+        `references '${previousPath}' and '${path}' in '${moduleUri}' resolve to the same target '${targetKey}'.`);
+    }
+    targets.set(targetKey, path);
+    this._refTargets.set(moduleUri, targets);
+    return {
+      ...target,
+      declaringModuleUri  : moduleUri,
+      declaringModulePath : path,
+      kind                : 'ref',
+      declaredRuleSet,
+      rolesByRawRef       : new Map(),
+      actions             : [],
+    };
+  }
+
+  private createRecordNode(moduleUri: string, path: string, declaredRuleSet: ModuleRuleSet): MutableResolvedNode {
+    const typeName = path.split('/').at(-1)!;
+    const definition = this._definitions.get(moduleUri)!;
+    if (!Object.hasOwn(definition.types, typeName)) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRuleSetRecordType,
+        `record path '${path}' in '${moduleUri}' has no local type '${typeName}'.`);
+    }
+    const separator = path.lastIndexOf('/');
+    const parent = separator === -1 ? undefined : this.resolveNode(moduleUri, path.slice(0, separator));
+    const physicalAncestors = parent === undefined ? [] : [...parent.physicalAncestors, this.ancestorStep(parent)];
+    return {
+      declaringModuleUri  : moduleUri,
+      declaringModulePath : path,
+      kind                : 'record',
+      owningModuleUri     : moduleUri,
+      owningModulePath    : path,
+      typeName,
+      recordType          : definition.types[typeName],
+      ruleSet             : declaredRuleSet,
+      declaredRuleSet,
+      physicalAncestors   : Object.freeze(physicalAncestors),
+      physicalDepth       : physicalAncestors.length + 1,
+      parentPhysicalDepth : physicalAncestors.length,
+      expectedParent      : parent === undefined ? undefined : this.address(parent),
+      rolesByRawRef       : new Map(),
+      actions             : [],
+    };
   }
 
   private address(node: ResolvedModuleAddress): ResolvedModuleAddress {
@@ -320,51 +326,58 @@ class ModuleGraphResolver {
   }
 
   private resolveActions(node: MutableResolvedNode): void {
-    const roles = new Set<string>();
-    const actors = new Set<string>();
+    const roleKeys = new Set<string>();
+    const actorKeys = new Set<string>();
     for (const rule of node.declaredRuleSet.$actions ?? []) {
-      if (rule.role !== undefined) {
-        const role = this.resolveRole(node.declaringModuleUri, rule.role);
-        if (role.parentAncestor !== undefined && !this.isSelfOrAncestor(node, role.parentAncestor)) {
-          throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRoleAncestor,
-            `role '${rule.role}' cannot obtain its parent context from '${node.declaringModulePath}' in '${node.declaringModuleUri}'.`);
-        }
-        const roleKey = JSON.stringify([role.owningModuleUri, role.owningModulePath]);
-        if (roles.has(roleKey)) {
-          throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateRoleInRuleSet,
-            `duplicate canonical role '${rule.role}' at '${node.declaringModulePath}'.`);
-        }
-        roles.add(roleKey);
-        if (this._requireKeyAgreement && node.kind === 'record' && node.recordType.encryptionRequired === true &&
-            rule.can.includes('read') && role.ruleSet.$keyAgreement === undefined) {
-          throw new DwnError(DwnErrorCode.ModulesConfigureInvalidEncryptedRoleMissingKeyAgreement,
-            `encrypted path '${node.declaringModulePath}' references role '${rule.role}' without $keyAgreement.`);
-        }
-        node.rolesByRawRef.set(rule.role, role);
-        node.actions.push(Object.freeze({ rule, resolvedRole: role }));
-      } else {
-        let resolvedActor: ResolvedActorReference | undefined;
-        if (rule.of !== undefined) {
-          const target = this.resolveReference(node.declaringModuleUri, rule.of);
-          if (!this.isSelfOrAncestor(node, target)) {
-            throw new DwnError(DwnErrorCode.ModulesConfigureInvalidActionOfNotAnAncestor,
-              `actor target '${rule.of}' is not an ancestor of '${node.declaringModulePath}' in '${node.declaringModuleUri}'.`);
-          }
-          resolvedActor = Object.freeze({
-            ...this.address(target),
-            who           : rule.who as 'author' | 'recipient',
-            rawOf         : rule.of,
-            physicalDepth : target.physicalDepth,
-          });
-        }
-        const actorKey = JSON.stringify([rule.who, resolvedActor?.owningModuleUri, resolvedActor?.owningModulePath]);
-        if (actors.has(actorKey)) {
-          throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateActorInRuleSet,
-            `duplicate canonical actor '${rule.who}' at '${node.declaringModulePath}'.`);
-        }
-        actors.add(actorKey);
-        node.actions.push(Object.freeze({ rule, resolvedActor }));
-      }
+      const action = rule.role === undefined
+        ? this.resolveActorAction(node, rule, actorKeys)
+        : this.resolveRoleAction(node, rule, roleKeys);
+      node.actions.push(action);
     }
+  }
+
+  private resolveRoleAction(node: MutableResolvedNode, rule: ModuleActionRule, roleKeys: Set<string>): ResolvedModuleAction {
+    const role = this.resolveRole(node.declaringModuleUri, rule.role!);
+    if (role.parentAncestor !== undefined && !this.isSelfOrAncestor(node, role.parentAncestor)) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureInvalidRoleAncestor,
+        `role '${rule.role}' cannot obtain its parent context from '${node.declaringModulePath}' in '${node.declaringModuleUri}'.`);
+    }
+    const roleKey = JSON.stringify([role.owningModuleUri, role.owningModulePath]);
+    if (roleKeys.has(roleKey)) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateRoleInRuleSet,
+        `duplicate canonical role '${rule.role}' at '${node.declaringModulePath}'.`);
+    }
+    roleKeys.add(roleKey);
+    if (this._requireKeyAgreement && node.kind === 'record' && node.recordType.encryptionRequired === true &&
+        rule.can.includes('read') && role.ruleSet.$keyAgreement === undefined) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureInvalidEncryptedRoleMissingKeyAgreement,
+        `encrypted path '${node.declaringModulePath}' references role '${rule.role}' without $keyAgreement.`);
+    }
+    node.rolesByRawRef.set(rule.role!, role);
+    return Object.freeze({ rule, resolvedRole: role });
+  }
+
+  private resolveActorAction(node: ResolvedModuleNode, rule: ModuleActionRule, actorKeys: Set<string>): ResolvedModuleAction {
+    let resolvedActor: ResolvedActorReference | undefined;
+    if (rule.of !== undefined) {
+      const target = this.resolveReference(node.declaringModuleUri, rule.of);
+      if (!this.isSelfOrAncestor(node, target)) {
+        throw new DwnError(DwnErrorCode.ModulesConfigureInvalidActionOfNotAnAncestor,
+          `actor target '${rule.of}' is not an ancestor of '${node.declaringModulePath}' in '${node.declaringModuleUri}'.`);
+      }
+      resolvedActor = Object.freeze({
+        ...this.address(target),
+        who           : rule.who as 'author' | 'recipient',
+        rawOf         : rule.of,
+        physicalDepth : target.physicalDepth,
+      });
+    }
+    const actorKey = JSON.stringify([rule.who, resolvedActor?.owningModuleUri, resolvedActor?.owningModulePath]);
+    if (actorKeys.has(actorKey)) {
+      throw new DwnError(DwnErrorCode.ModulesConfigureDuplicateActorInRuleSet,
+        `duplicate canonical actor '${rule.who}' at '${node.declaringModulePath}'.`);
+    }
+    actorKeys.add(actorKey);
+    return Object.freeze({ rule, resolvedActor });
   }
 }

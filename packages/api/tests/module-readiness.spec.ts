@@ -75,11 +75,12 @@ function createFixture(options: {
   api: ReturnType<typeof createModuleReadinessApi>;
   configure: sinon.SinonStub;
   hosted: Map<string, ModuleDefinition>;
-  operations: string[];
   processDwnRequest: sinon.SinonStub;
   sendDwnRequest: sinon.SinonStub;
+  operations: string[];
 } {
   const hosted = new Map<string, ModuleDefinition>();
+  const operations: string[] = [];
   const processDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => {
     if (request.messageType === DwnInterface.ModulesQuery) {
       const definition = options.localDefinitions?.get(request.messageParams!.filter!.module!);
@@ -122,7 +123,10 @@ function createFixture(options: {
     },
     status: { code: 200, detail: 'OK' },
   });
-  const configure = sinon.stub().callsFake(async (module: TypedModule): Promise<unknown> => configuredResult(module));
+  const configure = sinon.stub().callsFake(async (module: TypedModule): Promise<unknown> => {
+    operations.push(`install:${module.definition.module}`);
+    return configuredResult(module);
+  });
   const api = createModuleReadinessApi({
     agent,
     connectedDid : OWNER_DID,
@@ -135,32 +139,46 @@ function createFixture(options: {
     } as unknown as TypedEnbox<D, C>),
   });
 
-  return { api, configure, hosted, operations, processDwnRequest, sendDwnRequest };
+  return { api, configure, hosted, processDwnRequest, sendDwnRequest, operations };
 }
 
 describe('ModuleReadinessApi', () => {
-  it('should complete each manifest entry before installing the next entry', async () => {
-    const otherModule = defineModule({ ...NotesDefinition, module: 'https://example.com/modules/readiness-other' }, NotesModule.codecs);
-    const application = defineApplicationManifest({ modules: [NotesModule, otherModule] });
+  it('installs the requested modules before publishing and verifies each publication before the next', async () => {
+    const secondModule = defineModule({
+      definition : { ...NotesDefinition, module: 'https://example.com/modules/readiness-second' },
+      codecs     : NotesModule.codecs,
+    });
+    const application = defineApplicationManifest({ modules: [NotesModule, secondModule] });
     const fixture = createFixture();
 
     await fixture.api.ensureReady({ application });
 
     expect(fixture.operations).toEqual([
-      `install:${NotesDefinition.module}`, `publish:${NotesDefinition.module}`, `query:${NotesDefinition.module}`,
-      `install:${otherModule.definition.module}`, `publish:${otherModule.definition.module}`, `query:${otherModule.definition.module}`,
+      `install:${NotesDefinition.module}`,
+      `install:${secondModule.definition.module}`,
+      `publish:${NotesDefinition.module}`,
+      `query:${NotesDefinition.module}`,
+      `publish:${secondModule.definition.module}`,
+      `query:${secondModule.definition.module}`,
     ]);
   });
 
-  it('should stop later manifest writes when an earlier publication fails', async () => {
-    const otherModule = defineModule({ ...NotesDefinition, module: 'https://example.com/modules/readiness-other' }, NotesModule.codecs);
-    const application = defineApplicationManifest({ modules: [NotesModule, otherModule] });
+  it('stops later publications when an earlier requested module fails to publish', async () => {
+    const secondModule = defineModule({
+      definition : { ...NotesDefinition, module: 'https://example.com/modules/readiness-second' },
+      codecs     : NotesModule.codecs,
+    });
+    const application = defineApplicationManifest({ modules: [NotesModule, secondModule] });
     const fixture = createFixture({ publishStatus: { code: 503, detail: 'Unavailable' } });
 
-    await expect(fixture.api.ensureReady({ application })).rejects.toMatchObject({ operation: 'publish', module: NotesDefinition.module });
+    await expect(fixture.api.ensureReady({ application })).rejects.toBeInstanceOf(ModuleReadinessError);
 
-    expect(fixture.operations).toEqual([`install:${NotesDefinition.module}`, `publish:${NotesDefinition.module}`]);
-    expect(fixture.configure.callCount).toBe(1);
+    expect(fixture.operations).toEqual([
+      `install:${NotesDefinition.module}`,
+      `install:${secondModule.definition.module}`,
+      `publish:${NotesDefinition.module}`,
+    ]);
+    expect(fixture.hosted.size).toBe(0);
   });
 
   it('should install, publish, verify, and accept an idempotent rerun', async () => {

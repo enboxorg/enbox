@@ -1,6 +1,6 @@
 import type { TypedModule } from '@enbox/api';
 
-import { generateModuleModule } from '../src/codegen.js';
+import { generateModuleCode } from '../src/codegen.js';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { join, relative } from 'node:path';
@@ -50,9 +50,9 @@ describe('composition-aware code generation', () => {
   });
 
   it('emits typed imports and runtime metadata with the same resolved identities', async () => {
-    const base = await generateModuleModule(BaseDefinition, { schemasDir: directory, moduleName: 'Base' });
+    const base = await generateModuleCode(BaseDefinition, { schemasDir: directory, moduleName: 'Base' });
     await writeFile(join(directory, 'base.generated.ts'), base.code);
-    const consumer = await generateModuleModule(ConsumerDefinition, {
+    const consumer = await generateModuleCode(ConsumerDefinition, {
       schemasDir   : directory,
       moduleName   : 'Consumer',
       dependencies : { base: dependency },
@@ -89,12 +89,12 @@ describe('composition-aware code generation', () => {
 
   it('rejects missing, extra and mismatched dependency artifacts before emitting code', async () => {
     const options = { schemasDir: directory, moduleName: 'Consumer' };
-    await expect(generateModuleModule(ConsumerDefinition, options)).rejects.toThrow('exactly match uses aliases');
-    await expect(generateModuleModule(ConsumerDefinition, {
+    await expect(generateModuleCode(ConsumerDefinition, options)).rejects.toThrow('exactly match uses aliases');
+    await expect(generateModuleCode(ConsumerDefinition, {
       ...options,
       dependencies: { base: dependency, extra: dependency },
     })).rejects.toThrow('exactly match uses aliases');
-    await expect(generateModuleModule(ConsumerDefinition, {
+    await expect(generateModuleCode(ConsumerDefinition, {
       ...options,
       dependencies: { base: { ...dependency, definition: { ...BaseDefinition, module: 'https://example.com/other' } } },
     })).rejects.toThrow('dependency \'base\' must provide');

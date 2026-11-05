@@ -1439,7 +1439,7 @@ describe('generateModuleCode()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir   : SCHEMAS_DIR,
       moduleName   : 'Complete',
       dependencies : {

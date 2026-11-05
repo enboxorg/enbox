@@ -57,7 +57,7 @@ export async function preloadModuleDefinitions(
       if (definitions.has(targetUri)) {
         continue;
       }
-      const target = await fetchDefinition(targetUri);
+      const target = await fetchDefinition(targetUri); // NOSONAR: S9382 — bound reads and fail at the first canonical dependency.
       if (target === undefined) {
         throw new DwnError(DwnErrorCode.ModulesConfigureComposedModuleNotInstalled,
           `composed module '${targetUri}' is not installed.`);
@@ -66,7 +66,7 @@ export async function preloadModuleDefinitions(
         throw new DwnError(DwnErrorCode.ModulesConfigureInvalidUsesModuleUrl,
           `lookup for '${targetUri}' returned definition '${target.module}'.`);
       }
-      await visit(target);
+      await visit(target); // NOSONAR: S9382 — unwind the active ancestry before sibling cycle checks.
     }
     loading.delete(snapshot.module);
   }

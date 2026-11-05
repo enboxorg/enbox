@@ -33,7 +33,7 @@
 import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { EnboxPlatformAgent } from './types/agent.js';
 import type { DwnModuleDefinition, DwnResponse } from './types/dwn.js';
-import type { EncryptionKeyDeriver, ModulesQueryMessage, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { EncryptionKeyDeriver, ModuleDefinitionFetcher, ModulesQueryMessage, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import { computeJwkThumbprint } from '@enbox/crypto';
 import { logger } from '@enbox/common';
@@ -397,109 +397,187 @@ export async function resolveConnectModulePreparationPlan(params: {
     return { permissionRequests, inferredProviderUris };
   }
 
-  const requested = new Map<string, DwnModuleDefinition>();
+  const requestedDefinitionsByUri = collectRequestedModuleDefinitions(permissionRequests);
+  const installedDefinitionsByUri = new Map<string, DwnModuleDefinition | undefined>();
+  const fetchInstalled = async (moduleUri: string): Promise<DwnModuleDefinition | undefined> => {
+    if (installedDefinitionsByUri.has(moduleUri)) {
+      return installedDefinitionsByUri.get(moduleUri);
+    }
+    const result = await agent.processDwnRequest({
+      author: ownerDid, target: ownerDid, messageType: DwnInterface.ModulesQuery, messageParams: { filter: { module: moduleUri } },
+    });
+    if (result.reply.status.code !== 200) {
+      throw new Error(`Could not fetch module '${moduleUri}': ${result.reply.status.detail}`);
+    }
+    const definition = result.reply.entries?.[0]?.descriptor.definition;
+    if (definition !== undefined && definition.module !== moduleUri) {
+      throw new Error(`Module query for '${moduleUri}' returned '${definition.module}'.`);
+    }
+    installedDefinitionsByUri.set(moduleUri, definition);
+    return definition;
+  };
+
+  const requestedGraphsByUri = await resolveRequestedModuleGraphs(permissionRequests, requestedDefinitionsByUri, fetchInstalled);
+
+  const selectedDefinitionsByUri = new Map<string, DwnModuleDefinition>();
+  // Resolve lazily from explicit roots. An installed provider may no longer use
+  // one of the packaged dependencies; that obsolete zero-scope request is omitted.
+  const fetchSelected = async (moduleUri: string): Promise<DwnModuleDefinition | undefined> => {
+    if (selectedDefinitionsByUri.has(moduleUri)) {
+      return selectedDefinitionsByUri.get(moduleUri);
+    }
+    const installedDefinition = await fetchInstalled(moduleUri);
+    const definition = await selectPreparationDefinition({
+      agent,
+      ownerDid,
+      moduleUri,
+      installedDefinition,
+      requestedDefinition     : requestedDefinitionsByUri.get(moduleUri),
+      inferredProvider        : inferredProviderUris.has(moduleUri),
+      approvedModuleOverrides : params.approvedModuleOverrides,
+    });
+    if (definition !== undefined) {
+      selectedDefinitionsByUri.set(moduleUri, definition);
+    }
+    return definition;
+  };
+
+  await validateRequestedModuleImports(permissionRequests, inferredProviderUris, requestedGraphsByUri, fetchSelected);
+  await validateSelectedProviderImports({
+    requestedDefinitionsByUri, installedDefinitionsByUri, selectedDefinitionsByUri, requestedGraphsByUri,
+    inferredProviderUris, fetchInstalled, fetchSelected,
+  });
+
+  return {
+    inferredProviderUris,
+    permissionRequests: permissionRequests
+      .filter(request => selectedDefinitionsByUri.has(request.moduleDefinition.module))
+      .map(request => ({ ...request, moduleDefinition: selectedDefinitionsByUri.get(request.moduleDefinition.module)! })),
+  };
+}
+
+/** Validate every packaged definition before reading or selecting owner-installed policies. */
+function collectRequestedModuleDefinitions(permissionRequests: ConnectPermissionRequest[]): Map<string, DwnModuleDefinition> {
+  const definitionsByUri = new Map<string, DwnModuleDefinition>();
   for (const { moduleDefinition } of permissionRequests) {
-    if (requested.has(moduleDefinition.module)) {
+    if (definitionsByUri.has(moduleDefinition.module)) {
       throw new Error(`Connect contains duplicate module '${moduleDefinition.module}'.`);
     }
     if (!isNormalizedModuleUri(moduleDefinition.module) || containsRequesterManagedEncryptionKeys(moduleDefinition)) {
       throw new Error(getModuleSetupConflictMessage(undefined, moduleDefinition));
     }
     ModulesConfigure.validateModuleDefinition(moduleDefinition, { requireKeyAgreement: false });
-    requested.set(moduleDefinition.module, moduleDefinition);
+    definitionsByUri.set(moduleDefinition.module, moduleDefinition);
   }
+  return definitionsByUri;
+}
 
-  const installed = new Map<string, DwnModuleDefinition | undefined>();
-  const fetchInstalled = async (uri: string): Promise<DwnModuleDefinition | undefined> => {
-    if (installed.has(uri)) {
-      return installed.get(uri);
-    }
-    const result = await agent.processDwnRequest({
-      author: ownerDid, target: ownerDid, messageType: DwnInterface.ModulesQuery, messageParams: { filter: { module: uri } },
-    });
-    if (result.reply.status.code !== 200) {
-      throw new Error(`Could not fetch module '${uri}': ${result.reply.status.detail}`);
-    }
-    const definition = result.reply.entries?.[0]?.descriptor.definition;
-    if (definition !== undefined && definition.module !== uri) {
-      throw new Error(`Module query for '${uri}' returned '${definition.module}'.`);
-    }
-    installed.set(uri, definition);
-    return definition;
-  };
+/** Resolve imported policy while encryption-key verification remains with the setup checks. */
+async function resolveModuleContractGraph(
+  definition: DwnModuleDefinition, fetchDefinition: ModuleDefinitionFetcher,
+): Promise<ResolvedModuleGraph> {
+  const definitionsByUri = await preloadModuleDefinitions(definition, fetchDefinition);
+  return resolveModuleGraph(definition, moduleUri => definitionsByUri.get(moduleUri), { requireKeyAgreement: false });
+}
 
-  const authoredGraphs = new Map<string, ResolvedModuleGraph>();
+async function resolveRequestedModuleGraphs(
+  permissionRequests: ConnectPermissionRequest[],
+  requestedDefinitionsByUri: ReadonlyMap<string, DwnModuleDefinition>,
+  fetchInstalled: ModuleDefinitionFetcher,
+): Promise<Map<string, ResolvedModuleGraph>> {
+  const requestedGraphsByUri = new Map<string, ResolvedModuleGraph>();
+  const fetchDefinition: ModuleDefinitionFetcher = async moduleUri => requestedDefinitionsByUri.get(moduleUri) ?? await fetchInstalled(moduleUri);
   for (const { moduleDefinition } of permissionRequests) {
-    const definitions = await preloadModuleDefinitions(moduleDefinition, async uri => requested.get(uri) ?? await fetchInstalled(uri));
-    authoredGraphs.set(moduleDefinition.module, resolveModuleGraph(moduleDefinition, uri => definitions.get(uri), { requireKeyAgreement: false }));
+    // Request closures share the first installed lookup for each provider.
+    const graph = await resolveModuleContractGraph(moduleDefinition, fetchDefinition); // NOSONAR: S9382 — shared lookup cache.
+    requestedGraphsByUri.set(moduleDefinition.module, graph);
   }
+  return requestedGraphsByUri;
+}
 
-  const selected = new Map<string, DwnModuleDefinition>();
-  // Resolve lazily from explicit roots. An installed provider may no longer use
-  // one of the packaged dependencies; that obsolete zero-scope request is omitted.
-  const fetchSelected = async (uri: string): Promise<DwnModuleDefinition | undefined> => {
-    if (selected.has(uri)) {
-      return selected.get(uri);
+/** Installed inferred providers keep owner policy; explicit requests require normal override approval. */
+async function selectPreparationDefinition(params: {
+  agent: ConnectModuleInspectionAgent;
+  ownerDid: string;
+  moduleUri: string;
+  installedDefinition?: DwnModuleDefinition;
+  requestedDefinition?: DwnModuleDefinition;
+  inferredProvider: boolean;
+  approvedModuleOverrides: ReadonlySet<string>;
+}): Promise<DwnModuleDefinition | undefined> {
+  const { agent, ownerDid, moduleUri, installedDefinition, requestedDefinition, inferredProvider } = params;
+  if (requestedDefinition === undefined) {
+    if (installedDefinition === undefined) {
+      return undefined;
     }
-    const existing = await fetchInstalled(uri);
-    const requestedDefinition = requested.get(uri);
-    if (requestedDefinition === undefined) {
-      if (existing === undefined) {
-        return undefined;
-      }
-      const status = await getVerifiedModuleSetupStatus(existing, copyAuthoredDefinition(existing), ownerDid, agent);
-      if (status !== 'configured') {
-        throw new Error(`Installed dependency '${uri}' requires owner repair of its encryption metadata.`);
-      }
-      selected.set(uri, existing);
-      return existing;
+    const status = await getVerifiedModuleSetupStatus(installedDefinition, copyAuthoredDefinition(installedDefinition), ownerDid, agent);
+    if (status !== 'configured') {
+      throw new Error(`Installed dependency '${moduleUri}' requires owner repair of its encryption metadata.`);
     }
-    const definition = inferredProviderUris.has(uri) && existing !== undefined
-      ? copyAuthoredDefinition(existing) : requestedDefinition;
-    const status = await getVerifiedModuleSetupStatus(existing, definition, ownerDid, agent);
-    const override = !inferredProviderUris.has(uri) && params.approvedModuleOverrides.has(uri) &&
-      await isReplaceableAuthoredDefinitionConflict(existing, definition, ownerDid, agent);
-    if (status === 'conflict' && !override) {
-      throw new Error(getModuleSetupConflictMessage(existing, definition));
-    }
-    selected.set(uri, definition);
-    return definition;
-  };
+    return installedDefinition;
+  }
+  const definition = inferredProvider && installedDefinition !== undefined
+    ? copyAuthoredDefinition(installedDefinition) : requestedDefinition;
+  const status = await getVerifiedModuleSetupStatus(installedDefinition, definition, ownerDid, agent);
+  const override = !inferredProvider && params.approvedModuleOverrides.has(moduleUri) &&
+    await isReplaceableAuthoredDefinitionConflict(installedDefinition, definition, ownerDid, agent);
+  if (status === 'conflict' && !override) {
+    throw new Error(getModuleSetupConflictMessage(installedDefinition, definition));
+  }
+  return definition;
+}
+
+/** Explicit consumers retain the imports promised by their packaged definitions. */
+async function validateRequestedModuleImports(
+  permissionRequests: ConnectPermissionRequest[],
+  inferredProviderUris: ReadonlySet<string>,
+  requestedGraphsByUri: ReadonlyMap<string, ResolvedModuleGraph>,
+  fetchSelected: ModuleDefinitionFetcher,
+): Promise<void> {
   for (const { moduleDefinition } of permissionRequests) {
     if (inferredProviderUris.has(moduleDefinition.module)) {
       continue;
     }
-    const actual = (await fetchSelected(moduleDefinition.module))!;
+    const selectedDefinition = (await fetchSelected(moduleDefinition.module))!; // NOSONAR: S9382 — select roots in request order.
     // Actual installed providers can have additional dependencies absent from
     // the artifacts. Read their metadata under wallet authority; infer no grants.
-    const actualDefinitions = await preloadModuleDefinitions(actual, fetchSelected);
-    const actualGraph = resolveModuleGraph(actual, uri => actualDefinitions.get(uri), { requireKeyAgreement: false });
-    validateImportedModuleContracts(authoredGraphs.get(moduleDefinition.module)!, actualGraph);
+    // Finish this provider closure before selecting the next root.
+    const selectedGraph = await resolveModuleContractGraph(selectedDefinition, fetchSelected); // NOSONAR: S9382 — shared lookup cache.
+    validateImportedModuleContracts(requestedGraphsByUri.get(moduleDefinition.module)!, selectedGraph);
   }
+}
+
+/** Reused providers retain their current imports; new providers retain their packaged imports. */
+async function validateSelectedProviderImports(params: {
+  requestedDefinitionsByUri: ReadonlyMap<string, DwnModuleDefinition>;
+  installedDefinitionsByUri: ReadonlyMap<string, DwnModuleDefinition | undefined>;
+  selectedDefinitionsByUri: ReadonlyMap<string, DwnModuleDefinition>;
+  requestedGraphsByUri: ReadonlyMap<string, ResolvedModuleGraph>;
+  inferredProviderUris: ReadonlySet<string>;
+  fetchInstalled: ModuleDefinitionFetcher;
+  fetchSelected: ModuleDefinitionFetcher;
+}): Promise<void> {
+  const {
+    requestedDefinitionsByUri, installedDefinitionsByUri, selectedDefinitionsByUri, requestedGraphsByUri,
+    inferredProviderUris, fetchInstalled, fetchSelected,
+  } = params;
   // Existing providers keep their current imports; missing providers keep the
   // contracts in their authored package. Never compare an updated provider's
   // unrelated paths/actions against an older packaged provider definition.
-  for (const [uri, definition] of selected) {
-    if (requested.has(uri) && !inferredProviderUris.has(uri)) {
+  for (const [moduleUri, definition] of selectedDefinitionsByUri) {
+    if (requestedDefinitionsByUri.has(moduleUri) && !inferredProviderUris.has(moduleUri)) {
       continue;
     }
-    const existing = installed.get(uri);
-    let expectedGraph = authoredGraphs.get(uri);
-    if (existing !== undefined) {
-      const currentDefinitions = await preloadModuleDefinitions(existing, fetchInstalled);
-      expectedGraph = resolveModuleGraph(existing, target => currentDefinitions.get(target), { requireKeyAgreement: false });
+    const installedDefinition = installedDefinitionsByUri.get(moduleUri);
+    let expectedGraph = requestedGraphsByUri.get(moduleUri);
+    if (installedDefinition !== undefined) {
+      // Preserve the cached current closure before comparing the selected replacement.
+      expectedGraph = await resolveModuleContractGraph(installedDefinition, fetchInstalled); // NOSONAR: S9382 — shared lookup cache.
     }
-    const actualDefinitions = await preloadModuleDefinitions(definition, fetchSelected);
-    const actualGraph = resolveModuleGraph(definition, target => actualDefinitions.get(target), { requireKeyAgreement: false });
-    validateImportedModuleContracts(expectedGraph!, actualGraph);
+    // Dependency discovery can append providers to this live map; each must be validated.
+    const selectedGraph = await resolveModuleContractGraph(definition, fetchSelected); // NOSONAR: S9382 — live provider traversal.
+    validateImportedModuleContracts(expectedGraph!, selectedGraph);
   }
-
-  return {
-    inferredProviderUris,
-    permissionRequests: permissionRequests
-      .filter(request => selected.has(request.moduleDefinition.module))
-      .map(request => ({ ...request, moduleDefinition: selected.get(request.moduleDefinition.module)! })),
-  };
 }
 
 // ---------------------------------------------------------------------------

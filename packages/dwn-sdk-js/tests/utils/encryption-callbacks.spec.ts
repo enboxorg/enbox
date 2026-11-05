@@ -9,13 +9,14 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { Encryption } from '../../src/utils/encryption.js';
 import { Modules } from '../../src/utils/modules.js';
 import { Records } from '../../src/utils/records.js';
+import { resolveModuleGraph } from '../../src/core/module-graph.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { verifyTypeWithComposition } from '../../src/core/module-authorization-validation.js';
 import { X25519 } from '@enbox/crypto';
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
+import { verifyModulePathEncryptionIfNeeded, verifyType } from '../../src/core/module-authorization-validation.js';
 
 describe('Encryption callback interfaces', () => {
   let privateJwk: PrivateKeyJwk;
@@ -171,7 +172,10 @@ describe('Encryption callback interfaces', () => {
         return [];
       },
     } as unknown as ValidationStateReader;
-    await expect(verifyTypeWithComposition('did:example:alice', message, definition, reader))
+    const graph = resolveModuleGraph(definition, (): undefined => undefined);
+    const node = graph.nodesByDeclaredPath.get('note')!;
+    const recordType = verifyType(message, definition.types);
+    await expect(verifyModulePathEncryptionIfNeeded('did:example:alice', message, definition, node, recordType, reader))
       .rejects.toThrow('missing audience for role \'first\'');
     expect(queriedRoles).toEqual(['first']);
   });

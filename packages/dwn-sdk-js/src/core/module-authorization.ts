@@ -7,8 +7,8 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ResolvedModuleRole } from './module-authorization-action.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ModuleAction, ModuleRuleSet } from '../types/modules-types.js';
-import type { ResolvedModuleGraph, ResolvedModuleNode } from './module-graph.js';
+import type { ModuleAction, ModuleActionRule, ModuleRuleSet } from '../types/modules-types.js';
+import type { ResolvedModuleGraph, ResolvedModuleNode, ResolvedRoleReference } from './module-graph.js';
 
 import { EncryptionControl } from './encryption-control.js';
 import { isEncryptionControlPath } from './constants.js';
@@ -371,58 +371,65 @@ export class ModuleAuthorization {
     }
     const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage, actionRules);
 
-    const rawInvokedRole = incomingMessage.signaturePayload?.moduleRole;
-    let invokedRole;
-    if (rawInvokedRole !== undefined) {
-      try {
-        invokedRole = graph.resolveInvokedRole(rawInvokedRole);
-      } catch (error) {
-        // The complete governing graph is already loaded. These errors prove the
-        // signed role is invalid under that configuration, rather than unavailable
-        // because a live dependency or storage read is missing.
-        if (error instanceof DwnError && [
-          DwnErrorCode.ModulesConfigureInvalidRefAlias,
-          DwnErrorCode.ModulesConfigureInvalidRefModulePath,
-          DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
-        ].includes(error.code as DwnErrorCode)) {
-          throw new DwnError(
-            DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
-            `stored RecordsWrite invokes role '${rawInvokedRole}' which is invalid under the governing module config`
-          );
-        }
-        throw error;
-      }
-    }
-    for (const actionRule of actionRules) {
-      if (!actionRule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ModuleAction))) {
-        continue;
-      }
-
-      if (invokedRole !== undefined) {
-        if (actionRule.role !== undefined) {
-          const expected = graph.resolveInvokedRole(actionRule.role);
-          if (expected.owningModuleUri === invokedRole.owningModuleUri && expected.owningModulePath === invokedRole.owningModulePath) {
-            return;
-          }
-        }
-        continue;
-      }
-
-      if (actionRule.who === ModuleActor.Anyone) {
-        return;
-      }
-
-      // Author/recipient-of rules depend on the parent chain. This repair path preserves
-      // instead of hard-purging when validity depends on mutable or missing dependency records.
-      if (actionRule.who === ModuleActor.Author || actionRule.who === ModuleActor.Recipient) {
-        return;
-      }
+    const invokedRole = ModuleAuthorization.resolveStoredInitialWriteRole(incomingMessage, graph);
+    if (actionRules.some(rule => ModuleAuthorization.storedCreateRuleAllowsRecord(rule, actions, invokedRole, graph))) {
+      return;
     }
 
     throw new DwnError(
       DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
       `stored RecordsWrite by author ${incomingMessage.author} is not allowed by the resolved module config`
     );
+  }
+
+  /** Only conclusive governing-configuration failures prove that the signed role is invalid. */
+  private static resolveStoredInitialWriteRole(
+    incomingMessage: RecordsWrite,
+    graph: ResolvedModuleGraph,
+  ): ResolvedRoleReference | undefined {
+    const rawInvokedRole = incomingMessage.signaturePayload?.moduleRole;
+    if (rawInvokedRole === undefined) {
+      return undefined;
+    }
+    try {
+      return graph.resolveInvokedRole(rawInvokedRole);
+    } catch (error) {
+      // The complete governing graph is already loaded. Other errors can still
+      // reflect unavailable dependencies, so preserve their conservative classification.
+      if (error instanceof DwnError && [
+        DwnErrorCode.ModulesConfigureInvalidRefAlias,
+        DwnErrorCode.ModulesConfigureInvalidRefModulePath,
+        DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+      ].includes(error.code as DwnErrorCode)) {
+        throw new DwnError(
+          DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
+          `stored RecordsWrite invokes role '${rawInvokedRole}' which is invalid under the governing module config`
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Match immutable role identity while leaving parent-dependent actor rules to live authorization. */
+  private static storedCreateRuleAllowsRecord(
+    rule: ModuleActionRule,
+    actions: readonly ModuleAction[],
+    invokedRole: ResolvedRoleReference | undefined,
+    graph: ResolvedModuleGraph,
+  ): boolean {
+    if (!rule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ModuleAction))) {
+      return false;
+    }
+    if (invokedRole !== undefined) {
+      if (rule.role === undefined) {
+        return false;
+      }
+      const expected = graph.resolveInvokedRole(rule.role);
+      return expected.owningModuleUri === invokedRole.owningModuleUri && expected.owningModulePath === invokedRole.owningModulePath;
+    }
+    // Author/recipient rules depend on mutable parent records. Reconciliation
+    // must not hard-purge a record whose validity needs that live evidence.
+    return rule.who === ModuleActor.Anyone || rule.who === ModuleActor.Author || rule.who === ModuleActor.Recipient;
   }
 
   private static isStoredInitialWriteDirectlyAuthorized(tenant: string, incomingMessage: RecordsWrite): boolean {

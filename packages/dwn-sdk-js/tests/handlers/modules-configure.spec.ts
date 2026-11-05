@@ -123,15 +123,15 @@ export function testModulesConfigureHandler(): void {
         expect(reply.status.code).toBe(202);
       });
 
-      it('stops dependency reads before later aliases when the first dependency is missing', async () => {
+      it('stops dependency reads at the first missing module in canonical order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const missing = 'https://example.com/dependency-order/missing';
-        const later = 'https://example.com/dependency-order/later';
+        const missing = 'https://example.com/dependency-order/a-missing';
+        const later = 'https://example.com/dependency-order/z-later';
         const configuration = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           moduleDefinition : {
             module    : 'https://example.com/dependency-order/consumer', published : true,
-            uses      : { missing, later }, types     : {}, structure : {},
+            uses      : { later, missing }, types     : {}, structure : {},
           },
         });
         const reads = sinon.spy(StoreValidationStateReader.prototype, 'fetchModuleDefinition');

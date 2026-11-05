@@ -263,7 +263,7 @@ export function getInitialWriteActionsSeekingARuleMatch(
  */
 export async function authorizeAgainstAllowedActions(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   node: ResolvedModuleNode,
   recordChain: RecordsWriteMessage[],
   validationStateReader: ValidationStateReader,
@@ -314,7 +314,7 @@ async function actionRuleAuthorizesMessage(
   actionsSeekingARuleMatch: ModuleAction[],
   author: string | undefined,
   invokedRole: ResolvedModuleRole | undefined,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   recordChain: RecordsWriteMessage[],
 ): Promise<boolean> {
   const actionRule = action.rule;
@@ -340,13 +340,8 @@ async function actionRuleAuthorizesMessage(
   // go through role validation path if a role is invoked by the incoming message
   if (invokedRole !== undefined) {
     // When a module role is being invoked, we require that there is a matching `role` rule.
-    if (action.resolvedRole?.owningModuleUri === invokedRole.module &&
-        action.resolvedRole.owningModulePath === invokedRole.modulePath) {
-      // role is successfully invoked
-      return true;
-    } else {
-      return false;
-    }
+    return action.resolvedRole?.owningModuleUri === invokedRole.module &&
+      action.resolvedRole.owningModulePath === invokedRole.modulePath;
   }
 
   // Configuration validation permits a recipient without `of` only for co-update,
@@ -364,12 +359,7 @@ async function actionRuleAuthorizesMessage(
   }
 
   // validate the actor is allowed by the current action rule
-  const ancestorRuleSuccess: boolean = await checkActor(author, action, recordChain);
-  if (ancestorRuleSuccess) {
-    return true;
-  }
-
-  return false;
+  return checkActor(author, action, recordChain);
 }
 
 /**

@@ -401,27 +401,37 @@ function assertRoot(
   }
 }
 
-async function validateSupport(
-  params: SupportValidationParams,
-): Promise<{ moduleDefinition: ModuleDefinition; roleRecordId: string; resolvedGraph: ResolvedModuleGraph }> {
+/** Collect tenant-owned current definitions, rejecting malformed historical entries and duplicate current versions. */
+function collectCurrentModuleDefinitions(
+  sourceDid: string,
+  support: readonly RecordsReadReplicationSupportEntry[],
+): ReadonlyMap<string, ModuleDefinition> {
   const currentDefinitions = new Map<string, ModuleDefinition>();
-  for (const entry of params.support) {
+  for (const entry of support) {
     const message = entry.message as ModulesConfigureMessage;
     if (message.descriptor.interface !== DwnInterfaceName.Modules || message.descriptor.method !== DwnMethodName.Configure) {
       continue;
     }
     const definition = message.descriptor.definition;
-    if (!isTenantModuleConfig(params.sourceDid, definition.module)(message) ||
+    if (!isTenantModuleConfig(sourceDid, definition.module)(message) ||
         typeof entry.isLatestBaseState !== 'boolean' || entry.encodedData !== undefined) {
       throw unsupportedEntry(entry);
     }
-    if (entry.isLatestBaseState) {
-      if (currentDefinitions.has(definition.module)) {
-        throw new RoleReplicationSupportError(`the response must contain exactly one current module configuration for '${definition.module}'.`);
-      }
-      currentDefinitions.set(definition.module, definition);
+    if (!entry.isLatestBaseState) {
+      continue;
     }
+    if (currentDefinitions.has(definition.module)) {
+      throw new RoleReplicationSupportError(`the response must contain exactly one current module configuration for '${definition.module}'.`);
+    }
+    currentDefinitions.set(definition.module, definition);
   }
+  return currentDefinitions;
+}
+
+async function validateSupport(
+  params: SupportValidationParams,
+): Promise<{ moduleDefinition: ModuleDefinition; roleRecordId: string; resolvedGraph: ResolvedModuleGraph }> {
+  const currentDefinitions = collectCurrentModuleDefinitions(params.sourceDid, params.support);
   const definition = currentDefinitions.get(params.module);
   if (definition === undefined) {
     throw new RoleReplicationSupportError('the response must contain exactly one current module configuration.');

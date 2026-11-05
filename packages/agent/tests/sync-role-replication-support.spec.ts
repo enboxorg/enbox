@@ -614,6 +614,17 @@ describe('readRoleReplicationSupport', () => {
     ]);
   });
 
+  it('rejects historical configurations signed by a different tenant', async () => {
+    const fixture = await createFixture();
+    const foreignHistorical = await ModulesConfigure.create({
+      definition : fixture.configure.message.descriptor.definition,
+      signer     : peerSigner,
+    });
+    fixture.support.push({ isLatestBaseState: false, message: foreignHistorical.message });
+
+    await expect(readFixture(fixture)).rejects.toBeInstanceOf(RoleReplicationSupportError);
+  });
+
   it('rejects a support response that identifies multiple current module configurations', async () => {
     const fixture = await createFixture();
     const extra = await ModulesConfigure.create({

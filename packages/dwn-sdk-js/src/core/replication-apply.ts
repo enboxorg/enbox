@@ -448,8 +448,12 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
   }
   const role = context.resolvedGraph.resolveInvokedRole(moduleRole);
   const topLevelContext = (message as { contextId?: unknown }).contextId;
-  const contextId = typeof topLevelContext === 'string' ? topLevelContext
-    : typeof filter?.contextId === 'string' ? filter.contextId : undefined;
+  let contextId: string | undefined;
+  if (typeof topLevelContext === 'string') {
+    contextId = topLevelContext;
+  } else if (typeof filter?.contextId === 'string') {
+    contextId = filter.contextId;
+  }
   const contextPrefix = getRoleContextPrefix(role, contextId);
   if (role.parentPhysicalDepth > 0 && contextPrefix === undefined) {
     return undefined;

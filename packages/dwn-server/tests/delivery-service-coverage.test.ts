@@ -1,10 +1,10 @@
 import type { DwnServerConfig } from '../src/config.js';
 import type { DidDocument, DidResolutionResult, DidResolver } from '@enbox/dids';
-import type { Dwn, GenericMessage, ModuleDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition, RecordsQueryMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message, Poller } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { DeliveryService } from '../src/delivery-service.js';
@@ -960,6 +960,64 @@ describe('DeliveryService — coverage', () => {
       // Should have sent to bob's DWN endpoint.
       expect(fetchStub.callCount).toBe(1);
       expect(fetchStub.firstCall.args[0]).toBe('http://bob-dwn.example.com');
+    });
+
+    it('should complete one role lookup before querying the next delivery action', async () => {
+      const tenant = 'did:test:alice';
+      const firstRecipient = 'did:test:first';
+      const secondRecipient = 'did:test:second';
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'https://example.com/ordered-delivery',
+        published : true,
+        types     : { first: {}, second: {}, message: {} },
+        structure : {
+          first   : { $role: true },
+          second  : { $role: true },
+          message : {
+            $delivery : 'direct',
+            $actions  : [{ role: 'first', can: ['read'] }, { role: 'second', can: ['read'] }],
+          },
+        },
+      };
+      const lookups: string[] = [];
+      let releaseFirstLookup!: () => void;
+      const firstLookupGate = new Promise<void>(resolve => {
+        releaseFirstLookup = resolve;
+      });
+      let announceFirstLookup!: () => void;
+      const firstLookupStarted = new Promise<void>(resolve => {
+        announceFirstLookup = resolve;
+      });
+      const processStub = sinon.stub().callsFake(async (_tenant: string, message: GenericMessage) => {
+        if (message.descriptor.interface === DwnInterfaceName.Modules) {
+          return { status: { code: 200 }, entries: [{ descriptor: { definition: moduleDefinition } }] };
+        }
+        const path = (message as RecordsQueryMessage).descriptor.filter.modulePath!;
+        lookups.push(path);
+        if (path === 'first') {
+          announceFirstLookup();
+          await firstLookupGate;
+        }
+        return { status: { code: 200 }, entries: [{ descriptor: { recipient: path === 'first' ? firstRecipient : secondRecipient } }] };
+      });
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 200 }));
+      const resolver = fakeResolver({
+        [firstRecipient]  : didDocWithDwnService(firstRecipient, ['http://first.example.com']),
+        [secondRecipient] : didDocWithDwnService(secondRecipient, ['http://second.example.com']),
+      });
+      const service = DeliveryService.create(mockDwn(processStub), resolver, testConfig({ forwardingEnabled: false, deliveryEnabled: true }));
+      service.dispatchIfNeeded(tenant, moduleWriteMessage({ module: moduleDefinition.module, modulePath: 'message' }), 202);
+      try {
+        await firstLookupStarted;
+        expect(lookups).toEqual(['first']);
+        expect(fetchStub.callCount).toBe(0);
+      } finally {
+        releaseFirstLookup();
+        await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+          expect(fetchStub.callCount).toBe(2);
+        });
+      }
+      expect(lookups).toEqual(['first', 'second']);
     });
 
     it('should deliver to explicit recipient on the record', async () => {

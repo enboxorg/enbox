@@ -141,6 +141,33 @@ type PendingAudienceRecord = {
   sealingPublicKey: PublicKeyJwk;
 };
 
+type RoleAudienceEncryptionParams = {
+  authorDid: string;
+  granteeDid?: string;
+  permissionGrantId?: string;
+  delegatedGrant?: DataEncodedRecordsWriteMessage;
+  sourceDid: string;
+  module: string;
+  sourceModulePath: string;
+  parentContextId?: string;
+  moduleRole?: string;
+  resolvedGraph: ResolvedModuleGraph;
+  resolvedNode: ResolvedModuleNode;
+};
+
+type PublicRoleAudienceKey = {
+  module: string;
+  rolePath: string;
+  contextId: string;
+  keyId: string;
+  publicKeyJwk: PublicKeyJwk;
+};
+
+type PreparedRoleAudienceEncryptionInput = {
+  input: SourceRoleAudienceKeyEncryptionInput;
+  pendingAudienceRecord?: PendingAudienceRecord;
+};
+
 type AudienceWriteAuthorization = Pick<
   DwnMessageParams[DwnInterface.RecordsWrite], 'delegatedGrant' | 'permissionGrantId' | 'moduleRole'
 > & { authorDid?: string };
@@ -1507,19 +1534,9 @@ export class AgentDwnApi {
     return audienceContextId;
   }
 
-  private async getRoleAudienceKeyEncryptionInputs(params: {
-    authorDid: string;
-    granteeDid?: string;
-    permissionGrantId?: string;
-    delegatedGrant?: DataEncodedRecordsWriteMessage;
-    sourceDid: string;
-    module: string;
-    sourceModulePath: string;
-    parentContextId?: string;
-    moduleRole?: string;
-    resolvedGraph: ResolvedModuleGraph;
-    resolvedNode: ResolvedModuleNode;
-  }): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
+  private async getRoleAudienceKeyEncryptionInputs(
+    params: RoleAudienceEncryptionParams,
+  ): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: SourceRoleAudienceKeyEncryptionInput[] = [];
     const pendingAudienceRecords: PendingAudienceRecord[] = [];
     const readRules = params.resolvedNode.actions.filter(action =>
@@ -1527,54 +1544,62 @@ export class AgentDwnApi {
     );
 
     for (const { rule, resolvedRole } of readRules) {
-      const role = resolvedRole!;
-      const resolveWriteAuthorization = (): Promise<AudienceWriteAuthorization> => this.resolveAudienceWriteAuthorization(params, role);
-      const contextId = getRoleAudienceContextId(role, params.parentContextId);
-      const roleAudience = contextId === undefined ? undefined : {
-        module   : role.owningModuleUri,
-        rolePath : role.owningModulePath,
-        contextId,
-      };
+      // A role may create audience state reused by a later rule; failed authority must stop later key creation.
+      const prepared = await this.prepareRoleAudienceEncryptionInput(params, resolvedRole!, rule.role); // NOSONAR: S9382 — ordered key creation.
+      if (prepared.pendingAudienceRecord !== undefined) {
+        pendingAudienceRecords.push(prepared.pendingAudienceRecord);
+      }
+      inputs.push(prepared.input);
+    }
+
+    return { inputs, pendingAudienceRecords };
+  }
+
+  /** Prepare one role's public encryption input while keeping any new audience's private material in pending state. */
+  private async prepareRoleAudienceEncryptionInput(
+    params: RoleAudienceEncryptionParams,
+    role: ResolvedRoleReference,
+    roleReference: string | undefined,
+  ): Promise<PreparedRoleAudienceEncryptionInput> {
+    const resolveWriteAuthorization = (): Promise<AudienceWriteAuthorization> => this.resolveAudienceWriteAuthorization(params, role);
+    const contextId = getRoleAudienceContextId(role, params.parentContextId);
+    let pendingAudienceRecord: PendingAudienceRecord | undefined;
+    let audienceKey: AudienceKeyPayload | PublicRoleAudienceKey;
+    if (contextId === undefined) {
       const pendingContextId = params.parentContextId === undefined ? 'pending-record' : `${params.parentContextId}/pending-record`;
-      const pendingRoleAudience = roleAudience === undefined && getRoleAudienceContextId(role, pendingContextId) !== undefined
-        ? await this.preparePendingAudienceRecord(role, resolveWriteAuthorization)
-        : undefined;
-      if (roleAudience === undefined && pendingRoleAudience === undefined) {
+      if (getRoleAudienceContextId(role, pendingContextId) === undefined) {
         throw new Error(
-          `AgentDwnApi: Unable to resolve encrypted role audience '${rule.role}' ` +
+          `AgentDwnApi: Unable to resolve encrypted role audience '${roleReference}' ` +
           `for '${params.module}/${params.sourceModulePath}'.`
         );
       }
-
-      const audienceKey = roleAudience === undefined
-        ? pendingRoleAudience!.audienceKey
-        : await this.getOrCreateAudiencePublicKey({
-          authorDid  : params.authorDid,
-          contextId  : roleAudience.contextId,
-          granteeDid : params.granteeDid,
-          module     : roleAudience.module,
-          resolveWriteAuthorization,
-          rolePath   : roleAudience.rolePath,
-          sourceDid  : params.sourceDid,
-        });
-      if (pendingRoleAudience !== undefined) {
-        pendingAudienceRecords.push(pendingRoleAudience);
-      }
-      const audiencePublicKey = 'publicKeyJwk' in audienceKey
-        ? audienceKey.publicKeyJwk
-        : audienceKey.keyMaterial.publicKeyJwk;
-
-      inputs.push({
+      pendingAudienceRecord = await this.preparePendingAudienceRecord(role, resolveWriteAuthorization);
+      audienceKey = pendingAudienceRecord.audienceKey;
+    } else {
+      audienceKey = await this.getOrCreateAudiencePublicKey({
+        authorDid  : params.authorDid,
+        contextId,
+        granteeDid : params.granteeDid,
+        module     : role.owningModuleUri,
+        resolveWriteAuthorization,
+        rolePath   : role.owningModulePath,
+        sourceDid  : params.sourceDid,
+      });
+    }
+    const publicKey = 'publicKeyJwk' in audienceKey
+      ? audienceKey.publicKeyJwk
+      : audienceKey.keyMaterial.publicKeyJwk;
+    return {
+      input: {
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
         keyId            : audienceKey.keyId,
         module           : audienceKey.module,
-        publicKey        : audiencePublicKey,
+        publicKey,
         rolePath         : audienceKey.rolePath,
-      });
-    }
-
-    return { inputs, pendingAudienceRecords };
+      },
+      ...(pendingAudienceRecord === undefined ? {} : { pendingAudienceRecord }),
+    };
   }
 
   private async resolveAudienceWriteAuthorization(
@@ -1672,13 +1697,7 @@ export class AgentDwnApi {
     rolePath: string;
     granteeDid?: string;
     resolveWriteAuthorization: () => Promise<AudienceWriteAuthorization>;
-  }): Promise<{
-    module: string;
-    rolePath: string;
-    contextId: string;
-    keyId: string;
-    publicKeyJwk: PublicKeyJwk;
-  }> {
+  }): Promise<PublicRoleAudienceKey> {
     const existingAudience = await this.resolveCurrentAudienceRecord({
       authorDid : params.granteeDid ?? params.authorDid,
       contextId : params.contextId,

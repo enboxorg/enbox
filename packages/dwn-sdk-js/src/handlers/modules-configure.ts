@@ -1,3 +1,4 @@
+import type { DataStore } from '../types/data-store.js';
 import type { GenericMessageReply } from '../types/message-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
@@ -118,15 +119,7 @@ export class ModulesConfigureHandler implements MethodHandler {
     const incomingMessageIsNewest = newestMessage === undefined || await Message.isNewer(message, newestMessage);
     if (incomingMessageIsNewest) {
       try {
-        if (newestMessage !== undefined) {
-          await this.validateCompositionUpgradeCompatibility(tenant, newestMessage.descriptor.definition, message.descriptor.definition);
-        } else {
-          // A first installation becomes active even when its signed time predates a
-          // provider update. Its current binding must also be usable in the active graph.
-          await ModulesConfigureHandler.validateCompositionDependencies(
-            tenant, message.descriptor.definition, this.deps.validationStateReader,
-          );
-        }
+        await this.validateActiveConfiguration(tenant, message.descriptor.definition, newestMessage?.descriptor.definition);
       } catch (error) {
         return messageReplyFromError(error, 400);
       }
@@ -406,6 +399,20 @@ export class ModulesConfigureHandler implements MethodHandler {
     resolveModuleGraph(definition, uri => definitions.get(uri), { requireKeyAgreement: true });
   }
 
+  /** Validate the installed graph only when this configuration will become the active head. */
+  private async validateActiveConfiguration(
+    tenant: string,
+    incoming: ModuleDefinition,
+    previous: ModuleDefinition | undefined,
+  ): Promise<void> {
+    if (previous !== undefined) {
+      await this.validateCompositionUpgradeCompatibility(tenant, previous, incoming);
+      return;
+    }
+    // A late first installation must also bind against today's active providers.
+    await ModulesConfigureHandler.validateCompositionDependencies(tenant, incoming, this.deps.validationStateReader);
+  }
+
   /** Compare active old/new snapshots without substituting historical configurations. */
   private async validateCompositionUpgradeCompatibility(
     tenant: string,
@@ -468,7 +475,7 @@ export class ModulesConfigureHandler implements MethodHandler {
       const definition = newDefinitions.get(uri)!;
       for (const dependency of Object.values(definition.uses ?? {})) {
         if (affected.has(dependency)) {
-          await validateDependent(dependency);
+          await validateDependent(dependency); // NOSONAR: S9382 — validate dependencies before their consuming contracts.
         }
       }
       if (uri === incoming.module) {
@@ -489,118 +496,7 @@ export class ModulesConfigureHandler implements MethodHandler {
       }
     };
     for (const uri of [...affected].sort(lexicographicalCompare)) {
-      await validateDependent(uri);
-    }
-  }
-
-  /** Resolve an attachment alias while retaining the current one-boundary composition contract. */
-  private static validateReferenceTarget(
-    reference: string | undefined,
-    modulePath: string,
-    referencedDefinitions: ReadonlyMap<string, ModuleDefinition>,
-  ): void {
-    const parsed = reference === undefined ? undefined : parseCrossModuleRef(reference);
-    if (parsed === undefined) {
-      return;
-    }
-    const definition = referencedDefinitions.get(parsed.alias);
-    if (definition === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidRefAlias,
-        `'$ref' alias '${parsed.alias}' at module path '${modulePath}' ` +
-        `was not found in the referenced definitions map.`
-      );
-    }
-    ModulesConfigureHandler.validateReferencedTypePath(definition, parsed.modulePath, modulePath);
-  }
-
-  /** Every node in a referenced target path must exist and must not cross another attachment. */
-  private static validateReferencedTypePath(definition: ModuleDefinition, targetPath: string, modulePath: string): void {
-    const segments = targetPath.split('/');
-    let currentLevel = definition.structure;
-    for (const [index, segment] of segments.entries()) {
-      const node = currentLevel[segment] as ModuleRuleSet | undefined;
-      if (node === undefined) {
-        throw new DwnError(
-          DwnErrorCode.ModulesConfigureInvalidRefModulePath,
-          `'$ref' at module path '${modulePath}' references type path '${targetPath}' ` +
-          `which does not exist in module '${definition.module}'.`
-        );
-      }
-      if (node.$ref !== undefined) {
-        const traversedPath = segments.slice(0, index + 1).join('/');
-        throw new DwnError(
-          DwnErrorCode.ModulesConfigureInvalidRefTargetThroughRef,
-          `'$ref' at module path '${modulePath}' references type path '${targetPath}' ` +
-          `in module '${definition.module}', but the node '${traversedPath}' is itself ` +
-          `a '$ref' composition point. multi-level composition (chaining through '$ref' nodes) is not supported.`
-        );
-      }
-      currentLevel = node as { [key: string]: ModuleRuleSet };
-    }
-  }
-
-  /** Validate imported role identity and the existing encrypted-read key requirement. */
-  private static validateCrossModuleRoleReference(
-    action: ModuleActionRule,
-    modulePath: string,
-    isEncryptedPath: boolean,
-    referencedDefinitions: ReadonlyMap<string, ModuleDefinition>,
-  ): void {
-    const reference = action.role;
-    const parsed = reference === undefined ? undefined : parseCrossModuleRef(reference);
-    if (parsed === undefined) {
-      return;
-    }
-    const definition = referencedDefinitions.get(parsed.alias);
-    if (definition === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidCrossModuleRole,
-        `cross-module role alias '${parsed.alias}' in '${reference}' at module path '${modulePath}' ` +
-        `was not found in the referenced definitions map.`
-      );
-    }
-    const roleRuleSet = getRuleSetAtPath(parsed.modulePath, definition.structure);
-    if (!roleRuleSet?.$role) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidCrossModuleRole,
-        `cross-module role '${reference}' at module path '${modulePath}' ` +
-        `does not point to a valid role ($role: true) in module '${definition.module}'.`
-      );
-    }
-    if (isEncryptedPath && action.can.includes('read') && roleRuleSet.$keyAgreement === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidEncryptedRoleMissingKeyAgreement,
-        `encrypted module path '${modulePath}' references cross-module role '${reference}' ` +
-        `with no $keyAgreement.`
-      );
-    }
-  }
-
-  /** Validate an explicit imported author/recipient target without inheriting provider policy. */
-  private static validateCrossModuleActorReference(
-    reference: string | undefined,
-    modulePath: string,
-    referencedDefinitions: ReadonlyMap<string, ModuleDefinition>,
-  ): void {
-    const parsed = reference === undefined ? undefined : parseCrossModuleRef(reference);
-    if (parsed === undefined) {
-      return;
-    }
-    const definition = referencedDefinitions.get(parsed.alias);
-    if (definition === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidCrossModuleOf,
-        `cross-module 'of' alias '${parsed.alias}' in '${reference}' at module path '${modulePath}' ` +
-        `was not found in the referenced definitions map.`
-      );
-    }
-    if (getRuleSetAtPath(parsed.modulePath, definition.structure) === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModulesConfigureInvalidCrossModuleOf,
-        `cross-module 'of' reference '${reference}' at module path '${modulePath}' ` +
-        `does not point to a valid type path in module '${definition.module}'.`
-      );
+      await validateDependent(uri); // NOSONAR: S9382 — preserve first-dependent failure and shared snapshot traversal.
     }
   }
 }

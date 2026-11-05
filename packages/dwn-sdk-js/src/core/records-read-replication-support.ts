@@ -65,7 +65,7 @@ export class RecordsReadReplicationSupport {
       }),
     ]);
     const node = graph.nodesByDeclaredPath.get(matchedRecordsWrite.descriptor.modulePath);
-    if (node === undefined || node.kind !== 'record') {
+    if (node?.kind !== 'record') {
       throw RecordsReadReplicationSupport.unsupported('the matched record has no concrete module path.');
     }
     const expectedChain = [...node.physicalAncestors, node];
@@ -198,7 +198,7 @@ export class RecordsReadReplicationSupport {
 
     for (const record of [matchedRecordsWrite, ...recordChain]) {
       const parsed = await RecordsWrite.parse(record);
-      await addSelector(
+      await addSelector( // NOSONAR: S9382 — retain proof order while resolving each governing snapshot.
         parsed.signaturePayload?.moduleRole,
         parsed.author,
         record.contextId,
@@ -373,7 +373,7 @@ export class RecordsReadReplicationSupport {
         );
       }
       for (const dependency of Object.values(message.descriptor.definition.uses ?? {})) {
-        await collect(dependency, timestamp);
+        await collect(dependency, timestamp); // NOSONAR: S9382 — enforce the closure bound before loading the next dependency.
       }
       if (timestamp !== undefined) {
         await collect(uri);
@@ -381,7 +381,9 @@ export class RecordsReadReplicationSupport {
     };
     await collect(module);
     for (const record of records) {
-      await collect(record.descriptor.module ?? module, record.descriptor.messageTimestamp);
+      await collect( // NOSONAR: S9382 — bound history reads and retain per-record proof order.
+        record.descriptor.module ?? module, record.descriptor.messageTimestamp,
+      );
     }
     return [...unique].map(([cid, message]) => ({ isLatestBaseState: latestCids.has(cid), message }));
   }

@@ -12,6 +12,22 @@ export function validateModuleUpgrade(
   newGraph: ResolvedModuleGraph,
   storedPaths: ReadonlySet<string>,
 ): void {
+  validateUsesAliases(previous, incoming);
+
+  for (const [path, oldNode] of oldGraph.nodesByDeclaredPath) {
+    validateExistingNodeBinding(incoming.module, path, oldNode, newGraph, storedPaths);
+  }
+
+  // A temporary removal must not erase the physical binding of retained records.
+  for (const [path, node] of newGraph.nodesByDeclaredPath) {
+    if (node.kind === 'ref' && !oldGraph.nodesByDeclaredPath.has(path) && hasStoredRecordsInSubtree(storedPaths, path)) {
+      incompatible(incoming.module, path, 'retained record parent binding');
+    }
+  }
+}
+
+/** Existing lexical aliases may be removed when unused, but cannot be renamed or retargeted. */
+function validateUsesAliases(previous: ModuleDefinition, incoming: ModuleDefinition): void {
   const previousUses = previous.uses ?? {};
   const incomingUses = incoming.uses ?? {};
   for (const [alias, uri] of Object.entries(previousUses)) {
@@ -25,38 +41,42 @@ export function validateModuleUpgrade(
       );
     }
   }
+}
 
-  for (const [path, oldNode] of oldGraph.nodesByDeclaredPath) {
-    const newNode = newGraph.nodesByDeclaredPath.get(path);
-    if (newNode !== undefined && oldNode.kind !== newNode.kind) {
-      incompatible(incoming.module, path, 'node kind');
-    }
-    if (oldNode.kind !== 'ref') {
-      continue;
-    }
-
-    const renamed = [...newGraph.nodesByDeclaredPath.values()].some((node): boolean =>
-      node.kind === 'ref' && node.declaringModulePath !== path && sameOwner(oldNode, node)
-    );
-    if (renamed) {
-      incompatible(incoming.module, path, 'attachment name');
-    }
-    const hasStoredDescendants = [...storedPaths].some((stored): boolean => stored.startsWith(`${path}/`) || stored === path);
-    if (newNode !== undefined || hasStoredDescendants) {
-      if (newNode === undefined || oldNode.declaredRuleSet.$ref !== newNode.declaredRuleSet.$ref ||
-          !sameOwner(oldNode, newNode) || !equal(ancestry(oldNode), ancestry(newNode))) {
-        incompatible(incoming.module, path, 'attachment parent');
-      }
-    }
+/** Keep each surviving node's kind and each retained reference's name and physical parent. */
+function validateExistingNodeBinding(
+  moduleUri: string,
+  path: string,
+  oldNode: ResolvedModuleNode,
+  newGraph: ResolvedModuleGraph,
+  storedPaths: ReadonlySet<string>,
+): void {
+  const newNode = newGraph.nodesByDeclaredPath.get(path);
+  if (newNode !== undefined && oldNode.kind !== newNode.kind) {
+    incompatible(moduleUri, path, 'node kind');
+  }
+  if (oldNode.kind !== 'ref') {
+    return;
   }
 
-  // A temporary removal must not erase the physical binding of retained records.
-  for (const [path, node] of newGraph.nodesByDeclaredPath) {
-    if (node.kind === 'ref' && !oldGraph.nodesByDeclaredPath.has(path) &&
-        [...storedPaths].some(stored => stored === path || stored.startsWith(`${path}/`))) {
-      incompatible(incoming.module, path, 'retained record parent binding');
+  const renamed = [...newGraph.nodesByDeclaredPath.values()].some((node): boolean =>
+    node.kind === 'ref' && node.declaringModulePath !== path && sameRecordAddress(oldNode, node)
+  );
+  if (renamed) {
+    incompatible(moduleUri, path, 'attachment name');
+  }
+  const hasStoredDescendants = hasStoredRecordsInSubtree(storedPaths, path);
+  if (newNode !== undefined || hasStoredDescendants) {
+    if (newNode === undefined || oldNode.declaredRuleSet.$ref !== newNode.declaredRuleSet.$ref ||
+        !sameRecordAddress(oldNode, newNode) || !equal(ancestry(oldNode), ancestry(newNode))) {
+      incompatible(moduleUri, path, 'attachment parent');
     }
   }
+}
+
+/** Includes the path itself and every descendant that still has stored records. */
+function hasStoredRecordsInSubtree(storedPaths: ReadonlySet<string>, path: string): boolean {
+  return [...storedPaths].some(stored => stored === path || stored.startsWith(`${path}/`));
 }
 
 /** Compare only contracts explicitly imported by an unchanged reverse dependent. */
@@ -70,22 +90,29 @@ export function validateImportedModuleContracts(oldGraph: ResolvedModuleGraph, n
       incompatible(oldGraph.rootModuleUri, path, 'attachment identity, ancestry, representation, or lifecycle');
     }
 
-    for (let index = 0; index < oldNode.actions.length; index++) {
-      const previous = oldNode.actions[index];
-      const incoming = newNode.actions[index];
-      if (previous.resolvedRole !== undefined &&
-          (incoming?.resolvedRole === undefined || !equal(roleContract(previous.resolvedRole), roleContract(incoming.resolvedRole)))) {
-        incompatible(oldGraph.rootModuleUri, path, `role '${previous.rule.role}' identity or context`);
-      }
-      if (previous.resolvedActor !== undefined &&
-          (incoming?.resolvedActor === undefined || !equal(previous.resolvedActor, incoming.resolvedActor))) {
-        incompatible(oldGraph.rootModuleUri, path, `actor '${previous.rule.of}' identity or ancestry`);
-      }
+    validateImportedActionContracts(oldGraph.rootModuleUri, path, oldNode, newNode);
+  }
+}
+
+/** An unchanged consumer must resolve each role and actor rule to the same imported contract. */
+function validateImportedActionContracts(
+  moduleUri: string, path: string, oldNode: ResolvedModuleNode, newNode: ResolvedModuleNode,
+): void {
+  for (let index = 0; index < oldNode.actions.length; index++) {
+    const previous = oldNode.actions[index];
+    const incoming = newNode.actions[index];
+    if (previous.resolvedRole !== undefined &&
+        (incoming?.resolvedRole === undefined || !equal(roleContract(previous.resolvedRole), roleContract(incoming.resolvedRole)))) {
+      incompatible(moduleUri, path, `role '${previous.rule.role}' identity or context`);
+    }
+    if (previous.resolvedActor !== undefined &&
+        (incoming?.resolvedActor === undefined || !equal(previous.resolvedActor, incoming.resolvedActor))) {
+      incompatible(moduleUri, path, `actor '${previous.rule.of}' identity or ancestry`);
     }
   }
 }
 
-function sameOwner(left: ResolvedModuleNode, right: ResolvedModuleNode): boolean {
+function sameRecordAddress(left: ResolvedModuleNode, right: ResolvedModuleNode): boolean {
   return left.owningModuleUri === right.owningModuleUri && left.owningModulePath === right.owningModulePath;
 }
 

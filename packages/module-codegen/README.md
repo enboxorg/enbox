@@ -314,7 +314,7 @@ const commentsDefinition = {
   structure: { note: { $ref: 'core:note', comment: {} } },
 };
 
-const { code } = await generateModuleModule(commentsDefinition, {
+const { code } = await generateModuleCode(commentsDefinition, {
   schemasDir: './schemas',
   moduleName: 'Comments',
   dependencies: {

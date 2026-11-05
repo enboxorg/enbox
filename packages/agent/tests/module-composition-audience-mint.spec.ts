@@ -131,6 +131,75 @@ describe('fresh composed role audience authority', () => {
     expect(Encoder.bytesToString(await DataStream.toBytes(plaintext))).toBe('provider-authorized audience');
   });
 
+  it('prepares a pending local audience when its context root is being created', async () => {
+    const moduleDefinition: ModuleDefinition = {
+      module    : 'https://example.com/audience-mint/pending-document',
+      published : true,
+      types     : { document: { dataFormats: ['text/plain'], encryptionRequired: true }, reader: {} },
+      structure : {
+        document: {
+          $actions : [{ role: 'document/reader', can: ['read'] }],
+          reader   : { $role: true },
+        },
+      },
+    };
+    await install(moduleDefinition);
+    const written = await owner.agent.processDwnRequest({
+      author        : alice,
+      target        : alice,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : { module: moduleDefinition.module, modulePath: 'document', dataFormat: 'text/plain' },
+      dataStream    : new Blob(['new encrypted context']),
+    });
+
+    expect(written.reply.status.code).toBe(202);
+    expect(await audiences(moduleDefinition.module)).toHaveLength(1);
+    const plaintext = await owner.agent.dwn.decryptRecordData({
+      author: alice, target: alice, recordsWrite: written.message!, dataStream: written.data!.stream(),
+    });
+    expect(Encoder.bytesToString(await DataStream.toBytes(plaintext))).toBe('new encrypted context');
+  });
+
+  it('stops later audience creation when an earlier read role lacks provider authority', async () => {
+    const providerWithTwoRoles: ModuleDefinition = {
+      ...provider,
+      types     : { blocked: {}, allowed: {} },
+      structure : { blocked: { $role: true }, allowed: { $role: true } },
+    };
+    const consumerWithTwoAudiences: ModuleDefinition = {
+      ...consumer,
+      structure: {
+        note: {
+          $actions: [
+            { role: 'membership:blocked', can: ['read'] },
+            { role: 'membership:allowed', can: ['read'] },
+          ],
+        },
+      },
+    };
+    const installedProvider = await install(providerWithTwoRoles);
+    await install(consumerWithTwoAudiences);
+    const consumerWrite = await grant(consumer.module, 'Write');
+    const blockedRead = await grant(provider.module, 'Read', 'blocked');
+    const allowedRead = await grant(provider.module, 'Read', 'allowed');
+    await deliverSealCoverage(blockedRead, installedProvider);
+    await deliverSealCoverage(allowedRead, installedProvider);
+    await grant(provider.module, 'Write', 'allowed');
+
+    await expect(delegate.agent.processDwnRequest({
+      author        : alice,
+      target        : alice,
+      granteeDid    : bob,
+      messageType   : DwnInterface.RecordsWrite,
+      messageParams : {
+        module: consumer.module, modulePath: 'note', dataFormat: 'text/plain', delegatedGrant: consumerWrite.message,
+      },
+      dataStream: new Blob(['must not create a later audience']),
+    })).rejects.toThrow('No matching permission grant');
+
+    expect(await audiences(provider.module)).toHaveLength(0);
+  });
+
   it('reuses an accepted public audience without requesting provider write authority', async () => {
     await install(provider);
     await install(consumer);
