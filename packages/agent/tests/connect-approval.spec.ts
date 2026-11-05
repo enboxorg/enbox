@@ -1,6 +1,6 @@
 import type { DidResolutionResult } from '@enbox/dids';
 import type { RecordsPermissionScope } from '@enbox/dwn-sdk-js';
-import type { ConnectApproval, ConnectRequest } from '@enbox/connect';
+import type { ConnectApproval, ConnectPermissionRequest, ConnectRequest } from '@enbox/connect';
 
 import sinon from 'sinon';
 
@@ -498,6 +498,31 @@ describe('connect approval ceremony', () => {
   });
 
   describe('executeConnectApproval', () => {
+    it('rejects old and mixed module permission fields before approval side effects', async () => {
+      const definition = { module: 'https://example.com/modules/cutover-approval', published: false, types: {}, structure: {} };
+      const request = { moduleDefinition: definition, permissionScopes: [] };
+      const process = sinon.spy(testHarness.agent, 'processDwnRequest');
+      const grants = sinon.spy(ConnectCeremony, 'createPermissionGrants');
+      const delegate = sinon.spy(DidJwk, 'create');
+      for (const invalid of [
+        { protocolDefinition: definition, permissionScopes: [] },
+        { ...request, protocolDefinition: definition },
+        { ...request, moduleDefinition: { ...definition, protocol: definition.module } },
+        { ...request, permissionScopes: [{ interface: 'Records', method: 'Read', module: definition.module, protocol: definition.module }] },
+        { ...request, permissionScopes: [{ interface: 'Protocols', method: 'Query', module: definition.module }] },
+      ]) {
+        await expect(executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
+          request     : { appName: 'Cutover', permissionRequests: [invalid] as unknown as ConnectPermissionRequest[] },
+        })).rejects.toThrow();
+      }
+      expect(process.called).toBe(false);
+      expect(grants.called).toBe(false);
+      expect(delegate.called).toBe(false);
+    });
+
     type ApprovalStubs = {
       capturedSessions: Array<{ createdAt: string; expiresAt: string }>;
       capturedDelegateDids: string[];

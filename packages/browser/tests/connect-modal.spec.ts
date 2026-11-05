@@ -5,6 +5,8 @@ import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, Walle
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
 import { PopupWindowClosedError } from '../src/dweb-connect-client.js';
 import { runConnectModal } from '../src/ui/connect-modal.js';
 
@@ -15,9 +17,9 @@ const WALLETS: WalletOption[] = [
 
 const PERMISSIONS: ConnectPermissionRequest[] = [
   {
-    moduleDefinition : { module: 'https://proto.example.com', types: {}, structure: {} },
-    permissionScopes : [{ module: 'https://proto.example.com', interface: 'Records', method: 'Write' }],
-  } as unknown as ConnectPermissionRequest,
+    moduleDefinition : { module: 'https://proto.example.com', published: false, types: {}, structure: {} },
+    permissionScopes : [{ module: 'https://proto.example.com', interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+  },
 ];
 
 const HANDOFF: WalletUriHandoff = {

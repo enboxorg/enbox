@@ -1743,7 +1743,7 @@ describe('AuthManager', () => {
                   recordId    : 'grant-unrestricted',
                   contextId   : 'grant-unrestricted',
                   encodedData : btoa(JSON.stringify({
-                    dateExpires : '2040-01-01T00:00:00.000Z',
+                    dateExpires : '2040-01-01T00:00:00.000000Z',
                     scope       : { interface: 'Messages', method: 'Read' },
                     delegated   : true,
                   })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),

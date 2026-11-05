@@ -28,6 +28,13 @@ const walletUri = 'https://wallet.test/connect/app';
 const relayRequestUri = 'https://relay.test/connect/authorize/req-1.jwt';
 const pin = '1234';
 
+const TestModuleDefinition = {
+  module    : 'https://example.com/modules/wallet-connect-test',
+  published : false,
+  types     : {},
+  structure : {},
+} satisfies DwnModuleDefinition;
+
 const delegateGrants = [{ recordId: 'grant-1' }] as any;
 
 /** Wallet-side behavior: receives the opened request, returns the relay `id_token` body. */
@@ -224,7 +231,7 @@ describe('WalletConnect', () => {
       });
       const result = await WalletConnect.initClient({
         displayName        : 'OAuth and data', walletUri, connectServerUrl, authentication,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
       });
       expect(result?.authentication?.subject).toBe(owner.uri);
@@ -238,7 +245,7 @@ describe('WalletConnect', () => {
       await expect(WalletConnect.initClient({
         displayName        : 'OAuth and data', walletUri, connectServerUrl,
         authentication     : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
       })).rejects.toThrow();
     });
@@ -268,7 +275,7 @@ describe('WalletConnect', () => {
         displayName                : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests         : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests         : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady           : relay.onWalletUriReady,
         validatePin                : async (): Promise<string> => { pinPrompts.push(1); return pin; },
         applicationId              : 'com.example.test',
@@ -312,7 +319,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -332,7 +339,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : (): void => {},
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -362,7 +369,7 @@ describe('WalletConnect', () => {
         displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests  : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : relay.onWalletUriReady,
         validatePin         : async (): Promise<string> => pin,
         delegatePortableDid,
@@ -382,7 +389,7 @@ describe('WalletConnect', () => {
         displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests  : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : (): void => {},
         validatePin         : async (): Promise<string> => pin,
         delegatePortableDid : {
@@ -401,7 +408,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -417,7 +424,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -435,7 +442,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -450,7 +457,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin,
         pollIntervalMs     : 1,
@@ -472,7 +479,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -498,7 +505,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : (): void => {},
         validatePin        : async (): Promise<string> => pin,
         timeoutMs          : 5,
@@ -516,7 +523,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : (): void => {},
         validatePin        : async (): Promise<string> => pin,
       })).rejects.toThrow('Connect: pushed authorization request failed with HTTP 400.');

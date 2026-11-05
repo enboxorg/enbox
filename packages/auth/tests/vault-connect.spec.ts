@@ -163,8 +163,8 @@ describe('vaultConnect', () => {
     expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
     expect(syncCalls[0].options.modules).toEqual([
-      'https://identity.foundation/protocols/web5/identity-store',
-      'https://identity.foundation/protocols/web5/jwk-store',
+      'https://identity.foundation/modules/web5/identity-store',
+      'https://identity.foundation/modules/web5/jwk-store',
     ]);
     expect(syncCalls[1].did).toBe('did:dht:testuser123');
     expect(syncCalls[1].options.modules).toEqual(['https://proto.example/profile']);
@@ -316,8 +316,8 @@ describe('vaultConnect', () => {
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
     expect(syncCalls[0].options.modules).toEqual([
-      'https://identity.foundation/protocols/web5/identity-store',
-      'https://identity.foundation/protocols/web5/jwk-store',
+      'https://identity.foundation/modules/web5/identity-store',
+      'https://identity.foundation/modules/web5/jwk-store',
     ]);
   });
 

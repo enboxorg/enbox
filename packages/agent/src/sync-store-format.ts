@@ -27,7 +27,8 @@ export async function ensureSyncStoreFormat(
       throw incompatibleSyncStore();
     }
 
-    for await (const _key of db.keys({ limit: 1 })) {
+    const existingKeys = await db.keys({ limit: 1 }).all();
+    if (existingKeys.length > 0) {
       throw incompatibleSyncStore();
     }
     await db.put(SYNC_STORE_FORMAT_KEY, SYNC_STORE_FORMAT);

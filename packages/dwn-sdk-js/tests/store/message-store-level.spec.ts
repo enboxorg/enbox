@@ -57,6 +57,30 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('createLevelDatabase', function () {
+    it('initializes concurrent clients of one empty database with the same format and epoch', async () => {
+      const location = `TEST-MESSAGESTORE-CONCURRENT-OPEN-${crypto.randomUUID()}`;
+      const database = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+      await database.open();
+      const stores = Array.from({ length: 8 }, () => new MessageStoreLevel({
+        location,
+        // Real Level storage shared by independent store clients, as with browser IndexedDB clients.
+        createLevelDatabase: async <V>(): Promise<LevelDatabase<V>> => database as unknown as LevelDatabase<V>,
+      }));
+      try {
+        const results = await Promise.allSettled(stores.map(store => store.open()));
+        expect(results.map(result => result.status)).toEqual(stores.map(() => 'fulfilled'));
+        const epochs = await Promise.all(stores.map(store => store.epoch()));
+        expect(new Set(epochs).size).toBe(1);
+        expect(await database.get('!meta!epoch')).toBe(epochs[0]);
+        expect(await database.get('!meta!format')).toBe('enbox-modules-v1');
+      } finally {
+        await Promise.allSettled(stores.map(store => store.close()));
+        await database.open();
+        await database.clear();
+        await database.close();
+      }
+    });
+
     it('rejects the previous wire format even when replication metadata already exists', async () => {
       const location = 'TEST-MESSAGESTORE-OLD-FORMAT';
       const oldDb = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });

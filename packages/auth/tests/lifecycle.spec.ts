@@ -170,7 +170,7 @@ describe('ensureVaultReady', () => {
 
 describe('deriveSyncScopeFromGrants', () => {
   /** Build a minimal mock grant object (no DWN parse overhead). */
-  function mockGrant(scope: any, dateExpires = '2040-01-01T00:00:00Z'): any {
+  function mockGrant(scope: any, dateExpires = '2040-01-01T00:00:00.000000Z'): any {
     return { scope, dateExpires };
   }
 
@@ -214,7 +214,7 @@ describe('deriveSyncScopeFromGrants', () => {
       mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://proto.example/chat' }),
     ]],
     ['expired Messages.Read grants', [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }, '2020-01-01T00:00:00Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }, '2020-01-01T00:00:00.000000Z'),
     ]],
   ])('derives an empty scope from %s', (_name, grants) => {
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
@@ -222,8 +222,8 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('includes non-expired and excludes expired grants in the same set', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/expired' }, '2020-01-01T00:00:00Z'),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/valid' }, '2040-01-01T00:00:00Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/expired' }, '2020-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/valid' }, '2040-01-01T00:00:00.000000Z'),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://proto.example/valid']);
   });
@@ -259,7 +259,7 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('does not return all when the only wildcard grant is expired', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read' }, '2020-01-01T00:00:00Z'),
+      mockGrant({ interface: 'Messages', method: 'Read' }, '2020-01-01T00:00:00.000000Z'),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
   });
@@ -398,7 +398,7 @@ describe('deriveActiveSyncScope', () => {
 
   test('excludes expired wildcard grant', async () => {
     const agent = createMockAgent({
-      permissionsFetchGrants: async () => [buildUnscopedGrantEntry('g-expired', 'Messages', 'Read', '2020-01-01T00:00:00Z')],
+      permissionsFetchGrants: async () => [buildUnscopedGrantEntry('g-expired', 'Messages', 'Read', '2020-01-01T00:00:00.000000Z')],
     });
 
     const result = await deriveActiveSyncScope(agent as any, 'did:delegate');
@@ -667,7 +667,7 @@ describe('importDelegateAndSetupSync', () => {
       expect(syncCalls[0].options.modules).toBe('all');
     });
 
-    test('ignores unscoped Messages.Subscribe grant (only Messages.Read authorizes sync)', async () => {
+    test('rejects invalid Messages.Subscribe grants before changing sync registration', async () => {
       const syncCalls: any[] = [];
       const unregisterCalls: string[] = [];
 
@@ -685,18 +685,16 @@ describe('importDelegateAndSetupSync', () => {
 
       const grants = [buildUnscopedGrantMessage('grant-subscribe', 'Messages', 'Subscribe')];
 
-      await importDelegateAndSetupSync({
+      await expect(importDelegateAndSetupSync({
         userAgent           : agent,
         delegatePortableDid : { uri: 'did:jwk:delegate1', document: {} as any, metadata: {} },
         connectedDid        : 'did:dht:connected1',
         delegateGrants      : grants,
         flowName            : 'test',
-      });
+      })).rejects.toThrow('SchemaValidatorFailure: /scope/method');
 
-      // Should NOT register with 'all' — Messages.Subscribe does not authorize sync.
       expect(syncCalls).toHaveLength(0);
-      // Should unregister since no sync-relevant modules were found.
-      expect(unregisterCalls).toHaveLength(1);
+      expect(unregisterCalls).toHaveLength(0);
     });
   });
 });

@@ -138,7 +138,7 @@ describe('importFromPortable', () => {
     });
 
     const grantData = JSON.stringify({
-      dateExpires : '2040-01-01T00:00:00Z',
+      dateExpires : '2040-01-01T00:00:00.000000Z',
       scope       : { interface: 'Messages', method: 'Read', module: 'https://proto.example/chat' },
       delegated   : true,
     });
@@ -249,7 +249,7 @@ describe('importFromPortable', () => {
     });
 
     const grantData = JSON.stringify({
-      dateExpires : '2040-01-01T00:00:00Z',
+      dateExpires : '2040-01-01T00:00:00.000000Z',
       scope       : { interface: 'Messages', method: 'Read' },
       delegated   : true,
     });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
+
 import {
   ConnectDefinition,
   ConnectModule,
@@ -10,6 +12,12 @@ import {
 } from '../src/index.js';
 
 describe('@enbox/modules', () => {
+  it('should export catalog definitions that satisfy the module wire schema', () => {
+    for (const definition of [ProfileDefinition, PreferencesDefinition, ConnectDefinition]) {
+      expect(() => validateModuleDefinitionSchema(definition)).not.toThrow();
+    }
+  });
+
   describe('ProfileModule', () => {
     it('should have the correct module URI', () => {
       expect(ProfileDefinition.module).toBe('https://identity.foundation/modules/profile');

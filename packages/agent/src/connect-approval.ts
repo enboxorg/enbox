@@ -30,7 +30,7 @@ import type {
 import type { ConnectSessionMetadata, ConnectSessionTransport, DwnDataEncodedRecordsWriteMessage, DwnPermissionScope, DwnRecordsPermissionScope } from './types/dwn.js';
 
 import { Ed25519 } from '@enbox/crypto';
-import { assertExpectedProviderDid, randomToken } from '@enbox/connect';
+import { assertConnectPermissionRequests, assertExpectedProviderDid, randomToken } from '@enbox/connect';
 import { Convert, logger, nowMs, timed } from '@enbox/common';
 import { Did, DidJwk } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
@@ -778,6 +778,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       ? JSON.parse(JSON.stringify(approvedRequest)) as ConnectApprovalRequest : structuredClone(approvedRequest),
     approvedModuleOverrides: input.approvedModuleOverrides === undefined ? undefined : [...input.approvedModuleOverrides],
   };
+  assertConnectPermissionRequests(params.request.permissionRequests);
   const { agent, providerDid, request } = params;
   // Validate and snapshot before any delegate creation or DWN mutation. Sign
   // only at completion so module setup cannot consume the proof's lifetime.

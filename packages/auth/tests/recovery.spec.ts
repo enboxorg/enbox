@@ -48,8 +48,8 @@ function recoveredAgent(
 describe('AGENT_DID_SYNC_MODULES', () => {
   test('contains identity store and JWK store module URIs', () => {
     expect(AGENT_DID_SYNC_MODULES).toEqual([
-      'https://identity.foundation/protocols/web5/identity-store',
-      'https://identity.foundation/protocols/web5/jwk-store',
+      'https://identity.foundation/modules/web5/identity-store',
+      'https://identity.foundation/modules/web5/jwk-store',
     ]);
   });
 });

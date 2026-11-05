@@ -215,9 +215,12 @@ export class MessageStoreLevel implements MessageStore {
   async open(): Promise<void> {
     const partitions = await this.partitions();
     await partitions.root.open();
-    await this.assertNoPreSubstrateLayout(partitions);
-    await this.assertModuleFormat(partitions);
-    await this.getEpoch();
+    const lockName = `enbox:dwn-message-store-initialize:${JSON.stringify(this.config.location!)}`;
+    await runWithCrossContextLock(lockName, async (): Promise<void> => {
+      await this.assertNoPreSubstrateLayout(partitions);
+      await this.assertModuleFormat(partitions);
+      await this.getEpoch();
+    });
   }
 
   async close(): Promise<void> {
@@ -1225,7 +1228,7 @@ export class MessageStoreLevel implements MessageStore {
     if (format !== undefined) {
       throw incompatible();
     }
-    for await (const _key of partitions.root.keys()) {
+    if (!await partitions.root.isEmpty()) {
       throw incompatible();
     }
   }

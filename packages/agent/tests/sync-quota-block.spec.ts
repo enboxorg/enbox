@@ -120,7 +120,9 @@ describe('SyncEngineLevel quota-block observability and lifecycle', () => {
   beforeAll(async () => {
     projectionId = await computeProjectionId(TENANT, { kind: 'full' });
     db = new Level<string, string>('__TESTDATA__/sync-quota-block-spec');
+    await db.clear();
     syncEngine = new SyncEngineLevel({ db });
+    await syncEngine.getSyncHealth();
   });
 
   afterEach(async () => {

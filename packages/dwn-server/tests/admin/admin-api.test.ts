@@ -1713,10 +1713,11 @@ describe('AdminApi — config PATCH validation', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
-    port = 8850 + Math.floor(Math.random() * 40);
+    port = 0;
     tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-configval-'));
     dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
     await dwnServer.start();
+    port = dwnServer.httpServer.port!;
   });
 
   afterAll(async () => {
@@ -1883,7 +1884,7 @@ describe('AdminApi — rate limiter hot-reload (#389)', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
-    port = 8850 + Math.floor(Math.random() * 40);
+    port = 0;
     tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-ratelimit-'));
     dwnServer = new DwnServer({
       config: {
@@ -1895,6 +1896,7 @@ describe('AdminApi — rate limiter hot-reload (#389)', () => {
       },
     });
     await dwnServer.start();
+    port = dwnServer.httpServer.port!;
   });
 
   afterAll(async () => {

@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'bun:test';
 
-import { PermissionScopeMatcher } from '../../src/utils/permission-scope.js';
+import { PermissionScopeMatcher, validatePermissionScope } from '../../src/utils/permission-scope.js';
+
+describe('validatePermissionScope', () => {
+  it('validates current scopes without normalizing or mutating them', () => {
+    const scope = Object.freeze({ interface: 'Records', method: 'Read', module: 'https://example.com/module/', modulePath: 'protocol' });
+    expect(() => validatePermissionScope(scope)).not.toThrow();
+    expect(scope.module).toBe('https://example.com/module/');
+    expect(scope.modulePath).toBe('protocol');
+    expect(() => validatePermissionScope({ interface: 'Messages', method: 'Read' })).not.toThrow();
+    expect(() => validatePermissionScope({ interface: 'Modules', method: 'Query', module: 'https://example.com/module' })).not.toThrow();
+  });
+
+  it('rejects old, mixed, and malformed permission scopes', () => {
+    const scope = { interface: 'Records', method: 'Read', module: 'https://example.com/module' };
+    for (const invalid of [
+      undefined, null, [], {},
+      { interface: 'Records', method: 'Read', protocol: scope.module },
+      { ...scope, protocol: scope.module },
+      { ...scope, protocolPath: 'note' },
+      { ...scope, modulePath: 'note', protocolPath: 'note' },
+      { ...scope, interface: 'Protocols', method: 'Query' },
+    ]) {
+      expect(() => validatePermissionScope(invalid)).toThrow();
+    }
+  });
+});
 
 describe('PermissionScopeMatcher', () => {
   it('matches unrestricted scopes', () => {

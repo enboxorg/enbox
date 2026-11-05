@@ -110,6 +110,7 @@ describe('web features', () => {
     });
 
     it('configures the realm default DID DHT resolver', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
       const gatewayUri = 'http://127.0.0.1:17527';
       const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
       activatePolyfills({

@@ -165,8 +165,8 @@ describe('SyncEngineLevel durable feed convergence', () => {
 
   beforeEach(async () => {
     sinon.restore();
-    await syncEngine.clear();
     await testHarness.clearDwnStores();
+    await syncEngine.clear();
     await clearRemoteDwnStores(remoteStores);
     testHarness.agent.rpc = createLocalDwnRpc(remoteStores.dwn);
   });

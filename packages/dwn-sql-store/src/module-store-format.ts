@@ -14,7 +14,7 @@ export async function assertModuleStoreFormat(db: Kysely<any>): Promise<void> {
   if (!columns.has('module') || !columns.has('modulePath') || columns.has('protocol') || columns.has('protocolPath')) {
     throw new DwnError(
       DwnErrorCode.MessageStoreIncompatibleFormat,
-      'SQL message store uses an incompatible format; reinitialize the database before opening stores'
+      'sql message store uses an incompatible format; reinitialize the database before opening stores'
     );
   }
 }

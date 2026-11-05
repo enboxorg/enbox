@@ -4094,8 +4094,23 @@ describe('SyncEngineLevel', () => {
   });
 
   describe('startSync parameters', () => {
+    let parameterHarness: PlatformAgentTestHarness;
+
+    beforeAll(async () => {
+      parameterHarness = await PlatformAgentTestHarness.setup({
+        agentClass: TestAgent, agentStores: 'memory', testDataLocation: '__TESTDATA__/sync-parameters-spec',
+      });
+      await parameterHarness.clearStorage();
+      await parameterHarness.createAgentDid({ publish: false });
+    });
+
+    afterAll(async () => {
+      sinon.restore();
+      await parameterHarness.closeStorage();
+    });
+
     it('should start the live runtime', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       try {
@@ -4110,7 +4125,7 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should default the settle-check interval when none is given', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       try {
@@ -4125,7 +4140,7 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should reject an invalid interval before starting any runtime', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       await expect(syncEngine.startSync({ interval: 'not-a-duration' })).rejects.toThrow(
@@ -4138,7 +4153,8 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should leave a running runtime untouched when a reconfiguration passes an invalid interval', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
+      await syncEngine.clear();
       const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
       getSyncTargetsStub.resolves([]);
       const settleStub = sinon.stub((syncEngine as any)._runCoordinator, 'settle').resolves();

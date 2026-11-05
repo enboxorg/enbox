@@ -19,6 +19,7 @@ import { Records } from '../utils/records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { Time } from '../utils/time.js';
 import { validateJsonSchema } from '../schema-validator.js';
+import { validatePermissionScope } from '../utils/permission-scope.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { normalizeModuleUrl, validateModuleUrlNormalized } from '../utils/url.js';
 
@@ -584,7 +585,7 @@ export class PermissionsModule implements CoreModule {
    * @returns The normalized permission scope.
    */
   private static normalizePermissionScope(permissionScope: PermissionScope): PermissionScope {
-    validateJsonSchema('PermissionScope', permissionScope);
+    validatePermissionScope(permissionScope);
     const scope = { ...permissionScope };
 
     if (PermissionsModule.hasModuleScope(scope)) {

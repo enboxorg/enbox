@@ -1,5 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from '../src/types.js';
 
 import { ConnectProvider } from '../src/provider.js';
@@ -9,6 +10,7 @@ import { randomToken } from '../src/client.js';
 import { signJwt } from '../src/jwt.js';
 import {
   assertConnectAuthenticationResponse,
+  assertConnectPermissionRequests,
   assertConnectRequest,
   assertX25519PublicJwk,
   CONNECT_REQUEST_JWE_TYP,
@@ -78,6 +80,72 @@ function tamperCiphertext(jwe: string): string {
 }
 
 describe('connect envelope', () => {
+  describe('permission request boundaries', () => {
+    const definition: ModuleDefinition = {
+      module    : 'https://example.com/modules/boundary',
+      published : true,
+      types     : { note: { dataFormats: ['text/plain'] } },
+      structure : { note: {} },
+    };
+    const scope = { interface: 'Records', method: 'Read', module: definition.module, modulePath: 'note' };
+
+    it('rejects old and mixed vocabulary after authenticating a raw signed encrypted request', async () => {
+      const { clientDid, request } = await createTestRequest();
+      const requestKey = CryptoUtils.randomBytes(32);
+      const profile = { mode: 'dir' as const, requestKey };
+      const { module: _module, ...definitionWithoutModule } = definition;
+      const { module: _scopeModule, ...scopeWithoutModule } = scope;
+      const { modulePath: _modulePath, ...scopeWithoutPath } = scope;
+      const invalidRequests = [
+        { protocolDefinition: definition, permissionScopes: [scope] },
+        { moduleDefinition: definition, protocolDefinition: definition, permissionScopes: [scope] },
+        { moduleDefinition: { ...definitionWithoutModule, protocol: definition.module }, permissionScopes: [scope] },
+        { moduleDefinition: { ...definition, protocol: definition.module }, permissionScopes: [scope] },
+        { moduleDefinition: definition, permissionScopes: [{ ...scopeWithoutModule, protocol: definition.module }] },
+        { moduleDefinition: definition, permissionScopes: [{ ...scope, protocol: definition.module }] },
+        { moduleDefinition: definition, permissionScopes: [{ ...scopeWithoutPath, protocolPath: 'note' }] },
+        { moduleDefinition: definition, permissionScopes: [{ ...scope, protocolPath: 'note' }] },
+        { moduleDefinition: definition, permissionScopes: [{ interface: 'Protocols', method: 'Query', module: definition.module }] },
+      ];
+      for (const permissionRequest of invalidRequests) {
+        const malformed = { ...request, permissionRequests: [permissionRequest] } as unknown as ConnectRequest;
+        const jwe = await sealRequest({ request: malformed, signer: clientDid, encryption: profile });
+        await expect(ConnectProvider.openRequest({ jwe, decryption: profile })).rejects.toThrow();
+      }
+    });
+
+    it('rejects malformed nested wrappers, definitions, and scopes', () => {
+      for (const invalid of [
+        undefined, null, {}, [null], [[]], [{}],
+        [{ moduleDefinition: definition }],
+        [{ moduleDefinition: null, permissionScopes: [] }],
+        [{ moduleDefinition: {}, permissionScopes: [] }],
+        [{ moduleDefinition: definition, permissionScopes: null }],
+        [{ moduleDefinition: definition, permissionScopes: [null] }],
+        [{ moduleDefinition: definition, permissionScopes: [scope], unexpected: true }],
+      ]) {
+        expect(() => assertConnectPermissionRequests(invalid)).toThrow();
+      }
+    });
+
+    it('preserves application names and tags while allowing authored encryption and installation-only dependencies', async () => {
+      const authored: ModuleDefinition = {
+        ...definition,
+        types: {
+          protocol: { schema: 'https://example.com/schemas/protocol', dataFormats: ['application/json'], encryptionRequired: true },
+        },
+        structure: { protocol: { $tags: { protocol: { type: 'string' }, protocolPath: { type: 'string' } } } },
+      };
+      const permissionRequests = [{ moduleDefinition: authored, permissionScopes: [] }];
+      expect(() => assertConnectPermissionRequests(permissionRequests)).not.toThrow();
+      const { clientDid, request } = await createTestRequest({ permissionRequests });
+      const requestKey = CryptoUtils.randomBytes(32);
+      const profile = { mode: 'dir' as const, requestKey };
+      const jwe = await sealRequest({ request, signer: clientDid, encryption: profile });
+      await expect(ConnectProvider.openRequest({ jwe, decryption: profile })).resolves.toEqual(request);
+    });
+  });
+
   it('should preserve UTF-16 strings and property keys through encrypted JSON and owner proof verification', async () => {
     const owner = await DidJwk.create();
     const { clientDid, request } = await createTestRequest({

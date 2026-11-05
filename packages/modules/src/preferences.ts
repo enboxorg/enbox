@@ -78,20 +78,16 @@ export const PreferencesDefinition = {
   },
   structure: {
     theme: {
-      $recordLimit : { max: 1 },
-      $actions     : [],
+      $recordLimit: { max: 1 },
     },
     locale: {
-      $recordLimit : { max: 1 },
-      $actions     : [],
+      $recordLimit: { max: 1 },
     },
     privacy: {
-      $recordLimit : { max: 1 },
-      $actions     : [],
+      $recordLimit: { max: 1 },
     },
     notification: {
-      $actions : [],
-      $tags    : {
+      $tags: {
         $requiredTags       : ['channel'],
         $allowUndefinedTags : false,
         channel             : { type: 'string' },

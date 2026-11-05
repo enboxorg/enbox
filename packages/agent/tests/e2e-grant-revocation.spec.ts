@@ -551,7 +551,7 @@ describe('e2e: grant revocation stops future delivery', () => {
     // full auth retry chain: read retry context → read grant as delegate
     // → create delegated revocation → retry context cleared.
     const { retryOrphanedRevocations } = await import('../../auth/src/connect/restore.js');
-    const { STORAGE_KEYS } = await import('../../auth/src/types.js');
+    const { stageRevocationRetryEntry } = await import('../../auth/src/connect/session-state.js');
     const { MemoryStorage } = await import('../../auth/src/storage/storage.js');
     const ownerDid = ownerIdentity.did.uri;
     const { DidJwk } = await import('@enbox/dids');
@@ -662,11 +662,11 @@ describe('e2e: grant revocation stops future delivery', () => {
 
       // Persist retry context in real MemoryStorage (simulates partial disconnect)
       const storage = new MemoryStorage();
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+      await stageRevocationRetryEntry(storage, [], {
         delegateDid  : delegateBearerDid.uri,
         connectedDid : ownerDid,
         revocations  : [{ grantId: sessionGrant.message.recordId, revocationGrantId: revGrant.message.recordId }],
-      }]));
+      });
 
       // Call the REAL auth-layer retry function
       await retryOrphanedRevocations(delegateHarness.agent as any, storage);

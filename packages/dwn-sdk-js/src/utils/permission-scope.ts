@@ -1,4 +1,12 @@
+import type { PermissionScope } from '../types/permission-types.js';
+
 import { FilterUtility } from './filter.js';
+import { validateJsonSchema } from '../schema-validator.js';
+
+/** Validates the exact permission-scope wire shape without normalizing or changing the input. */
+export function validatePermissionScope(scope: unknown): asserts scope is PermissionScope {
+  validateJsonSchema('PermissionScope', scope);
+}
 
 /**
  * Minimal module-bound scope shape used by permission grant authorization.

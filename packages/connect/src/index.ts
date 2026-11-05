@@ -2,6 +2,7 @@ export * from './client.js';
 // `openRequest` is deliberately not re-exported: `ConnectProvider.openRequest`
 // is the single public spelling of the wallet-side open operation.
 export {
+  assertConnectPermissionRequests,
   assertConnectRequest,
   assertConnectResponse,
   assertConnectAuthenticationResponse,
