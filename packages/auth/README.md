@@ -55,6 +55,48 @@ The explicit `{ definition: RawDefinition, permissions }` form remains
 available. A non-empty `protocols` array intentionally selects delegated
 handler routing; owner applications should continue to use `connectVault()`.
 
+## Identity-only wallet authentication
+
+`WalletConnect.initAuthentication()` performs a relay-mediated owner login and
+returns `{ connectedDid, authentication }`, or `undefined` when denied. Its
+options contain a service-issued `authentication` request (`version`, HTTPS
+`audience`, and unpredictable `challenge`) and the usual relay, wallet URI and
+PIN callbacks. It returns no delegate keys or `AgentSession` and requests no
+DWN permissions. Authentication-enabled wallets must trust the request origin;
+an arbitrary public relay does not establish that trust.
+
+For combined approval, `WalletConnect.initClient()` accepts the same optional
+`authentication` request and returns verified authentication alongside the
+delegated credentials. A wallet response that omits the requested proof is
+rejected. The service remains responsible for consuming the challenge once;
+cryptographic verification alone does not create an account or OAuth session.
+Use `onAuthenticationRequest` to durably register the exact generated request
+with the service before it reaches the wallet. The callback is awaited, and
+failure prevents delivery. The service binds it to its own challenge and OAuth
+transaction, then verifies the response against that stored request; it must
+not trust browser-reported verification results.
+
+Authentication-bearing inputs must be cloneable plain JSON data; unwrap
+reactive proxies before using these new APIs. Ordinary delegation continues
+to accept JSON-serializable reactive inputs and snapshots their wire value.
+
+Server verification additionally requires `expected: { audience, challenge }`
+from service configuration and the issued transaction. A replay store must
+reject challenges the service never issued, not merely duplicates. The proof
+expires 300 seconds after signing even though its encrypted response envelope
+lasts 600 seconds after sealing; delayed relay PIN entry can therefore fail
+authentication after approval. Reconcile existing grants before retrying a
+combined operation. Owner authentication requires HTTPS during local
+development too; an HTTP delegation origin does not enable HTTP sign-in.
+
+These adapters do not discover or negotiate wallet authentication capability.
+An older wallet rejects identity-only requests, but a combined request can
+produce its requested DWN grants before the missing proof causes login to
+fail. Use combined mode only with a wallet known to support authentication.
+Any combined failure needs outcome reconciliation: grants written before a
+late signing failure are not automatically rolled back, and a failed login
+must not be retried as a blind new grant-creation transaction.
+
 ## Storage
 
 `BrowserStorage`, `MemoryStorage`, `LevelStorage`, and `createDefaultStorage()`

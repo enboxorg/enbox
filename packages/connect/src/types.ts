@@ -69,7 +69,34 @@ export type ConnectClientMetadata = {
 };
 
 /** Identifies the user-facing purpose of a connect request. */
-export type ConnectRequestType = 'connect' | 'refresh';
+export type ConnectRequestType = 'connect' | 'refresh' | 'authenticate';
+
+/** Versioned owner authentication requested in addition to, or without, DWN permissions. */
+export type ConnectAuthenticationParams = {
+  version: 1;
+  /** Exact HTTPS audience of the service verifying the proof; not an app-name/origin hint. */
+  audience: string;
+  /** Fresh, unpredictable service challenge, consumed once by the service's durable transaction. */
+  challenge: string;
+};
+
+/** Cryptographically verified proof facts. This does not assert that the service consumed the challenge. */
+export type VerifiedConnectAuthentication = Readonly<{
+  proof: string;
+  subject: string;
+  audience: string;
+  challenge: string;
+  requestDigest: string;
+  issuedAt: number;
+  expiresAt: number;
+  methodId: string;
+}>;
+
+/** Authentication-only completion, deliberately without delegate keys, grants or an AgentSession. */
+export type ConnectAuthenticationResult = {
+  connectedDid: string;
+  authentication: VerifiedConnectAuthentication;
+};
 
 /**
  * Describes how the wallet must deliver its sealed response back to the app.
@@ -111,6 +138,9 @@ export type ConnectRequest = {
 
   /** Optional client/environment metadata for wallet session display. */
   clientMetadata?: ConnectClientMetadata;
+
+  /** Required owner proof. Its absence in the response is an authentication failure, never a downgrade. */
+  authentication?: ConnectAuthenticationParams;
 
   /** DWN protocols and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
@@ -209,6 +239,21 @@ export type ConnectResponse = {
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations: SessionRevocation[];
+
+  /** Owner-signed proof when the request required authentication. The outer signer is not this proof. */
+  authenticationProof?: string;
+};
+
+/** Authentication-only wire response. Delegation fields are forbidden, not empty placeholders. */
+export type ConnectAuthenticationResponse = {
+  responseType: 'authentication';
+  providerDid: string;
+  aud: string;
+  iat: number;
+  exp: number;
+  nonce: string;
+  state: string;
+  authenticationProof: string;
 };
 
 /**
@@ -230,6 +275,9 @@ export type ConnectResult = {
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations: SessionRevocation[];
+
+  /** Present only after verification against the exact authentication-bearing request. */
+  authentication?: VerifiedConnectAuthentication;
 };
 
 /**
@@ -253,6 +301,9 @@ export type ConnectApproval = {
 
   /** Per-grant revocation mappings for session-bound self-revocation on disconnect. */
   sessionRevocations: SessionRevocation[];
+
+  /** Optional owner proof, produced before grant side effects when authentication was requested. */
+  authenticationProof?: string;
 };
 
 /**

@@ -51,6 +51,7 @@ export * from './store-identity.js';
 export * from './store-key.js';
 export * from './utils.js';
 export * from './connect-approval.js';
+export * from './connect-authentication.js';
 export { inspectConnectProtocol } from './connect-protocol-preparation.js';
 export type {
   ConnectProtocolInspection,

@@ -18,7 +18,15 @@
 
 import type { Permission } from './types.js';
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
+import type {
+  ConnectAuthenticationParams,
+  ConnectAuthenticationResult,
+  ConnectClientMetadata,
+  ConnectClientOptions,
+  ConnectPermissionRequest,
+  ConnectRequestType,
+  ConnectResult,
+} from '@enbox/connect';
 import type { DwnPermissionScope, DwnProtocolDefinition } from '@enbox/agent';
 
 import { DidJwk } from '@enbox/dids';
@@ -67,10 +75,19 @@ export type WalletConnectClientOptions = {
   delegatePortableDid?: PortableDid;
 
   /** Explicit wallet UI signal. Omitted for an initial connect. */
-  requestType?: ConnectRequestType;
+  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
 
   /** Wallet profile DID that the approval must use. */
   expectedProviderDid?: string;
+
+  /** Optional owner authentication requested alongside DWN delegation. */
+  authentication?: ConnectAuthenticationParams;
+
+  /** DID resolver used to verify the owner's authentication key. */
+  authenticationResolver?: ConnectClientOptions['authenticationResolver'];
+
+  /** Register the full authentication request with the service before wallet delivery. */
+  onAuthenticationRequest?: ConnectClientOptions['onAuthenticationRequest'];
 
   /** The URL of the connect server which relays messages between the app and wallet. */
   connectServerUrl: string;
@@ -118,6 +135,17 @@ export type WalletConnectClientOptions = {
 };
 
 /**
+ * Identity-only relay authentication. This does not create a delegate or an
+ * AuthManager session. Authentication-enabled wallets must trust the relay's
+ * request origin according to their own requester policy.
+ */
+export type WalletAuthenticationClientOptions = Omit<WalletConnectClientOptions,
+  'permissionRequests' | 'preSupplyDelegateDid' | 'delegatePortableDid' | 'requestType' |
+  'requestedSessionTtlSeconds' | 'authentication'> & {
+    authentication: ConnectAuthenticationParams;
+  };
+
+/**
  * The options for creating a permission request for a given protocol.
  */
 export type ProtocolPermissionOptions = {
@@ -145,6 +173,9 @@ async function initClient({
   delegatePortableDid,
   requestType,
   expectedProviderDid,
+  authentication,
+  authenticationResolver,
+  onAuthenticationRequest,
   connectServerUrl,
   walletUri,
   permissionRequests,
@@ -153,6 +184,9 @@ async function initClient({
   timeoutMs,
   pollIntervalMs,
 }: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
+  if ((requestType as ConnectRequestType | undefined) === 'authenticate') {
+    throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
+  }
   if (requestType === 'refresh' && delegatePortableDid === undefined) {
     throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
   }
@@ -171,6 +205,8 @@ async function initClient({
     }),
     onWalletUriReady : async (handoff): Promise<void> => { await onWalletUriReady(handoff.walletUri); },
     requestPin       : validatePin,
+    authenticationResolver,
+    onAuthenticationRequest,
   });
 
   return await client.connect({
@@ -183,6 +219,31 @@ async function initClient({
     delegatePortableDid : localDelegatePortableDid,
     requestType,
     expectedProviderDid,
+    authentication,
+  });
+}
+
+/** Run a relay login without importing credentials or creating an AgentSession. */
+async function initAuthentication(options: WalletAuthenticationClientOptions): Promise<ConnectAuthenticationResult | undefined> {
+  const client = new ConnectClient({
+    transport: new RelayClientTransport({
+      connectServerUrl : options.connectServerUrl,
+      walletUri        : options.walletUri,
+      timeoutMs        : options.timeoutMs,
+      pollIntervalMs   : options.pollIntervalMs,
+    }),
+    onWalletUriReady        : async (handoff): Promise<void> => { await options.onWalletUriReady(handoff.walletUri); },
+    requestPin              : options.validatePin,
+    authenticationResolver  : options.authenticationResolver,
+    onAuthenticationRequest : options.onAuthenticationRequest,
+  });
+  return await client.authenticate({
+    appName             : options.displayName,
+    appIcon             : options.appIcon,
+    applicationId       : options.applicationId,
+    clientMetadata      : options.clientMetadata,
+    expectedProviderDid : options.expectedProviderDid,
+    authentication      : options.authentication,
   });
 }
 
@@ -283,4 +344,4 @@ function createPermissionRequestForProtocol({ definition, permissions }: Protoco
   };
 }
 
-export const WalletConnect = { initClient, createPermissionRequestForProtocol };
+export const WalletConnect = { initClient, initAuthentication, createPermissionRequestForProtocol };

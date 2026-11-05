@@ -58,8 +58,8 @@ export { prepareBrowser } from './prepare-browser.js';
 export type { PrepareBrowserOptions } from './prepare-browser.js';
 export { BrowserConnectHandler, DEFAULT_WALLETS } from './browser-connect-handler.js';
 export type { BrowserConnectHandlerOptions, WalletOption } from './browser-connect-handler.js';
-export { connectViaPopup, PopupClientTransport, PopupWindowClosedError } from './dweb-connect-client.js';
-export type { PopupClientTransportOptions, PopupConnectOptions } from './dweb-connect-client.js';
+export { authenticateViaPopup, connectViaPopup, PopupClientTransport, PopupWindowClosedError } from './dweb-connect-client.js';
+export type { PopupAuthenticationOptions, PopupClientTransportOptions, PopupConnectOptions } from './dweb-connect-client.js';
 export { WalletPostMessageTransport } from './dweb-connect-wallet.js';
 export type { WalletPostMessageTransportOptions } from './dweb-connect-wallet.js';
 export {

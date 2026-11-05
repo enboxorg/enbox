@@ -165,7 +165,7 @@ export interface ConnectModalOptions {
   walletUrl?: string;
 
   /** User-facing mode. Absent means a normal connect. */
-  mode?: ConnectRequestType;
+  mode?: Exclude<ConnectRequestType, 'authenticate'>;
 
   /** Existing delegate credentials reused by a refresh request. */
   delegatePortableDid?: PortableDid;
@@ -265,7 +265,7 @@ async function runPopupConnect(options: {
   applicationId?: string;
   timeoutMs?: number;
   delegatePortableDid?: PortableDid;
-  requestType?: ConnectRequestType;
+  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
   expectedProviderDid?: string;
 }): Promise<ConnectResult | undefined> {
   // The transport constructor calls `window.open` synchronously — callers

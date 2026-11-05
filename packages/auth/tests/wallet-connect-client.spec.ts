@@ -9,6 +9,7 @@
  */
 
 import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { WalletConnectClientOptions } from '../src/wallet-connect-client.js';
 import type { ConnectRequest, ConnectResponse } from '@enbox/connect';
 
 import sinon from 'sinon';
@@ -18,7 +19,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
 import { WalletConnect } from '../src/wallet-connect-client.js';
-import { CONNECT_DENIED_TOKEN, ConnectProvider, parseWalletConnectUri, sealResponse } from '@enbox/connect';
+import { CONNECT_DENIED_TOKEN, ConnectProvider, createOwnerAuthenticationProof, parseWalletConnectUri, randomToken, sealResponse } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 const providerDid = 'did:dht:provider789';
@@ -164,6 +165,97 @@ function sealRawResponse(build: (request: ConnectRequest) => Partial<ConnectResp
 describe('WalletConnect', () => {
   afterEach(() => {
     sinon.restore();
+  });
+
+  describe('owner authentication', () => {
+    it('returns verified identity-only completion without delegate credentials or requested protocols', async () => {
+      const owner = await DidJwk.create();
+      const authentication = { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() };
+      const relay = stubRelay(async (request) => ConnectProvider.sealAuthenticationResponse({
+        request, providerDid : owner.uri,
+        approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
+        signer      : await DidJwk.create(), pin,
+      }));
+      let registered: Readonly<ConnectRequest> | undefined;
+      const result = await WalletConnect.initAuthentication({
+        displayName             : 'OAuth sign-in', walletUri, connectServerUrl, authentication,
+        expectedProviderDid     : owner.uri, onWalletUriReady        : relay.onWalletUriReady,
+        validatePin             : async (): Promise<string> => pin, pollIntervalMs          : 1,
+        onAuthenticationRequest : async (request): Promise<void> => {
+          expect(relay.parRequests).toHaveLength(0);
+          registered = request;
+        },
+      });
+      expect(result?.connectedDid).toBe(owner.uri);
+      expect(result?.authentication.subject).toBe(owner.uri);
+      expect(result?.authentication.challenge).toBe(authentication.challenge);
+      expect(Object.keys(result!).sort()).toEqual(['authentication', 'connectedDid']);
+      expect(relay.openedRequests[0].requestType).toBe('authenticate');
+      expect(relay.openedRequests[0].permissionRequests).toEqual([]);
+      expect(relay.openedRequests[0].delegateDid).toBeUndefined();
+      expect(relay.openedRequests[0].requestedSessionTtlSeconds).toBeUndefined();
+      expect(JSON.parse(JSON.stringify(registered))).toEqual(relay.openedRequests[0]);
+    });
+
+    it('does not deliver an authentication request when durable service registration fails', async () => {
+      const relay = stubRelay(async () => { throw new Error('The wallet must not receive an unregistered request'); });
+      await expect(WalletConnect.initAuthentication({
+        displayName             : 'OAuth sign-in', walletUri, connectServerUrl,
+        authentication          : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+        onWalletUriReady        : relay.onWalletUriReady, validatePin             : async (): Promise<string> => pin,
+        onAuthenticationRequest : async (): Promise<void> => { throw new Error('Registration unavailable'); },
+      })).rejects.toThrow('Registration unavailable');
+      expect(relay.parRequests).toHaveLength(0);
+      expect(relay.openedRequests).toHaveLength(0);
+    });
+
+    it('retains verified owner authentication alongside approved data grants', async () => {
+      const owner = await DidJwk.create();
+      const authentication = { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() };
+      const relay = stubRelay(async (request) => {
+        const delegate = await DidJwk.create();
+        return ConnectProvider.sealApprovedResponse({
+          request, providerDid : owner.uri, signer      : delegate, pin,
+          approval    : {
+            delegateDid         : delegate.uri, delegatePortableDid : await delegate.export(), delegateGrants, sessionRevocations  : [],
+            authenticationProof : await createOwnerAuthenticationProof({ request, owner }),
+          },
+        });
+      });
+      const result = await WalletConnect.initClient({
+        displayName        : 'OAuth and data', walletUri, connectServerUrl, authentication,
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] }],
+        onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
+      });
+      expect(result?.authentication?.subject).toBe(owner.uri);
+      expect(result?.authentication?.proof.split('.')).toHaveLength(3);
+      expect(result?.delegateGrants).toHaveLength(1);
+    });
+
+    it('fails closed when an old wallet omits the requested owner proof', async () => {
+      const legacy = approveWithWalletMintedDelegate();
+      const relay = stubRelay(async (request) => legacy.wallet({ ...request, authentication: undefined }));
+      await expect(WalletConnect.initClient({
+        displayName        : 'OAuth and data', walletUri, connectServerUrl,
+        authentication     : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] }],
+        onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
+      })).rejects.toThrow();
+    });
+
+    it('handles wallet denial and rejects identity-only requests through the data adapter', async () => {
+      const relay = stubRelay(async () => CONNECT_DENIED_TOKEN);
+      const common = {
+        displayName      : 'OAuth sign-in', walletUri, connectServerUrl,
+        authentication   : { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() },
+        onWalletUriReady : relay.onWalletUriReady, validatePin      : async (): Promise<string> => pin, pollIntervalMs   : 1,
+      };
+      expect(await WalletConnect.initAuthentication(common)).toBeUndefined();
+      const before = relay.parRequests.length;
+      await expect(WalletConnect.initClient({ ...common, requestType: 'authenticate', permissionRequests: [] } as WalletConnectClientOptions))
+        .rejects.toThrow('initAuthentication');
+      expect(relay.parRequests).toHaveLength(before);
+    });
   });
 
   describe('initClient — relay flow', () => {

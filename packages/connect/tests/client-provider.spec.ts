@@ -114,6 +114,47 @@ async function approveWithMintedDelegate({ jwe, requestKey, providerDid, pin }: 
 }
 
 describe('ConnectClient + ConnectProvider (loopback)', () => {
+  it('should snapshot reactive legacy connect and refresh inputs without retaining mutable caller state', async () => {
+    const owner = await DidJwk.create();
+    const delegate = await DidJwk.create();
+    const portable = await delegate.export();
+    const pin = '163902';
+    for (const requestType of ['connect', 'refresh'] as const) {
+      const metadata = { origin: 'https://approved.example' };
+      const permissionRequests: ConnectRequest['permissionRequests'] = [{
+        protocolDefinition : { protocol: 'https://approved.example/protocol', published: false, types: {}, structure: {} },
+        permissionScopes   : [{ interface: 'Records', method: 'Read', protocol: 'https://approved.example/protocol' }],
+      }];
+      const approvedPermissions = structuredClone(permissionRequests);
+      const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+        const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+        expect(request.clientMetadata).toEqual({ origin: 'https://approved.example' });
+        expect(request.permissionRequests).toEqual(approvedPermissions);
+        expect(request.requestType).toBe(requestType);
+        return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer      : delegate, pin,
+          approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [],
+            ...(requestType === 'refresh' ? {} : { delegatePortableDid: portable }) },
+        });
+      });
+      const requestProfile = transport.requestProfile.bind(transport);
+      transport.requestProfile = async (state): Promise<ConnectRequestProfile> => {
+        const profile = await requestProfile(state);
+        return { ...profile, reply: new Proxy(profile.reply, {}) };
+      };
+      const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+      const options = {
+        appName            : 'Reactive application', requestType, clientMetadata     : new Proxy(metadata, {}),
+        permissionRequests : new Proxy(permissionRequests, {}),
+        ...(requestType === 'refresh' ? { delegatePortableDid: portable } : {}),
+      };
+      const pending = client.connect(new Proxy(options, {}));
+      metadata.origin = 'https://changed.example';
+      permissionRequests[0].permissionScopes[0].protocol = 'https://changed.example/protocol';
+      expect((await pending)?.connectedDid).toBe(owner.uri);
+      expect(transport.confirmCompleteCalls).toBe(1);
+    }
+  });
+
   it('should complete a relay-profile handshake with a PIN', async () => {
     const provider = await DidJwk.create();
     const pin = '482913';
@@ -242,7 +283,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     });
 
     expect(result).toBeDefined();
-    expect(result!.delegatePortableDid).toBe(localPortableDid);
+    expect(result!.delegatePortableDid).toEqual(localPortableDid);
     expect(result!.connectedDid).toBe(provider.uri);
   });
 
@@ -367,6 +408,40 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
   });
 
   describe('ConnectProvider approval guards', () => {
+    it('should reject authentication and delegation approvals used with the wrong request', async () => {
+      const client = await DidJwk.create();
+      const owner = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const responsePrivateKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        clientDid           : client.uri, appName             : 'Authentication guards', permissionRequests  : [], supportedDidMethods : ['did:jwk'],
+        nonce               : randomToken(), state               : randomToken(), responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
+        reply               : { mode: 'post_message' },
+        authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      };
+      const approval: ConnectApproval = {
+        delegateDid: delegate.uri, delegatePortableDid: await delegate.export(), delegateGrants: [], sessionRevocations: [],
+      };
+      const common = { providerDid: owner.uri, signer: delegate };
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request: { ...request, requestType: 'authenticate' }, approval }))
+        .rejects.toThrow('invalid-request');
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request, approval })).rejects.toThrow('invalid-proof');
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request  : { ...request, authentication: undefined },
+        approval : { ...approval, authenticationProof: 'unexpected-proof' } })).rejects.toThrow('invalid-proof');
+
+      const authenticationRequest: ConnectRequest = { ...request, requestType: 'authenticate' };
+      const invalidApprovals = [
+        { authenticationProof: '' },
+        ...['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].map(key => ({
+          authenticationProof: 'proof', [key]: undefined,
+        })),
+      ];
+      for (const invalid of invalidApprovals) {
+        await expect(ConnectProvider.sealAuthenticationResponse({ ...common, request: authenticationRequest, approval: invalid }))
+          .rejects.toThrow('invalid-proof');
+      }
+    });
+
     it('should enforce the expected wallet profile at preflight and seal time', async () => {
       const expectedProvider = await DidJwk.create();
       const selectedProvider = await DidJwk.create();

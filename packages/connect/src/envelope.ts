@@ -23,12 +23,13 @@
 
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
-import type { ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
+import type { ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 
+import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
 import { signJwt, verifyJwt } from './jwt.js';
 
 /** JWE `typ` header value identifying a sealed connect request. */
@@ -107,8 +108,8 @@ function requireOptionalObject(payload: Record<string, unknown>, field: string, 
 
 function requireOptionalConnectRequestType(payload: Record<string, unknown>, context: string): void {
   const value = payload.requestType;
-  if (value !== undefined && value !== 'connect' && value !== 'refresh') {
-    fail(context, 'requestType', 'must be "connect" or "refresh" when present');
+  if (value !== undefined && value !== 'connect' && value !== 'refresh' && value !== 'authenticate') {
+    fail(context, 'requestType', 'must be "connect", "refresh", or "authenticate" when present');
   }
 }
 
@@ -201,6 +202,8 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireString(payload, 'state', ctx);
   requireResponseKey(payload, ctx);
   requireReplyDescriptor(payload, ctx);
+  if (payload.authentication !== undefined) { assertConnectRequestAuthentication(payload as ConnectRequest); }
+  if (payload.requestType === 'authenticate') { assertConnectAuthenticationRequest(payload as ConnectRequest); }
 }
 
 /**
@@ -210,6 +213,7 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
  */
 export function assertConnectResponse(payload: Record<string, unknown>): asserts payload is ConnectResponse {
   const ctx = 'invalid connect response';
+  if (payload.responseType !== undefined) { fail(ctx, 'responseType', 'is not a delegation response'); }
   requireString(payload, 'providerDid', ctx);
   requireString(payload, 'delegateDid', ctx);
   requireString(payload, 'aud', ctx);
@@ -222,6 +226,20 @@ export function assertConnectResponse(payload: Record<string, unknown>): asserts
     fail(ctx, 'delegatePortableDid', 'must be a portable DID when present');
   }
   requireSessionRevocations(payload, ctx);
+  requireOptionalString(payload, 'authenticationProof', ctx);
+}
+
+/** A distinct response variant prevents authentication-only completion from fabricating delegate credentials. */
+export function assertConnectAuthenticationResponse(payload: Record<string, unknown>): asserts payload is ConnectAuthenticationResponse {
+  const ctx = 'invalid authentication response';
+  const keys = ['responseType', 'providerDid', 'aud', 'iat', 'exp', 'nonce', 'state', 'authenticationProof'];
+  if (Object.keys(payload).length !== keys.length || !keys.every(key => Object.hasOwn(payload, key)) ||
+      payload.responseType !== 'authentication') { fail(ctx, 'responseType', 'must identify only authentication fields'); }
+  for (const key of ['providerDid', 'aud', 'nonce', 'state', 'authenticationProof']) { requireString(payload, key, ctx); }
+  for (const key of ['iat', 'exp']) {
+    requireNumber(payload, key, ctx);
+    if (!Number.isSafeInteger(payload[key])) { fail(ctx, key, 'must be an integer'); }
+  }
 }
 
 // ─── Envelope internals ─────────────────────────────────────────────────
@@ -362,6 +380,29 @@ export async function sealResponse({ response, signer, responseKey, pin }: {
   responseKey: Jwk;
   pin?: string;
 }): Promise<string> {
+  return sealResponseEnvelope({ response, signer, responseKey, pin });
+}
+
+/** Seal the authentication-only response with the same channel encryption, without delegation fields. */
+export async function sealAuthenticationResponse(params: {
+  response: ConnectAuthenticationResponse;
+  signer: BearerDid;
+  responseKey: Jwk;
+  pin?: string;
+}): Promise<string> {
+  assertConnectAuthenticationResponse(params.response);
+  return sealResponseEnvelope(params);
+}
+
+async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, pin }: {
+  response: ConnectResponse | ConnectAuthenticationResponse;
+  signer: BearerDid;
+  responseKey: Jwk;
+  pin?: string;
+}): Promise<string> {
+  // Capture the agreed recipient and response before asynchronous KMS signing.
+  const response = structuredClone(inputResponse);
+  const responseKey = structuredClone(inputResponseKey);
   const jwt = await signJwt({ did: signer, data: response });
 
   return await CompactJwe.encrypt({
@@ -392,12 +433,29 @@ export async function sealResponse({ response, signer, responseKey, pin }: {
  * @param params.pin - The user-entered PIN on relay channels; must match the sealing PIN.
  * @returns A promise resolving to the validated {@link ConnectResponse}.
  */
-export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: {
+export type OpenConnectResponseOptions = {
   jwe: string;
   recipientPrivateKey: Jwk;
   expected: { clientDid: string; nonce: string; state: string; providerDid?: string };
   pin?: string;
-}): Promise<ConnectResponse> {
+};
+
+export async function openResponse(options: OpenConnectResponseOptions): Promise<ConnectResponse> {
+  const payload = await openResponseEnvelope(options);
+  assertConnectResponse(payload);
+  assertResponseContext(payload, options.expected);
+  return payload;
+}
+
+/** Open only the authentication variant. Owner proof verification is a separate mandatory client step. */
+export async function openAuthenticationResponse(options: OpenConnectResponseOptions): Promise<ConnectAuthenticationResponse> {
+  const payload = await openResponseEnvelope(options);
+  assertConnectAuthenticationResponse(payload);
+  assertResponseContext(payload, options.expected);
+  return payload;
+}
+
+async function openResponseEnvelope({ jwe, recipientPrivateKey, expected, pin }: OpenConnectResponseOptions): Promise<Record<string, unknown>> {
   const { plaintext, protectedHeader } = await CompactJwe.decrypt({
     jwe,
     key     : { mode: 'ecdh-es', privateKey: recipientPrivateKey, pin },
@@ -413,8 +471,10 @@ export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: 
 
   const jwt = Convert.uint8Array(plaintext).toString();
   const { payload } = await verifyJwt({ jwt });
-  assertConnectResponse(payload);
+  return payload;
+}
 
+function assertResponseContext(payload: ConnectResponse | ConnectAuthenticationResponse, expected: OpenConnectResponseOptions['expected']): void {
   if (payload.aud !== expected.clientDid) {
     throw new Error('Connect: response `aud` does not match the client DID.');
   }
@@ -439,5 +499,4 @@ export async function openResponse({ jwe, recipientPrivateKey, expected, pin }: 
     throw new Error('Connect: response has expired.');
   }
 
-  return payload;
 }

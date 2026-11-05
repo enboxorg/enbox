@@ -117,7 +117,7 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
       delegatePortableDid?: PortableDid;
-      requestType?: ConnectRequestType;
+      requestType?: Exclude<ConnectRequestType, 'authenticate'>;
       expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
       if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {

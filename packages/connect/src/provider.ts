@@ -12,10 +12,11 @@
  */
 
 import type { BearerDid } from '@enbox/dids';
-import type { ConnectApproval, ConnectRequest, ConnectRequestDecryption, ConnectResponse } from './types.js';
+import type { ConnectApproval, ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectResponse } from './types.js';
 
 import { CONNECT_DENIED_TOKEN } from './types.js';
-import { openRequest, sealResponse } from './envelope.js';
+import { assertConnectAuthenticationRequest, ConnectAuthenticationError } from './owner-authentication.js';
+import { openRequest, sealAuthenticationResponse, sealResponse } from './envelope.js';
 
 /** Lifetime, in seconds, of a sealed connect response (`exp = iat + 600`). */
 export const CONNECT_RESPONSE_TTL_SECONDS = 600;
@@ -89,6 +90,10 @@ export class ConnectProvider {
     pin?: string;
   }): Promise<string> {
     assertExpectedProviderDid(request, providerDid);
+    if (request.requestType === 'authenticate') { throw new ConnectAuthenticationError('invalid-request'); }
+    if ((request.authentication === undefined) !== (approval.authenticationProof === undefined)) {
+      throw new ConnectAuthenticationError('invalid-proof');
+    }
 
     if (request.delegateDid !== undefined && approval.delegateDid !== request.delegateDid) {
       throw new Error('Connect: approval delegate DID does not match the request-supplied `delegateDid`.');
@@ -111,10 +116,34 @@ export class ConnectProvider {
       state              : request.state,
       delegateGrants     : approval.delegateGrants,
       sessionRevocations : approval.sessionRevocations,
+      ...(approval.authenticationProof === undefined ? {} : { authenticationProof: approval.authenticationProof }),
       ...(approval.delegatePortableDid !== undefined ? { delegatePortableDid: approval.delegatePortableDid } : {}),
     };
 
     return await sealResponse({ response, signer, responseKey: request.responseKey, pin });
+  }
+
+  /** Seal a verified-request owner's authentication-only approval; no delegate fields are permitted. */
+  public static async sealAuthenticationResponse({ request, providerDid, approval, signer, pin }: {
+    request: ConnectRequest;
+    providerDid: string;
+    approval: { authenticationProof: string };
+    signer: BearerDid;
+    pin?: string;
+  }): Promise<string> {
+    assertConnectAuthenticationRequest(request);
+    assertExpectedProviderDid(request, providerDid);
+    if (typeof approval.authenticationProof !== 'string' || approval.authenticationProof.length === 0 ||
+        ['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].some(key => Object.hasOwn(approval, key))) {
+      throw new ConnectAuthenticationError('invalid-proof');
+    }
+    const iat = Math.floor(Date.now() / 1_000);
+    const response: ConnectAuthenticationResponse = {
+      responseType        : 'authentication', providerDid, aud                 : request.clientDid,
+      iat, exp                 : iat + CONNECT_RESPONSE_TTL_SECONDS, nonce               : request.nonce, state               : request.state,
+      authenticationProof : approval.authenticationProof,
+    };
+    return sealAuthenticationResponse({ response, signer, responseKey: request.responseKey, pin });
   }
 
   /**

@@ -5,6 +5,7 @@
  */
 
 export { AgentSession } from '@enbox/agent';
+export { ConnectAuthenticationError } from '@enbox/connect';
 export type { AgentSessionIdentity } from '@enbox/agent';
 
 export { AuthEventEmitter } from './events.js';
@@ -30,7 +31,7 @@ export {
 } from './connect/status.js';
 export { normalizePermissionPolicy, normalizeProtocolRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { ProtocolPermissionOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export type { ProtocolPermissionOptions, WalletAuthenticationClientOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 export {
   applyLocalDwnDiscovery,
@@ -76,6 +77,11 @@ export type {
   AuthEventMap,
   AuthManagerOptions,
   AuthState,
+  ConnectAuthenticationFailure,
+  ConnectAuthenticationParams,
+  ConnectAuthenticationReplayStore,
+  ConnectAuthenticationResolver,
+  ConnectAuthenticationResult,
   ConnectClientMetadata,
   ConnectHandler,
   ConnectOptions,
@@ -117,5 +123,6 @@ export type {
   SyncIntervalString,
   SyncOption,
   VaultConnectOptions,
+  VerifiedConnectAuthentication,
   WalletConnectOptions,
 } from './types.js';

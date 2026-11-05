@@ -60,6 +60,77 @@ const response = await agent.dwn.processRequest({
 await agent.sync.sync();
 ```
 
+## Owner authentication during Connect
+
+`executeConnectAuthentication({ agent, providerDid, request, verifiedRequesterOrigin })`
+approves an identity-only `requestType: 'authenticate'` request. It signs with
+the selected locally owned DID's authentication key through the key manager,
+and returns `authenticationProof` plus an ephemeral envelope signer. It does
+not create a data delegate, install protocols, write grants, or open a session.
+Pass the result as `approval` to `ConnectProvider.sealAuthenticationResponse`.
+
+An authentication-bearing delegation request goes through
+`executeConnectApproval` and returns the proof alongside its grants. Pass the
+original full request and the separately verified requester origin; rewriting
+request metadata would change the proof's transaction binding. The ceremony
+uses the verified origin for stored session metadata. The origin must come
+from the popup transport or a trusted, service-owned relay policy, never from
+`applicationId`, the claimed audience, or other request display hints. Parsing
+`new URL(request.authentication.audience).origin` does not establish trust.
+
+For relay authentication, a wallet policy must independently establish the
+request's provenance: fetch the registered transaction request from the
+authentication service's HTTPS origin, reject redirects, bind that fetched
+request to the observed origin, and require the audience's origin to match.
+An arbitrary upload to a public relay does not meet that requirement. The SDK
+accepts the policy's result; it does not authenticate a relay by accepting an
+origin string. Show the service audience prominently in consent and ask the
+user to approve only a transaction they initiated. Provenance alone does not
+prevent an attacker from forwarding a real service's QR transaction; a branded
+origin type alone would not prevent that either.
+
+Owner authentication requires an HTTPS audience, including during local
+development. Use a local HTTPS origin or an HTTPS development tunnel. The
+shared origin validator also accepts HTTP for ordinary delegation; this does
+not enable owner authentication from `http://localhost`.
+
+The receiving service must call `verifyOwnerAuthenticationProof` with its
+stored full request and a separate `expected: { audience, challenge }`: take
+the audience from service configuration and the challenge from its issued,
+pending transaction. Never take either expected value from an incoming proof
+or client-supplied request. Require atomic consumption of that issued
+transaction when establishing an account session or issuing an OAuth code.
+A replay store must reject unknown, expired, consumed or mismatched bindings;
+remembering previously seen proofs is insufficient. DWN delegation and owner
+authentication remain distinct even when approved together.
+
+An owner proof expires 300 seconds after signing. The response envelope has a
+separate 600-second lifetime after sealing; the earlier deadline governs a
+successful authentication. Relay PIN entry happens before decryption, so a
+slow PIN entry can reveal a still-valid envelope containing an expired proof.
+Login must fail in that case. Start a fresh authentication transaction and
+reconcile any already-approved grants before retrying combined mode; never
+extend the proof's lifetime because the envelope remains valid.
+
+`ConnectAuthenticationError` has a fixed public message and code. A signer
+acquisition failure retains its original error as `cause` for trusted local
+diagnostics. Causes may contain implementation or key-manager details; do not
+serialize them as part of the public authentication error response.
+
+Combined approval is not atomic across DWN writes and the final authentication
+signature. If signing fails after grant delivery, the promise rejects and no
+successful combined result is returned, but protocols or grants may already
+exist. The caller must reconcile the outcome and revoke or reuse approved
+delegation as appropriate; it must not report rollback or retry grant creation
+blindly. The service must not complete login without a verified owner proof.
+
+Wallet capability discovery/negotiation is not implemented by these helpers.
+Older wallets reject the identity-only request type. An older wallet receiving
+a combined request may create the explicitly requested grants while omitting
+the proof, causing the client to reject login afterward. Enable combined mode
+only for wallets whose authentication support is known until an advertisement
+and preflight capability check is available.
+
 ## Key Classes
 
 | Class | Purpose |

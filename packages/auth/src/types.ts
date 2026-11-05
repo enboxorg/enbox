@@ -12,7 +12,18 @@ import type { PasswordProvider } from './password-provider.js';
 export type { ComputeConnectionStatusOptions, ConnectionState, ConnectionStatus, ConnectionStatusGrant, GetConnectionStatusOptions } from '@enbox/agent';
 
 // Re-export types that consumers will need
-export type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
+export type {
+  ConnectAuthenticationFailure,
+  ConnectAuthenticationParams,
+  ConnectAuthenticationReplayStore,
+  ConnectAuthenticationResolver,
+  ConnectAuthenticationResult,
+  ConnectClientMetadata,
+  ConnectPermissionRequest,
+  ConnectRequestType,
+  ConnectResult,
+  VerifiedConnectAuthentication,
+} from '@enbox/connect';
 export type { HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
 
 // Re-export EnboxUserAgent so consumers don't need a direct @enbox/agent dep
@@ -213,7 +224,7 @@ export interface ConnectHandler {
     /** Existing delegate credentials to re-grant during a refresh flow. */
     delegatePortableDid?: PortableDid;
     /** Explicit wallet UI signal. Omitted for an initial connect. */
-    requestType?: ConnectRequestType;
+    requestType?: Exclude<ConnectRequestType, 'authenticate'>;
     /** Wallet profile DID that a refresh must renew. */
     expectedProviderDid?: string;
   }): Promise<ConnectResult | undefined>;

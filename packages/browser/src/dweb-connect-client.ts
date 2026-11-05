@@ -22,7 +22,10 @@
 
 import type { Jwk } from '@enbox/crypto';
 import type {
+  ConnectAuthenticationParams,
+  ConnectAuthenticationResult,
   ConnectClientMetadata,
+  ConnectClientOptions,
   ConnectPermissionRequest,
   ConnectRequestProfile,
   ConnectResult,
@@ -151,8 +154,8 @@ export class PopupClientTransport implements ConnectTransport {
   private _messageListener?: (event: MessageEvent) => void;
 
   private readonly _walletEpkPromise: Promise<Jwk>;
-  private _resolveWalletEpk?: (walletEpk: Jwk) => void;
-  private _rejectWalletEpk?: (error: Error) => void;
+  private readonly _resolveWalletEpk?: (walletEpk: Jwk) => void;
+  private readonly _rejectWalletEpk?: (error: Error) => void;
 
   private readonly _responsePromise: Promise<string>;
   private readonly _resolveResponse: (payload: string) => void;
@@ -176,10 +179,12 @@ export class PopupClientTransport implements ConnectTransport {
     }
     this._popup = popup;
 
-    this._walletEpkPromise = new Promise<Jwk>((resolve, reject): void => {
-      this._resolveWalletEpk = resolve;
-      this._rejectWalletEpk = reject;
-    });
+    // Authentication registration can reject before requestProfile() attaches
+    // its listener. Mark the deferred rejection handled, just as for responses.
+    const walletEpk = createHandledDeferred<Jwk>();
+    this._walletEpkPromise = walletEpk.promise;
+    this._resolveWalletEpk = walletEpk.resolve;
+    this._rejectWalletEpk = walletEpk.reject;
 
     // Created up-front so a response (or deny) arriving before
     // `awaitResponse()` is called is never dropped. Early rejections
@@ -242,6 +247,17 @@ export class PopupClientTransport implements ConnectTransport {
    */
   public async awaitResponse(): Promise<string> {
     return await this._responsePromise;
+  }
+
+  /** Close a failed or abandoned handshake and release its listeners/timers. */
+  public abort(): void {
+    if (!this._settled) {
+      this.fail(new Error('[@enbox/browser] DWeb Connect cancelled.'));
+      return;
+    }
+    if (this._popup.closed !== true) {
+      try { this._popup.close(); } catch { /* best effort */ }
+    }
   }
 
   /**
@@ -379,6 +395,23 @@ export type PopupConnectOptions = {
    * the wallet's consent screen.
    */
   appIcon?: string;
+
+  /** Optional owner authentication requested with the DWN permissions. */
+  authentication?: ConnectAuthenticationParams;
+
+  /** Restrict the approval to a previously selected owner identity. */
+  expectedProviderDid?: string;
+
+  /** DID resolver used to verify an owner authentication proof. */
+  authenticationResolver?: ConnectClientOptions['authenticationResolver'];
+
+  /** Await durable service registration of the exact request before wallet delivery. */
+  onAuthenticationRequest?: ConnectClientOptions['onAuthenticationRequest'];
+};
+
+/** Popup sign-in options; no DWN permission or delegate session is requested. */
+export type PopupAuthenticationOptions = Omit<PopupConnectOptions, 'permissionRequests' | 'authentication'> & {
+  authentication: ConnectAuthenticationParams;
 };
 
 /** Collects self-reported environment hints for the wallet's session display. */
@@ -413,20 +446,46 @@ export async function connectViaPopup(options: PopupConnectOptions): Promise<Con
     walletUrl : options.walletUrl,
     timeoutMs : options.timeout,
   });
-  const client = new ConnectClient({ transport });
+  const client = new ConnectClient({
+    transport, authenticationResolver: options.authenticationResolver, onAuthenticationRequest: options.onAuthenticationRequest,
+  });
 
   try {
     return await client.connect({
-      appName            : options.appName ?? globalThis.location.host,
-      appIcon            : options.appIcon,
-      clientMetadata     : collectBrowserClientMetadata(),
-      permissionRequests : options.permissionRequests,
+      appName             : options.appName ?? globalThis.location.host,
+      appIcon             : options.appIcon,
+      clientMetadata      : collectBrowserClientMetadata(),
+      permissionRequests  : options.permissionRequests,
+      authentication      : options.authentication,
+      expectedProviderDid : options.expectedProviderDid,
     });
   } catch (error) {
+    transport.abort();
     if (error instanceof PopupWindowClosedError) {
       // The user closed the wallet before it loaded — same as a denial.
       return undefined;
     }
+    throw error;
+  }
+}
+
+/** Authenticate an owner through the wallet popup without creating a data session. */
+export async function authenticateViaPopup(options: PopupAuthenticationOptions): Promise<ConnectAuthenticationResult | undefined> {
+  const transport = new PopupClientTransport({ walletUrl: options.walletUrl, timeoutMs: options.timeout });
+  const client = new ConnectClient({
+    transport, authenticationResolver: options.authenticationResolver, onAuthenticationRequest: options.onAuthenticationRequest,
+  });
+  try {
+    return await client.authenticate({
+      appName             : options.appName ?? globalThis.location.host,
+      appIcon             : options.appIcon,
+      clientMetadata      : collectBrowserClientMetadata(),
+      authentication      : options.authentication,
+      expectedProviderDid : options.expectedProviderDid,
+    });
+  } catch (error) {
+    transport.abort();
+    if (error instanceof PopupWindowClosedError) { return undefined; }
     throw error;
   }
 }
