@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { createEnboxTestContext } from '@enbox/api/testing';
 import { defineApplicationManifest } from '@enbox/api';
-import { ModulesConfigure } from '@enbox/dwn-sdk-js';
+import { ModulesConfigure, validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
 
 import {
   ConnectDefinition,
@@ -16,6 +16,12 @@ import {
 } from '../src/index.js';
 
 describe('@enbox/modules', () => {
+  it('should export catalog definitions that satisfy the module wire schema', () => {
+    for (const definition of [ProfileDefinition, PreferencesDefinition, ConnectDefinition]) {
+      expect(() => validateModuleDefinitionSchema(definition)).not.toThrow();
+    }
+  });
+
   it('should configure every catalog module with valid runtime metadata on a real DWN', async () => {
     const modules: TypedModule[] = [ProfileModule, PreferencesModule, ConnectModule];
     const application = defineApplicationManifest({ modules });

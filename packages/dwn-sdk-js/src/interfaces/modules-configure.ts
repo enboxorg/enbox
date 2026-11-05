@@ -15,7 +15,7 @@ import { Message } from '../core/message.js';
 import { ModulesGrantAuthorization } from '../core/modules-grant-authorization.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
 import { Time } from '../utils/time.js';
-import { validateJsonSchema } from '../schema-validator.js';
+import { validateModuleDefinitionSchema } from '../schema-validator.js';
 import { validateModuleTagSchemaDefinition } from '../utils/module-tags.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -109,7 +109,7 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     definition: ModuleDefinition,
     options: { requireKeyAgreement?: boolean } = {},
   ): void {
-    validateJsonSchema('ModuleDefinition', definition);
+    validateModuleDefinitionSchema(definition);
     ModulesConfigure.validateReservedEncryptionControlPath(definition);
     const { module, types, uses } = definition;
 

@@ -97,6 +97,7 @@ export { EncryptionModule, WRAPPED_GRANT_KEY_FORMAT, assertWrappedGrantKeyEnvelo
 export type { WrappedGrantKeyEnvelope } from './modules/encryption.js';
 export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './modules/permissions.js';
 export { PermissionScopeMatcher, validatePermissionScope } from './utils/permission-scope.js';
+export { validateModuleDefinitionSchema } from './schema-validator.js';
 export type { ModuleScope } from './utils/permission-scope.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
