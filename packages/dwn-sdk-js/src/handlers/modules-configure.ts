@@ -115,6 +115,12 @@ export class ModulesConfigureHandler implements MethodHandler {
       try {
         if (newestMessage !== undefined) {
           await this.validateCompositionUpgradeCompatibility(tenant, newestMessage.descriptor.definition, message.descriptor.definition);
+        } else {
+          // A first installation becomes active even when its signed time predates a
+          // provider update. Its current binding must also be usable in the active graph.
+          await ModulesConfigureHandler.validateCompositionDependencies(
+            tenant, message.descriptor.definition, this.deps.validationStateReader,
+          );
         }
       } catch (error) {
         return messageReplyFromError(error, 400);
@@ -377,7 +383,7 @@ export class ModulesConfigureHandler implements MethodHandler {
     tenant: string,
     definition: ModuleDefinition,
     validationStateReader: ValidationStateReader,
-    messageTimestamp: string,
+    messageTimestamp?: string,
   ): Promise<void> {
     const definitions = await preloadModuleDefinitions(definition, async (uri): Promise<ModuleDefinition> => {
       try {
@@ -388,7 +394,7 @@ export class ModulesConfigureHandler implements MethodHandler {
         }
         throw new DwnError(
           DwnErrorCode.ModulesConfigureComposedModuleNotInstalled,
-          `composed module '${uri}' is not installed for tenant '${tenant}' at ${messageTimestamp}`
+          `composed module '${uri}' is not installed for tenant '${tenant}' at ${messageTimestamp ?? 'the active snapshot'}`
         );
       }
     });

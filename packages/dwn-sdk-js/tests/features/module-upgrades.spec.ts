@@ -123,6 +123,16 @@ export function testModuleUpgrades(): void {
       expect((await configure(comments(), 4)).status.code).toBe(202);
     });
 
+    it('does not activate a late first consumer when its provider has already removed the target', async () => {
+      expect((await configure(core(), 2)).status.code).toBe(202);
+      const latest = core();
+      delete latest.structure.workspace.note;
+      expect((await configure(latest, 4)).status.code).toBe(202);
+      const reply = await configure(comments(), 3);
+      expect(reply.status.code).toBe(400);
+      expect(reply.status.detail).toContain(DwnErrorCode.ModulesConfigureInvalidRefModulePath);
+    });
+
     it('rejects immutable alias and attachment renames', async () => {
       await install();
       const renamedAlias = comments();
