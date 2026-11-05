@@ -52,6 +52,7 @@ import {
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
+  PermissionScopeMatcher,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   SEAL_DERIVATION_SCHEME,
@@ -1637,9 +1638,10 @@ async function hydrateAudienceKeyFromDeliveryMessages(
   params: HydrateAudienceKeyParams,
   audienceRecord: AudienceRecordCandidate,
 ): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const deliveryReadActor = await getAudienceDeliveryReadActor(params);
+  let deliveryReadActor: AudienceDeliveryReadActor;
   let deliveryLookup: { messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number };
   try {
+    deliveryReadActor = await getAudienceDeliveryReadActor(params);
     deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
   } catch (error) {
     recordFailedLookup(params, '$encryption/delivery', error);
@@ -2088,11 +2090,13 @@ async function decryptAudienceDelivery(input: {
   };
 }
 
+/** Select a grant that authorizes both role verification and the existing role-key disclosure policy. */
 async function getAudienceDeliveryReadActor(params: {
   agent: EnboxPlatformAgent;
   recipientDid: string;
   module: string;
   rolePath: string;
+  contextId: string;
   granteeDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
 }): Promise<AudienceDeliveryReadActor> {
@@ -2102,12 +2106,16 @@ async function getAudienceDeliveryReadActor(params: {
 
   let delegatedGrant = params.delegatedGrant;
   const scope = delegatedGrant === undefined ? undefined : DwnPermissionGrant.parse(delegatedGrant).scope;
-  if (scope?.module !== params.module || scope.interface !== 'Records' || scope.method !== 'Read') {
+  const contextId = params.contextId === '' ? undefined : params.contextId;
+  if (scope?.module !== params.module || scope.interface !== 'Records' || scope.method !== 'Read' ||
+      !PermissionScopeMatcher.matches(scope, { module: params.module, modulePath: params.rolePath, contextId }) ||
+      !isGrantKeyEligibleRecordsScope(scope)) {
     const permission = await params.agent.permissions.getPermissionForRequest({
       connectedDid : params.recipientDid,
       delegateDid  : params.granteeDid,
       messageType  : DwnInterface.RecordsRead,
       module       : params.module,
+      // Context-bound key custody is not supported. Select an approved module/role-path grant.
       modulePath   : params.rolePath,
       delegate     : true,
     });

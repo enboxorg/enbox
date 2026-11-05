@@ -14,6 +14,7 @@ import type {
   RecordsWriteMessage,
   ReplicationApplyOptions,
   ReplicationApplyResult,
+  ResolvedModuleGraph,
   ResolvedModuleNode,
   ResolvedRoleReference,
   SourceRoleAudienceKeyEncryptionInput,
@@ -136,12 +137,18 @@ type PendingAudienceRecord = {
   audienceKey: AudienceKeyPayload;
   resolvedRole: ResolvedRoleReference;
   rolePath: string;
+  resolveWriteAuthorization: () => Promise<AudienceWriteAuthorization>;
   sealingPublicKey: PublicKeyJwk;
 };
+
+type AudienceWriteAuthorization = Pick<
+  DwnMessageParams[DwnInterface.RecordsWrite], 'delegatedGrant' | 'permissionGrantId' | 'moduleRole'
+> & { authorDid?: string };
 
 type RecordEncryptionPolicy = {
   encryptionRequired: boolean;
   moduleDefinition: ModuleDefinition;
+  resolvedGraph: ResolvedModuleGraph;
   resolvedNode: ResolvedModuleNode;
   ruleSet: ModuleRuleSet;
 };
@@ -1510,7 +1517,7 @@ export class AgentDwnApi {
     sourceModulePath: string;
     parentContextId?: string;
     moduleRole?: string;
-    moduleDefinition: ModuleDefinition;
+    resolvedGraph: ResolvedModuleGraph;
     resolvedNode: ResolvedModuleNode;
   }): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: SourceRoleAudienceKeyEncryptionInput[] = [];
@@ -1521,6 +1528,7 @@ export class AgentDwnApi {
 
     for (const { rule, resolvedRole } of readRules) {
       const role = resolvedRole!;
+      const resolveWriteAuthorization = (): Promise<AudienceWriteAuthorization> => this.resolveAudienceWriteAuthorization(params, role);
       const contextId = getRoleAudienceContextId(role, params.parentContextId);
       const roleAudience = contextId === undefined ? undefined : {
         module   : role.owningModuleUri,
@@ -1529,7 +1537,7 @@ export class AgentDwnApi {
       };
       const pendingContextId = params.parentContextId === undefined ? 'pending-record' : `${params.parentContextId}/pending-record`;
       const pendingRoleAudience = roleAudience === undefined && getRoleAudienceContextId(role, pendingContextId) !== undefined
-        ? await this.preparePendingAudienceRecord(role)
+        ? await this.preparePendingAudienceRecord(role, resolveWriteAuthorization)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
         throw new Error(
@@ -1541,15 +1549,13 @@ export class AgentDwnApi {
       const audienceKey = roleAudience === undefined
         ? pendingRoleAudience!.audienceKey
         : await this.getOrCreateAudiencePublicKey({
-          authorDid         : params.authorDid,
-          contextId         : roleAudience.contextId,
-          delegatedGrant    : params.delegatedGrant,
-          granteeDid        : params.granteeDid,
-          permissionGrantId : params.permissionGrantId,
-          module            : roleAudience.module,
-          moduleRole        : params.moduleRole,
-          rolePath          : roleAudience.rolePath,
-          sourceDid         : params.sourceDid,
+          authorDid  : params.authorDid,
+          contextId  : roleAudience.contextId,
+          granteeDid : params.granteeDid,
+          module     : roleAudience.module,
+          resolveWriteAuthorization,
+          rolePath   : roleAudience.rolePath,
+          sourceDid  : params.sourceDid,
         });
       if (pendingRoleAudience !== undefined) {
         pendingAudienceRecords.push(pendingRoleAudience);
@@ -1571,7 +1577,64 @@ export class AgentDwnApi {
     return { inputs, pendingAudienceRecords };
   }
 
-  private async preparePendingAudienceRecord(resolvedRole: ResolvedRoleReference): Promise<PendingAudienceRecord> {
+  private async resolveAudienceWriteAuthorization(
+    params: {
+      authorDid: string;
+      sourceDid: string;
+      module: string;
+      moduleRole?: string;
+      delegatedGrant?: DataEncodedRecordsWriteMessage;
+      permissionGrantId?: string;
+      granteeDid?: string;
+      resolvedGraph: ResolvedModuleGraph;
+    },
+    role: ResolvedRoleReference,
+  ): Promise<AudienceWriteAuthorization> {
+    if (role.owningModuleUri === params.module) {
+      return { delegatedGrant: params.delegatedGrant, permissionGrantId: params.permissionGrantId, moduleRole: params.moduleRole };
+    }
+    const signerDid = params.granteeDid ?? params.authorDid;
+    if (signerDid === params.sourceDid) {
+      return { authorDid: params.sourceDid };
+    }
+
+    // Match the invoked role by identity, then use the provider's own lexical
+    // reference only when that provider grants it role-creation authority.
+    let moduleRole: string | undefined;
+    if (params.moduleRole !== undefined) {
+      const invoked = params.resolvedGraph.resolveInvokedRole(params.moduleRole);
+      const definition = params.resolvedGraph.definitionsByUri.get(role.owningModuleUri)!;
+      const provider = resolveModuleGraph(definition, uri => params.resolvedGraph.definitionsByUri.get(uri));
+      moduleRole = provider.nodesByDeclaredPath.get(role.owningModulePath)?.actions.find(action =>
+        action.rule.can.includes('create') &&
+        action.resolvedRole?.owningModuleUri === invoked.owningModuleUri &&
+        action.resolvedRole.owningModulePath === invoked.owningModulePath
+      )?.rule.role;
+    }
+
+    const isDelegate = params.granteeDid !== undefined && params.granteeDid !== params.authorDid;
+    if (!isDelegate && moduleRole !== undefined) {
+      return { moduleRole };
+    }
+    // Provider control administration belongs to the source tenant, even when
+    // the consumer record is authored by a foreign member and their delegate.
+    const permission = await this.agent.permissions.getPermissionForRequest({
+      connectedDid : params.sourceDid,
+      delegateDid  : signerDid,
+      delegate     : isDelegate,
+      messageType  : DwnInterface.RecordsWrite,
+      module       : role.owningModuleUri,
+      modulePath   : role.owningModulePath,
+    });
+    return isDelegate
+      ? { authorDid: params.sourceDid, delegatedGrant: permission.message }
+      : { permissionGrantId: permission.grant.id };
+  }
+
+  private async preparePendingAudienceRecord(
+    resolvedRole: ResolvedRoleReference,
+    resolveWriteAuthorization: () => Promise<AudienceWriteAuthorization>,
+  ): Promise<PendingAudienceRecord> {
     const sealingPublicKey = resolvedRole.ruleSet.$keyAgreement!.publicKeyJwk as PublicKeyJwk;
     return {
       audienceKey: await generateAudienceKeyFn({
@@ -1580,6 +1643,7 @@ export class AgentDwnApi {
         rolePath  : resolvedRole.owningModulePath,
       }),
       resolvedRole,
+      resolveWriteAuthorization,
       rolePath: resolvedRole.owningModulePath,
       sealingPublicKey,
     };
@@ -1605,9 +1669,7 @@ export class AgentDwnApi {
     contextId: string;
     rolePath: string;
     granteeDid?: string;
-    permissionGrantId?: string;
-    delegatedGrant?: DataEncodedRecordsWriteMessage;
-    moduleRole?: string;
+    resolveWriteAuthorization: () => Promise<AudienceWriteAuthorization>;
   }): Promise<{
     module: string;
     rolePath: string;
@@ -1652,6 +1714,7 @@ export class AgentDwnApi {
     permissionGrantId?: string;
     delegatedGrant?: DataEncodedRecordsWriteMessage;
     moduleRole?: string;
+    resolveWriteAuthorization?: () => Promise<AudienceWriteAuthorization>;
   }): Promise<AudienceKeyPayload> {
     const existingAudience = await this.resolveCurrentAudienceRecord({
       authorDid : params.granteeDid ?? params.authorDid,
@@ -1711,18 +1774,19 @@ export class AgentDwnApi {
       sourceDid  : params.sourceDid,
     });
 
+    const writeAuthorization = params.resolveWriteAuthorization === undefined
+      ? { delegatedGrant: params.delegatedGrant, permissionGrantId: params.permissionGrantId, moduleRole: params.moduleRole }
+      : await params.resolveWriteAuthorization();
     const created = await createAudienceRecordFn({
-      agent             : this.agent,
-      authorDid         : params.authorDid,
-      contextId         : params.contextId,
-      delegatedGrant    : params.delegatedGrant,
-      granteeDid        : params.granteeDid,
-      permissionGrantId : params.permissionGrantId,
-      module            : params.module,
-      moduleRole        : params.moduleRole,
-      rolePath          : params.rolePath,
+      agent      : this.agent,
+      authorDid  : params.authorDid,
+      contextId  : params.contextId,
+      granteeDid : params.granteeDid,
+      module     : params.module,
+      rolePath   : params.rolePath,
       sealingPublicKey,
-      sourceDid         : params.sourceDid,
+      sourceDid  : params.sourceDid,
+      ...writeAuthorization,
     });
     this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
       contextId    : params.contextId,
@@ -1950,6 +2014,7 @@ export class AgentDwnApi {
     return {
       encryptionRequired : resolvedNode.recordType.encryptionRequired === true,
       moduleDefinition,
+      resolvedGraph      : graph,
       resolvedNode,
       ruleSet            : resolvedNode.ruleSet,
     };
@@ -2030,7 +2095,7 @@ export class AgentDwnApi {
       permissionGrantId : messageParams.permissionGrantId,
       module            : messageParams.module,
       moduleRole        : messageParams.moduleRole,
-      moduleDefinition  : policy.moduleDefinition,
+      resolvedGraph     : policy.resolvedGraph,
       sourceDid         : request.target,
       sourceModulePath  : messageParams.modulePath,
       resolvedNode      : policy.resolvedNode,
@@ -2148,19 +2213,18 @@ export class AgentDwnApi {
     });
 
     const audienceKey: AudienceKeyPayload = { ...pending.audienceKey, contextId };
+    const writeAuthorization = await pending.resolveWriteAuthorization();
     await createAudienceRecordFn({
-      agent             : this.agent,
+      agent            : this.agent,
       audienceKey,
-      authorDid         : request.author,
+      authorDid        : request.author,
       contextId,
-      delegatedGrant    : messageParams.delegatedGrant,
-      granteeDid        : request.granteeDid,
-      permissionGrantId : messageParams.permissionGrantId,
-      module            : audienceKey.module,
-      moduleRole        : messageParams.moduleRole,
-      rolePath          : audienceKey.rolePath,
-      sealingPublicKey  : pending.sealingPublicKey,
-      sourceDid         : request.target,
+      granteeDid       : request.granteeDid,
+      module           : audienceKey.module,
+      rolePath         : audienceKey.rolePath,
+      sealingPublicKey : pending.sealingPublicKey,
+      sourceDid        : request.target,
+      ...writeAuthorization,
     });
     this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
       contextId,
