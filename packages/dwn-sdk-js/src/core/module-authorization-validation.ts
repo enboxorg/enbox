@@ -347,7 +347,9 @@ async function verifyRoleAudienceEncryptionIfNeeded(
       continue;
     }
 
-    await verifyResolvedRoleAudienceEncryption(tenant, inboundMessage, roleAudience, validationStateReader);
+    await verifyResolvedRoleAudienceEncryption( // NOSONAR: S9382 — bound storage reads and stop at the first invalid role.
+      tenant, inboundMessage, roleAudience, validationStateReader,
+    );
   }
 }
 

@@ -2,7 +2,7 @@
  * Build-time generation of CSP-safe JSON Schema validators.
  *
  * Ajv compiles schemas to standalone JavaScript, then esbuild folds Ajv's
- * runtime helpers into one browser-safe block. Generated module modules
+ * runtime helpers into one browser-safe block. Generated TypeScript modules
  * therefore do not depend on Ajv or dynamic code evaluation at runtime.
  *
  * @module

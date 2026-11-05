@@ -1,6 +1,6 @@
 import type { CliIo } from '../src/cli.js';
 
-import { generateModuleModule } from '../src/codegen.js';
+import { generateModuleCode } from '../src/codegen.js';
 import { generateStandaloneValidators } from '../src/standalone-validator.js';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -728,7 +728,7 @@ describe('generateStandaloneValidators()', () => {
   });
 });
 
-describe('generateModuleModule()', () => {
+describe('generateModuleCode()', () => {
   afterEach(async (): Promise<void> => {
     await rm(TMP_DIR, { force: true, recursive: true });
   });
@@ -736,7 +736,7 @@ describe('generateModuleModule()', () => {
   it('should generate TypeScript types from resolved schemas', async () => {
     const definition = await loadDefinition();
 
-    const { code, resolutions } = await generateModuleModule(definition as any, {
+    const { code, resolutions } = await generateModuleCode(definition as any, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Todo',
     });
@@ -773,7 +773,7 @@ describe('generateModuleModule()', () => {
   it('should generate modules against the browser runtime surface', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateModuleModule(definition as any, {
+    const { code } = await generateModuleCode(definition as any, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Todo',
       target     : 'browser',
@@ -793,7 +793,7 @@ describe('generateModuleModule()', () => {
   it('should generate correct interface properties from schema', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateModuleModule(definition as any, {
+    const { code } = await generateModuleCode(definition as any, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Todo',
     });
@@ -819,7 +819,7 @@ describe('generateModuleModule()', () => {
       additionalProperties : false,
     }), 'utf-8');
 
-    const { code } = await generateModuleModule({
+    const { code } = await generateModuleCode({
       module    : 'https://example.com/modules/events',
       published : true,
       types     : {
@@ -861,7 +861,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       allowUnresolvedJsonSchemas : true,
       schemasDir,
       moduleName                 : 'SchemaId',
@@ -888,7 +888,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir,
       moduleName: 'SchemaId',
     })).rejects.toThrow('(found undefined)');
@@ -914,7 +914,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir,
       moduleName: 'SchemaId',
     })).rejects.toThrow(
@@ -934,7 +934,7 @@ describe('generateModuleModule()', () => {
       additionalProperties : false,
     }), 'utf-8');
 
-    const { code, resolutions } = await generateModuleModule({
+    const { code, resolutions } = await generateModuleCode({
       module    : 'https://example.com/modules/title',
       published : true,
       types     : {
@@ -977,7 +977,7 @@ describe('generateModuleModule()', () => {
         },
       }), 'utf-8');
 
-      await expect(generateModuleModule({
+      await expect(generateModuleCode({
         module    : 'https://example.com/modules/refs',
         published : true,
         types     : {
@@ -1014,7 +1014,7 @@ describe('generateModuleModule()', () => {
       $id  : schemaUri,
       $ref : './external.json#/$defs/value',
     }), 'utf-8');
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir,
       moduleName: 'Refs',
     })).rejects.toThrow('must be a local fragment beginning with \'#\' (found "./external.json#/$defs/value")');
@@ -1029,7 +1029,7 @@ describe('generateModuleModule()', () => {
       },
       $ref: '#/$defs/value',
     }), 'utf-8');
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir,
       moduleName: 'Refs',
     });
@@ -1063,7 +1063,7 @@ describe('generateModuleModule()', () => {
         },
       }), 'utf-8');
 
-      const { code } = await generateModuleModule({
+      const { code } = await generateModuleCode({
         module    : 'https://example.com/modules/literal-ref',
         published : true,
         types     : {
@@ -1100,7 +1100,7 @@ describe('generateModuleModule()', () => {
       },
     }), 'utf-8');
 
-    const { code } = await generateModuleModule({
+    const { code } = await generateModuleCode({
       module    : 'https://example.com/modules/literal-local-ref',
       published : true,
       types     : {
@@ -1125,12 +1125,12 @@ describe('generateModuleModule()', () => {
       types     : {},
       structure : {},
     };
-    await expect(generateModuleModule(emptyDefinition, {
+    await expect(generateModuleCode(emptyDefinition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'invalid-name',
     })).rejects.toThrow('Module name \'invalid-name\' must be a PascalCase TypeScript identifier');
 
-    await expect(generateModuleModule({
+    await expect(generateModuleCode({
       ...emptyDefinition,
       types: {
         'foo-bar' : { dataFormats: ['text/plain'] },
@@ -1142,7 +1142,7 @@ describe('generateModuleModule()', () => {
       moduleName : 'Names',
     })).rejects.toThrow('\'foo-bar\', \'foo_bar\' all generate the identifier \'FooBarData\'');
 
-    await expect(generateModuleModule({
+    await expect(generateModuleCode({
       ...emptyDefinition,
       types     : { '123-note': { dataFormats: ['text/plain'] } },
       structure : { '123-note': {} },
@@ -1156,8 +1156,8 @@ describe('generateModuleModule()', () => {
     const definition = await loadDefinition();
     const options = { schemasDir: SCHEMAS_DIR, moduleName: 'Todo' };
 
-    const first = await generateModuleModule(definition as any, options);
-    const second = await generateModuleModule(definition as any, options);
+    const first = await generateModuleCode(definition as any, options);
+    const second = await generateModuleCode(definition as any, options);
 
     expect(second.code).toBe(first.code);
   });
@@ -1177,7 +1177,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Test',
     })).rejects.toThrow(
@@ -1200,7 +1200,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       allowUnresolvedJsonSchemas : true,
       schemasDir                 : SCHEMAS_DIR,
       moduleName                 : 'Test',
@@ -1220,7 +1220,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'MissingSchemaUri',
     })).rejects.toThrow('type \'note\' must declare a schema URI');
@@ -1234,7 +1234,7 @@ describe('generateModuleModule()', () => {
       'APPLICATION/VND.EXAMPLE+JSON ; charset=utf-8',
     ];
     for (const dataFormat of validJsonFormats) {
-      await expect(generateModuleModule({
+      await expect(generateModuleCode({
         module    : 'https://example.com/modules/json-media-type',
         published : true,
         types     : { note: { dataFormats: [dataFormat] } },
@@ -1253,7 +1253,7 @@ describe('generateModuleModule()', () => {
       'application/json-seq',
     ];
     for (const dataFormat of nonJsonFormats) {
-      const { code, resolutions } = await generateModuleModule({
+      const { code, resolutions } = await generateModuleCode({
         module    : 'https://example.com/modules/non-json-media-type',
         published : true,
         types     : { note: { dataFormats: [dataFormat] } },
@@ -1281,7 +1281,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Media',
     });
@@ -1329,7 +1329,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       allowUnresolvedJsonSchemas : true,
       schemasDir                 : SCHEMAS_DIR,
       moduleName                 : 'Formats',
@@ -1376,7 +1376,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code, resolutions } = await generateModuleModule(definition, {
+    const { code, resolutions } = await generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'SchemaFormats',
     });
@@ -1406,7 +1406,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Composed',
     })).rejects.toThrow('Cannot generate a typed codec for $ref path \'thread\'');
@@ -1439,7 +1439,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Complete',
     });
@@ -1465,7 +1465,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'StringEscaping',
     });
@@ -1482,7 +1482,7 @@ describe('generateModuleModule()', () => {
       structure : { note: {} },
     };
 
-    await expect(generateModuleModule(definition, {
+    await expect(generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'MissingCodec',
     })).rejects.toThrow('Cannot infer a record codec for module type \'note\'');
@@ -1506,7 +1506,7 @@ describe('generateModuleModule()', () => {
       structure: { note: {} },
     };
 
-    const { code, resolutions } = await generateModuleModule(definition, {
+    const { code, resolutions } = await generateModuleCode(definition, {
       schemasDir,
       moduleName: 'Reachable',
     });
@@ -1520,7 +1520,7 @@ describe('generateModuleModule()', () => {
   it('should support custom banner comment', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateModuleModule(definition as any, {
+    const { code } = await generateModuleCode(definition as any, {
       schemasDir    : SCHEMAS_DIR,
       moduleName    : 'Todo',
       bannerComment : '// Custom banner',
@@ -1533,7 +1533,7 @@ describe('generateModuleModule()', () => {
   it('should support empty banner comment', async () => {
     const definition = await loadDefinition();
 
-    const { code } = await generateModuleModule(definition as any, {
+    const { code } = await generateModuleCode(definition as any, {
       schemasDir    : SCHEMAS_DIR,
       moduleName    : 'Todo',
       bannerComment : '',
@@ -1567,7 +1567,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code, resolutions } = await generateModuleModule(definition, {
+    const { code, resolutions } = await generateModuleCode(definition, {
       allowUnresolvedJsonSchemas : true,
       schemasDir                 : SCHEMAS_DIR,
       moduleName                 : 'Mixed',
@@ -1614,7 +1614,7 @@ describe('generateModuleModule()', () => {
         },
       };
 
-      const { code, resolutions } = await generateModuleModule(definition, {
+      const { code, resolutions } = await generateModuleCode(definition, {
         allowUnresolvedJsonSchemas : true,
         schemasDir                 : emptyDir,
         moduleName                 : 'HttpTest',
@@ -1648,7 +1648,7 @@ describe('generateModuleModule()', () => {
       },
     };
 
-    const { code } = await generateModuleModule(definition, {
+    const { code } = await generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Naming',
     });

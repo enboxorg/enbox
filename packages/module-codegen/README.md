@@ -297,7 +297,7 @@ raw module APIs when an application needs explicit module composition.
 The codegen engine can also be used as a library:
 
 ```ts
-import { generateModuleModule } from '@enbox/module-codegen';
+import { generateModuleCode } from '@enbox/module-codegen';
 
 const definition = {
   module: 'https://example.com/my-module',
@@ -307,7 +307,7 @@ const definition = {
   structure: { note: {} },
 };
 
-const { code, resolutions } = await generateModuleModule(definition, {
+const { code, resolutions } = await generateModuleCode(definition, {
   schemasDir   : './schemas',
   moduleName : 'MyModule',
 });
@@ -316,7 +316,7 @@ const { code, resolutions } = await generateModuleModule(definition, {
 // resolutions is a Map<string, SchemaResolution> with metadata about each type
 ```
 
-### `generateModuleModule(definition, options)`
+### `generateModuleCode(definition, options)`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

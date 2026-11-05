@@ -678,7 +678,7 @@ export type ContextsApi<
  *
  * @example
  * ```ts
- * await proto.records.create('notebook/page', {
+ * await notebooks.records.create('notebook/page', {
  *   data: { title: 'My Page', body: '...' },       // type-checked as PageData
  *   parentContextId: notebook.contextId,             // link to parent
  *   tags: { category: 'draft' },
@@ -725,12 +725,12 @@ type TypedCreateOptions<
    *
    * @example
    * ```ts
-   * const notebook = await proto.records.create('notebook', {
+   * const notebook = await notebooks.records.create('notebook', {
    *   data: { name: 'My Notebook' },
    * });
    *
    * // Create a page under the notebook
-   * await proto.records.create('notebook/page', {
+   * await notebooks.records.create('notebook/page', {
    *   data: { title: 'Page 1' },
    *   parentContextId: notebook.contextId,
    * });
@@ -904,10 +904,10 @@ export type TypedSetRequest<
  * @example
  * ```ts
  * // Read a specific record by ID
- * const record = await proto.records.read('notebook', notebookId);
+ * const record = await notebooks.records.read('notebook', notebookId);
  *
  * // Read a nested record from a remote DWN using a module role
- * const remote = await proto.records.read('notebook/entry', {
+ * const remote = await notebooks.records.read('notebook/entry', {
  *   from: 'did:example:alice',
  *   moduleRole: 'notebook/participant',
  *   within: notebook.contextId,
@@ -936,11 +936,11 @@ export type TypedReadRequest<
  *
  * @example
  * ```ts
- * await proto.records.delete('notebook', {
+ * await notebooks.records.delete('notebook', {
  *   recordId: notebook.id,
  * });
  *
- * await proto.records.delete('notebook/entry', {
+ * await notebooks.records.delete('notebook/entry', {
  *   from: 'did:example:alice',
  *   moduleRole: 'notebook/participant',
  *   recordId: entry.id,
@@ -1355,9 +1355,9 @@ export class TypedEnbox<
    *
    * @example
    * ```ts
-   * const proto = enbox.using(NotebookModule);
+   * const notebooks = enbox.using(NotebookModule);
    *
-   * const { status, module } = await proto.configure();
+   * const { status, module } = await notebooks.configure();
    * console.log(status.code); // 202 (first install) or 200 (already installed)
    * ```
    */
@@ -3279,12 +3279,12 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * const record = await proto.records.create('notebook', {
+       * const record = await notebooks.records.create('notebook', {
        *   data: { name: 'My Notebook' },
        * });
        *
        * // Create a child page under the notebook's context
-       * const page = await proto.records.create('notebook/page', {
+       * const page = await notebooks.records.create('notebook/page', {
        *   data: { title: 'First Page', body: '' },
        *   parentContextId: record.contextId,
        * });
@@ -3316,10 +3316,10 @@ export class TypedEnbox<
        * @example
        * ```ts
        * // Query all notebooks
-       * const { records } = await proto.records.query('notebook');
+       * const { records } = await notebooks.records.query('notebook');
        *
        * // Query pages under a specific notebook
-       * const { records: pages } = await proto.records.query('notebook/page', {
+       * const { records: pages } = await notebooks.records.query('notebook/page', {
        *   within: notebook.contextId,
        * });
        *
@@ -3328,7 +3328,7 @@ export class TypedEnbox<
        * }
        *
        * // Paginated query
-       * const firstPage = await proto.records.query('notebook', {
+       * const firstPage = await notebooks.records.query('notebook', {
        *   pagination: { limit: 10 },
        *   dateSort: DateSort.CreatedDescending,
        * });
@@ -3543,7 +3543,7 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * const record = await proto.records.read('notebook', notebookId);
+       * const record = await notebooks.records.read('notebook', notebookId);
        *
        * if (record === undefined) {
        *   throw new Error('Notebook not found');
@@ -3680,7 +3680,7 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * await proto.records.delete('notebook', {
+       * await notebooks.records.delete('notebook', {
        *   recordId: notebook.id,
        * });
        * ```

@@ -116,12 +116,20 @@ export type SyncRoleAuthorization = {
  * Normalizes a module list into canonical scope-union order.
  */
 export function normalizeSyncModules(modules: [string, ...string[]] | string[]): NonEmptyStringArray {
-  if (!Array.isArray(modules) || modules.some(module => typeof module !== 'string' || module.length === 0)) {
-    throw new TypeError('SyncScope: modules must be a non-empty string array.');
+  return normalizeSyncScopeList(modules, 'modules');
+}
+
+/** Sorts and deduplicates scope selectors while keeping URI and path diagnostics distinct. */
+function normalizeSyncScopeList(values: string[], field: 'modules' | 'modulePaths'): NonEmptyStringArray {
+  if (!Array.isArray(values) || values.some(value => typeof value !== 'string' || value.length === 0)) {
+    throw new TypeError(`SyncScope: ${field} must be a non-empty string array.`);
   }
-  const unique = [...new Set(modules)].sort(lexicographicalCompare);
+  const unique = [...new Set(values)].sort(lexicographicalCompare);
   if (unique.length === 0) {
-    throw new Error('SyncScope: module-set scope requires at least one module URI.');
+    const requirement = field === 'modules'
+      ? 'module-set scope requires at least one module URI.'
+      : 'context scope requires at least one module path.';
+    throw new Error(`SyncScope: ${requirement}`);
   }
   return unique as NonEmptyStringArray;
 }
@@ -200,10 +208,21 @@ async function hashCanonicalObject(value: Record<string, unknown>): Promise<stri
 
 /** Returns a canonical JSON-ready representation of a sync scope. */
 export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
-  const allowedKeys = scope.kind === 'full' ? ['kind']
-    : scope.kind === 'context' ? ['kind', 'module', 'contextId', 'modulePaths']
-      : scope.kind === 'moduleSet' ? ['kind', 'modules'] : [];
-  if (allowedKeys.length === 0 || Object.keys(scope).some(key => !allowedKeys.includes(key))) {
+  let allowedKeys: string[];
+  switch (scope.kind) {
+    case 'full':
+      allowedKeys = ['kind'];
+      break;
+    case 'context':
+      allowedKeys = ['kind', 'module', 'contextId', 'modulePaths'];
+      break;
+    case 'moduleSet':
+      allowedKeys = ['kind', 'modules'];
+      break;
+    default:
+      throw new TypeError('SyncScope: unsupported sync scope; use module-format fields.');
+  }
+  if (Object.keys(scope).some(key => !allowedKeys.includes(key))) {
     throw new TypeError('SyncScope: unsupported sync scope; use module-format fields.');
   }
   if (scope.kind === 'full') {
@@ -218,7 +237,7 @@ export function canonicalizeSyncScope(scope: SyncScope): SyncScope {
       contextId   : scope.contextId,
       kind        : 'context',
       module      : scope.module,
-      modulePaths : normalizeSyncModules(scope.modulePaths),
+      modulePaths : normalizeSyncScopeList(scope.modulePaths, 'modulePaths'),
     };
   }
   return { kind: 'moduleSet', modules: normalizeSyncModules(scope.modules) };

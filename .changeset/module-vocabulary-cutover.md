@@ -20,3 +20,6 @@ SDKs, connect, sync, encryption identifiers, packages, and tooling. This is a
 coordinated breaking cutover requiring fresh stores, sessions, configurations,
 records, grants, and encryption material. Old wire formats and package aliases
 are not supported.
+
+The codegen package exports `generateModuleCode` to generate TypeScript source
+from a DWN module definition and its schemas.

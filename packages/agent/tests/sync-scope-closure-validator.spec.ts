@@ -140,12 +140,14 @@ describe('SyncScopeClosureValidator', () => {
     }));
 
     await expect(validator.validateClosure('did:example:alice', {
-      modules: [commentsModule],
+      modules: [commentsModule, profilesModule],
     })).rejects.toThrow(
       `SyncScopeClosureValidator: local module history query failed for did:example:alice / ${commentsModule}: ` +
       '503 temporarily unavailable'
     );
     expect(operations.resolvePermissionGrantIds.called).toBe(false);
+    // A failed retained-history scan must stop before querying the next module.
+    expect(operations.queryModuleHistory.calledOnce).toBe(true);
   });
 
   it('rejects an undrained module-history page without a cursor', async () => {

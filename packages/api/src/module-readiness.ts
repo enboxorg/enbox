@@ -90,56 +90,62 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
   }
 
   public async ensureReady(options: EnsureModulesReadyOptions): Promise<void> {
-    for (const { module } of options.application.modules) {
-      const typed = this.using(module);
-      let failureTargetDid = this.connectedDid;
-      let operation: ModuleReadinessOperation = 'install';
+    for (const { module: moduleArtifact } of options.application.modules) {
+      // A failed installation or publication must stop later manifest entries from writing.
+      await this.ensureModuleReady(moduleArtifact, options); // NOSONAR: S9382 — preserve fail-stop manifest order.
+    }
+  }
 
-      try {
-        const configured = await typed.configure();
-        if (this.delegateDid !== undefined) {
-          continue;
-        }
+  /** Complete one manifest entry's installation and publication before advancing to the next. */
+  private async ensureModuleReady(moduleArtifact: TypedModule, options: EnsureModulesReadyOptions): Promise<void> {
+    const moduleApi = this.using(moduleArtifact);
+    let failureTargetDid = this.connectedDid;
+    let operation: ModuleReadinessOperation = 'install';
 
-        requireDwnSuccess(`Configure module '${typed.module}'`, configured);
-        if (options.publish === false) {
-          continue;
-        }
-        if (configured.module === undefined) {
-          throw new Error(`Configure module '${typed.module}' returned no signed message.`);
-        }
-
-        const targetDid = options.targetDid ?? this.connectedDid;
-        failureTargetDid = targetDid;
-        const message = targetDid === this.connectedDid
-          ? configured.module.toJSON()
-          : await this.createTargetConfiguration(targetDid, typed.definition);
-
-        operation = 'publish';
-        const { reply } = await this.agent.sendDwnRequest({
-          author      : targetDid,
-          messageType : DwnInterface.ModulesConfigure,
-          rawMessage  : message,
-          target      : targetDid,
-        });
-        if (reply.status.code !== 409) {
-          requireDwnSuccess(`Publish module '${typed.module}'`, reply);
-        }
-
-        operation = 'query';
-        const installed = await this.queryHostedDefinition(targetDid, typed.module);
-        if (!installedModuleDefinitionsEqual(installed, message.descriptor.definition)) {
-          operation = 'publish';
-          throw new Error('The hosted DWN retained a different active module definition.');
-        }
-      } catch (cause: unknown) {
-        throw new ModuleReadinessError({
-          cause,
-          operation,
-          module    : typed.module,
-          targetDid : failureTargetDid,
-        });
+    try {
+      const localConfiguration = await moduleApi.configure();
+      if (this.delegateDid !== undefined) {
+        return;
       }
+
+      requireDwnSuccess(`Configure module '${moduleApi.module}'`, localConfiguration);
+      if (options.publish === false) {
+        return;
+      }
+      if (localConfiguration.module === undefined) {
+        throw new Error(`Configure module '${moduleApi.module}' returned no signed message.`);
+      }
+
+      const publicationDid = options.targetDid ?? this.connectedDid;
+      failureTargetDid = publicationDid;
+      const message = publicationDid === this.connectedDid
+        ? localConfiguration.module.toJSON()
+        : await this.createTargetConfiguration(publicationDid, moduleApi.definition);
+
+      operation = 'publish';
+      const { reply } = await this.agent.sendDwnRequest({
+        author      : publicationDid,
+        messageType : DwnInterface.ModulesConfigure,
+        rawMessage  : message,
+        target      : publicationDid,
+      });
+      if (reply.status.code !== 409) {
+        requireDwnSuccess(`Publish module '${moduleApi.module}'`, reply);
+      }
+
+      operation = 'query';
+      const publishedDefinition = await this.queryHostedDefinition(publicationDid, moduleApi.module);
+      if (!installedModuleDefinitionsEqual(publishedDefinition, message.descriptor.definition)) {
+        operation = 'publish';
+        throw new Error('The hosted DWN retained a different active module definition.');
+      }
+    } catch (cause: unknown) {
+      throw new ModuleReadinessError({
+        cause,
+        operation,
+        module    : moduleApi.module,
+        targetDid : failureTargetDid,
+      });
     }
   }
 

@@ -287,6 +287,40 @@ describe('connect module preparation', () => {
   });
 
   describe('prepareModule', () => {
+    it('should inspect independent remote keys concurrently before any configure writes', async () => {
+      const { agent, processDwnRequest, sendDwnRequest } = stubAgent({
+        installed    : installedEncryptedModule,
+        endpoints    : ['https://dwn-a.example/', 'https://dwn-b.example/'],
+        remoteBefore : encryptedModule,
+        remoteAfter  : installedEncryptedModule,
+      });
+      const getKeyDeriver = agent.dwn.getEncryptionKeyDeriver as sinon.SinonStub;
+      const keyDeriver = await getKeyDeriver();
+      getKeyDeriver.resetHistory();
+      let releaseFirstRemote!: () => void;
+      const firstRemoteGate = new Promise<void>(resolve => { releaseFirstRemote = resolve; });
+      let signalSecondRemote!: () => void;
+      const secondRemoteStarted = new Promise<void>(resolve => { signalSecondRemote = resolve; });
+      let inspectionsStarted = 0;
+      getKeyDeriver.callsFake(async () => {
+        inspectionsStarted++;
+        if (inspectionsStarted === 2) { await firstRemoteGate; }
+        if (inspectionsStarted === 3) { signalSecondRemote(); }
+        return keyDeriver;
+      });
+
+      const preparing = prepareModule('did:example:owner', agent, encryptedModule);
+      try {
+        await secondRemoteStarted;
+        expect(configureCalls(processDwnRequest)).toHaveLength(0);
+        expect(remoteConfigureSends(sendDwnRequest)).toHaveLength(0);
+      } finally {
+        releaseFirstRemote();
+        await preparing;
+      }
+      expect(remoteConfigureSends(sendDwnRequest)).toHaveLength(2);
+    });
+
     it('should verify remotes without configuring when local and remote installs are current', async () => {
       const endpoints = ['https://dwn-a.example/', 'https://dwn-b.example/'];
       const { agent, processDwnRequest, sendDwnRequest } = stubAgent({
@@ -704,6 +738,33 @@ describe('connect module preparation — composed modules', () => {
 
     const configures = sends.filter((send) => send.kind === 'configure');
     expect(configures.map((send) => send.moduleUri)).toEqual([BASE_URI, DEPENDENCY_URI, COMPOSED_URI]);
+  });
+
+  it('should preserve the first prerequisite failure before attempting dependent siblings', async () => {
+    const secondDependencyUri = 'https://example.com/modules/second-membership';
+    const baseModule = { ...dependencyModule, module: BASE_URI };
+    const firstDependency = { ...dependencyModule, uses: { base: BASE_URI } };
+    const secondDependency = { ...dependencyModule, module: secondDependencyUri, uses: { base: BASE_URI } };
+    const requested = { ...composedModule, uses: { first: DEPENDENCY_URI, second: secondDependencyUri } };
+    const { agent, sends } = simAgent({
+      local: {
+        [BASE_URI]            : baseModule,
+        [DEPENDENCY_URI]      : firstDependency,
+        [secondDependencyUri] : secondDependency,
+        [COMPOSED_URI]        : requested,
+      },
+      remotes: {
+        'https://dwn-a.example/': {
+          modules         : new Map(),
+          rejectConfigure : uri => ({ code: 503, detail: uri === BASE_URI ? 'base prerequisite unavailable' : 'dependent unavailable' }),
+        },
+      },
+    });
+
+    await expect(prepareModule('did:example:owner', agent, requested)).rejects.toThrow('base prerequisite unavailable');
+
+    expect(sends.filter(send => send.kind === 'configure').map(send => send.moduleUri))
+      .toEqual([BASE_URI, DEPENDENCY_URI, secondDependencyUri, COMPOSED_URI]);
   });
 
   it('should surface the endpoint rejection reason in the postcondition error', async () => {

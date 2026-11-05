@@ -16,7 +16,7 @@ import type { CodegenResult, CodegenTarget, ModuleDefinitionInput } from './code
 
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
-import { generateModuleModule } from './codegen.js';
+import { generateModuleCode } from './codegen.js';
 import { parseArgs } from 'node:util';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { lstat, open, readFile, realpath, stat } from 'node:fs/promises';
@@ -292,7 +292,7 @@ async function prepareGeneration(args: GenerateArgs, io: CliIo): Promise<Prepare
   const definitionJson = await readFile(definitionPath, 'utf-8');
   const definition = JSON.parse(definitionJson) as ModuleDefinitionInput;
 
-  const result = await generateModuleModule(definition, {
+  const result = await generateModuleCode(definition, {
     allowUnresolvedJsonSchemas : args.allowUnresolvedJsonSchemas,
     schemasDir,
     moduleName                 : args.name,

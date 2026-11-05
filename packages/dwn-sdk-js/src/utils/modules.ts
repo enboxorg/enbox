@@ -318,25 +318,19 @@ export class Modules {
       publicKeyJwk: await keyDeriver.derivePublicKey(basePath),
     };
 
-    async function injectKeys(
-      ruleSet: ModuleRuleSet, parentPath: string[],
-    ): Promise<void> {
+    async function injectKeys(ruleSet: ModuleRuleSet, parentPath: string[]): Promise<void> {
       for (const key in ruleSet) {
-        if (!key.startsWith('$')) {
-          const currentPath = [...parentPath, key];
-          const childRuleSet = ruleSet[key] as ModuleRuleSet;
-
-          // Skip $ref nodes — they are governed by the referenced module's encryption keys.
-          // Still recurse into children, which belong to the composing module.
-          if (childRuleSet.$ref !== undefined) {
-            await injectKeys(childRuleSet, currentPath);
-            continue;
-          }
-
-          const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath);
-          childRuleSet.$keyAgreement = { publicKeyJwk };
-          await injectKeys(childRuleSet, currentPath);
+        if (key.startsWith('$')) {
+          continue;
         }
+        const currentPath = [...parentPath, key];
+        const childRuleSet = ruleSet[key] as ModuleRuleSet;
+        // Reference nodes use their provider's key, while their children remain local.
+        if (childRuleSet.$ref === undefined) {
+          const publicKeyJwk = await keyDeriver.derivePublicKey(currentPath); // NOSONAR: S9382 — bound concurrent KMS operations.
+          childRuleSet.$keyAgreement = { publicKeyJwk };
+        }
+        await injectKeys(childRuleSet, currentPath); // NOSONAR: S9382 — finish each subtree before scheduling further derivations.
       }
     }
 

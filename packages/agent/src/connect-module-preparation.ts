@@ -481,39 +481,47 @@ async function queryReachableModuleEndpoints(
   return reachableReplies;
 }
 
-/** Computes each reachable endpoint's verified setup status, throwing on the first remote conflict. */
-async function getRemoteModuleStates(
+/** Inspect independent endpoint definitions concurrently, preserving endpoint order when reporting conflicts. */
+async function inspectRemoteModuleStates(
   reachableReplies: Array<{ dwnUrl: string; reply: ModuleQueryReply }>,
   moduleDefinition: DwnModuleDefinition,
   selectedDid: string,
   agent: EnboxPlatformAgent,
   allowDefinitionOverride: boolean,
 ): Promise<Array<{ dwnUrl: string; setupStatus: ModuleSetupStatus }>> {
-  const remoteStates: Array<{ dwnUrl: string; setupStatus: ModuleSetupStatus }> = [];
-  for (const { dwnUrl, reply } of reachableReplies) {
-    const installedDefinition = getModuleDefinitionFromEntry(reply.entries?.[0]);
-    const remoteStatus = await getVerifiedModuleSetupStatus(
-      installedDefinition,
-      moduleDefinition,
-      selectedDid,
-      agent,
-    );
-    if (remoteStatus === 'conflict' && !(
-      allowDefinitionOverride
-      && await isReplaceableAuthoredDefinitionConflict(
+  const inspections = await mapConcurrentSettled(
+    reachableReplies,
+    MODULE_FANOUT_CONCURRENCY,
+    async ({ dwnUrl, reply }) => {
+      const installedDefinition = getModuleDefinitionFromEntry(reply.entries?.[0]);
+      const setupStatus = await getVerifiedModuleSetupStatus(
         installedDefinition,
         moduleDefinition,
         selectedDid,
         agent,
-      )
-    )) {
-      throw new Error(
-        `Module '${moduleDefinition.module}' conflicts with the latest definition or encryption keys on ${dwnUrl}.`,
       );
+      if (setupStatus === 'conflict' && !(
+        allowDefinitionOverride
+        && await isReplaceableAuthoredDefinitionConflict(
+          installedDefinition,
+          moduleDefinition,
+          selectedDid,
+          agent,
+        )
+      )) {
+        throw new Error(
+          `Module '${moduleDefinition.module}' conflicts with the latest definition or encryption keys on ${dwnUrl}.`,
+        );
+      }
+      return { dwnUrl, setupStatus };
+    },
+  );
+  return inspections.map(inspection => {
+    if (inspection.status === 'rejected') {
+      throw inspection.reason;
     }
-    remoteStates.push({ dwnUrl, setupStatus: remoteStatus });
-  }
-  return remoteStates;
+    return inspection.value;
+  });
 }
 
 /**
@@ -633,7 +641,7 @@ export async function prepareModule(
     moduleDefinition.module,
   );
 
-  const remoteStates = await getRemoteModuleStates(
+  const remoteStates = await inspectRemoteModuleStates(
     reachableReplies,
     moduleDefinition,
     selectedDid,
@@ -668,14 +676,13 @@ export async function prepareModule(
   // batch only orders dependencies the requester also asked for, so
   // out-of-batch dependencies (installed locally alongside the dependent)
   // must be propagated to the endpoints that are missing the dependent.
-  await ensureRemoteUsesDependencies(
-    selectedDid,
+  await ensureRemoteUsesDependencies(moduleDefinition, {
     agent,
-    moduleDefinition,
-    endpointsNeedingConfigure,
-    new Set([moduleDefinition.module]),
-    endpointFailures,
-  );
+    ownerDid           : selectedDid,
+    endpointUrls       : endpointsNeedingConfigure,
+    visitedModuleUris  : new Set([moduleDefinition.module]),
+    failuresByEndpoint : endpointFailures,
+  });
 
   // Best-effort send: individual failures are recorded rather than thrown
   // because the postcondition below fails closed — with the reasons attached
@@ -852,78 +859,78 @@ async function findEndpointsMissingUsesDependency(
   return endpointsMissingDependency;
 }
 
+/** State shared while prerequisites are propagated to the same owner endpoints. */
+type RemoteDependencyPreparation = {
+  agent: EnboxPlatformAgent;
+  ownerDid: string;
+  endpointUrls: string[];
+  visitedModuleUris: Set<string>;
+  failuresByEndpoint: Map<string, string>;
+};
+
 /**
- * Ensures every `uses` dependency of a composed module is installed on the
- * given endpoints before the dependent's configure is sent: the DWN rejects a
- * composed `ModulesConfigure` when a `uses` target is not installed for the
- * tenant, and the connect batch only orders dependencies the requester also
- * asked for. Dependencies are propagated from the provider's locally stored
- * configure entries, depth-first so transitive dependencies land first; a
- * dependency that is missing locally is recorded per endpoint and left to the
- * dependent's own configure/postcondition to report.
+ * Ensures every `uses` dependency of a module is installed before its configure
+ * is sent. Existing remote definitions are retained. Shared prerequisites are
+ * visited before dependents, with the earliest endpoint failure kept as the cause.
  */
 async function ensureRemoteUsesDependencies(
-  selectedDid: string,
-  agent: EnboxPlatformAgent,
   moduleDefinition: DwnModuleDefinition,
-  dwnUrls: string[],
-  visited: Set<string>,
-  endpointFailures: Map<string, string>,
+  preparation: RemoteDependencyPreparation,
 ): Promise<void> {
   const usesTargets = Object.values(moduleDefinition.uses ?? {}).filter(
-    (targetUri): targetUri is string => typeof targetUri === 'string' && !visited.has(targetUri),
+    (moduleUri): moduleUri is string => typeof moduleUri === 'string' && !preparation.visitedModuleUris.has(moduleUri),
   );
 
-  for (const targetUri of usesTargets) {
-    visited.add(targetUri);
-
-    const localDependency = await resolveLocalUsesDependency(selectedDid, agent, targetUri);
-    if ('failureReason' in localDependency) {
-      recordEndpointFailures(endpointFailures, dwnUrls, localDependency.failureReason);
-      continue;
-    }
-
-    const { entry: dependencyEntry, message: localQueryMessage } = localDependency;
-
-    // Transitive dependencies land before this dependency.
-    const dependencyDefinition = getModuleDefinitionFromEntry(dependencyEntry);
-    if (dependencyDefinition !== undefined) {
-      await ensureRemoteUsesDependencies(
-        selectedDid,
-        agent,
-        dependencyDefinition,
-        dwnUrls,
-        visited,
-        endpointFailures,
-      );
-    }
-
-    // Find the endpoints missing this dependency…
-    const endpointsMissingDependency = await findEndpointsMissingUsesDependency(
-      dwnUrls,
-      selectedDid,
-      agent,
-      localQueryMessage,
-      targetUri,
-      endpointFailures,
-    );
-
-    // …and propagate the locally stored configure entry to them.
-    if (endpointsMissingDependency.length > 0) {
-      logger.log(
-        `prepareModule: propagating uses dependency '${targetUri}' of '${moduleDefinition.module}' `
-        + `to ${endpointsMissingDependency.length} endpoint(s)`,
-      );
-      await sendConfigureToEndpoints(
-        selectedDid,
-        agent,
-        dependencyEntry,
-        endpointsMissingDependency,
-        `uses dependency '${targetUri}' configure`,
-        endpointFailures,
-      );
-    }
+  for (const dependencyUri of usesTargets) {
+    preparation.visitedModuleUris.add(dependencyUri);
+    // Shared prerequisites must finish before siblings reuse the visited set and failure map.
+    await propagateRemoteDependency(moduleDefinition.module, dependencyUri, preparation); // NOSONAR: S9382 — preserve prerequisite order.
   }
+}
+
+/** Resolve one local prerequisite, prepare its prerequisites, and publish it only where absent. */
+async function propagateRemoteDependency(
+  dependentModuleUri: string,
+  dependencyUri: string,
+  preparation: RemoteDependencyPreparation,
+): Promise<void> {
+  const { agent, ownerDid, endpointUrls, failuresByEndpoint } = preparation;
+  const localDependency = await resolveLocalUsesDependency(ownerDid, agent, dependencyUri);
+  if ('failureReason' in localDependency) {
+    recordEndpointFailures(failuresByEndpoint, endpointUrls, localDependency.failureReason);
+    return;
+  }
+
+  const { entry: dependencyEntry, message: localQueryMessage } = localDependency;
+  const dependencyDefinition = getModuleDefinitionFromEntry(dependencyEntry);
+  if (dependencyDefinition !== undefined) {
+    await ensureRemoteUsesDependencies(dependencyDefinition, preparation);
+  }
+
+  const endpointsMissingDependency = await findEndpointsMissingUsesDependency(
+    endpointUrls,
+    ownerDid,
+    agent,
+    localQueryMessage,
+    dependencyUri,
+    failuresByEndpoint,
+  );
+  if (endpointsMissingDependency.length === 0) {
+    return;
+  }
+
+  logger.log(
+    `prepareModule: propagating uses dependency '${dependencyUri}' of '${dependentModuleUri}' `
+    + `to ${endpointsMissingDependency.length} endpoint(s)`,
+  );
+  await sendConfigureToEndpoints(
+    ownerDid,
+    agent,
+    dependencyEntry,
+    endpointsMissingDependency,
+    `uses dependency '${dependencyUri}' configure`,
+    failuresByEndpoint,
+  );
 }
 
 /**

@@ -100,7 +100,7 @@ export const PreferencesDefinition = {
 // Typed module export
 // ---------------------------------------------------------------------------
 
-/** Typed Preferences module for use with `dwn.using()`. */
+/** Typed Preferences module for use with `enbox.using()`. */
 export const PreferencesModule = defineModule(
   PreferencesDefinition,
   {

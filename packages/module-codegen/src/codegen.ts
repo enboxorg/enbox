@@ -76,13 +76,13 @@ export type CodegenResult = {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a complete typed module module from a definition and JSON Schemas.
+ * Generate TypeScript code for a typed DWN module from a definition and JSON Schemas.
  *
  * @param definition - The module definition object.
  * @param options    - Code generation options.
  * @returns The generated source code and resolution metadata.
  */
-export async function generateModuleModule(
+export async function generateModuleCode(
   definition: ModuleDefinitionInput,
   options: CodegenOptions,
 ): Promise<CodegenResult> {

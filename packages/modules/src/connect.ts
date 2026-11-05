@@ -49,7 +49,7 @@ export const ConnectDefinition = {
 // Typed module export
 // ---------------------------------------------------------------------------
 
-/** Typed Connect module for use with `dwn.using()`. */
+/** Typed Connect module for use with `enbox.using()`. */
 export const ConnectModule = defineModule(
   ConnectDefinition,
   {

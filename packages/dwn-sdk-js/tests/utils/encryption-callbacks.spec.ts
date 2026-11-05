@@ -1,4 +1,6 @@
 import type { ModuleRuleSet } from '../../src/types/modules-types.js';
+import type { SourceRoleAudienceKeyEncryptionInput } from '../../src/utils/encryption.js';
+import type { ValidationStateReader } from '../../src/types/validation-state-reader.js';
 import type { EncryptionKeyDeriver, KeyDecrypter } from '../../src/types/encryption-types.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from '../../src/types/jose-types.js';
 
@@ -8,10 +10,12 @@ import { Encryption } from '../../src/utils/encryption.js';
 import { Modules } from '../../src/utils/modules.js';
 import { Records } from '../../src/utils/records.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
+import { verifyTypeWithComposition } from '../../src/core/module-authorization-validation.js';
 import { X25519 } from '@enbox/crypto';
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { HdKey, KeyDerivationScheme } from '../../src/utils/hd-key.js';
+import { KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 
 describe('Encryption callback interfaces', () => {
   let privateJwk: PrivateKeyJwk;
@@ -23,6 +27,42 @@ describe('Encryption callback interfaces', () => {
   });
 
   describe('Modules.deriveAndInjectPublicEncryptionKeys()', () => {
+    it('bounds KMS work and stops the depth-first walk when a derivation fails', async () => {
+      const definition = {
+        module    : 'https://example.com/key-derivation-order', published : true,
+        types     : { first: {}, child: {}, failed: {}, later: {} },
+        uses      : { provider: 'https://example.com/provider' },
+        structure : { first: { child: {} }, reference: { $ref: 'provider:root', child: {} }, failed: { child: {} }, later: {} },
+      };
+      const original = structuredClone(definition);
+      const paths: string[][] = [];
+      const failure = new Error('KMS derivation failed');
+      const realDeriver = createKeyDeriver(privateJwk, rootKeyId);
+      let active = 0;
+      let maximumActive = 0;
+      const deriver: EncryptionKeyDeriver = {
+        ...realDeriver,
+        derivePublicKey: async (path): Promise<PublicKeyJwk> => {
+          paths.push(path.slice(2));
+          maximumActive = Math.max(maximumActive, ++active);
+          try {
+            await Promise.resolve();
+            if (path.at(-1) === 'failed') {
+              throw failure;
+            }
+            return await realDeriver.derivePublicKey(path);
+          } finally {
+            active--;
+          }
+        },
+      };
+
+      await expect(Modules.deriveAndInjectPublicEncryptionKeys(definition, deriver)).rejects.toBe(failure);
+      expect(maximumActive).toBe(1);
+      expect(paths).toEqual([[], ['first'], ['first', 'child'], ['reference', 'child'], ['failed']]);
+      expect(definition).toEqual(original);
+    });
+
     it('injects the derived public key for each rule set path', async () => {
       const moduleDefinition = {
         module    : 'https://example.com/module/foo',
@@ -93,6 +133,47 @@ describe('Encryption callback interfaces', () => {
         [KeyDerivationScheme.ModulePath, 'https://example.com/module/bar', 'thread', 'message'],
       ]);
     });
+  });
+
+  it('stops audience storage reads at the first invalid role in declared order', async () => {
+    const definition = await Modules.deriveAndInjectPublicEncryptionKeys({
+      module    : 'https://example.com/audience-validation-order', published : true,
+      types     : { note: { encryptionRequired: true }, first: {}, second: {} },
+      structure : {
+        note   : { $actions: [{ role: 'first', can: ['read'] }, { role: 'second', can: ['read'] }] },
+        first  : { $role: true }, second : { $role: true },
+      },
+    }, createKeyDeriver(privateJwk, rootKeyId));
+    const noteKey = definition.structure.note.$keyAgreement!.publicKeyJwk;
+    const roleInputs = await Promise.all(['first', 'second'].map(async (rolePath): Promise<SourceRoleAudienceKeyEncryptionInput> => {
+      const publicKey = definition.structure[rolePath].$keyAgreement!.publicKeyJwk;
+      return {
+        algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+        derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
+        module           : definition.module, rolePath, publicKey, keyId            : await Encryption.getKeyId(publicKey),
+      };
+    }));
+    const { message } = await TestDataGenerator.generateRecordsWrite({
+      module          : definition.module, modulePath      : 'note', dataFormat      : 'text/plain',
+      encryptionInput : {
+        key                  : TestDataGenerator.randomBytes(32), initializationVector : TestDataGenerator.randomBytes(16),
+        keyEncryptionInputs  : [{
+          algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw, derivationScheme : KeyDerivationScheme.ModulePath,
+          publicKey        : noteKey, keyId            : await Encryption.getKeyId(noteKey),
+        }, ...roleInputs],
+      },
+    });
+    const queriedRoles: string[] = [];
+    const reader = {
+      queryAudienceRecords: async ({ rolePath }: { rolePath: string }): Promise<[]> => {
+        queriedRoles.push(rolePath);
+        await Promise.resolve();
+        return [];
+      },
+    } as unknown as ValidationStateReader;
+    await expect(verifyTypeWithComposition('did:example:alice', message, definition, reader))
+      .rejects.toThrow('missing audience for role \'first\'');
+    expect(queriedRoles).toEqual(['first']);
   });
 
   describe('Records.decrypt() with KeyDecrypter', () => {

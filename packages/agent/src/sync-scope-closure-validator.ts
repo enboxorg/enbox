@@ -118,12 +118,13 @@ export class SyncScopeClosureValidator {
     state: SyncScopeClosureValidationState,
   ): Promise<void> {
     while (state.modulesToScan.length > 0) {
-      const module = state.modulesToScan.shift();
-      if (module === undefined || state.scannedModules.has(module)) {
+      const moduleUri = state.modulesToScan.shift();
+      if (moduleUri === undefined || state.scannedModules.has(moduleUri)) {
         continue;
       }
 
-      await this.scanModule(did, options, module, state);
+      // Each scan discovers more dependencies; finish its retained history before advancing the queue.
+      await this.scanModule(did, options, moduleUri, state); // NOSONAR: S9382 — dependent traversal, one history buffer at a time.
     }
   }
 

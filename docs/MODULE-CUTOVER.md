@@ -4,6 +4,22 @@ Enbox now calls its declarative data definitions **modules**. This release chang
 the signed wire format, storage indexes, SDK names, package names, and first-party
 definition identifiers together.
 
+The names distinguish the identifier, the rules, and the API that uses them:
+
+| Name | Meaning |
+| --- | --- |
+| `module` / local variable `moduleUri` | The URI that identifies a DWN data module. |
+| `ModuleDefinition` / `definition` | The serializable types, structure, and authorization rules for that URI. |
+| `modulePath` | A path through the definition's structure, such as `notebook/page`. |
+| `moduleRole` | The role invoked to authorize an operation; it is separate from the record's own path. |
+| `TypedModule` | A definition paired with application codecs by `defineModule`. |
+| `Module` | The API wrapper around one signed `ModulesConfigure` message. |
+
+Use an application name for the bound typed client, such as
+`const notebooks = enbox.using(NotebookModule)`. Then
+`notebooks.records.create(...)` clearly names the application being used.
+JavaScript modules remain source-code import units; they are not DWN data modules.
+
 Deploy matching versions of the DWN engine, server, clients, agent, SDK, connect
 peers, and applications. Use `@enbox/modules`, `@enbox/module-codegen`,
 `ModuleDefinition`, `ModulesConfigure`, `ModulesQuery`, and `enbox.modules`.

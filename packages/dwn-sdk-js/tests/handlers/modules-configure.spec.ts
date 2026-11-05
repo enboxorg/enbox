@@ -20,6 +20,8 @@ import { lexicographicalCompare } from '../../src/utils/string.js';
 import { Message } from '../../src/core/message.js';
 import { ModuleAction } from '../../src/types/modules-types.js';
 import { ModulesConfigureHandler } from '../../src/handlers/modules-configure.js';
+import { StorageController } from '../../src/store/storage-controller.js';
+import { StoreValidationStateReader } from '../../src/core/validation-state-reader.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -119,6 +121,81 @@ export function testModulesConfigureHandler(): void {
 
         const reply = await dwn.processMessage(alice.did, modulesConfig.message);
         expect(reply.status.code).toBe(202);
+      });
+
+      it('stops dependency reads before later aliases when the first dependency is missing', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const missing = 'https://example.com/dependency-order/missing';
+        const later = 'https://example.com/dependency-order/later';
+        const configuration = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : {
+            module    : 'https://example.com/dependency-order/consumer', published : true,
+            uses      : { missing, later }, types     : {}, structure : {},
+          },
+        });
+        const reads = sinon.spy(StoreValidationStateReader.prototype, 'fetchModuleDefinition');
+        const writes = sinon.spy(messageStore, 'put');
+        const result = await dwn.processMessage(alice.did, configuration.message);
+        expect(result.status.code).toBe(400);
+        expect(result.status.detail).toContain(DwnErrorCode.ModulesConfigureComposedModuleNotInstalled);
+        expect(reads.getCalls().map(call => call.args[1])).toEqual([missing]);
+        expect(writes.called).toBe(false);
+      });
+
+      it('stops historical demotions after the first index mutation fails', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const definition = { ...minimalModuleDefinition, module: 'https://example.com/demotion-order' };
+        for (const day of ['01', '02']) {
+          const configuration = await TestDataGenerator.generateModulesConfigure({
+            author: alice, moduleDefinition: definition, messageTimestamp: `2025-05-${day}T00:00:00.000000Z`,
+          });
+          expect((await dwn.processMessage(alice.did, configuration.message)).status.code).toBe(202);
+        }
+        const incoming = await TestDataGenerator.generateModulesConfigure({
+          author: alice, moduleDefinition: definition, messageTimestamp: '2025-05-03T00:00:00.000000Z',
+        });
+        const failure = new Error('index mutation failed');
+        const demotions = sinon.stub(messageStore, 'updateIndexes').callsFake(async (): Promise<void> => {
+          await Promise.resolve();
+          throw failure;
+        });
+        await expect(dwn.processMessage(alice.did, incoming.message)).rejects.toBe(failure);
+        expect(demotions.callCount).toBe(1);
+      });
+
+      it('stops initial-record reconciliation after a purge fails', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const definition: ModuleDefinition = {
+          module    : 'https://example.com/purge-order', published : true,
+          types     : { post: { dataFormats: ['text/plain'] } },
+          structure : { post: { $actions: [{ who: 'anyone', can: ['create', 'read'] }] } },
+        };
+        const original = await TestDataGenerator.generateModulesConfigure({
+          author: alice, moduleDefinition: definition, messageTimestamp: '2025-05-01T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, original.message)).status.code).toBe(202);
+        for (const hour of ['01', '02', '03']) {
+          const record = await TestDataGenerator.generateRecordsWrite({
+            author           : bob, module           : definition.module, modulePath       : 'post', dataFormat       : 'text/plain',
+            messageTimestamp : `2025-05-03T${hour}:00:00.000000Z`, dateCreated      : `2025-05-03T${hour}:00:00.000000Z`,
+          });
+          expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
+        }
+        const incoming = await TestDataGenerator.generateModulesConfigure({
+          author           : alice, moduleDefinition : { ...definition, structure: { post: {} } },
+          messageTimestamp : '2025-05-02T00:00:00.000000Z',
+        });
+        const failure = new Error('record purge failed');
+        const purge = sinon.stub(StorageController, 'purgeRecordMessages').callsFake(async (): Promise<void> => {
+          await Promise.resolve();
+          throw failure;
+        });
+        await expect(dwn.processMessage(alice.did, incoming.message)).rejects.toBe(failure);
+        expect(purge.callCount).toBe(1);
+        const retained = await messageStore.query(alice.did, [{ interface: DwnInterfaceName.Records, module: definition.module }]);
+        expect(retained.messages).toHaveLength(3);
       });
 
       it('should return 400 if more than 1 signature is provided in `authorization`', async () => {

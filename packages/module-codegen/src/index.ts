@@ -8,7 +8,7 @@
  *
  * @example
  * ```ts
- * import { generateModuleModule } from '@enbox/module-codegen';
+ * import { generateModuleCode } from '@enbox/module-codegen';
  *
  * const definition = {
  *   module: 'https://example.com/modules/inventory',
@@ -16,7 +16,7 @@
  *   structure: { product: { $actions: [{ who: 'anyone', can: ['read'] }] } },
  * };
  *
- * const { code, resolutions } = await generateModuleModule(definition, {
+ * const { code, resolutions } = await generateModuleCode(definition, {
  *   schemasDir: './schemas',
  *   moduleName: 'Inventory',
  * });
@@ -27,7 +27,7 @@
  * @packageDocumentation
  */
 
-export { generateModuleModule } from './codegen.js';
+export { generateModuleCode } from './codegen.js';
 export type {
   CodegenOptions,
   CodegenResult,

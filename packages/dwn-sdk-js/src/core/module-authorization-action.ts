@@ -162,18 +162,14 @@ function roleRecordNotFound(resolvedRole: ResolvedModuleRole): DwnError {
 }
 
 /**
- * Returns all the ModuleActions that would authorized the incoming message
- * (but we still need to later verify if there is a rule defined that matches one of the actions).
- * NOTE: the reason why there could be multiple actions is because:
- * - In case of an initial RecordsWrite, the RecordsWrite can be authorized by an allow `create` or `write` rule.
- * - In case of a non-initial RecordsWrite by the original record author, the RecordsWrite can be authorized by a `write` or `co-update` rule.
- *
- * It is important to recognize that the `write` access that allowed the original record author to create the record maybe revoked
- * (e.g. by role revocation) by the time a "non-initial" write by the same author is attempted.
+ * Returns the actions that can authorize the operation, before matching its current rules.
+ * Initial writes require create or squash permission. Updates by the original author
+ * can use update or co-update; another author needs co-update. Creation permission
+ * does not imply that an author still has permission when a later update arrives.
  */
 export async function getActionsSeekingARuleMatch(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   validationStateReader: ValidationStateReader,
   actionRules?: ModuleActionRule[],
 ): Promise<ModuleAction[]> {
@@ -208,7 +204,7 @@ export async function getActionsSeekingARuleMatch(
  */
 async function getDeleteActionsSeekingARuleMatch(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   validationStateReader: ValidationStateReader,
 ): Promise<ModuleAction[]> {
   const recordsDelete = incomingMessage as RecordsDelete;
@@ -248,7 +244,7 @@ async function getDeleteActionsSeekingARuleMatch(
  */
 async function getWriteActionsSeekingARuleMatch(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   validationStateReader: ValidationStateReader,
   actionRules?: ModuleActionRule[],
 ): Promise<ModuleAction[]> {
@@ -312,7 +308,7 @@ export function getInitialWriteActionsSeekingARuleMatch(
  */
 export async function authorizeAgainstAllowedActions(
   tenant: string,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   ruleSet: ModuleRuleSet,
   recordChain: RecordsWriteMessage[],
   validationStateReader: ValidationStateReader,
@@ -365,7 +361,7 @@ async function actionRuleAuthorizesMessage(
   actionsSeekingARuleMatch: ModuleAction[],
   author: string | undefined,
   invokedRole: string | undefined,
-  incomingMessage: RecordsCount | RecordsDelete | RecordsQuery | RecordsRead | RecordsSubscribe | RecordsWrite,
+  incomingMessage: ModuleAuthorizableMessage,
   recordChain: RecordsWriteMessage[],
   moduleDefinition?: ModuleDefinition,
 ): Promise<boolean> {
@@ -376,9 +372,6 @@ async function actionRuleAuthorizesMessage(
   if (!ruleHasAMatchingAllowedAction) {
     return false;
   }
-
-  // Code reaches here means this action rule has an allowed action that matches the action of the message.
-  // The remaining code checks the actor/author of the incoming message.
 
   // If the action rule allows `anyone`, then no further checks are needed.
   if (actionRule.who === ModuleActor.Anyone) {
@@ -394,46 +387,25 @@ async function actionRuleAuthorizesMessage(
   // go through role validation path if a role is invoked by the incoming message
   if (invokedRole !== undefined) {
     // When a module role is being invoked, we require that there is a matching `role` rule.
-    if (actionRule.role === invokedRole) {
-      // role is successfully invoked
-      return true;
-    } else {
-      return false;
-    }
+    return actionRule.role === invokedRole;
   }
 
-  // else we go through the actor (`who`) validation
-
-  // If `of` is not set, handle it as a special case
-  // NOTE: `of` is always set if `who` is set to `author` (we do this check in `validateRuleSetRecursively()`)
+  // Configuration validation permits a recipient without `of` only for co-update,
+  // co-delete, and co-prune. Those actions concern this record's recipient.
   if (actionRule.who === ModuleActor.Recipient && actionRule.of === undefined) {
-    // If the action rule specifies a recipient without `of` and the incoming message is authenticated:
-
-    // Author must be recipient of the record being accessed
     let recordsWriteMessage: RecordsWriteMessage;
     if (incomingMessage.message.descriptor.method === DwnMethodName.Write) {
       recordsWriteMessage = incomingMessage.message as RecordsWriteMessage;
     } else {
-      // else the incoming message must be a `RecordsDelete` because only `co-update`, `co-delete`, `co-prune` are allowed recipient actions,
-      // (we do this check in `validateRuleSetRecursively()`)
-      // and we have already checked that the incoming message is not a `RecordsWrite` above which covers `co-update` path.
+      // Deletes and prunes use the last write in the record's ancestor chain.
       recordsWriteMessage = recordChain.at(-1)!;
     }
 
-    if (recordsWriteMessage.descriptor.recipient === author) {
-      return true;
-    } else {
-      return false;
-    }
+    return recordsWriteMessage.descriptor.recipient === author;
   }
 
   // validate the actor is allowed by the current action rule
-  const ancestorRuleSuccess: boolean = await checkActor(author, actionRule, recordChain, moduleDefinition);
-  if (ancestorRuleSuccess) {
-    return true;
-  }
-
-  return false;
+  return checkActor(author, actionRule, recordChain, moduleDefinition);
 }
 
 /**

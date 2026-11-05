@@ -92,7 +92,7 @@ function getModuleDefinition(message: GenericMessage): Partial<ModuleDefinition>
   return isModulesConfigureDescriptor(descriptor) ? descriptor.definition : undefined;
 }
 
-function getConfiguredModule(message: GenericMessage): string | undefined {
+function getConfiguredModuleUri(message: GenericMessage): string | undefined {
   const module = getModuleDefinition(message)?.module;
   return typeof module === 'string' ? module : undefined;
 }
@@ -349,15 +349,15 @@ function buildDependencyIndexes<T extends { message: GenericMessage }>(messages:
 }
 
 function indexModuleConfigure<T>(message: GenericMessage, index: number, indexes: DependencyIndexes<T>): void {
-  const moduleUrl = getConfiguredModule(message);
-  if (moduleUrl === undefined) {
+  const moduleUri = getConfiguredModuleUri(message);
+  if (moduleUri === undefined) {
     return;
   }
 
   const moduleDefinition = getModuleDefinition(message);
-  indexes.moduleConfigureIndex.set(moduleUrl, index);
+  indexes.moduleConfigureIndex.set(moduleUri, index);
   if (moduleDefinition !== undefined) {
-    indexes.moduleDefinitionsByModule.set(moduleUrl, moduleDefinition);
+    indexes.moduleDefinitionsByModule.set(moduleUri, moduleDefinition);
   }
 }
 
