@@ -367,6 +367,40 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
   });
 
   describe('ConnectProvider approval guards', () => {
+    it('should reject authentication and delegation approvals used with the wrong request', async () => {
+      const client = await DidJwk.create();
+      const owner = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const responsePrivateKey = await X25519.generateKey();
+      const request: ConnectRequest = {
+        clientDid           : client.uri, appName             : 'Authentication guards', permissionRequests  : [], supportedDidMethods : ['did:jwk'],
+        nonce               : randomToken(), state               : randomToken(), responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
+        reply               : { mode: 'post_message' },
+        authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      };
+      const approval: ConnectApproval = {
+        delegateDid: delegate.uri, delegatePortableDid: await delegate.export(), delegateGrants: [], sessionRevocations: [],
+      };
+      const common = { providerDid: owner.uri, signer: delegate };
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request: { ...request, requestType: 'authenticate' }, approval }))
+        .rejects.toThrow('invalid-request');
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request, approval })).rejects.toThrow('invalid-proof');
+      await expect(ConnectProvider.sealApprovedResponse({ ...common, request  : { ...request, authentication: undefined },
+        approval : { ...approval, authenticationProof: 'unexpected-proof' } })).rejects.toThrow('invalid-proof');
+
+      const authenticationRequest: ConnectRequest = { ...request, requestType: 'authenticate' };
+      const invalidApprovals = [
+        { authenticationProof: '' },
+        ...['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].map(key => ({
+          authenticationProof: 'proof', [key]: undefined,
+        })),
+      ];
+      for (const invalid of invalidApprovals) {
+        await expect(ConnectProvider.sealAuthenticationResponse({ ...common, request: authenticationRequest, approval: invalid }))
+          .rejects.toThrow('invalid-proof');
+      }
+    });
+
     it('should enforce the expected wallet profile at preflight and seal time', async () => {
       const expectedProvider = await DidJwk.create();
       const selectedProvider = await DidJwk.create();

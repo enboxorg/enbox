@@ -11,6 +11,7 @@ import { randomToken } from '../src/client.js';
 import {
   assertConnectAuthenticationParams,
   assertConnectAuthenticationRequest,
+  assertConnectRequestAuthentication,
   CONNECT_AUTHENTICATION_MAX_REQUEST_BYTES,
   CONNECT_OWNER_AUTHENTICATION_TYP,
   connectAuthenticationRequestDigest,
@@ -55,6 +56,118 @@ async function resign(proof: string, owner: BearerDid, change: {
 }
 
 describe('owner authentication proofs', () => {
+  it('should categorize malformed requests and non-string transaction identifiers in the public validator', async () => {
+    const { request } = await fixture();
+    const malformed: unknown[] = [null, undefined, 12, 'request', [],
+      { ...request, clientDid: null }, { ...request, nonce: 1234567890123456789012n },
+      { ...request, state: 1234567890123456789012n }];
+    for (const value of malformed) {
+      expect(() => assertConnectRequestAuthentication(value as ConnectRequest)).toThrow('Connect authentication failed: invalid-request.');
+    }
+  });
+
+  it('should reject malformed DID method containers and entries with categorized errors', async () => {
+    const { owner, request } = await fixture();
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const malformed = [
+      { verificationMethod: {} }, { verificationMethod: [null] }, { verificationMethod: [{}] }, { verificationMethod: new Array(1) },
+      { verificationMethod: [{ id: 12 }] }, { authentication: [null] },
+      { authentication: [{}] }, { authentication: [{ id: 12 }] }, { authentication: new Array(1) },
+    ];
+    for (const change of malformed) {
+      await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+        resolver    : resolverFor({ ...owner.document, ...change } as DidDocument) }))
+        .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
+    }
+    await expect(prepareOwnerAuthenticationProof({ owner, request, methodId: 12 as unknown as string }))
+      .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
+  });
+
+  it('should resolve only the selected authentication key and reject duplicate selected relationships', async () => {
+    const { owner, request } = await fixture();
+    const selected = owner.document.authentication![0] as string;
+    owner.document.authentication = [selected, '#unavailable-unused-key'];
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const options = { proof, request, providerDid: owner.uri, now: NOW, resolver: resolverFor(owner.document) };
+    expect((await verifyOwnerAuthenticationProof(options)).subject).toBe(owner.uri);
+    owner.document.authentication = ['#unavailable-unused-key', selected];
+    expect((await verifyOwnerAuthenticationProof(options)).subject).toBe(owner.uri);
+    await expect(prepareOwnerAuthenticationProof({ owner, request })).rejects.toMatchObject({ code: 'unsupported-key' });
+    await expect(prepareOwnerAuthenticationProof({ owner, request, methodId: selected })).resolves.toBeDefined();
+    owner.document.authentication = [selected, selected];
+    await expect(verifyOwnerAuthenticationProof(options)).rejects.toMatchObject({ code: 'unsupported-key' });
+  });
+
+  it('should categorize unavailable KMS and embedded-only signing keys while verifying embedded authentication keys', async () => {
+    const { owner, request } = await fixture();
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const method = owner.document.verificationMethod![0];
+    owner.document.authentication = [method];
+    owner.document.verificationMethod = [];
+    expect((await verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+      resolver    : resolverFor(owner.document) })).subject).toBe(owner.uri);
+    await expect(prepareOwnerAuthenticationProof({ owner, request }))
+      .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
+    owner.document.verificationMethod = [method];
+    owner.document.authentication = [structuredClone(method)];
+    method.controller = 'did:example:another-controller';
+    await expect(prepareOwnerAuthenticationProof({ owner, request }))
+      .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
+    method.controller = owner.uri;
+    owner.document.authentication = [method];
+    const anotherOwner = await DidJwk.create();
+    method.publicKeyJwk = anotherOwner.document.verificationMethod![0].publicKeyJwk;
+    await expect(prepareOwnerAuthenticationProof({ owner, request }))
+      .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
+  });
+
+  it('should reject live signing-key replacement or ambiguity during asynchronous preparation', async () => {
+    const { owner, request } = await fixture();
+    const replacementUri = await owner.keyManager.generateKey({ algorithm: 'Ed25519' });
+    const replacementKey = await owner.keyManager.getPublicKey({ keyUri: replacementUri });
+    const originalDocument = structuredClone(owner.document);
+    for (const duringSignerAcquisition of [false, true]) {
+      owner.document.verificationMethod = structuredClone(originalDocument.verificationMethod);
+      const replaceKey = (): void => { owner.document.verificationMethod![0].publicKeyJwk = replacementKey; };
+      const getSigner = owner.getSigner.bind(owner);
+      const spy = duringSignerAcquisition ? spyOn(owner, 'getSigner').mockImplementation(async params => {
+        const signer = await getSigner(params);
+        replaceKey();
+        return signer;
+      }) : undefined;
+      try {
+        const pending = prepareOwnerAuthenticationProof({ owner, request });
+        if (!duringSignerAcquisition) { replaceKey(); }
+        await expect(pending).rejects.toMatchObject({ code: 'unsupported-key' });
+      } finally { spy?.mockRestore(); }
+    }
+    owner.document.verificationMethod = structuredClone(originalDocument.verificationMethod);
+    const pending = prepareOwnerAuthenticationProof({ owner, request });
+    owner.document.verificationMethod!.push(structuredClone(owner.document.verificationMethod![0]));
+    await expect(pending).rejects.toMatchObject({ code: 'unsupported-key' });
+  });
+
+  it('should allow signing-key metadata changes that preserve the algorithm and public key material', async () => {
+    const { owner, request } = await fixture();
+    const pending = prepareOwnerAuthenticationProof({ owner, request });
+    owner.document.verificationMethod![0].publicKeyJwk!.kid = 'metadata-only-change';
+    const proof = await (await pending).sign({ now: NOW });
+    expect((await verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+      resolver    : resolverFor(owner.document) })).subject).toBe(owner.uri);
+  });
+
+  it('should reject non-JSON objects before signing and preserve plain null-prototype metadata', async () => {
+    const { owner, request } = await fixture();
+    for (const value of [new Date(), /pattern/u, new Map([['name', 'value']]), new Set(['value']), new Array(2)]) {
+      const changed = { ...request, clientMetadata: { value } } as unknown as ConnectRequest;
+      await expect(connectAuthenticationRequestDigest(changed)).rejects.toMatchObject({ code: 'invalid-request' });
+      await expect(prepareOwnerAuthenticationProof({ owner, request: changed })).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+    const metadata = Object.assign(Object.create(null), { name: 'value' });
+    expect(await connectAuthenticationRequestDigest({ ...request, clientMetadata: metadata }))
+      .toBe(await connectAuthenticationRequestDigest({ ...request, clientMetadata: { name: 'value' } } as ConnectRequest));
+  });
+
   it('should keep verified and consumed bindings on the initial request across asynchronous resolution', async () => {
     const { owner, request } = await fixture();
     const original = structuredClone(request);

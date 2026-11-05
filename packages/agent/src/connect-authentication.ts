@@ -5,7 +5,7 @@ import type { EnboxPlatformAgent } from './types/agent.js';
 import type { ConnectRequest, PreparedOwnerAuthenticationProof } from '@enbox/connect';
 
 import { DidJwk } from '@enbox/dids';
-import { assertExpectedProviderDid, prepareOwnerAuthenticationProof } from '@enbox/connect';
+import { assertConnectAuthenticationParams, assertExpectedProviderDid, prepareOwnerAuthenticationProof } from '@enbox/connect';
 
 /** Parameters shared by owner authentication and combined Connect approval. */
 export type CreateConnectAuthenticationProofParams = {
@@ -46,6 +46,7 @@ export async function prepareConnectAuthenticationProof(
   if (request.authentication === undefined) {
     throw new Error('Connect authentication: the request did not ask for an owner authentication proof.');
   }
+  assertConnectAuthenticationParams(request.authentication);
   assertVerifiedConnectRequesterOrigin(verifiedRequesterOrigin);
   if (new URL(request.authentication.audience).origin !== verifiedRequesterOrigin) {
     throw new Error('Connect authentication: the audience does not match the verified requester origin.');
@@ -79,7 +80,12 @@ export async function executeConnectAuthentication(
 
 /** Validate a caller's transport-authenticated origin before using it as metadata. */
 export function assertVerifiedConnectRequesterOrigin(origin: string): void {
-  const parsed = new URL(origin);
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error('Connect: verified requester origin must be a canonical HTTP(S) origin.');
+  }
   if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.origin !== origin) {
     throw new Error('Connect: verified requester origin must be a canonical HTTP(S) origin.');
   }

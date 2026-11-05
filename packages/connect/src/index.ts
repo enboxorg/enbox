@@ -15,6 +15,7 @@ export {
   sealResponse,
   sealAuthenticationResponse,
 } from './envelope.js';
+export type { OpenConnectResponseOptions } from './envelope.js';
 export * from './owner-authentication.js';
 export * from './jwt.js';
 export * from './provider.js';

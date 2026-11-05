@@ -196,7 +196,7 @@ export function BrowserConnectHandler(
     async requestAccess(params: {
       permissionRequests: ConnectPermissionRequest[];
       delegatePortableDid?: PortableDid;
-      requestType?: ConnectRequestType;
+      requestType?: Exclude<ConnectRequestType, 'authenticate'>;
       expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
       const appIconBase = window.location.origin === 'null' ? window.location.href : window.location.origin;

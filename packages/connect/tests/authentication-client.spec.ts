@@ -192,7 +192,8 @@ describe('ConnectClient owner authentication', () => {
     expect(await client.authenticate(params)).toBeUndefined();
     await expect(client.authenticate({ ...params, permissionRequests: [] } as Parameters<ConnectClient['authenticate']>[0]))
       .rejects.toMatchObject({ code: 'invalid-request' });
-    await expect(client.connect({ ...params, requestType: 'authenticate', permissionRequests: [] })).rejects.toThrow('use authenticate()');
+    await expect(client.connect({ ...params, requestType: 'authenticate', permissionRequests: [] } as Parameters<ConnectClient['connect']>[0]))
+      .rejects.toThrow('use authenticate()');
     expect(observed.requests).toHaveLength(1);
     expect(observed.completions).toBe(0);
   });

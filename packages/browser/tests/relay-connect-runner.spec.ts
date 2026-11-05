@@ -1,4 +1,5 @@
 import type { PortableDid } from '@enbox/dids';
+import type { RelayConnectOptions } from '../src/relay-connect-runner.js';
 import type {
   ConnectPermissionRequest,
   ConnectRequest,
@@ -178,6 +179,23 @@ describe('runRelayConnect', () => {
     expect(observedRequest?.requestType).toBe('refresh');
     expect(result?.delegatePortableDid).toBe(delegatePortableDid);
     expect(transport.confirmCompleteCalls).toBe(1);
+  });
+
+  it('rejects identity-only requests before starting the data-session relay flow', async () => {
+    const transport = createLoopbackTransport('1234', 'approve');
+    const { options, handoffs } = baseOptions(transport);
+    let transportCreated = false;
+    let pinRequested = false;
+    await expect(runRelayConnect({
+      ...options,
+      requestType     : 'authenticate',
+      createTransport : () => { transportCreated = true; return transport; },
+      requestPin      : async (): Promise<string> => { pinRequested = true; return '1234'; },
+    } as RelayConnectOptions)).rejects.toThrow('Connect: runRelayConnect creates data sessions');
+    expect(transportCreated).toBe(false);
+    expect(pinRequested).toBe(false);
+    expect(handoffs).toHaveLength(0);
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('rejects a refresh request without a pre-supplied delegate', async () => {

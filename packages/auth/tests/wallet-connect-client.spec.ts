@@ -9,6 +9,7 @@
  */
 
 import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { WalletConnectClientOptions } from '../src/wallet-connect-client.js';
 import type { ConnectRequest, ConnectResponse } from '@enbox/connect';
 
 import sinon from 'sinon';
@@ -251,7 +252,7 @@ describe('WalletConnect', () => {
       };
       expect(await WalletConnect.initAuthentication(common)).toBeUndefined();
       const before = relay.parRequests.length;
-      await expect(WalletConnect.initClient({ ...common, requestType: 'authenticate', permissionRequests: [] }))
+      await expect(WalletConnect.initClient({ ...common, requestType: 'authenticate', permissionRequests: [] } as WalletConnectClientOptions))
         .rejects.toThrow('initAuthentication');
       expect(relay.parRequests).toHaveLength(before);
     });

@@ -191,6 +191,44 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       expect(Object.keys(result!).sort()).toEqual(['authentication', 'connectedDid']);
     });
 
+    it('returns approved data grants and verified owner authentication from one popup approval', async () => {
+      const owner = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const authentication = { version: 1 as const, audience: `${DAPP_ORIGIN}/`, challenge: randomToken() };
+      const permissionRequests = [stubPermissionRequest()];
+      let registered: Readonly<ConnectRequest> | undefined;
+      const flow = connectViaPopup({
+        walletUrl               : WALLET_URL, appName                 : 'Identity and data', permissionRequests, authentication, expectedProviderDid     : owner.uri,
+        onAuthenticationRequest : async (request): Promise<void> => {
+          expect(dappToWallet.some(message => message.data.type === DWEB_CONNECT_REQUEST_MESSAGE_TYPE)).toBe(false);
+          registered = request;
+        },
+      });
+      flow.catch((): undefined => undefined);
+      await waitFor(() => windowOpenSpy.mock.calls.length > 0);
+      const wallet = await createWalletTransport();
+      const request = await wallet.awaitRequest();
+      expect(request.permissionRequests).toEqual(permissionRequests);
+      expect(request.expectedProviderDid).toBe(owner.uri);
+      expect(JSON.parse(JSON.stringify(registered))).toEqual(request);
+      const delegateGrants = [{ recordId: 'combined-grant' } as unknown as ConnectApproval['delegateGrants'][number]];
+      const sealed = await ConnectProvider.sealApprovedResponse({
+        request, providerDid : owner.uri, signer      : delegate,
+        approval    : {
+          delegateDid         : delegate.uri, delegatePortableDid : await delegate.export(), delegateGrants, sessionRevocations  : [],
+          authenticationProof : await createOwnerAuthenticationProof({ request, owner }),
+        },
+      });
+      wallet.sendResponse(sealed);
+      const result = await flow;
+      expect(result?.connectedDid).toBe(owner.uri);
+      expect(result?.delegatePortableDid.uri).toBe(delegate.uri);
+      expect(result?.delegateGrants).toEqual(delegateGrants);
+      expect(result?.authentication?.subject).toBe(owner.uri);
+      expect(result?.authentication?.challenge).toBe(authentication.challenge);
+      expect(dappToWallet.filter(message => message.data.type === DWEB_CONNECT_ACK_MESSAGE_TYPE)).toHaveLength(1);
+    });
+
     it('closes the popup without delivering a request when service registration fails', async () => {
       const flow = authenticateViaPopup({
         walletUrl               : WALLET_URL,

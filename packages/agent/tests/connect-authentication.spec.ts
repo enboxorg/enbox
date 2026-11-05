@@ -11,7 +11,11 @@ import { randomToken, verifyOwnerAuthenticationProof } from '@enbox/connect';
 import { executeConnectApproval } from '../src/connect-approval.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
-import { createConnectAuthenticationProof, executeConnectAuthentication } from '../src/connect-authentication.js';
+import {
+  assertVerifiedConnectRequesterOrigin,
+  createConnectAuthenticationProof,
+  executeConnectAuthentication,
+} from '../src/connect-authentication.js';
 
 const ORIGIN = 'https://login.example';
 
@@ -83,6 +87,36 @@ describe('Connect owner authentication approval', () => {
         agent: harness.agent, providerDid: owner.did.uri, request, verifiedRequesterOrigin,
       })).rejects.toThrow();
     }
+    expect(signer.called).toBe(false);
+  });
+
+  it('reports invalid transport origins consistently while retaining canonical HTTP origins', () => {
+    for (const origin of ['', 'not-a-url', `${ORIGIN}/`, `${ORIGIN}/path`, 'ftp://login.example', 'https://user@login.example']) {
+      expect(() => assertVerifiedConnectRequesterOrigin(origin))
+        .toThrow('Connect: verified requester origin must be a canonical HTTP(S) origin.');
+    }
+    expect(() => assertVerifiedConnectRequesterOrigin(ORIGIN)).not.toThrow();
+    expect(() => assertVerifiedConnectRequesterOrigin('http://localhost:3000')).not.toThrow();
+  });
+
+  it('rejects invalid authentication parameters before looking up the owner or signing', async () => {
+    const identityGet = sinon.spy(harness.agent.identity, 'get');
+    const signer = sinon.spy(harness.agent.keyManager, 'sign');
+    const authentication = request.authentication!;
+    const mutations = [
+      { audience: 'not-a-url' },
+      { audience: 'http://login.example' },
+      { challenge: 'short' },
+      { version: 2 },
+    ];
+    for (const mutation of mutations) {
+      const malformed = { ...request, authentication: { ...authentication, ...mutation } } as ConnectRequest;
+      await expect(createConnectAuthenticationProof({
+        agent                   : harness.agent, providerDid             : owner.did.uri, request                 : malformed,
+        verifiedRequesterOrigin : mutation.audience === 'http://login.example' ? mutation.audience : ORIGIN,
+      })).rejects.toThrow('Connect authentication failed: invalid-request.');
+    }
+    expect(identityGet.called).toBe(false);
     expect(signer.called).toBe(false);
   });
 

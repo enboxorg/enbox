@@ -59,15 +59,14 @@ export function assertConnectAuthenticationParams(value: unknown): asserts value
 
 /** The proof covers the original full request, before any transport display-metadata overrides. */
 export async function connectAuthenticationRequestDigest(request: ConnectRequest): Promise<string> {
-  assertAuthenticationRequest(request);
+  assertConnectRequestAuthentication(request);
   const encoded = new TextEncoder().encode(canonical(request));
-  if (encoded.byteLength > CONNECT_AUTHENTICATION_MAX_REQUEST_BYTES) { throw new ConnectAuthenticationError('invalid-request'); }
   return Convert.uint8Array(await Sha256.digest({ data: encoded })).toBase64Url();
 }
 
 /** Authentication-only requests never carry a delegated permission or credential request. */
 export function assertConnectAuthenticationRequest(request: ConnectRequest): void {
-  assertAuthenticationRequest(request);
+  assertConnectRequestAuthentication(request);
   if (request.requestType !== 'authenticate') { throw new ConnectAuthenticationError('invalid-request'); }
 }
 
@@ -89,10 +88,15 @@ export async function prepareOwnerAuthenticationProof({ request, owner, methodId
   assertProvider(snapshot, subject);
   const method = authenticationMethod(document, subject, methodId);
   const algorithm = signingAlgorithm(method.publicKeyJwk);
-  const signer = await owner.getSigner({ methodId: method.id });
-  if (signer.algorithm !== algorithm || absoluteMethodId(signer.keyId, subject) !== method.id) {
-    throw new ConnectAuthenticationError('unsupported-key');
-  }
+  let signer: Awaited<ReturnType<BearerDid['getSigner']>>;
+  try {
+    assertLiveSigningMethod(owner.document, subject, method);
+    signer = await owner.getSigner({ methodId: method.id });
+    assertLiveSigningMethod(owner.document, subject, method);
+    if (signer.algorithm !== algorithm || typeof signer.keyId !== 'string' || absoluteMethodId(signer.keyId, subject) !== method.id) {
+      throw new ConnectAuthenticationError('unsupported-key');
+    }
+  } catch { throw new ConnectAuthenticationError('unsupported-key'); }
   const authentication = snapshot.authentication as ConnectAuthenticationParams;
   return Object.freeze({
     async sign(options?: { now?: number }): Promise<string> {
@@ -233,8 +237,13 @@ async function verifyProofSignature(
   if (!valid) { throw new ConnectAuthenticationError('invalid-signature'); }
 }
 
-function assertAuthenticationRequest(request: ConnectRequest): void {
+/** Validate the complete JSON context of combined and authentication-only requests before consent. */
+export function assertConnectRequestAuthentication(request: ConnectRequest): void {
+  if (!object(request)) { throw new ConnectAuthenticationError('invalid-request'); }
   assertConnectAuthenticationParams(request.authentication);
+  if (typeof request.clientDid !== 'string' || typeof request.nonce !== 'string' || typeof request.state !== 'string') {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
   const client = Did.parse(request.clientDid);
   if (client?.uri !== request.clientDid || client?.method !== 'jwk' || client.path || client.query || client.fragment ||
       typeof request.appName !== 'string' || request.appName.length === 0 || request.appName.length > 256 ||
@@ -261,6 +270,9 @@ function assertAuthenticationRequest(request: ConnectRequest): void {
   if (request.requestType === 'refresh' && request.delegateDid === undefined) {
     throw new ConnectAuthenticationError('invalid-request');
   }
+  if (new TextEncoder().encode(canonical(request)).byteLength > CONNECT_AUTHENTICATION_MAX_REQUEST_BYTES) {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
 }
 
 function assertProvider(request: ConnectRequest, providerDid: string): void {
@@ -274,25 +286,51 @@ function assertProvider(request: ConnectRequest, providerDid: string): void {
 }
 
 function authenticationMethod(document: DidDocument, subject: string, selected?: string): DidVerificationMethod {
-  if (document.id !== subject || !Array.isArray(document.authentication) || document.authentication.length === 0 ||
-      document.authentication.length > 64 || (document.verificationMethod?.length ?? 0) > 64) {
+  if (!object(document) || document.id !== subject || !Array.isArray(document.authentication) || document.authentication.length === 0 ||
+      document.authentication.length > 64 ||
+      (document.verificationMethod !== undefined && (!Array.isArray(document.verificationMethod) || document.verificationMethod.length > 64)) ||
+      (selected !== undefined && typeof selected !== 'string')) {
     throw new ConnectAuthenticationError('unsupported-key');
   }
-  const methods = document.authentication.map(reference => {
-    if (typeof reference !== 'string') { return reference; }
-    const id = absoluteMethodId(reference, subject);
-    const matching = document.verificationMethod?.filter(method => absoluteMethodId(method.id, subject) === id) ?? [];
-    if (matching.length !== 1) { throw new ConnectAuthenticationError('unsupported-key'); }
-    return matching[0];
-  });
-  const selectedId = selected === undefined ? absoluteMethodId(methods[0].id, subject) : absoluteMethodId(selected, subject);
-  const matching = methods.filter(method => absoluteMethodId(method.id, subject) === selectedId);
-  if (matching.length !== 1 || !selectedId.startsWith(`${subject}#`) || selectedId.length === subject.length + 1 ||
-      matching[0].controller !== subject) {
+  const methods = document.verificationMethod ?? [];
+  if (Array.from(document.authentication).some(reference => typeof reference !== 'string' && !validMethod(reference)) ||
+      Array.from(methods).some(method => !validMethod(method))) {
     throw new ConnectAuthenticationError('unsupported-key');
   }
-  signingAlgorithm(matching[0].publicKeyJwk);
-  return { ...matching[0], id: selectedId };
+  const first = document.authentication[0];
+  const selectedId = absoluteMethodId(selected ?? (typeof first === 'string' ? first : first.id), subject);
+  const matching = document.authentication.filter(reference =>
+    absoluteMethodId(typeof reference === 'string' ? reference : reference.id, subject) === selectedId);
+  if (matching.length !== 1 || !selectedId.startsWith(`${subject}#`) || selectedId.length === subject.length + 1) {
+    throw new ConnectAuthenticationError('unsupported-key');
+  }
+  const selectedReference = matching[0];
+  const resolved = typeof selectedReference === 'string'
+    ? methods.filter(method => absoluteMethodId(method.id, subject) === selectedId) : [selectedReference];
+  if (resolved.length !== 1 || resolved[0].controller !== subject) { throw new ConnectAuthenticationError('unsupported-key'); }
+  signingAlgorithm(resolved[0].publicKeyJwk);
+  return { ...resolved[0], id: selectedId };
+}
+
+function validMethod(value: unknown): value is DidVerificationMethod {
+  return Boolean(object(value) && typeof (value as DidVerificationMethod).id === 'string');
+}
+
+/** BearerDid signs from verificationMethod, including when authentication embeds the same method. */
+function assertLiveSigningMethod(document: DidDocument, subject: string, approved: DidVerificationMethod): void {
+  const live = authenticationMethod(document, subject, approved.id);
+  const matching = document.verificationMethod?.filter(method => absoluteMethodId(method.id, subject) === approved.id) ?? [];
+  if (matching.length !== 1 || matching[0].controller !== subject || !sameSigningKey(live.publicKeyJwk, approved.publicKeyJwk) ||
+      !sameSigningKey(matching[0].publicKeyJwk, approved.publicKeyJwk)) {
+    throw new ConnectAuthenticationError('unsupported-key');
+  }
+}
+
+function sameSigningKey(left: Jwk | undefined, right: Jwk | undefined): boolean {
+  const leftAlgorithm = signingAlgorithm(left);
+  const rightAlgorithm = signingAlgorithm(right);
+  return leftAlgorithm === rightAlgorithm && left!.kty === right!.kty && left!.crv === right!.crv &&
+    left!.x === right!.x && left!.y === right!.y;
 }
 
 function absoluteMethodId(value: string, subject: string): string {
@@ -322,7 +360,9 @@ function assertNow(now: number): void {
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null ? value as Record<string, unknown> : undefined;
 }
 
 function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
@@ -333,7 +373,7 @@ function canonical(value: unknown, depth = 0): string {
   if (depth > 32) { throw new ConnectAuthenticationError('invalid-request'); }
   if (value === null || typeof value === 'string' || typeof value === 'boolean') { return JSON.stringify(value); }
   if (typeof value === 'number' && Number.isFinite(value)) { return JSON.stringify(value); }
-  if (Array.isArray(value)) { return `[${value.map(item => canonical(item, depth + 1)).join(',')}]`; }
+  if (Array.isArray(value)) { return `[${Array.from(value, item => canonical(item, depth + 1)).join(',')}]`; }
   if (object(value)) {
     const record = value as Record<string, unknown>;
     const entries = Object.keys(record).filter(key => record[key] !== undefined).sort(compareCodeUnits)

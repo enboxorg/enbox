@@ -29,7 +29,7 @@ import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 
-import { assertConnectAuthenticationParams, assertConnectAuthenticationRequest } from './owner-authentication.js';
+import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
 import { signJwt, verifyJwt } from './jwt.js';
 
 /** JWE `typ` header value identifying a sealed connect request. */
@@ -202,7 +202,7 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireString(payload, 'state', ctx);
   requireResponseKey(payload, ctx);
   requireReplyDescriptor(payload, ctx);
-  if (payload.authentication !== undefined) { assertConnectAuthenticationParams(payload.authentication); }
+  if (payload.authentication !== undefined) { assertConnectRequestAuthentication(payload as ConnectRequest); }
   if (payload.requestType === 'authenticate') { assertConnectAuthenticationRequest(payload as ConnectRequest); }
 }
 

@@ -75,7 +75,7 @@ export type WalletConnectClientOptions = {
   delegatePortableDid?: PortableDid;
 
   /** Explicit wallet UI signal. Omitted for an initial connect. */
-  requestType?: ConnectRequestType;
+  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
 
   /** Wallet profile DID that the approval must use. */
   expectedProviderDid?: string;
@@ -184,7 +184,7 @@ async function initClient({
   timeoutMs,
   pollIntervalMs,
 }: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
-  if (requestType === 'authenticate') {
+  if ((requestType as ConnectRequestType | undefined) === 'authenticate') {
     throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
   }
   if (requestType === 'refresh' && delegatePortableDid === undefined) {

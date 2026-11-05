@@ -79,7 +79,7 @@ export interface RelayConnectOptions {
   delegatePortableDid?: PortableDid;
 
   /** User-facing request purpose. Absent means a normal connect. */
-  requestType?: ConnectRequestType;
+  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
 
   /** Wallet profile DID that a refresh must renew. */
   expectedProviderDid?: string;
@@ -163,7 +163,7 @@ export function visibilityAwareSleep(ms: number): Promise<void> {
  * delegated credentials, or `undefined` when the user denied in the wallet.
  */
 export async function runRelayConnect(options: RelayConnectOptions): Promise<ConnectResult | undefined> {
-  if (options.requestType === 'authenticate') {
+  if ((options.requestType as ConnectRequestType | undefined) === 'authenticate') {
     throw new Error('Connect: runRelayConnect creates data sessions; use ConnectClient.authenticate for identity-only requests.');
   }
   if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {

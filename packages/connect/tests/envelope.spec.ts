@@ -1,17 +1,22 @@
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
-import type { ConnectRequest, ConnectResponse } from '../src/types.js';
+import type { ConnectAuthenticationResponse, ConnectRequest, ConnectResponse } from '../src/types.js';
 
+import { ConnectProvider } from '../src/provider.js';
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
+import { randomToken } from '../src/client.js';
 import { signJwt } from '../src/jwt.js';
 import {
+  assertConnectAuthenticationResponse,
   assertConnectRequest,
   assertX25519PublicJwk,
   CONNECT_REQUEST_JWE_TYP,
   CONNECT_RESPONSE_JWE_TYP,
+  openAuthenticationResponse,
   openRequest,
   openResponse,
+  sealAuthenticationResponse,
   sealRequest,
   sealResponse,
 } from '../src/envelope.js';
@@ -86,6 +91,40 @@ describe('connect envelope', () => {
   });
 
   describe('sealRequest / openRequest — relay (dir) profile', () => {
+    it('should validate the full combined authentication context before returning it to the wallet', async () => {
+      const { clientDid, request } = await createTestRequest({
+        authentication: { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      });
+      const requestKey = CryptoUtils.randomBytes(32);
+      const decryption = { mode: 'dir' as const, requestKey };
+      const invalidOverrides: Partial<ConnectRequest>[] = [
+        { appName: '' },
+        { appName: 'a'.repeat(257) },
+        { nonce: 'short' },
+        { state: 'short' },
+        { supportedDidMethods: [] },
+        { supportedDidMethods: ['did:jwk', 'did:jwk'] },
+        { supportedDidMethods: ['jwk'] },
+        { permissionRequests: Array.from({ length: 33 }, () => ({})) as ConnectRequest['permissionRequests'] },
+        { reply: { mode: 'direct_post', callbackUrl: '' } },
+        { reply: { mode: 'direct_post', callbackUrl: 'a'.repeat(2_049) } },
+      ];
+      for (const requestType of [undefined, 'connect', 'refresh'] as const) {
+        const valid = { ...request, requestType, ...(requestType === 'refresh' ? { delegateDid: 'did:example:delegate' } : {}) };
+        const validJwe = await sealRequest({ request: valid, signer: clientDid, encryption: decryption });
+        await expect(ConnectProvider.openRequest({ jwe: validJwe, decryption })).resolves.toEqual(JSON.parse(JSON.stringify(valid)));
+        for (const overrides of invalidOverrides) {
+          const malformed = { ...valid, ...overrides };
+          const jwe = await sealRequest({ request: malformed, signer: clientDid, encryption: decryption });
+          await expect(ConnectProvider.openRequest({ jwe, decryption })).rejects.toThrow('invalid-request');
+        }
+      }
+      for (const suffix of ['/path', '?query=value', '#fragment']) {
+        expect(() => assertConnectRequest({ ...request, clientDid: `${clientDid.uri}${suffix}` })).toThrow('invalid-request');
+      }
+      expect(() => assertConnectRequest({ ...request, requestType: 'authenticate', authentication: undefined })).toThrow('invalid-request');
+    });
+
     it('should round-trip a request through the dir profile', async () => {
       const { clientDid, request } = await createTestRequest();
       const requestKey = CryptoUtils.randomBytes(32);
@@ -313,6 +352,44 @@ describe('connect envelope', () => {
   });
 
   describe('sealResponse / openResponse', () => {
+    it('should keep authentication and delegation response variants separate at the encrypted boundary', async () => {
+      const { request, responsePrivateKey } = await createTestRequest();
+      const signer = await DidJwk.create();
+      const iat = Math.floor(Date.now() / 1_000);
+      const response: ConnectAuthenticationResponse = {
+        responseType        : 'authentication', providerDid         : signer.uri, aud                 : request.clientDid,
+        iat, exp                 : iat + 300, nonce               : request.nonce, state               : request.state, authenticationProof : 'proof',
+      };
+      const expected = { clientDid: request.clientDid, nonce: request.nonce, state: request.state };
+      const jwe = await sealAuthenticationResponse({ response, signer, responseKey: request.responseKey });
+      const options = { jwe, recipientPrivateKey: responsePrivateKey, expected };
+      await expect(openAuthenticationResponse(options)).resolves.toEqual(response);
+      await expect(openResponse(options)).rejects.toThrow('is not a delegation response');
+
+      const invalidOverrides: Record<string, unknown>[] = [
+        { responseType: 'connect' },
+        { delegateDid: 'did:example:delegate' },
+        { delegatePortableDid: {} },
+        { delegateGrants: [] },
+        { sessionRevocations: [] },
+        { iat: iat + 0.5 },
+        { exp: iat + 300.5 },
+      ];
+      for (const overrides of invalidOverrides) {
+        const malformed = { ...response, ...overrides };
+        expect(() => assertConnectAuthenticationResponse(malformed)).toThrow('invalid authentication response');
+        // Bypass the honest sender's validator to exercise untrusted signed input at the receiver.
+        const jwt = await signJwt({ did: signer, data: malformed });
+        const malformedJwe = await CompactJwe.encrypt({
+          plaintext       : Convert.string(jwt).toUint8Array(),
+          protectedHeader : { alg : 'ECDH-ES', cty : 'JWT', enc : 'XC20P', typ : CONNECT_RESPONSE_JWE_TYP,
+            apu : Convert.string(request.state).toBase64Url() },
+          key: { mode: 'ecdh-es', peerPublicKey: request.responseKey },
+        });
+        await expect(openAuthenticationResponse({ ...options, jwe: malformedJwe })).rejects.toThrow('invalid authentication response');
+      }
+    });
+
     it('should round-trip a response without a PIN', async () => {
       const { clientDid, request, responsePrivateKey } = await createTestRequest();
       const walletSigner = await DidJwk.create();

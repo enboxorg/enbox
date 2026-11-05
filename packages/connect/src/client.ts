@@ -114,7 +114,7 @@ export type ConnectClientConnectParams = {
    * User-facing request purpose. Absent means a normal connect; `refresh`
    * tells the wallet to render a re-grant screen for `delegatePortableDid`.
    */
-  requestType?: ConnectRequestType;
+  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
 
   /** Wallet profile DID that a refresh must renew. */
   expectedProviderDid?: string;
@@ -177,7 +177,7 @@ export class ConnectClient {
    */
   public async connect(input: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
     const params = structuredClone(input);
-    if (params.requestType === 'authenticate') {
+    if ((params.requestType as ConnectRequestType | undefined) === 'authenticate') {
       throw new Error('Connect: use authenticate() for an authentication-only request.');
     }
     const exchanged = await this._exchange(params, false);
@@ -210,7 +210,10 @@ export class ConnectClient {
     return { connectedDid: exchanged.response.providerDid, authentication: exchanged.authentication };
   }
 
-  private async _exchange(params: ConnectClientConnectParams, authenticationOnly: boolean): Promise<{
+  private async _exchange(
+    params: Omit<ConnectClientConnectParams, 'requestType'> & { requestType?: ConnectRequestType },
+    authenticationOnly: boolean,
+  ): Promise<{
     response: ConnectResponse | ConnectAuthenticationResponse;
     authentication?: VerifiedConnectAuthentication;
   } | undefined> {
