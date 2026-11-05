@@ -18,10 +18,10 @@ export type ConnectAuthenticationFailure =
   | 'invalid-request' | 'invalid-proof' | 'unsupported-key' | 'invalid-signature'
   | 'context-mismatch' | 'expired-proof' | 'did-resolution' | 'replayed-proof';
 
-/** Safe fixed categories; neither signed payloads nor identity/key values appear in the message. */
+/** Fixed public messages; an optional cause is for local diagnostics and may contain private details. */
 export class ConnectAuthenticationError extends Error {
-  public constructor(public readonly code: ConnectAuthenticationFailure) {
-    super(`Connect authentication failed: ${code}.`);
+  public constructor(public readonly code: ConnectAuthenticationFailure, options?: ErrorOptions) {
+    super(`Connect authentication failed: ${code}.`, options);
     this.name = 'ConnectAuthenticationError';
   }
 }
@@ -31,6 +31,9 @@ export class ConnectAuthenticationError extends Error {
  * OAuth transaction that owns that challenge. Subject/requestDigest are checked
  * binding facts, never extra key partitions. Do not key by proof/signature:
  * another owner or another valid signature must not consume a challenge twice.
+ * Return false for a challenge the service never issued, an expired or consumed
+ * transaction, or a binding that differs from the stored transaction context.
+ * A set that accepts every previously unseen challenge is not sufficient.
  */
 export interface ConnectAuthenticationReplayStore {
   consume(binding: Pick<VerifiedConnectAuthentication,
@@ -88,15 +91,15 @@ export async function prepareOwnerAuthenticationProof({ request, owner, methodId
   assertProvider(snapshot, subject);
   const method = authenticationMethod(document, subject, methodId);
   const algorithm = signingAlgorithm(method.publicKeyJwk);
+  assertLiveSigningMethod(owner.document, subject, method);
   let signer: Awaited<ReturnType<BearerDid['getSigner']>>;
   try {
-    assertLiveSigningMethod(owner.document, subject, method);
     signer = await owner.getSigner({ methodId: method.id });
-    assertLiveSigningMethod(owner.document, subject, method);
-    if (signer.algorithm !== algorithm || typeof signer.keyId !== 'string' || absoluteMethodId(signer.keyId, subject) !== method.id) {
-      throw new ConnectAuthenticationError('unsupported-key');
-    }
-  } catch { throw new ConnectAuthenticationError('unsupported-key'); }
+  } catch (cause) { throw new ConnectAuthenticationError('unsupported-key', { cause }); }
+  assertLiveSigningMethod(owner.document, subject, method);
+  if (signer.algorithm !== algorithm || typeof signer.keyId !== 'string' || absoluteMethodId(signer.keyId, subject) !== method.id) {
+    throw new ConnectAuthenticationError('unsupported-key');
+  }
   const authentication = snapshot.authentication as ConnectAuthenticationParams;
   return Object.freeze({
     async sign(options?: { now?: number }): Promise<string> {
@@ -128,12 +131,16 @@ export async function createOwnerAuthenticationProof(options: {
 /**
  * Verify an owner proof against this exact request, independently of the outer
  * ephemeral Connect signer. Default DID resolution has no persistent cache.
+ * `expected` must come from the service's configured audience and its own
+ * outstanding transaction; `request` must be that transaction's stored request.
+ * Deriving these values from client-supplied input does not establish trust.
  * The service must durably consume the transaction: supply replayStore here,
  * or consume it atomically with account/code issuance after this returns.
  */
-export async function verifyOwnerAuthenticationProof({ proof, request, providerDid, resolver, now, replayStore }: {
+export async function verifyOwnerAuthenticationProof({ proof, request, expected, providerDid, resolver, now, replayStore }: {
   proof: string;
   request: ConnectRequest;
+  expected: Readonly<Pick<ConnectAuthenticationParams, 'audience' | 'challenge'>>;
   providerDid: string;
   resolver?: ConnectAuthenticationResolver;
   now?: number;
@@ -141,7 +148,7 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
 }): Promise<VerifiedConnectAuthentication> {
   // Keep every checked and returned binding on the same caller-independent
   // context, including while an asynchronous resolver or replay store runs.
-  const snapshot = structuredClone(request);
+  const snapshot = snapshotVerificationRequest(request, expected);
   const requestDigest = await connectAuthenticationRequestDigest(snapshot);
   assertProvider(snapshot, providerDid);
   if (typeof proof !== 'string' || proof.length > MAX_PROOF_BYTES) { throw new ConnectAuthenticationError('invalid-proof'); }
@@ -194,6 +201,22 @@ export async function verifyOwnerAuthenticationProof({ proof, request, providerD
   // it does not undo a challenge the store already consumed.
   assertProofTimeWindow(payload, now ?? Math.floor(Date.now() / 1_000));
   return verified;
+}
+
+/** Capture the independent service expectation before cloning potentially caller-owned request data. */
+function snapshotVerificationRequest(
+  request: ConnectRequest,
+  expected: Readonly<Pick<ConnectAuthenticationParams, 'audience' | 'challenge'>>,
+): ConnectRequest {
+  const expectedAuthentication = { version: 1, audience: expected?.audience, challenge: expected?.challenge };
+  assertConnectAuthenticationParams(expectedAuthentication);
+  const snapshot = structuredClone(request);
+  assertConnectAuthenticationParams(snapshot?.authentication);
+  if (snapshot.authentication.audience !== expectedAuthentication.audience ||
+      snapshot.authentication.challenge !== expectedAuthentication.challenge) {
+    throw new ConnectAuthenticationError('context-mismatch');
+  }
+  return snapshot;
 }
 
 function assertProofTimeWindow(

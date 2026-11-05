@@ -769,10 +769,14 @@ async function prepareConnectApprovalAuthentication(
 export async function executeConnectApproval(input: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   // Progress observers and asynchronous collaborators must not change an
   // approved request or its controls while grants are being prepared.
+  // Legacy reactive inputs retain their JSON wire semantics. Authentication
+  // keeps cloneable plain data intact for strict proof-context validation.
+  const approvedRequest = input.request;
   const params = {
     ...input,
-    request                   : structuredClone(input.request),
-    approvedProtocolOverrides : input.approvedProtocolOverrides === undefined ? undefined : [...input.approvedProtocolOverrides],
+    request: approvedRequest.authentication === undefined
+      ? JSON.parse(JSON.stringify(approvedRequest)) as ConnectApprovalRequest : structuredClone(approvedRequest),
+    approvedProtocolOverrides: input.approvedProtocolOverrides === undefined ? undefined : [...input.approvedProtocolOverrides],
   };
   const { agent, providerDid, request } = params;
   // Validate and snapshot before any delegate creation or DWN mutation. Sign

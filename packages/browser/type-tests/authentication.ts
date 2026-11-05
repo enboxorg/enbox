@@ -6,7 +6,7 @@ import type { ConnectClient, ConnectClientConnectParams, OpenConnectResponseOpti
 import { ConnectAuthenticationError as AuthError } from '@enbox/auth';
 import { ConnectAuthenticationError as BrowserAuthError } from '@enbox/auth/browser';
 import { ConnectAuthenticationError as BrowserError } from '@enbox/browser';
-import { openAuthenticationResponse, openResponse } from '@enbox/connect';
+import { openAuthenticationResponse, openResponse, verifyOwnerAuthenticationProof } from '@enbox/connect';
 
 // Every consumer-facing auth entrypoint exposes the same authentication contracts.
 declare const fromAuth: [
@@ -41,6 +41,12 @@ void errors;
 declare const responseOptions: OpenConnectResponseOptions;
 void openResponse(responseOptions);
 void openAuthenticationResponse(responseOptions);
+
+// Proof verification requires a separate trusted transaction binding.
+declare const proofInput: Pick<Parameters<typeof verifyOwnerAuthenticationProof>[0], 'proof' | 'request' | 'providerDid'>;
+// @ts-expect-error the incoming request cannot substitute for the expected service audience and challenge.
+void verifyOwnerAuthenticationProof(proofInput);
+void verifyOwnerAuthenticationProof({ ...proofInput, expected: { audience: 'https://identity.example', challenge: 'abcdefghijklmnopqrstuv' } });
 
 // Delegation APIs reject identity-only mode at compile time; refresh remains supported.
 const connect: ConnectClientConnectParams = { appName: 'App', permissionRequests: [], requestType: 'refresh' };

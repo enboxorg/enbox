@@ -13,7 +13,11 @@ export type CreateConnectAuthenticationProofParams = {
   providerDid: string;
   /** The original request opened by the transport, without metadata rewriting. */
   request: ConnectRequest;
-  /** Origin authenticated by the popup transport or the trusted relay policy. */
+  /**
+   * Origin established independently by the popup transport or service-owned
+   * relay policy. Never derive this from request.authentication.audience.
+   * Owner authentication requires HTTPS, including local development.
+   */
   verifiedRequesterOrigin: string;
 };
 
@@ -78,7 +82,7 @@ export async function executeConnectAuthentication(
   return { authenticationProof, responseSigner };
 }
 
-/** Validate a caller's transport-authenticated origin before using it as metadata. */
+/** Validate transport-origin syntax; HTTP supports delegation, while authentication separately requires HTTPS. */
 export function assertVerifiedConnectRequesterOrigin(origin: string): void {
   let parsed: URL;
   try {

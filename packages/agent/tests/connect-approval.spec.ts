@@ -681,6 +681,28 @@ describe('connect approval ceremony', () => {
       expect('delegateDecryptionKeys' in result).toBe(false);
     });
 
+    it('snapshots reactive legacy approval data before progress observers can change it', async () => {
+      const original = structuredClone(approvalRequest({ clientMetadata: { origin: 'https://approved.example' } }));
+      const request = {
+        ...structuredClone(original),
+        clientMetadata     : new Proxy(original.clientMetadata!, {}),
+        permissionRequests : new Proxy(structuredClone(original.permissionRequests), {}),
+      };
+      const { createGrantsStub, capturedSessions } = await stubApprovalDependencies();
+      const result = await executeConnectApproval({
+        agent       : testHarness.agent, providerDid : providerIdentity.did.uri, transport   : 'relay', request     : new Proxy(request, {}),
+        onProgress  : ({ phase }) => {
+          if (phase === 'delegate') {
+            request.clientMetadata.origin = 'https://changed.example';
+            request.permissionRequests[0].permissionScopes[0].protocol = 'https://changed.example/protocol';
+          }
+        },
+      });
+      expect(createGrantsStub.firstCall.args[3]).toEqual(original.permissionRequests.flatMap(entry => entry.permissionScopes));
+      expect(capturedSessions[0]).toMatchObject({ origin: 'https://approved.example' });
+      expect(result.authenticationProof).toBeUndefined();
+    });
+
     it('binds combined owner authentication to the original request while storing the verified popup origin', async () => {
       const client = await DidJwk.create();
       const responseKey = await X25519.generateKey();
@@ -706,12 +728,14 @@ describe('connect approval ceremony', () => {
         didDocument: providerIdentity.did.document, didDocumentMetadata: {}, didResolutionMetadata: {},
       }) };
       const verified = await verifyOwnerAuthenticationProof({
-        proof: result.authenticationProof!, request, providerDid: providerIdentity.did.uri, resolver,
+        proof       : result.authenticationProof!, request, providerDid : providerIdentity.did.uri, resolver,
+        expected    : { audience: 'https://login.example/', challenge: request.authentication!.challenge },
       });
       expect(verified.subject).toBe(providerIdentity.did.uri);
       await expect(verifyOwnerAuthenticationProof({
         proof       : result.authenticationProof!, providerDid : providerIdentity.did.uri, resolver,
         request     : { ...request, clientMetadata: { origin: 'https://login.example' } },
+        expected    : { audience: 'https://login.example/', challenge: request.authentication!.challenge },
       })).rejects.toThrow('context-mismatch');
     });
 
@@ -742,6 +766,7 @@ describe('connect approval ceremony', () => {
       expect(createGrantsStub.firstCall.args[3]).toEqual(original.permissionRequests.flatMap(entry => entry.permissionScopes));
       expect(capturedSessions[0]).toMatchObject({ origin: 'https://login.example' });
       const verified = await verifyOwnerAuthenticationProof({ proof       : result.authenticationProof!, request     : original,
+        expected    : { audience: 'https://login.example/', challenge: original.authentication!.challenge },
         providerDid : providerIdentity.did.uri, resolver    : { resolve: async (): Promise<DidResolutionResult> => ({
           didDocument: providerIdentity.did.document, didDocumentMetadata: {}, didResolutionMetadata: {},
         }) } });

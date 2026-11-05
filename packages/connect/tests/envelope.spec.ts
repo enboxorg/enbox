@@ -1,6 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
-import type { ConnectAuthenticationResponse, ConnectRequest, ConnectResponse } from '../src/types.js';
+import type { ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from '../src/types.js';
 
 import { ConnectProvider } from '../src/provider.js';
 import { Convert } from '@enbox/common';
@@ -21,6 +21,7 @@ import {
   sealResponse,
 } from '../src/envelope.js';
 import { CompactJwe, CryptoUtils, X25519 } from '@enbox/crypto';
+import { connectAuthenticationRequestDigest, createOwnerAuthenticationProof, verifyOwnerAuthenticationProof } from '../src/owner-authentication.js';
 import { describe, expect, it, spyOn } from 'bun:test';
 
 const WALLET_ORIGIN = 'https://wallet.example';
@@ -77,6 +78,44 @@ function tamperCiphertext(jwe: string): string {
 }
 
 describe('connect envelope', () => {
+  it('should preserve UTF-16 strings and property keys through encrypted JSON and owner proof verification', async () => {
+    const owner = await DidJwk.create();
+    const { clientDid, request } = await createTestRequest({
+      authentication: { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+    });
+    const requestKey = CryptoUtils.randomBytes(32);
+    const walletEpk = await X25519.generateKey();
+    const channels: { encryption: ConnectRequestEncryption; decryption: ConnectRequestDecryption }[] = [
+      { encryption: { mode: 'dir', requestKey }, decryption: { mode: 'dir', requestKey } },
+      {
+        encryption : { mode: 'ecdh-es', walletEpk: { kty: 'OKP', crv: 'X25519', x: walletEpk.x }, walletOrigin: WALLET_ORIGIN },
+        decryption : { mode: 'ecdh-es', recipientPrivateKey: walletEpk, walletOrigin: WALLET_ORIGIN },
+      },
+    ];
+    // JSON escapes lone surrogates before TextEncoder sees them; raw UTF-8
+    // encoding of these strings would replace them and is not the wire format.
+    for (const appName of ['high\ud800', 'low\udfff', 'paired\ud800\udc00']) {
+      const clientMetadata = { language: appName, ['high\ud800']: appName, ['low\udfff']: appName };
+      for (const requestType of ['connect', 'authenticate'] as const) {
+        const original = { ...request, appName, clientMetadata, requestType };
+        const digest = await connectAuthenticationRequestDigest(original);
+        for (const { encryption, decryption } of channels) {
+          const jwe = await sealRequest({ request: original, signer: clientDid, encryption });
+          const opened = await openRequest({ jwe, decryption });
+          expect(opened).toEqual(original);
+          expect(await connectAuthenticationRequestDigest(opened)).toBe(digest);
+          const proof = await createOwnerAuthenticationProof({ request: opened, owner });
+          const verified = await verifyOwnerAuthenticationProof({
+            proof, request     : original, providerDid : owner.uri,
+            expected    : { audience: original.authentication!.audience, challenge: original.authentication!.challenge },
+          });
+          expect(verified.requestDigest).toBe(digest);
+          expect(verified.subject).toBe(owner.uri);
+        }
+      }
+    }
+  });
+
   describe('assertX25519PublicJwk', () => {
     it('should accept a public X25519 JWK', () => {
       expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).not.toThrow();
@@ -352,6 +391,43 @@ describe('connect envelope', () => {
   });
 
   describe('sealResponse / openResponse', () => {
+    it('should reject an expired owner proof after delayed PIN entry even while its envelope is still valid', async () => {
+      const owner = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const { request, responsePrivateKey } = await createTestRequest({
+        authentication: { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      });
+      const issuedAt = Math.floor(Date.now() / 1_000);
+      const clock = spyOn(Date, 'now').mockReturnValue(issuedAt * 1_000);
+      const pin = '1234';
+      try {
+        for (const authenticationOnly of [false, true]) {
+          clock.mockReturnValue(issuedAt * 1_000);
+          const original: ConnectRequest = { ...request,
+            ...(authenticationOnly ? { requestType: 'authenticate' } : { delegateDid: delegate.uri }) };
+          const authenticationProof = await createOwnerAuthenticationProof({ request: original, owner });
+          const common = { request: original, providerDid: owner.uri, signer: delegate, pin };
+          const jwe = authenticationOnly
+            ? await ConnectProvider.sealAuthenticationResponse({ ...common, approval: { authenticationProof } })
+            : await ConnectProvider.sealApprovedResponse({ ...common,
+              approval: { authenticationProof, delegateDid: delegate.uri, delegateGrants: [], sessionRevocations: [] } });
+          clock.mockReturnValue((issuedAt + 301) * 1_000);
+          const opened = await (authenticationOnly ? openAuthenticationResponse : openResponse)({
+            jwe, pin, recipientPrivateKey : responsePrivateKey,
+            expected            : { clientDid: original.clientDid, nonce: original.nonce, state: original.state },
+          });
+          expect(opened.exp).toBe(issuedAt + 600);
+          let consumed = false;
+          await expect(verifyOwnerAuthenticationProof({
+            proof       : opened.authenticationProof!, request     : original, providerDid : owner.uri,
+            expected    : { audience: original.authentication!.audience, challenge: original.authentication!.challenge },
+            replayStore : { consume: async (): Promise<boolean> => { consumed = true; return true; } },
+          })).rejects.toMatchObject({ code: 'expired-proof' });
+          expect(consumed).toBe(false);
+        }
+      } finally { clock.mockRestore(); }
+    });
+
     it('should keep authentication and delegation response variants separate at the encrypted boundary', async () => {
       const { request, responsePrivateKey } = await createTestRequest();
       const signer = await DidJwk.create();

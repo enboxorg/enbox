@@ -75,11 +75,47 @@ original full request and the separately verified requester origin; rewriting
 request metadata would change the proof's transaction binding. The ceremony
 uses the verified origin for stored session metadata. The origin must come
 from the popup transport or a trusted, service-owned relay policy, never from
-`applicationId` or other request display hints.
+`applicationId`, the claimed audience, or other request display hints. Parsing
+`new URL(request.authentication.audience).origin` does not establish trust.
 
-The receiving service must verify the proof and consume its challenge once
-when establishing an account session or issuing an OAuth code. DWN delegation
-and owner authentication remain distinct even when approved together.
+For relay authentication, a wallet policy must independently establish the
+request's provenance: fetch the registered transaction request from the
+authentication service's HTTPS origin, reject redirects, bind that fetched
+request to the observed origin, and require the audience's origin to match.
+An arbitrary upload to a public relay does not meet that requirement. The SDK
+accepts the policy's result; it does not authenticate a relay by accepting an
+origin string. Show the service audience prominently in consent and ask the
+user to approve only a transaction they initiated. Provenance alone does not
+prevent an attacker from forwarding a real service's QR transaction; a branded
+origin type alone would not prevent that either.
+
+Owner authentication requires an HTTPS audience, including during local
+development. Use a local HTTPS origin or an HTTPS development tunnel. The
+shared origin validator also accepts HTTP for ordinary delegation; this does
+not enable owner authentication from `http://localhost`.
+
+The receiving service must call `verifyOwnerAuthenticationProof` with its
+stored full request and a separate `expected: { audience, challenge }`: take
+the audience from service configuration and the challenge from its issued,
+pending transaction. Never take either expected value from an incoming proof
+or client-supplied request. Require atomic consumption of that issued
+transaction when establishing an account session or issuing an OAuth code.
+A replay store must reject unknown, expired, consumed or mismatched bindings;
+remembering previously seen proofs is insufficient. DWN delegation and owner
+authentication remain distinct even when approved together.
+
+An owner proof expires 300 seconds after signing. The response envelope has a
+separate 600-second lifetime after sealing; the earlier deadline governs a
+successful authentication. Relay PIN entry happens before decryption, so a
+slow PIN entry can reveal a still-valid envelope containing an expired proof.
+Login must fail in that case. Start a fresh authentication transaction and
+reconcile any already-approved grants before retrying combined mode; never
+extend the proof's lifetime because the envelope remains valid.
+
+`ConnectAuthenticationError` has a fixed public message and code. A signer
+acquisition failure retains its original error as `cause` for trusted local
+diagnostics. Causes may contain implementation or key-manager details; do not
+serialize them as part of the public authentication error response.
 
 Combined approval is not atomic across DWN writes and the final authentication
 signature. If signing fails after grant delivery, the promise rejects and no

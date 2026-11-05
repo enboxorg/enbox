@@ -76,6 +76,19 @@ failure prevents delivery. The service binds it to its own challenge and OAuth
 transaction, then verifies the response against that stored request; it must
 not trust browser-reported verification results.
 
+Authentication-bearing inputs must be cloneable plain JSON data; unwrap
+reactive proxies before using these new APIs. Ordinary delegation continues
+to accept JSON-serializable reactive inputs and snapshots their wire value.
+
+Server verification additionally requires `expected: { audience, challenge }`
+from service configuration and the issued transaction. A replay store must
+reject challenges the service never issued, not merely duplicates. The proof
+expires 300 seconds after signing even though its encrypted response envelope
+lasts 600 seconds after sealing; delayed relay PIN entry can therefore fail
+authentication after approval. Reconcile existing grants before retrying a
+combined operation. Owner authentication requires HTTPS during local
+development too; an HTTP delegation origin does not enable HTTP sign-in.
+
 These adapters do not discover or negotiate wallet authentication capability.
 An older wallet rejects identity-only requests, but a combined request can
 produce its requested DWN grants before the missing proof causes login to

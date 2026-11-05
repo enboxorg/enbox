@@ -14,6 +14,7 @@ import {
   assertConnectRequestAuthentication,
   CONNECT_AUTHENTICATION_MAX_REQUEST_BYTES,
   CONNECT_OWNER_AUTHENTICATION_TYP,
+  ConnectAuthenticationError,
   connectAuthenticationRequestDigest,
   createOwnerAuthenticationProof,
   prepareOwnerAuthenticationProof,
@@ -56,6 +57,56 @@ async function resign(proof: string, owner: BearerDid, change: {
 }
 
 describe('owner authentication proofs', () => {
+  it('should reject another service audience or transaction challenge before resolving or consuming', async () => {
+    const { owner, request, resolver } = await fixture();
+    const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
+    const issued = request.authentication!;
+    let resolutions = 0;
+    let consumptions = 0;
+    for (const expected of [
+      { audience: 'https://another-service.example', challenge: issued.challenge },
+      { audience: `${issued.audience}/`, challenge: issued.challenge },
+      { audience: `${issued.audience}/other-issuer`, challenge: issued.challenge },
+      { audience: issued.audience, challenge: randomToken() },
+    ]) {
+      await expect(verifyOwnerAuthenticationProof({
+        proof, request, expected, providerDid : owner.uri, now         : NOW,
+        resolver    : { resolve: async did => { resolutions++; return resolver.resolve(did); } },
+        replayStore : { consume: async () => { consumptions++; return true; } },
+      })).rejects.toMatchObject({ code: 'context-mismatch' });
+    }
+    expect(resolutions).toBe(0);
+    expect(consumptions).toBe(0);
+  });
+
+  it('should require valid expected service and transaction bindings at runtime', async () => {
+    const { owner, request } = await fixture();
+    const expectedValues: unknown[] = [undefined, null, 'service', {},
+      { audience: 'http://identity.example', challenge: randomToken() },
+      { audience: 'https://identity.example', challenge: 'short' }];
+    for (const expected of expectedValues) {
+      await expect(verifyOwnerAuthenticationProof({
+        proof: 'unused', request, expected: expected as { audience: string; challenge: string }, providerDid: owner.uri, now: NOW,
+      })).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+  });
+
+  it('should preserve signer acquisition causes without exposing them in the public error message or JSON', async () => {
+    const { owner, request } = await fixture();
+    const cause = new Error('private key-store diagnostic');
+    const spy = spyOn(owner.keyManager, 'getPublicKey').mockRejectedValue(cause);
+    try {
+      const caught = await prepareOwnerAuthenticationProof({ owner, request }).catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(ConnectAuthenticationError);
+      const failure = caught as ConnectAuthenticationError;
+      expect(failure.code).toBe('unsupported-key');
+      expect(failure.cause).toBe(cause);
+      expect(failure.message).toBe('Connect authentication failed: unsupported-key.');
+      expect(Object.keys(failure)).not.toContain('cause');
+      expect(JSON.stringify(failure)).not.toContain(cause.message);
+    } finally { spy.mockRestore(); }
+  });
+
   it('should categorize malformed requests and non-string transaction identifiers in the public validator', async () => {
     const { request } = await fixture();
     const malformed: unknown[] = [null, undefined, 12, 'request', [],
@@ -75,7 +126,7 @@ describe('owner authentication proofs', () => {
       { authentication: [{}] }, { authentication: [{ id: 12 }] }, { authentication: new Array(1) },
     ];
     for (const change of malformed) {
-      await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+      await expect(verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri, now         : NOW,
         resolver    : resolverFor({ ...owner.document, ...change } as DidDocument) }))
         .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
     }
@@ -88,7 +139,7 @@ describe('owner authentication proofs', () => {
     const selected = owner.document.authentication![0] as string;
     owner.document.authentication = [selected, '#unavailable-unused-key'];
     const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
-    const options = { proof, request, providerDid: owner.uri, now: NOW, resolver: resolverFor(owner.document) };
+    const options = { proof, request, expected: request.authentication!, providerDid: owner.uri, now: NOW, resolver: resolverFor(owner.document) };
     expect((await verifyOwnerAuthenticationProof(options)).subject).toBe(owner.uri);
     owner.document.authentication = ['#unavailable-unused-key', selected];
     expect((await verifyOwnerAuthenticationProof(options)).subject).toBe(owner.uri);
@@ -104,7 +155,7 @@ describe('owner authentication proofs', () => {
     const method = owner.document.verificationMethod![0];
     owner.document.authentication = [method];
     owner.document.verificationMethod = [];
-    expect((await verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+    expect((await verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri, now         : NOW,
       resolver    : resolverFor(owner.document) })).subject).toBe(owner.uri);
     await expect(prepareOwnerAuthenticationProof({ owner, request }))
       .rejects.toMatchObject({ name: 'ConnectAuthenticationError', code: 'unsupported-key' });
@@ -152,7 +203,7 @@ describe('owner authentication proofs', () => {
     const pending = prepareOwnerAuthenticationProof({ owner, request });
     owner.document.verificationMethod![0].publicKeyJwk!.kid = 'metadata-only-change';
     const proof = await (await pending).sign({ now: NOW });
-    expect((await verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, now         : NOW,
+    expect((await verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri, now         : NOW,
       resolver    : resolverFor(owner.document) })).subject).toBe(owner.uri);
   });
 
@@ -171,19 +222,24 @@ describe('owner authentication proofs', () => {
   it('should keep verified and consumed bindings on the initial request across asynchronous resolution', async () => {
     const { owner, request } = await fixture();
     const original = structuredClone(request);
+    const expected = { audience: original.authentication!.audience, challenge: original.authentication!.challenge };
     const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
     let consumed: Parameters<ConnectAuthenticationReplayStore['consume']>[0] | undefined;
-    const pending = verifyOwnerAuthenticationProof({
+    const pending = verifyOwnerAuthenticationProof({ expected,
       proof, request, providerDid : owner.uri, now         : NOW,
       resolver    : { resolve: async () => {
         request.authentication!.audience = 'https://unverified.example';
         request.authentication!.challenge = randomToken();
+        expected.audience = 'https://changed-during-resolution.example';
+        expected.challenge = randomToken();
         return { didDocument: owner.document, didDocumentMetadata: {}, didResolutionMetadata: {} };
       } },
       replayStore: { consume: async binding => { consumed = binding; return true; } },
     });
     request.nonce = randomToken();
     request.expectedProviderDid = 'did:example:changed';
+    expected.audience = 'https://changed-before-resolution.example';
+    expected.challenge = randomToken();
     const verified = await pending;
     expect(verified.audience).toBe(original.authentication!.audience);
     expect(verified.challenge).toBe(original.authentication!.challenge);
@@ -198,7 +254,7 @@ describe('owner authentication proofs', () => {
     const clock = spyOn(Date, 'now').mockReturnValue(NOW * 1000);
     let consumptions = 0;
     try {
-      await expect(verifyOwnerAuthenticationProof({
+      await expect(verifyOwnerAuthenticationProof({ expected    : request.authentication!,
         proof, request, providerDid : owner.uri,
         resolver    : { resolve: async () => {
           clock.mockReturnValue((NOW + 300) * 1000);
@@ -216,7 +272,7 @@ describe('owner authentication proofs', () => {
     const clock = spyOn(Date, 'now').mockReturnValue(NOW * 1000);
     let consumptions = 0;
     try {
-      await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri, resolver,
+      await expect(verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri, resolver,
         replayStore : { consume: async () => {
           consumptions++;
           clock.mockReturnValue((NOW + 300) * 1000);
@@ -260,9 +316,13 @@ describe('owner authentication proofs', () => {
     request.reply = { mode: 'direct_post', callbackUrl: 'https://changed.example/callback' };
     const issuedAt = NOW + 600;
     const proof = await prepared.sign({ now: issuedAt });
-    expect(await verifyOwnerAuthenticationProof({ proof, request: original, providerDid: owner.uri, resolver, now: issuedAt }))
+    expect(await verifyOwnerAuthenticationProof({
+      expected: original.authentication!, proof, request: original, providerDid: owner.uri, resolver, now: issuedAt,
+    }))
       .toMatchObject({ issuedAt, expiresAt: issuedAt + 300, audience: 'https://identity.example' });
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid: owner.uri, resolver, now: issuedAt }))
+    await expect(verifyOwnerAuthenticationProof({
+      expected: request.authentication!, proof, request, providerDid: owner.uri, resolver, now: issuedAt,
+    }))
       .rejects.toMatchObject({ code: 'context-mismatch' });
   });
 
@@ -270,7 +330,9 @@ describe('owner authentication proofs', () => {
     const { owner, request, resolver } = await fixture();
     owner.export = async (): Promise<never> => { throw new Error('Owner key export is forbidden.'); };
     const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
-    const verified = await verifyOwnerAuthenticationProof({ proof, request, providerDid: owner.uri, resolver, now: NOW });
+    const verified = await verifyOwnerAuthenticationProof({
+      expected: request.authentication!, proof, request, providerDid: owner.uri, resolver, now: NOW,
+    });
     expect(verified).toMatchObject({ proof, subject   : owner.uri, audience  : 'https://identity.example',
       challenge : request.authentication?.challenge, issuedAt  : NOW, expiresAt : NOW + 300 });
     expect(verified.requestDigest).toBe(await connectAuthenticationRequestDigest(request));
@@ -292,7 +354,7 @@ describe('owner authentication proofs', () => {
       owner.document.authentication = [`${owner.uri}#login`];
       owner.document.assertionMethod = [`${owner.uri}#claims`];
       const proof = await createOwnerAuthenticationProof({ request, owner, now: NOW });
-      const verified = await verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri,
+      const verified = await verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri,
         resolver    : resolverFor(owner.document), now         : NOW });
       expect(verified.methodId).toBe(`${owner.uri}#login`);
       await expect(createOwnerAuthenticationProof({ request, owner, methodId: `${owner.uri}#claims`, now: NOW }))
@@ -317,7 +379,9 @@ describe('owner authentication proofs', () => {
       { ...request, responseKey: { ...request.responseKey, x: (await X25519.generateKey()).x } },
     ];
     for (const changed of variants) {
-      await expect(verifyOwnerAuthenticationProof({ proof, request: changed, providerDid: owner.uri, resolver, now: NOW }))
+      await expect(verifyOwnerAuthenticationProof({
+        expected: request.authentication!, proof, request: changed, providerDid: owner.uri, resolver, now: NOW,
+      }))
         .rejects.toThrow();
     }
   });
@@ -327,14 +391,16 @@ describe('owner authentication proofs', () => {
     const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
     const attacker = await DidDht.create({ options: { publish: false } });
     const forged = await resign(proof, attacker, {});
-    await expect(verifyOwnerAuthenticationProof({ proof: forged, request, providerDid: owner.uri, resolver, now: NOW }))
+    await expect(verifyOwnerAuthenticationProof({
+      expected: request.authentication!, proof: forged, request, providerDid: owner.uri, resolver, now: NOW,
+    }))
       .rejects.toMatchObject({ code: 'invalid-signature' });
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid: attacker.uri, resolver, now: NOW }))
+    await expect(verifyOwnerAuthenticationProof({ expected: request.authentication!, proof, request, providerDid: attacker.uri, resolver, now: NOW }))
       .rejects.toMatchObject({ code: 'context-mismatch' });
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri,
+    await expect(verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri,
       resolver    : resolverFor({ ...owner.document, authentication: [] }), now         : NOW }))
       .rejects.toMatchObject({ code: 'unsupported-key' });
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid : owner.uri,
+    await expect(verifyOwnerAuthenticationProof({ expected    : request.authentication!, proof, request, providerDid : owner.uri,
       resolver    : { resolve: async (): Promise<never> => { throw new Error('Unavailable'); } }, now         : NOW }))
       .rejects.toMatchObject({ code: 'did-resolution' });
   });
@@ -351,39 +417,71 @@ describe('owner authentication proofs', () => {
     ];
     for (const change of changes) {
       const altered = await resign(proof, owner, change);
-      await expect(verifyOwnerAuthenticationProof({ proof: altered, request, providerDid: owner.uri, resolver, now: NOW })).rejects.toThrow();
+      await expect(verifyOwnerAuthenticationProof({
+        expected: request.authentication!, proof: altered, request, providerDid: owner.uri, resolver, now: NOW,
+      })).rejects.toThrow();
     }
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid: owner.uri, resolver, now: NOW + 300 }))
+    await expect(verifyOwnerAuthenticationProof({
+      expected: request.authentication!, proof, request, providerDid: owner.uri, resolver, now: NOW + 300,
+    }))
       .rejects.toMatchObject({ code: 'expired-proof' });
   });
 
-  it('should consume a service-owned challenge only after valid proof verification and reject replay', async () => {
+  it('should consume only a pre-issued live transaction with its registered binding and reject replay', async () => {
     const { owner, request, resolver } = await fixture();
     const proof = await createOwnerAuthenticationProof({ owner, request, now: NOW });
-    const consumed = new Set<string>();
+    const key = `${request.authentication!.audience}:${request.authentication!.challenge}`;
+    const transaction = {
+      subject: owner.uri, requestDigest: await connectAuthenticationRequestDigest(request), expiresAt: NOW + 300, consumed: false,
+    };
+    const issued = new Map([[key, transaction]]);
     let calls = 0;
+    let consumptions = 0;
     const replayStore: ConnectAuthenticationReplayStore = {
       consume: async binding => {
         calls++;
         expect(Object.keys(binding).sort()).toEqual(['audience', 'challenge', 'expiresAt', 'requestDigest', 'subject']);
-        const key = `${binding.audience}:${binding.challenge}`;
-        if (consumed.has(key)) { return false; }
-        consumed.add(key); return true;
+        const registered = issued.get(`${binding.audience}:${binding.challenge}`);
+        if (registered === undefined || registered.consumed || registered.expiresAt <= NOW ||
+            registered.subject !== binding.subject || registered.requestDigest !== binding.requestDigest) { return false; }
+        registered.consumed = true;
+        consumptions++;
+        return true;
       },
     };
-    await verifyOwnerAuthenticationProof({ proof, request, providerDid: owner.uri, resolver, replayStore, now: NOW });
-    await expect(verifyOwnerAuthenticationProof({ proof, request, providerDid: owner.uri, resolver, replayStore, now: NOW }))
-      .rejects.toMatchObject({ code: 'replayed-proof' });
-    await expect(verifyOwnerAuthenticationProof({ proof: 'forged', request, providerDid: owner.uri, resolver, replayStore, now: NOW }))
-      .rejects.toThrow();
-    expect(calls).toBe(2);
-    expect(consumed.size).toBe(1);
+    const unissued = { ...request, authentication: { ...request.authentication!, challenge: randomToken() } };
+    const wrongContext = { ...request, appName: 'Different transaction context' };
+    for (const candidate of [unissued, wrongContext]) {
+      await expect(verifyOwnerAuthenticationProof({
+        proof       : await createOwnerAuthenticationProof({ owner, request: candidate, now: NOW }), request     : candidate,
+        expected    : candidate.authentication!, providerDid : owner.uri, resolver, replayStore, now         : NOW,
+      })).rejects.toMatchObject({ code: 'replayed-proof' });
+    }
     const secondOwner = await DidDht.create({ options: { publish: false } });
-    const anotherProof = await createOwnerAuthenticationProof({ owner: secondOwner, request, now: NOW });
-    await expect(verifyOwnerAuthenticationProof({ proof       : anotherProof, request, providerDid : secondOwner.uri,
-      resolver    : resolverFor(secondOwner.document), replayStore, now         : NOW }))
+    await expect(verifyOwnerAuthenticationProof({
+      proof       : await createOwnerAuthenticationProof({ owner: secondOwner, request, now: NOW }), request,
+      expected    : request.authentication!, providerDid : secondOwner.uri,
+      resolver    : resolverFor(secondOwner.document), replayStore, now         : NOW,
+    })).rejects.toMatchObject({ code: 'replayed-proof' });
+    transaction.expiresAt = NOW;
+    await expect(verifyOwnerAuthenticationProof({
+      proof, request, expected: request.authentication!, providerDid: owner.uri, resolver, replayStore, now: NOW,
+    })).rejects.toMatchObject({ code: 'replayed-proof' });
+    expect(transaction.consumed).toBe(false);
+    transaction.expiresAt = NOW + 300;
+    await verifyOwnerAuthenticationProof({
+      proof, request, expected: request.authentication!, providerDid: owner.uri, resolver, replayStore, now: NOW,
+    });
+    await expect(verifyOwnerAuthenticationProof({
+      proof, request, expected: request.authentication!, providerDid: owner.uri, resolver, replayStore, now: NOW,
+    }))
       .rejects.toMatchObject({ code: 'replayed-proof' });
-    expect(consumed.size).toBe(1);
+    await expect(verifyOwnerAuthenticationProof({
+      proof: 'forged', request, expected: request.authentication!, providerDid: owner.uri, resolver, replayStore, now: NOW,
+    })).rejects.toMatchObject({ code: 'invalid-proof' });
+    expect(calls).toBe(6);
+    expect(consumptions).toBe(1);
+    expect(issued.size).toBe(1);
   });
 
   it('should reject authentication-only delegation, unsupported versions and oversized requests before signing', async () => {

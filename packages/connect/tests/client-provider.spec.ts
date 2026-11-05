@@ -114,6 +114,47 @@ async function approveWithMintedDelegate({ jwe, requestKey, providerDid, pin }: 
 }
 
 describe('ConnectClient + ConnectProvider (loopback)', () => {
+  it('should snapshot reactive legacy connect and refresh inputs without retaining mutable caller state', async () => {
+    const owner = await DidJwk.create();
+    const delegate = await DidJwk.create();
+    const portable = await delegate.export();
+    const pin = '163902';
+    for (const requestType of ['connect', 'refresh'] as const) {
+      const metadata = { origin: 'https://approved.example' };
+      const permissionRequests: ConnectRequest['permissionRequests'] = [{
+        protocolDefinition : { protocol: 'https://approved.example/protocol', published: false, types: {}, structure: {} },
+        permissionScopes   : [{ interface: 'Records', method: 'Read', protocol: 'https://approved.example/protocol' }],
+      }];
+      const approvedPermissions = structuredClone(permissionRequests);
+      const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+        const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+        expect(request.clientMetadata).toEqual({ origin: 'https://approved.example' });
+        expect(request.permissionRequests).toEqual(approvedPermissions);
+        expect(request.requestType).toBe(requestType);
+        return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer      : delegate, pin,
+          approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [],
+            ...(requestType === 'refresh' ? {} : { delegatePortableDid: portable }) },
+        });
+      });
+      const requestProfile = transport.requestProfile.bind(transport);
+      transport.requestProfile = async (state): Promise<ConnectRequestProfile> => {
+        const profile = await requestProfile(state);
+        return { ...profile, reply: new Proxy(profile.reply, {}) };
+      };
+      const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+      const options = {
+        appName            : 'Reactive application', requestType, clientMetadata     : new Proxy(metadata, {}),
+        permissionRequests : new Proxy(permissionRequests, {}),
+        ...(requestType === 'refresh' ? { delegatePortableDid: portable } : {}),
+      };
+      const pending = client.connect(new Proxy(options, {}));
+      metadata.origin = 'https://changed.example';
+      permissionRequests[0].permissionScopes[0].protocol = 'https://changed.example/protocol';
+      expect((await pending)?.connectedDid).toBe(owner.uri);
+      expect(transport.confirmCompleteCalls).toBe(1);
+    }
+  });
+
   it('should complete a relay-profile handshake with a PIN', async () => {
     const provider = await DidJwk.create();
     const pin = '482913';

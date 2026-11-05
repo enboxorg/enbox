@@ -71,6 +71,14 @@ Supply `onAuthenticationRequest` to register that exact generated request with
 the service before wallet delivery; the callback must resolve successfully
 before approval can proceed. A registration failure closes the popup.
 
+Service-side verification requires an independent `expected: { audience,
+challenge }` from configuration and its issued transaction, together with the
+stored full request. Unknown or already-used challenges must be rejected.
+Owner authentication requires an HTTPS origin, including local development.
+Proofs expire 300 seconds after signing; the response envelope's separate
+600-second lifetime does not extend that deadline. An expired proof fails
+login even if the wallet already approved grants in combined mode.
+
 `connectViaPopup()` also accepts `authentication` to combine sign-in with its
 explicit DWN permission request. The existing application/connection-store
 APIs continue to manage data sessions. The Connect proof is an Enbox wallet

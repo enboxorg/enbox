@@ -192,9 +192,28 @@ describe('ConnectClient owner authentication', () => {
     expect(await client.authenticate(params)).toBeUndefined();
     await expect(client.authenticate({ ...params, permissionRequests: [] } as Parameters<ConnectClient['authenticate']>[0]))
       .rejects.toMatchObject({ code: 'invalid-request' });
+    await expect(client.authenticate({ ...params, permissionRequests: undefined } as Parameters<ConnectClient['authenticate']>[0]))
+      .rejects.toMatchObject({ code: 'invalid-request' });
     await expect(client.connect({ ...params, requestType: 'authenticate', permissionRequests: [] } as Parameters<ConnectClient['connect']>[0]))
       .rejects.toThrow('use authenticate()');
     expect(observed.requests).toHaveLength(1);
     expect(observed.completions).toBe(0);
+  });
+
+  it('should reject non-JSON authentication metadata before request registration or delivery', async () => {
+    let registrations = 0;
+    const { client, observed } = await loopback('relay', async (): Promise<never> => { throw new Error('Must not reach wallet'); },
+      (): void => { registrations++; });
+    for (const userAgent of [new Date(), new Map(), new Set(), new Array(2)]) {
+      const params = {
+        appName        : 'Strict identity service',
+        authentication : { version: 1 as const, audience: 'https://identity.example', challenge: randomToken() },
+        clientMetadata : { userAgent: userAgent as unknown as string },
+      };
+      await expect(client.authenticate(params)).rejects.toMatchObject({ code: 'invalid-request' });
+      await expect(client.connect({ ...params, permissionRequests: [] })).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+    expect(registrations).toBe(0);
+    expect(observed.requests).toHaveLength(0);
   });
 });

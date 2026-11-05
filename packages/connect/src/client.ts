@@ -35,7 +35,7 @@ import { CryptoUtils, X25519 } from '@enbox/crypto';
 
 import { CONNECT_DENIED_TOKEN } from './types.js';
 import { assertConnectRequest, openAuthenticationResponse, openResponse, sealRequest } from './envelope.js';
-import { ConnectAuthenticationError, connectAuthenticationRequestDigest, verifyOwnerAuthenticationProof } from './owner-authentication.js';
+import { ConnectAuthenticationError, verifyOwnerAuthenticationProof } from './owner-authentication.js';
 
 /** DID methods a connect client accepts for the connected identity by default. */
 const DEFAULT_SUPPORTED_DID_METHODS = ['did:dht', 'did:jwk'];
@@ -176,7 +176,7 @@ export class ConnectClient {
    *          the request in the wallet.
    */
   public async connect(input: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
-    const params = structuredClone(input);
+    const params = snapshotClientData(input);
     if ((params.requestType as ConnectRequestType | undefined) === 'authenticate') {
       throw new Error('Connect: use authenticate() for an authentication-only request.');
     }
@@ -237,7 +237,7 @@ export class ConnectClient {
 
     const profile = await this._transport.requestProfile(state);
 
-    const request: ConnectRequest = structuredClone({
+    const request: ConnectRequest = snapshotClientData({
       clientDid                  : clientDid.uri,
       appName                    : params.appName,
       appIcon                    : params.appIcon,
@@ -258,7 +258,6 @@ export class ConnectClient {
 
     assertConnectRequest(request);
     if (request.authentication !== undefined) {
-      await connectAuthenticationRequestDigest(request);
       await this._onAuthenticationRequest?.(structuredClone(request));
     }
 
@@ -303,10 +302,20 @@ export class ConnectClient {
     }
     if (response.authenticationProof === undefined) { throw new ConnectAuthenticationError('invalid-proof'); }
     const authentication = await verifyOwnerAuthenticationProof({
-      proof: response.authenticationProof, request, providerDid: response.providerDid, resolver: this._authenticationResolver,
+      proof       : response.authenticationProof, request, providerDid : response.providerDid, resolver    : this._authenticationResolver,
+      expected    : { audience: request.authentication.audience, challenge: request.authentication.challenge },
     });
     return { response, authentication };
   }
+}
+
+/**
+ * Legacy callers may supply reactive proxies: capture their JSON wire value
+ * synchronously while retaining isolation across awaits. Authentication uses
+ * cloneable plain data, preserving invalid values for its strict validator.
+ */
+function snapshotClientData<T extends { authentication?: ConnectAuthenticationParams }>(input: T): T {
+  return input.authentication === undefined ? JSON.parse(JSON.stringify(input)) as T : structuredClone(input);
 }
 
 /**

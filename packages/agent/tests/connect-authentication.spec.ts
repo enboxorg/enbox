@@ -18,6 +18,7 @@ import {
 } from '../src/connect-authentication.js';
 
 const ORIGIN = 'https://login.example';
+const AUDIENCE = `${ORIGIN}/`;
 
 describe('Connect owner authentication approval', () => {
   let harness: PlatformAgentTestHarness;
@@ -42,7 +43,7 @@ describe('Connect owner authentication approval', () => {
       nonce               : randomToken(), state               : randomToken(),
       responseKey         : { kty: 'OKP', crv: 'X25519', x: responseKey.x },
       reply               : { mode: 'post_message' },
-      authentication      : { version: 1, audience: `${ORIGIN}/`, challenge: randomToken() },
+      authentication      : { version: 1, audience: AUDIENCE, challenge: randomToken() },
     };
   });
 
@@ -59,7 +60,8 @@ describe('Connect owner authentication approval', () => {
     const result = await executeConnectAuthentication({
       agent: harness.agent, providerDid: owner.did.uri, request, verifiedRequesterOrigin: ORIGIN,
     });
-    const verified = await verifyOwnerAuthenticationProof({ proof: result.authenticationProof, request, providerDid: owner.did.uri });
+    const verified = await verifyOwnerAuthenticationProof({ proof       : result.authenticationProof, request,
+      expected    : { audience: AUDIENCE, challenge: request.authentication!.challenge }, providerDid : owner.did.uri });
     expect(verified.subject).toBe(owner.did.uri);
     expect(verified.audience).toBe(`${ORIGIN}/`);
     expect(result.responseSigner.uri).not.toBe(owner.did.uri);
@@ -131,7 +133,8 @@ describe('Connect owner authentication approval', () => {
     const result = await executeConnectAuthentication({
       agent: harness.agent, providerDid: owner.did.uri, request, verifiedRequesterOrigin: ORIGIN,
     });
-    const verified = await verifyOwnerAuthenticationProof({ proof: result.authenticationProof, request: approved, providerDid: owner.did.uri });
+    const verified = await verifyOwnerAuthenticationProof({ proof       : result.authenticationProof, request     : approved,
+      expected    : { audience: AUDIENCE, challenge: approved.authentication!.challenge }, providerDid : owner.did.uri });
     expect(verified.audience).toBe(approved.authentication!.audience);
     expect(verified.challenge).toBe(approved.authentication!.challenge);
   });
