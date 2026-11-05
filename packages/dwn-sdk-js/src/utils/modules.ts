@@ -1,5 +1,4 @@
 import type { EncryptionKeyDeriver } from '../types/encryption-types.js';
-import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
 
 import { canonicalJsonStringify } from '@enbox/common';
@@ -17,17 +16,8 @@ export type CrossModuleRef = {
   modulePath: string;
 };
 
-/**
- * Canonical lookup identity of a module role assignment. Distinct role
- * records that regrant the same role in the same scope intentionally share it.
- */
-export type RoleRecordIdentity = {
-  contextIdPrefix: string | undefined;
-  key: string;
-  module: string;
-  modulePath: string;
-  recipient: string;
-};
+export type { RoleRecordIdentity } from '../core/module-role-records.js';
+export { getRoleAudienceContextId, getRoleContextPrefix, getRoleRecordIdentity, getRecordsWriteRoleIdentity } from '../core/module-role-records.js';
 
 /**
  * Parses a string that may be a cross-module reference in `alias:path` format.
@@ -63,79 +53,6 @@ export function isCrossModuleRef(ref: string): boolean {
  */
 export function getTypeName(modulePath: string): string {
   return modulePath.split('/').at(-1)!;
-}
-
-/**
- * Computes the role-audience context id for a role path relative to a source record context id.
- * Root-level role audiences use the empty string; nested role audiences use the ancestor
- * context prefix at the same depth as the role parent.
- */
-export function getRoleAudienceContextId(rolePath: string, contextId?: string): string | undefined {
-  const roleParentDepth = rolePath.split('/').length - 1;
-  if (roleParentDepth === 0) {
-    return '';
-  }
-
-  if (contextId === undefined) {
-    return undefined;
-  }
-
-  const contextSegments = contextId.split('/');
-  if (contextSegments.length < roleParentDepth) {
-    return undefined;
-  }
-
-  return contextSegments.slice(0, roleParentDepth).join('/');
-}
-
-/**
- * Computes the context prefix used when querying for role records. Root-level
- * role records are queried without a context prefix.
- */
-export function getRoleContextPrefix(rolePath: string, contextId?: string): string | undefined {
-  const roleAudienceContextId = getRoleAudienceContextId(rolePath, contextId);
-  return roleAudienceContextId === '' ? undefined : roleAudienceContextId;
-}
-
-/**
- * Returns the canonical lookup identity of a module role assignment. The
- * supplied context may be either the role record context or a descendant
- * context; root-level roles intentionally have no context dimension, and
- * same-scope regrants intentionally resolve to the same identity.
- */
-export function getRoleRecordIdentity(input: {
-  contextId?: string;
-  module: string;
-  modulePath: string;
-  recipient: string;
-}): RoleRecordIdentity {
-  const { module, modulePath, recipient } = input;
-  const contextIdPrefix = getRoleContextPrefix(modulePath, input.contextId);
-  return {
-    contextIdPrefix,
-    key: JSON.stringify([module, modulePath, recipient, contextIdPrefix]),
-    module,
-    modulePath,
-    recipient,
-  };
-}
-
-/**
- * Returns the canonical role identity described by a RecordsWrite, or
- * `undefined` when the required descriptor fields are absent.
- */
-export function getRecordsWriteRoleIdentity(message: RecordsWriteMessage): RoleRecordIdentity | undefined {
-  const { module, modulePath, recipient } = message.descriptor;
-  if (module === undefined || modulePath === undefined || recipient === undefined) {
-    return undefined;
-  }
-
-  return getRoleRecordIdentity({
-    contextId: message.contextId,
-    module,
-    modulePath,
-    recipient,
-  });
 }
 
 /**
@@ -233,6 +150,9 @@ export function resolveModuleContextRoles(definition: ModuleDefinition, contextP
   if (context === undefined || context.$role === true) {
     throw new TypeError(`Context path '${contextPath}' must identify a non-role record.`);
   }
+  if (context.$ref !== undefined) {
+    return [];
+  }
 
   const roles: string[] = [];
   for (const action of context.$actions ?? []) {
@@ -266,7 +186,7 @@ export function resolveModuleRoleContextScope(
   const allowedPaths: string[] = [];
   const readablePaths: string[] = [];
   walkModuleRuleSets(definition.structure as ModuleRuleSet, (path, child): void => {
-    const contentPath = child.$role !== true &&
+    const contentPath = child.$role !== true && child.$ref === undefined &&
       (path === modulePath || path.startsWith(`${modulePath}/`));
     if (contentPath) {
       const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);

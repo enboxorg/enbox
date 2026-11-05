@@ -2,8 +2,22 @@ import type { ModuleDefinition } from '../../src/index.js';
 
 import { describe, expect, it } from 'bun:test';
 
+import { resolveModuleGraph } from '../../src/core/module-graph.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionModule, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
+
+function roleDefinition(module: string): ModuleDefinition {
+  return {
+    module,
+    published : false,
+    types     : { member: {}, admin: {}, thread: {}, chat: {}, message: {} },
+    structure : {
+      member : { $role: true },
+      thread : { member: { $role: true }, admin: { $role: true }, message: {}, chat: { $actions: [{ role: 'thread/member', can: ['read'] }, { role: 'thread/admin', can: ['read'] }] } },
+      chat   : { message: {} },
+    },
+  };
+}
 
 describe('replicationApplyResultFromReply', () => {
   it('classifies successful and idempotent replies', async () => {
@@ -86,7 +100,7 @@ describe('replicationApplyResultFromReply', () => {
     }, { parentRecordPruned: true })).toEqual({ kind: 'Superseded' });
   });
 
-  it('classifies parent-chain misses with the incoming module', async () => {
+  it('does not guess ancestor ownership without resolved graph metadata', async () => {
     const module = 'https://example.com/module';
     const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
@@ -97,7 +111,7 @@ describe('replicationApplyResultFromReply', () => {
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Ancestor', recordId: 'parent-record', module }],
+      missing : [{ type: 'Ancestor', recordId: 'parent-record' }],
     });
   });
 
@@ -113,8 +127,8 @@ describe('replicationApplyResultFromReply', () => {
     }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
       kind    : 'Incomplete',
       missing : [
-        { type: 'Ancestor', recordId: 'foo-record', module },
-        { type: 'Ancestor', recordId: 'bar-record', module },
+        { type: 'Ancestor', recordId: 'foo-record' },
+        { type: 'Ancestor', recordId: 'bar-record' },
         { type: 'Parent', recordId: 'baz-record', module },
       ],
     });
@@ -132,9 +146,9 @@ describe('replicationApplyResultFromReply', () => {
     }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
       kind    : 'Incomplete',
       missing : [
-        { type: 'Ancestor', recordId: 'foo-record', module },
-        { type: 'Ancestor', recordId: 'bar-record', module },
-        { type: 'Ancestor', recordId: 'baz-record', module },
+        { type: 'Ancestor', recordId: 'foo-record' },
+        { type: 'Ancestor', recordId: 'bar-record' },
+        { type: 'Ancestor', recordId: 'baz-record' },
       ],
     });
   });
@@ -150,7 +164,7 @@ describe('replicationApplyResultFromReply', () => {
       },
     }, { missingAncestorRecordIds: [] })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Ancestor', recordId: 'parent-record', module }],
+      missing : [{ type: 'Ancestor', recordId: 'parent-record' }],
     });
   });
 
@@ -206,7 +220,7 @@ describe('replicationApplyResultFromReply', () => {
         code   : 401,
         detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
-    })).toEqual({
+    }, { resolvedGraph: resolveModuleGraph(roleDefinition(module), () => undefined) })).toEqual({
       kind    : 'Incomplete',
       missing : [{
         type       : 'Role',
@@ -225,18 +239,18 @@ describe('replicationApplyResultFromReply', () => {
       modulePath: 'thread/message',
       moduleRole,
     });
-    (message.descriptor as Record<string, unknown>).contextId = 'thread-context/member-context';
+    message.contextId = 'threadcontext/membercontext';
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
         detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
-    })).toEqual({
+    }, { resolvedGraph: resolveModuleGraph(roleDefinition(module), () => undefined) })).toEqual({
       kind    : 'Incomplete',
       missing : [{
         type          : 'Role',
-        contextPrefix : 'thread-context',
+        contextPrefix : 'threadcontext',
         module,
         modulePath    : moduleRole,
         recipient     : author.did,
@@ -266,18 +280,18 @@ describe('replicationApplyResultFromReply', () => {
       modulePath: 'message',
       moduleRole,
     });
-    (message.descriptor as Record<string, unknown>).contextId = 'thread-context/member-context';
+    message.contextId = 'threadcontext/membercontext';
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
         detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
-    }, { moduleDefinition })).toEqual({
+    }, { resolvedGraph: resolveModuleGraph(moduleDefinition, () => roleDefinition(roleModule)) })).toEqual({
       kind    : 'Incomplete',
       missing : [{
         type          : 'Role',
-        contextPrefix : 'thread-context',
+        contextPrefix : 'threadcontext',
         module        : roleModule,
         modulePath    : 'thread/member',
         recipient     : author.did,
@@ -350,7 +364,7 @@ describe('replicationApplyResultFromReply', () => {
         code: 400,
         detail,
       },
-    })).toEqual({
+    }, { resolvedGraph: resolveModuleGraph(roleDefinition(module), () => undefined) })).toEqual({
       kind    : 'Incomplete',
       missing : [
         {
@@ -492,7 +506,7 @@ describe('replicationApplyResultFromReply', () => {
         code   : 400,
         detail : misleadingDetail,
       },
-    })).toEqual({
+    }, { resolvedGraph: resolveModuleGraph(roleDefinition(module), () => undefined) })).toEqual({
       kind    : 'Incomplete',
       missing : [
         {

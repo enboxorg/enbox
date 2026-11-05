@@ -3,10 +3,14 @@ import type { ModuleDefinition, ModuleKeyAgreement, ModuleRuleSet } from '../../
 import { join } from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 
-import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { preloadModuleDefinitions } from '../../src/core/module-graph-loader.js';
+import { EncryptionModule } from '../../src/modules/encryption.js';
+import { messageReplyFromError } from '../../src/core/message-reply.js';
+import { replicationApplyResultFromReply } from '../../src/core/replication-apply.js';
 import { resolveModuleGraph } from '../../src/core/module-graph.js';
+import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
+import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
+import { loadModuleGraph, preloadModuleDefinitions } from '../../src/core/module-graph-loader.js';
 
 const baseUri = 'https://example.com/modules/base';
 const messagesUri = 'https://example.com/modules/messages';
@@ -56,6 +60,17 @@ function lookup(...definitions: ModuleDefinition[]): (uri: string) => ModuleDefi
 }
 
 describe('resolveModuleGraph', () => {
+  it('resolves the trusted encryption core definition without rewriting its strict tag rules', () => {
+    const graph = resolveModuleGraph(EncryptionModule.definition, lookup());
+    expect(graph.nodesByDeclaredPath.get('grantKey')?.kind).toBe('record');
+    expect(graph.nodesByDeclaredPath.get('grantKey')?.ruleSet.$tags?.keyId).toEqual({
+      type      : 'string',
+      minLength : 43,
+      maxLength : 43,
+      pattern   : '^[A-Za-z0-9_-]{43}$',
+    });
+  });
+
   it('preserves local ownership and maps a renamed deep attachment to its physical parent', () => {
     const graph = resolveModuleGraph(messagesDefinition(), lookup(baseDefinition()));
     const attachment = graph.nodesByDeclaredPath.get('task')!;
@@ -339,6 +354,56 @@ describe('resolveModuleGraph', () => {
 });
 
 describe('preloadModuleDefinitions', () => {
+  it('repairs the actual missing transitive module when the runtime reader throws not-found', async () => {
+    const extras = definition(extrasUri, ['reaction'], {
+      comment: { $ref: 'messages:task/comment', reaction: {} },
+    }, { messages: messagesUri });
+    const selected = lookup(extras, messagesDefinition());
+    const timestamp = '2026-01-01T00:00:00.000000Z';
+    const lookups: string[] = [];
+    const reader = {
+      fetchModuleDefinition: async (_tenant: string, uri: string, at?: string): Promise<ModuleDefinition> => {
+        expect(at).toBe(timestamp);
+        lookups.push(uri);
+        const value = selected(uri);
+        if (value === undefined) {
+          throw new DwnError(DwnErrorCode.ModuleAuthorizationModuleNotFound, `unable to find module definition for ${uri}`);
+        }
+        return value;
+      },
+    };
+    let failure: unknown;
+    try {
+      await loadModuleGraph('did:example:tenant', extrasUri, reader, timestamp);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(DwnError);
+    expect((failure as DwnError).code).toBe(DwnErrorCode.ModulesConfigureComposedModuleNotInstalled);
+    expect(lookups).toEqual([extrasUri, messagesUri, baseUri]);
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module: extrasUri, modulePath: 'comment/reaction' });
+    expect(replicationApplyResultFromReply(message, messageReplyFromError(failure, 400))).toEqual({
+      kind    : 'Incomplete',
+      missing : [{ type: 'Module', module: baseUri }],
+    });
+  });
+
+  it('preserves root not-found and non-not-found dependency errors', async () => {
+    const missing = new DwnError(DwnErrorCode.ModuleAuthorizationModuleNotFound, 'root missing');
+    const rootMissingReader = { fetchModuleDefinition: async (): Promise<ModuleDefinition> => { throw missing; } };
+    await expect(loadModuleGraph('did:example:tenant', messagesUri, rootMissingReader)).rejects.toThrow(missing.message);
+    const unavailable = new Error('storage unavailable');
+    const reader = {
+      fetchModuleDefinition: async (_tenant: string, uri: string): Promise<ModuleDefinition> => {
+        if (uri === messagesUri) {
+          return messagesDefinition();
+        }
+        throw unavailable;
+      },
+    };
+    await expect(loadModuleGraph('did:example:tenant', messagesUri, reader)).rejects.toThrow(unavailable.message);
+  });
+
   it('fetches a shared diamond dependency once and includes the supplied root', async () => {
     const extras = definition(extrasUri, ['reaction'], {
       comment: { $ref: 'messages:task/comment', reaction: {} },

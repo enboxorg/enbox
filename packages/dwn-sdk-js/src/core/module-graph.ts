@@ -1,7 +1,6 @@
 import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet, ModuleType } from '../types/modules-types.js';
 
 import { DwnConstant } from './dwn-constant.js';
-import { validateJsonSchema } from '../schema-validator.js';
 import { validateModuleUrlNormalized } from '../utils/url.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
@@ -76,7 +75,9 @@ type MutableResolvedNode = Omit<ResolvedModuleNode, 'rolesByRawRef' | 'actions'>
 };
 
 /**
- * Resolves a module's complete dependency closure without fetching or changing caller state.
+ * Resolves verified definitions without fetching or changing caller state.
+ * Wire/authored syntax validation belongs to ModulesConfigure; registered core modules
+ * supply trusted definitions and enforce their payload contracts through core hooks.
  * Every definition is copied so later mutations of authoring input cannot alter this graph.
  */
 export function resolveModuleGraph(
@@ -132,7 +133,6 @@ class ModuleGraphResolver {
     if (this._definitions.has(moduleUri)) {
       return;
     }
-    validateJsonSchema('ModuleDefinition', input);
     validateModuleUrlNormalized(moduleUri);
     const definition = structuredClone(input);
     this._loading.add(moduleUri);
