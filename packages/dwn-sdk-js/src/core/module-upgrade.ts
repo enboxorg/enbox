@@ -48,6 +48,14 @@ export function validateModuleUpgrade(
       }
     }
   }
+
+  // A temporary removal must not erase the physical binding of retained records.
+  for (const [path, node] of newGraph.nodesByDeclaredPath) {
+    if (node.kind === 'ref' && !oldGraph.nodesByDeclaredPath.has(path) &&
+        [...storedPaths].some(stored => stored === path || stored.startsWith(`${path}/`))) {
+      incompatible(incoming.module, path, 'retained record parent binding');
+    }
+  }
 }
 
 /** Compare only contracts explicitly imported by an unchanged reverse dependent. */

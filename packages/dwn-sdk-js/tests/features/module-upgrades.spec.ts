@@ -164,6 +164,38 @@ export function testModuleUpgrades(): void {
       expect((await configure(redirected, 4)).status.detail).toContain(DwnErrorCode.ModulesConfigureIncompatibleContractUpdate);
     });
 
+    it('preserves retained parent bindings across removal and reintroduction', async () => {
+      const provider: ModuleDefinition = {
+        module: coreUri, published: true, types: { root: {} }, structure: { root: {} },
+      };
+      const local: ModuleDefinition = {
+        module: commentsUri, published: true, types: { root: {}, child: {} }, structure: { root: { child: {} } },
+      };
+      expect((await configure(provider, 2)).status.code).toBe(202);
+      expect((await configure(local, 3)).status.code).toBe(202);
+      const root = await TestDataGenerator.generateRecordsWrite({
+        author           : alice, module           : commentsUri, modulePath       : 'root',
+        messageTimestamp : '2025-05-03T12:00:00.000000Z', dateCreated      : '2025-05-03T12:00:00.000000Z',
+      });
+      expect((await dwn.processMessage(alice.did, root.message, { dataStream: root.dataStream })).status.code).toBe(202);
+      const child = await TestDataGenerator.generateRecordsWrite({
+        author           : alice, module           : commentsUri, modulePath       : 'root/child', parentContextId  : root.message.contextId,
+        messageTimestamp : '2025-05-03T12:00:00.000000Z', dateCreated      : '2025-05-03T12:00:00.000000Z',
+      });
+      expect((await dwn.processMessage(alice.did, child.message, { dataStream: child.dataStream })).status.code).toBe(202);
+      expect((await configure({ ...local, types: {}, structure: {} }, 4)).status.code).toBe(202);
+
+      const redirected: ModuleDefinition = {
+        ...local,
+        uses      : { provider: coreUri },
+        types     : { child: {} },
+        structure : { root: { $ref: 'provider:root', child: {} } },
+      };
+      expect((await configure(redirected, 5)).status.detail).toContain(DwnErrorCode.ModulesConfigureIncompatibleContractUpdate);
+      const retained = await TestStores.get().messageStore.query(alice.did, [{ module: commentsUri, interface: 'Records', method: 'Write' }]);
+      expect(retained.messages).toHaveLength(2);
+    });
+
     it('rejects squashable imported ancestry and preserves independent versioned URIs', async () => {
       await install();
       const squashable = core();

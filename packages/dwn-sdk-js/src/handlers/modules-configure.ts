@@ -431,7 +431,10 @@ export class ModulesConfigureHandler implements MethodHandler {
     const removesAttachment = [...oldGraph.nodesByDeclaredPath].some(([path, node]): boolean =>
       node.kind === 'ref' && !newGraph.nodesByDeclaredPath.has(path)
     );
-    const writes = removesAttachment ? (await this.deps.messageStore.query(tenant, [{
+    const introducesAttachment = [...newGraph.nodesByDeclaredPath].some(([path, node]): boolean =>
+      node.kind === 'ref' && !oldGraph.nodesByDeclaredPath.has(path)
+    );
+    const writes = removesAttachment || introducesAttachment ? (await this.deps.messageStore.query(tenant, [{
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Write,
       module    : incoming.module,
