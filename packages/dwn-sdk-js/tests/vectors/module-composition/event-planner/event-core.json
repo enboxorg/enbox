@@ -1,0 +1,80 @@
+{
+  "module": "https://example.org/modules/events/core",
+  "published": true,
+  "types": {
+    "event": {
+      "schema": "https://example.org/schemas/events/event",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "organizer": {
+      "schema": "https://example.org/schemas/events/organizer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "attendee": {
+      "schema": "https://example.org/schemas/events/attendee",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "event": {
+      "$size": {
+        "max": 65536
+      },
+      "$actions": [
+        {
+          "who": "anyone",
+          "can": [
+            "read"
+          ]
+        },
+        {
+          "role": "event/organizer",
+          "can": [
+            "co-update"
+          ]
+        }
+      ],
+      "organizer": {
+        "$role": true,
+        "$size": {
+          "max": 4096
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "event/organizer",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "attendee": {
+        "$role": true,
+        "$size": {
+          "max": 4096
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "event/attendee",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

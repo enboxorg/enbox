@@ -295,6 +295,20 @@ export function resolveModuleRoleContextScope(
  * Class containing Module related utility methods.
  */
 export class Modules {
+  /** Roles need sealing keys even when their module owns no encrypted application types. */
+  public static requiresKeyAgreement(definition: ModuleDefinition): boolean {
+    if (Object.values(definition.types).some(type => type.encryptionRequired === true)) {
+      return true;
+    }
+    let hasRole = false;
+    walkModuleRuleSets(definition.structure as ModuleRuleSet, (_path, ruleSet): void => {
+      if (ruleSet.$role === true) {
+        hasRole = true;
+      }
+    });
+    return hasRole;
+  }
+
   /**
    * Derives public encryption keys and injects them in `$keyAgreement`.
    * NOTE: The original definition passed in is unmodified.

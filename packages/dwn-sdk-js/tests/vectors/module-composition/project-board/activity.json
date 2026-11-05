@@ -1,0 +1,60 @@
+{
+  "module": "https://example.org/modules/projects/activity/v1",
+  "published": true,
+  "uses": {
+    "boards": "https://example.org/modules/projects/boards/v1",
+    "workspace": "https://example.org/modules/projects/workspace/v1"
+  },
+  "types": {
+    "comment": {
+      "schema": "https://example.org/schemas/projects/comment/v1",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    },
+    "attachment": {
+      "dataFormats": ["application/octet-stream"],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "task": {
+      "$ref": "boards:workspace/board/task",
+      "comment": {
+        "$immutable": true,
+        "$size": { "max": 32768 },
+        "$actions": [
+          {
+            "role": "workspace:workspace/manager",
+            "can": ["create", "read", "co-delete"]
+          },
+          {
+            "role": "workspace:workspace/editor",
+            "can": ["create", "read", "delete"]
+          },
+          {
+            "role": "workspace:workspace/viewer",
+            "can": ["read"]
+          }
+        ]
+      },
+      "attachment": {
+        "$immutable": true,
+        "$size": { "max": 16777216 },
+        "$actions": [
+          {
+            "role": "workspace:workspace/manager",
+            "can": ["create", "read", "co-delete"]
+          },
+          {
+            "role": "workspace:workspace/editor",
+            "can": ["create", "read", "delete"]
+          },
+          {
+            "role": "workspace:workspace/viewer",
+            "can": ["read"]
+          }
+        ]
+      }
+    }
+  }
+}

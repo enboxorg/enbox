@@ -1,0 +1,42 @@
+{
+  "module": "https://example.org/modules/notes/files/v1",
+  "published": true,
+  "uses": {
+    "core": "https://example.org/modules/notes/core/v1"
+  },
+  "types": {
+    "file": {
+      "dataFormats": [
+        "application/octet-stream"
+      ],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "note": {
+      "$ref": "core:notebook/note",
+      "file": {
+        "$actions": [
+          {
+            "role": "core:notebook/editor",
+            "can": [
+              "create",
+              "read",
+              "delete"
+            ]
+          },
+          {
+            "role": "core:notebook/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "$immutable": true,
+        "$size": {
+          "max": 52428800
+        }
+      }
+    }
+  }
+}

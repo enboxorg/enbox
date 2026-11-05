@@ -1,0 +1,168 @@
+{
+  "module": "https://example.org/modules/notes/core/v1",
+  "published": true,
+  "types": {
+    "notebook": {
+      "schema": "https://example.org/schemas/notes/notebook/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    },
+    "note": {
+      "schema": "https://example.org/schemas/notes/note/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    },
+    "editor": {
+      "schema": "https://example.org/schemas/notes/role/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://example.org/schemas/notes/role/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "text": {
+      "dataFormats": [
+        "text/plain"
+      ],
+      "encryptionRequired": true
+    },
+    "link": {
+      "schema": "https://example.org/schemas/notes/link/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "notebook": {
+      "$actions": [
+        {
+          "role": "notebook/editor",
+          "can": [
+            "read"
+          ]
+        },
+        {
+          "role": "notebook/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "notebook/editor",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "notebook/viewer",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "note": {
+        "$actions": [
+          {
+            "role": "notebook/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "delete"
+            ]
+          },
+          {
+            "role": "notebook/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "$size": {
+          "max": 16384
+        },
+        "text": {
+          "$actions": [
+            {
+              "role": "notebook/editor",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "notebook/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ],
+          "$recordLimit": {
+            "max": 1
+          },
+          "$size": {
+            "max": 1048576
+          }
+        },
+        "link": {
+          "$actions": [
+            {
+              "role": "notebook/editor",
+              "can": [
+                "create",
+                "read",
+                "update",
+                "delete"
+              ]
+            },
+            {
+              "role": "notebook/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ],
+          "$size": {
+            "max": 4096
+          }
+        }
+      }
+    }
+  }
+}

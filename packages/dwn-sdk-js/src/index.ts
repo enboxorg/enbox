@@ -6,6 +6,10 @@ export type { DependencyRef, ReplicationApplyOptions, ReplicationApplyResult, Re
 export { replicationApplyResultFromReply } from './core/replication-apply.js';
 export type { ValidationStateReader } from './types/validation-state-reader.js';
 export { StoreValidationStateReader } from './core/validation-state-reader.js';
+export { resolveModuleGraph } from './core/module-graph.js';
+export type { ModuleDefinitionLookup, ResolveModuleGraphOptions, ResolvedActorReference, ResolvedAncestorStep, ResolvedModuleAction, ResolvedModuleAddress, ResolvedModuleGraph, ResolvedModuleNode, ResolvedRoleReference } from './core/module-graph.js';
+export { preloadModuleDefinitions } from './core/module-graph-loader.js';
+export type { ModuleDefinitionFetcher } from './core/module-graph-loader.js';
 export type { RecordedValidationRead } from './core/recording-validation-state-reader.js';
 export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';
 export type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions } from './types/messages-types.js';

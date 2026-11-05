@@ -1,4 +1,7 @@
 export class DwnConstant {
+  /** Maximum physical record depth, including ancestors imported through module references. */
+  public static readonly maxRecordNestingDepth = 10;
+
   /**
    * The maximum size of raw data that will be returned as `encodedData`.
    *

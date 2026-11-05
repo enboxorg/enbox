@@ -1,0 +1,90 @@
+{
+  "module": "https://example.org/modules/projects/workspace/v1",
+  "published": true,
+  "types": {
+    "workspace": {
+      "schema": "https://example.org/schemas/projects/workspace/v1",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    },
+    "manager": {
+      "dataFormats": ["application/json"],
+      "encryptionRequired": false
+    },
+    "editor": {
+      "dataFormats": ["application/json"],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "dataFormats": ["application/json"],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "workspace": {
+      "$size": { "max": 16384 },
+      "$actions": [
+        {
+          "role": "workspace/manager",
+          "can": ["read", "co-update"]
+        },
+        {
+          "role": "workspace/editor",
+          "can": ["read"]
+        },
+        {
+          "role": "workspace/viewer",
+          "can": ["read"]
+        }
+      ],
+      "manager": {
+        "$role": true,
+        "$immutable": true,
+        "$size": { "max": 2 },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "workspace/manager",
+            "can": ["read"]
+          },
+          {
+            "who": "recipient",
+            "can": ["co-delete"]
+          }
+        ]
+      },
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": { "max": 2 },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "workspace/editor",
+            "can": ["read"]
+          },
+          {
+            "who": "recipient",
+            "can": ["co-delete"]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": { "max": 2 },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "workspace/viewer",
+            "can": ["read"]
+          },
+          {
+            "who": "recipient",
+            "can": ["co-delete"]
+          }
+        ]
+      }
+    }
+  }
+}

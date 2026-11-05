@@ -1,0 +1,58 @@
+{
+  "module": "https://example.org/modules/projects/boards/v1",
+  "published": true,
+  "uses": {
+    "workspace": "https://example.org/modules/projects/workspace/v1"
+  },
+  "types": {
+    "board": {
+      "schema": "https://example.org/schemas/projects/board/v1",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    },
+    "task": {
+      "schema": "https://example.org/schemas/projects/task/v1",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "workspace": {
+      "$ref": "workspace:workspace",
+      "board": {
+        "$size": { "max": 32768 },
+        "$actions": [
+          {
+            "role": "workspace:workspace/manager",
+            "can": ["create", "read", "co-update", "co-delete"]
+          },
+          {
+            "role": "workspace:workspace/editor",
+            "can": ["read"]
+          },
+          {
+            "role": "workspace:workspace/viewer",
+            "can": ["read"]
+          }
+        ],
+        "task": {
+          "$size": { "max": 65536 },
+          "$actions": [
+            {
+              "role": "workspace:workspace/manager",
+              "can": ["create", "read", "co-update", "co-delete"]
+            },
+            {
+              "role": "workspace:workspace/editor",
+              "can": ["create", "read", "co-update"]
+            },
+            {
+              "role": "workspace:workspace/viewer",
+              "can": ["read"]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
