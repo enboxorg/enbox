@@ -326,7 +326,7 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     const crossesAttachment = (path: string): boolean => rootStructure[path.split('/')[0]]?.$ref !== undefined;
 
     // Validate $ref constraints: $ref is only supported at root level (no `/` in module path),
-    // and a $ref node is a pure attachment point with no other directives.
+    // and a $ref node is an attachment point with no record-policy overrides.
     if (ruleSet.$ref !== undefined) {
       ModulesConfigure.validateRefNode(ruleSet, modulePath, input.uses);
     }

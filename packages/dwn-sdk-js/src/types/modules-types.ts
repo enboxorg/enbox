@@ -240,21 +240,24 @@ export type ModuleRuleSet = {
   $actions?: ModuleActionRule[];
 
   /**
-   * If true, this marks a record as a `role` that may be used within a context.
-   * The recipient of a $role record may invoke their role by setting `moduleRole` property to the module path of the $role record.
+   * If true, this marks a record as a `role`. Root roles apply within their tenant;
+   * nested roles apply within their resolved physical parent context.
+   * Recipients invoke a role using its local path or an explicit `alias:path` in `moduleRole`.
    * Role assignments must be issued by an authorized actor; their action rules cannot grant `create` or `squash` to `anyone`.
    * A role path cannot use `$recordLimit`, because hidden records must never remain authorization capabilities.
    */
   $role?: boolean;
 
   /**
-   * References a type from an external module declared in `uses`.
+   * Attaches local child records to a record path in a module declared in `uses`.
    * Format: `"alias:typePath"` where `alias` is a key in the module definition's `uses` map
    * and `typePath` is the module path of the type in the external module's structure.
    *
-   * A `$ref` node is a pure attachment point — it must NOT have `$actions`, `$role`, `$size`,
-   * `$tags`, or `$keyAgreement`. Authorization for the referenced type is governed by its own
-   * module. Only children defined under the `$ref` node get `$actions` from the composing module.
+   * The attachment must be a root structure node with at least one local child.
+   * Its target may be deep or resolve through another attachment. No record can be
+   * written at the attachment itself. Explicit `$actions` do not grant authority over
+   * the provider record or flow into children; each local child declares its own rules.
+   * Record policy overrides such as `$role`, `$size`, `$tags`, and `$keyAgreement` are forbidden.
    *
    * Example:
    * ```

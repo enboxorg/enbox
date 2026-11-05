@@ -1189,7 +1189,7 @@ export class WalletReapprovalRequiredError extends Error {
  * `status` semantics:
  * - **`'up-to-date'`** — the installed definition canonically matches the
  *   code definition (runtime encryption blocks stripped before comparison)
- *   and, when the module declares encrypted types, every path the
+ *   and, when the module declares encrypted types or roles, every path the
  *   encryption-key injection covers carries a `$keyAgreement.publicKeyJwk`.
  * - **`'owner-can-update'`** — the connected identity owns the tenant and
  *   the installation is missing, drifted, or lacking `$keyAgreement` keys;
@@ -1221,7 +1221,7 @@ export type VerifyInstalledResult = {
    * Module paths the encryption-key injection should cover whose
    * `$keyAgreement.publicKeyJwk` is missing from the installed definition.
    * The empty string denotes the module root. Checked only when the
-   * definition declares encrypted types (`encryptionRequired: true`) and an
+   * definition declares encrypted types or roles and an
    * installation was found; empty otherwise. `$ref` composition nodes are
    * exempt — their records are governed by the referenced module's keys.
    */
@@ -1797,7 +1797,7 @@ export class TypedEnbox<
    *
    * 1. canonically compares the installed definition against the code
    *    definition with runtime `$encryption`/`$keyAgreement` blocks stripped;
-   * 2. when the definition declares encrypted types, verifies a
+   * 2. when the definition declares encrypted types or roles, verifies a
    *    `$keyAgreement.publicKeyJwk` is present at every path the
    *    encryption-key injection covers (module root and every non-`$ref`
    *    structure path);
