@@ -14,7 +14,11 @@ describe('Module query physical depth', () => {
 
   it('accepts physical contexts deeper than the declared path in query, count and subscribe', async () => {
     for (const parse of parsers) {
-      await parse({ module: 'https://example.com/modules/comments', modulePath: 'note/comment', contextId: 'workspace/note/comment' });
+      await expect(parse({
+        module     : 'https://example.com/modules/comments',
+        modulePath : 'note/comment',
+        contextId  : 'workspace/note/comment',
+      })).resolves.toBeUndefined();
     }
   });
 

@@ -245,9 +245,9 @@ function resolveCodegenGraph(
     if (!isPlainObject(providers)) {
       throw new TypeError('Codegen dependencies must be an object.');
     }
-    const aliases = Object.keys(consumer.uses ?? {}).sort();
-    const supplied = Object.keys(providers).sort();
-    if (aliases.length !== supplied.length || aliases.some((alias, index) => alias !== supplied[index])) {
+    const aliases = Object.keys(consumer.uses ?? {});
+    const supplied = Object.keys(providers);
+    if (aliases.length !== supplied.length || aliases.some(alias => !Object.hasOwn(providers, alias))) {
       throw new TypeError(`Codegen dependencies must exactly match uses aliases for '${consumer.module}'.`);
     }
     for (const alias of aliases) {

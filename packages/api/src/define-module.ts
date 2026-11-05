@@ -154,9 +154,9 @@ function assertDependencyAliases(definition: ModuleDefinition, value: unknown): 
     throw new TypeError('defineModule: dependencies must be an object.');
   }
   const uses = definition.uses ?? {};
-  const required = Object.keys(uses).sort();
-  const supplied = Object.keys(value).sort();
-  if (required.length !== supplied.length || required.some((alias, index) => alias !== supplied[index])) {
+  const required = Object.keys(uses);
+  const supplied = Object.keys(value);
+  if (required.length !== supplied.length || required.some(alias => !Object.hasOwn(value, alias))) {
     throw new TypeError('defineModule: dependencies must exactly match the declared uses aliases.');
   }
   for (const alias of required) {

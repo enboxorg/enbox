@@ -1,6 +1,7 @@
 import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet, ModuleType } from '../types/modules-types.js';
 
 import { DwnConstant } from './dwn-constant.js';
+import { lexicographicalCompare } from '../utils/string.js';
 import { validateModuleUrlNormalized } from '../utils/url.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
@@ -138,7 +139,7 @@ class ModuleGraphResolver {
     this._loading.add(moduleUri);
     this._definitions.set(moduleUri, definition);
     const usedUris = new Set<string>();
-    for (const alias of Object.keys(definition.uses ?? {}).sort()) {
+    for (const alias of Object.keys(definition.uses ?? {}).sort(lexicographicalCompare)) {
       const targetUri = definition.uses![alias];
       validateModuleUrlNormalized(targetUri);
       if (usedUris.has(targetUri)) {
@@ -168,7 +169,7 @@ class ModuleGraphResolver {
   }
 
   private resolveStructure(moduleUri: string, structure: ModuleRuleSet, parentPath: string): void {
-    for (const name of Object.keys(structure).filter(key => !key.startsWith('$')).sort()) {
+    for (const name of Object.keys(structure).filter(key => !key.startsWith('$')).sort(lexicographicalCompare)) {
       const path = parentPath === '' ? name : `${parentPath}/${name}`;
       this.resolveNode(moduleUri, path);
       this.resolveStructure(moduleUri, structure[name] as ModuleRuleSet, path);

@@ -46,6 +46,8 @@ import type {
   ContextRolesAtPath,
   ContextRootPath,
   DirectSingletonChildPaths,
+  ModuleDependencies,
+  ModuleDependency,
   ModulePaths,
   ModuleRolePaths,
   SingletonModulePaths,
@@ -57,7 +59,6 @@ import type { DwnApi, ModulesConfigureResponse } from './dwn-api.js';
 import type { ExpandableRecordView, RecordView } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
 import type { ModuleDefinition, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
-import type { ModuleDependencies, ModuleDependency } from './module-types.js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
 import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
@@ -3976,7 +3977,7 @@ function consumedRecordRepresentation(node: ResolvedModuleNode): unknown {
     owner     : [node.owningModuleUri, node.owningModulePath],
     ancestors : node.physicalAncestors.map(parent => [parent.owningModuleUri, parent.owningModulePath]),
     schema    : node.recordType.schema,
-    formats   : node.recordType.dataFormats === undefined ? undefined : [...new Set(node.recordType.dataFormats)].sort(),
+    formats   : node.recordType.dataFormats === undefined ? undefined : [...new Set(node.recordType.dataFormats)].sort(compareCodeUnits),
     encrypted : node.recordType.encryptionRequired === true,
     role      : node.ruleSet.$role === true,
     squash    : node.ruleSet.$squash === true,

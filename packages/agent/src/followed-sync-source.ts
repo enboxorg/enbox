@@ -155,15 +155,15 @@ export function resolveFollowedSyncRoleRoot(
   if (resolvedRole !== undefined) {
     const parent = resolvedRole.parentAncestor;
     if (parent === undefined || contextSegments.length !== resolvedRole.parentPhysicalDepth ||
-        contextSegments.some(segment => segment === '')) {
+        contextSegments.includes('')) {
       throw new TypeError('FollowedSyncSource: followed contexts require the role\'s exact physical parent context ID.');
     }
     return { module: parent.owningModuleUri, modulePath: parent.owningModulePath };
   }
 
   const roleSegments = role.split('/');
-  if (role.includes(':') || roleSegments.length < 2 || roleSegments.some(segment => segment === '') ||
-      contextSegments.length !== roleSegments.length - 1 || contextSegments.some(segment => segment === '')) {
+  if (role.includes(':') || roleSegments.length < 2 || roleSegments.includes('') ||
+      contextSegments.length !== roleSegments.length - 1 || contextSegments.includes('')) {
     throw new TypeError('FollowedSyncSource: followed contexts require a native nested role and its exact parent context ID.');
   }
   return { modulePath: roleSegments.slice(0, -1).join('/') };

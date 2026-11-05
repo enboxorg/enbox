@@ -7,6 +7,7 @@ import type { ModuleDefinition, ModulesConfigureMessage } from '../types/modules
 
 import { authenticate } from '../core/auth.js';
 import { isEncryptionControlPath } from '../core/constants.js';
+import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { ModuleAuthorization } from '../core/module-authorization.js';
@@ -483,7 +484,7 @@ export class ModulesConfigureHandler implements MethodHandler {
         );
       }
     };
-    for (const uri of [...affected].sort()) {
+    for (const uri of [...affected].sort(lexicographicalCompare)) {
       await validateDependent(uri);
     }
   }

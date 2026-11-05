@@ -2,6 +2,7 @@ import type { ModuleDefinition } from '../types/modules-types.js';
 import type { ResolvedModuleGraph } from './module-graph.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
+import { lexicographicalCompare } from '../utils/string.js';
 import { resolveModuleGraph } from './module-graph.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
@@ -48,7 +49,7 @@ export async function preloadModuleDefinitions(
     const snapshot = structuredClone(definition);
     definitions.set(snapshot.module, snapshot);
     loading.add(snapshot.module);
-    for (const targetUri of [...new Set(Object.values(snapshot.uses ?? {}))].sort()) {
+    for (const targetUri of [...new Set(Object.values(snapshot.uses ?? {}))].sort(lexicographicalCompare)) {
       if (loading.has(targetUri)) {
         throw new DwnError(DwnErrorCode.ModulesConfigureInvalidUsesCycle,
           `module dependency '${snapshot.module}' -> '${targetUri}' forms a cycle.`);

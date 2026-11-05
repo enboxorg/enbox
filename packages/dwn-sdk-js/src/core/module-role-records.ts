@@ -18,7 +18,7 @@ export function getRoleAudienceContextId(
     return '';
   }
   const segments = contextId?.split('/');
-  if (segments === undefined || segments.length < role.parentPhysicalDepth || segments.some(segment => segment === '')) {
+  if (segments === undefined || segments.length < role.parentPhysicalDepth || segments.includes('')) {
     return undefined;
   }
   return segments.slice(0, role.parentPhysicalDepth).join('/');

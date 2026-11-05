@@ -1,6 +1,7 @@
 import type { ModuleDefinition } from '../types/modules-types.js';
 import type { ResolvedModuleGraph, ResolvedModuleNode, ResolvedRoleReference } from './module-graph.js';
 
+import { lexicographicalCompare } from '../utils/string.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
 /** Validate a consumer's own immutable aliases and existing physical attachment bindings. */
@@ -99,7 +100,7 @@ function attachmentContract(node: ResolvedModuleNode): unknown {
     role      : node.ruleSet.$role === true,
     squash    : node.ruleSet.$squash === true,
     schema    : node.recordType.schema,
-    formats   : node.recordType.dataFormats === undefined ? undefined : [...new Set(node.recordType.dataFormats)].sort(),
+    formats   : node.recordType.dataFormats === undefined ? undefined : [...new Set(node.recordType.dataFormats)].sort(lexicographicalCompare),
     encrypted : node.recordType.encryptionRequired === true,
   };
 }
