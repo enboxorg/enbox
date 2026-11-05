@@ -41,7 +41,7 @@ const ApplicationDefinition = {
   structure : {},
 } as const satisfies ModuleDefinition;
 
-const ApplicationModule = defineModule(ApplicationDefinition, {});
+const ApplicationModule = defineModule({ definition: ApplicationDefinition, codecs: {} });
 const APPLICATION = defineApplicationManifest({
   modules: [{ module: ApplicationModule, permissions: ['read'] }],
 } as const);
@@ -63,7 +63,7 @@ const WriteOnlyDefinition = {
   structure : {},
 } as const satisfies ModuleDefinition;
 
-const WriteOnlyModule = defineModule(WriteOnlyDefinition, {});
+const WriteOnlyModule = defineModule({ definition: WriteOnlyDefinition, codecs: {} });
 const DEFAULT_READ_APPLICATION = defineApplicationManifest({
   modules: [ApplicationModule],
 } as const);

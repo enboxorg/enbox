@@ -273,7 +273,10 @@ export const TodoCodecs = {
 // Typed module
 // ---------------------------------------------------------------------------
 
-export const TodoModule = defineModule(TodoDefinition, TodoCodecs);
+export const TodoModule = defineModule({
+  definition: TodoDefinition,
+  codecs: TodoCodecs,
+});
 ```
 
 Import `TodoModule` from the generated module and pass it directly to `Enbox.using()`.
@@ -288,9 +291,57 @@ applications do not ship Ajv or a runtime schema compiler. Generated validators
 stop after the first failing schema rule; custom `RecordValidator`
 implementations may report multiple failures.
 
-Composed `$ref` paths require referenced module metadata that a standalone
-definition file does not contain. Code generation rejects them clearly; use the
-raw module APIs when an application needs explicit module composition.
+## Composed modules
+
+Supply one dependency artifact for every direct `uses` alias. The generator
+validates the same graph as `defineModule`, follows transitive dependencies,
+and emits static imports of the existing typed providers. It never executes a
+provider module or fetches a module URI over the network.
+
+```ts
+const coreDefinition = {
+  module: 'https://example.com/modules/core',
+  published: true,
+  types: { note: { dataFormats: ['text/plain'] } },
+  structure: { note: {} },
+};
+
+const commentsDefinition = {
+  module: 'https://example.com/modules/comments',
+  published: true,
+  uses: { core: coreDefinition.module },
+  types: { comment: { dataFormats: ['text/plain'] } },
+  structure: { note: { $ref: 'core:note', comment: {} } },
+};
+
+const { code } = await generateModuleModule(commentsDefinition, {
+  schemasDir: './schemas',
+  moduleName: 'Comments',
+  dependencies: {
+    core: {
+      definition: coreDefinition,
+      importPath: './core.generated.js',
+      exportName: 'CoreModule',
+    },
+  },
+});
+```
+
+`importPath` is the import specifier relative to the generated consumer file
+(or a package specifier). `exportName` names the provider's typed module export.
+The artifact's `definition` must match the alias URI; its own `dependencies`
+carry any transitive artifacts in the same shape. A shared provider in a
+dependency diamond must have the same authored definition in every branch.
+
+For CLI use, serialize this dependency map as JSON and pass
+`--dependencies ./dependencies.json` to either `generate` or `check`. The
+registry contains complete inline definitions and import metadata, not executable
+JavaScript. Missing/extra aliases and conflicting artifacts fail before output.
+
+Only locally owned record types receive codecs. A `$ref` attachment has no local
+record or codec, while locally declared children below it remain ordinary typed
+records. Their physical context depths come from the resolved graph. A genuine
+local type with the same name as an attachment keeps its own representation.
 
 ## Programmatic API
 

@@ -140,9 +140,9 @@ describe('cross-tenant writes (#973)', () => {
       expect(record).toBeDefined();
 
       // The write dispatched REMOTELY (sendDwnRequest), never through the
-      // local processing path.
+      // local record-mutation path. Module lookups may still be local.
       expect(sendSpy.callCount).toBe(1);
-      expect(processSpy.callCount).toBe(0);
+      expect(processSpy.getCalls().filter(call => call.args[0].messageType === DwnInterface.RecordsWrite)).toHaveLength(0);
       expect(sendSpy.firstCall.args[0].target).toBe(aliceDid.uri);
       expect(sendSpy.firstCall.args[0].author).toBe(bobDid.uri);
 
@@ -234,13 +234,13 @@ describe('cross-tenant writes (#973)', () => {
       // typed payload for `album` is a plain string.
       const typedBob = new TypedEnbox(
         dwnBob,
-        defineModule(moduleDefinition as ModuleDefinition, {
+        defineModule({ definition : moduleDefinition as ModuleDefinition, codecs     : {
           album       : recordCodecs.text(),
           friend      : recordCodecs.text(),
           participant : recordCodecs.text(),
           photo       : recordCodecs.text(),
           updater     : recordCodecs.text(),
-        }),
+        } }),
       );
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
@@ -301,7 +301,7 @@ describe('cross-tenant writes (#973)', () => {
 
       expect(updatedRecord).toBe(record);
       expect(sendSpy.callCount).toBe(1);
-      expect(processSpy.callCount).toBe(0);
+      expect(processSpy.getCalls().filter(call => call.args[0].messageType === DwnInterface.RecordsWrite)).toHaveLength(0);
       expect(sendSpy.firstCall.args[0].target).toBe(aliceDid.uri);
 
       // The update landed on Alice's remote DWN.
@@ -650,12 +650,12 @@ describe('cross-tenant writes (#973)', () => {
       const { enbox } = await createDelegatedEnbox(roleModule, ['read', 'delete']);
       const typed = new TypedEnbox(
         enbox.dwn,
-        defineModule(roleModule, {
+        defineModule({ definition : roleModule, codecs     : {
           thread      : recordCodecs.text(),
           participant : recordCodecs.text(),
           auditor     : recordCodecs.text(),
           session     : recordCodecs.text(),
-        }),
+        } }),
       );
       const readRequest = {
         from   : bobDid.uri,

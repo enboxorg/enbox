@@ -38,9 +38,9 @@ describe('createHostedDelegatedEnboxTestContext', () => {
         secret: { $immutable: true },
       },
     } as const satisfies ModuleDefinition;
-    const module = defineModule(definition, {
+    const module = defineModule({ definition : definition, codecs     : {
       secret: recordCodecs.json<{ message: string }>(),
-    });
+    } });
     const application = defineApplicationManifest({ modules: [module] } as const);
 
     context = await createHostedDelegatedEnboxTestContext({
@@ -76,14 +76,14 @@ describe('createHostedDelegatedEnboxTestContext', () => {
 
   it('requires a caller-managed hosted DWN endpoint', async () => {
     const moduleUri = 'https://example.com/modules/hosted-testing-input';
-    const module = defineModule({
+    const module = defineModule({ definition: {
       module    : moduleUri,
       published : false,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: {} },
-    } as const satisfies ModuleDefinition, {
+    } as const satisfies ModuleDefinition, codecs: {
       note: recordCodecs.json<{ body: string }>(),
-    });
+    } });
     const application = defineApplicationManifest({ modules: [module] } as const);
 
     await expect(createHostedDelegatedEnboxTestContext({

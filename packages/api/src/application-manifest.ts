@@ -11,8 +11,8 @@ import type { TypedModule } from './module-types.js';
 import type { ModuleRequest, Permission } from '@enbox/auth';
 
 import { authoredModuleDefinitionsEqual } from '@enbox/dwn-sdk-js';
-import { isTypedModule } from './define-module.js';
 import { normalizePermissionPolicy } from '@enbox/auth';
+import { isTypedModule, orderTypedModuleDependencies } from './define-module.js';
 
 /** One typed module registered by an application. */
 export type ApplicationManifestModule<Module extends TypedModule = TypedModule> = {
@@ -68,9 +68,8 @@ export type DefineApplicationManifestOptions<
  * must be unique; duplicate and conflicting definitions are rejected instead
  * of silently merging permission policies.
  *
- * The returned manifest freezes only its copied containers. Caller-owned typed
- * modules, definitions, and codecs are retained by reference and are not
- * frozen or otherwise mutated.
+ * The returned manifest freezes its copied containers. Immutable typed module
+ * artifacts are retained by reference without further mutation.
  *
  * @example
  * ```ts
@@ -124,6 +123,8 @@ export function defineApplicationManifest<
  * Projects a typed application manifest into dependency-neutral auth module
  * requests for a delegated connect or refresh call.
  *
+ * Dependencies are projected before consumers. Providers not explicitly registered
+ * in the manifest are installation-only and request no grants.
  * The returned array and permission arrays are fresh mutable copies.
  * Runtime codecs are never included. Owner/vault callers should not pass these
  * requests to `connect()` because a non-empty module list intentionally
@@ -132,10 +133,13 @@ export function defineApplicationManifest<
 export function getApplicationModuleRequests(
   application: ApplicationManifest,
 ): ModuleRequest[] {
-  return application.modules.map(({ permissions, module }) => ({
-    definition  : module.definition,
-    permissions : [...permissions],
-  }));
+  const policies = new Map(application.modules.map(({ permissions, module }) => [module.definition.module, permissions]));
+  return orderTypedModuleDependencies(application.modules.map(entry => entry.module)).map(module => {
+    const permissions = policies.get(module.definition.module);
+    return permissions === undefined
+      ? { definition: module.definition, permissions: [], installationOnly: true }
+      : { definition: module.definition, permissions: [...permissions] };
+  });
 }
 
 /** Whether an input uses the explicit application-manifest entry shape. */

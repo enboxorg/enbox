@@ -562,7 +562,7 @@ describe('observed stores', () => {
   });
 
   it('observes encrypted records, singleton children, and owned contexts through the same observe helper', async () => {
-    const module = defineModule({
+    const module = defineModule({ definition: {
       module    : 'https://api.example.test/store-store/native', published : false,
       types     : {
         note    : { dataFormats: ['application/json'], encryptionRequired: true },
@@ -573,11 +573,11 @@ describe('observed stores', () => {
         $actions : [{ role: 'note/member', can: ['read'] }],
         preview  : { $recordLimit: { max: 1 } }, member   : { $role: true },
       } },
-    } as const, {
+    } as const, codecs: {
       note    : recordCodecs.json<{ title: string }>(),
       preview : recordCodecs.json<{ body: string }>(),
       member  : recordCodecs.json<{ label: string }>(),
-    });
+    } });
     const context = await createEnboxTestContext({ application: defineApplicationManifest({ modules: [module] }) });
     const owner = fixture();
     const typed = context.enbox.using(module);

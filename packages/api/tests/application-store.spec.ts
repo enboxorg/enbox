@@ -11,12 +11,12 @@ import { defineStore } from '../src/store/definition.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreNotConnectedError, StoreRetiredError } from '../src/store/scope.js';
 
-const Module = defineModule({
+const Module = defineModule({ definition: {
   module    : 'https://example.com/modules/application-stores',
   published : true,
   types     : { note: { dataFormats: ['application/json'] } },
   structure : { note: {} },
-} as const, { note: recordCodecs.json<{ title: string }>() });
+} as const, codecs: { note: recordCodecs.json<{ title: string }>() } });
 
 function controlledConnection(initial: ConnectionSnapshot): {
   connection: ConnectionStore;
@@ -78,7 +78,7 @@ describe('headless application stores', () => {
     expect(connections).toBe(1);
     expect(app.manifest.modules).toHaveLength(1);
     expect(app.manifest.modules[0].permissions).toEqual(['read']);
-    const conflicting = defineModule(Module.definition, Module.codecs);
+    const conflicting = defineModule({ definition: Module.definition, codecs: Module.codecs });
     expect(() => createApplication({
       stores: { base }, modules: [conflicting], connection,
     })).toThrow('conflicts with a store dependency');

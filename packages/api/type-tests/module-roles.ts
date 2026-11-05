@@ -5,6 +5,16 @@ import { defineModule, recordCodecs } from '@enbox/api';
 
 enum Action { Read = 'read' }
 
+const OtherModule = defineModule({
+  definition: {
+    module    : 'https://example.com/other',
+    published : true,
+    types     : { member: { dataFormats: ['application/json'] } },
+    structure : { member: { $role: true } },
+  },
+  codecs: { member: recordCodecs.json<object>() },
+});
+
 const RoleDefinition = {
   module    : 'https://example.com/modules/typed-roles',
   published : true,
@@ -31,9 +41,8 @@ const RoleDefinition = {
     admin     : { $role: true },
     workspace : {
       $actions: [
-        { who: 'anyone', can: ['read'] },
         { role: 'admin', can: ['read'] },
-        { role: 'other:workspace/member', can: ['read'] },
+        { role: 'other:member', can: ['read'] },
         { role: 'workspace/writer', can: ['create'] },
         { role: 'workspace/member', can: ['read'] },
         { role: 'workspace/viewer', can: [Action.Read] },
@@ -53,7 +62,7 @@ const RoleDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const RoleModule = defineModule(RoleDefinition, {
+const RoleModule = defineModule({ definition : RoleDefinition, codecs     : {
   blind     : recordCodecs.json<unknown>(),
   note      : recordCodecs.json<unknown>(),
   writer    : recordCodecs.json<unknown>(),
@@ -61,7 +70,7 @@ const RoleModule = defineModule(RoleDefinition, {
   member    : recordCodecs.json<{ label: string }>(),
   viewer    : recordCodecs.json<{ label: string }>(),
   workspace : recordCodecs.json<{ name: string }>(),
-});
+}, dependencies: { other: OtherModule } });
 void RoleModule;
 
 // @ts-expect-error shared role selection comes from the module's read actions.

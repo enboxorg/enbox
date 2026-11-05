@@ -2,12 +2,12 @@ import type { StoreInstance } from '@enbox/api';
 
 import { createApplication, createConnectionStore, defineModule, defineStore, recordCodecs } from '@enbox/api';
 
-const Module = defineModule({
+const Module = defineModule({ definition: {
   module    : 'https://example.com/modules/application-store-types',
   published : false,
   types     : { note: { dataFormats: ['application/json'] } },
   structure : { note: {} },
-} as const, { note: recordCodecs.json<{ title: string }>() });
+} as const, codecs: { note: recordCodecs.json<{ title: string }>() } });
 
 const Notes = defineStore({
   modules: { notes: Module },

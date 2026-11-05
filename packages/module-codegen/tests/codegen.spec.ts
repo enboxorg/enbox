@@ -758,7 +758,7 @@ describe('generateModuleCode()', () => {
     expect(code).toContain('list       : recordCodecs.json<ListData>({ validator: moduleValidators.validateListData }),');
     expect(code).toContain('task       : recordCodecs.json<TaskData>({ validator: moduleValidators.validateTaskData }),');
     expect(code).toContain('attachment : recordCodecs.blob(),');
-    expect(code).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+    expect(code).toContain('export const TodoModule = defineModule({\n  definition: TodoDefinition,\n  codecs: TodoCodecs,\n});');
     expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
 
     const generatedPath = join(TMP_DIR, 'todo.generated.ts');
@@ -1390,7 +1390,7 @@ describe('generateModuleCode()', () => {
     expect(resolutions.size).toBe(0);
   });
 
-  it('should reject $ref paths until referenced module metadata can be supplied', async () => {
+  it('should reject composed definitions without their explicit dependency artifacts', async () => {
     const definition = {
       module    : 'https://example.com/modules/composed',
       published : true,
@@ -1409,7 +1409,7 @@ describe('generateModuleCode()', () => {
     await expect(generateModuleCode(definition, {
       schemasDir : SCHEMAS_DIR,
       moduleName : 'Composed',
-    })).rejects.toThrow('Cannot generate a typed codec for $ref path \'thread\'');
+    })).rejects.toThrow('Codegen dependencies must exactly match uses aliases');
   });
 
   it('should preserve the complete module definition and its directives', async () => {
@@ -1439,9 +1439,21 @@ describe('generateModuleCode()', () => {
       },
     };
 
-    const { code } = await generateModuleCode(definition, {
-      schemasDir : SCHEMAS_DIR,
-      moduleName : 'Complete',
+    const { code } = await generateModuleModule(definition, {
+      schemasDir   : SCHEMAS_DIR,
+      moduleName   : 'Complete',
+      dependencies : {
+        social: {
+          definition: {
+            module    : definition.uses.social,
+            published : true,
+            types     : {},
+            structure : {},
+          },
+          importPath : './social.generated.js',
+          exportName : 'SocialModule',
+        },
+      },
     });
 
     expect(code).toContain('uses      : {');
@@ -1687,7 +1699,7 @@ describe('CLI', () => {
     expect(proc.exitCode).toBe(0);
     expect(stdout).toContain('export interface ListData');
     expect(stdout).toContain('export const TodoCodecs');
-    expect(stdout).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+    expect(stdout).toContain('export const TodoModule = defineModule({\n  definition: TodoDefinition,\n  codecs: TodoCodecs,\n});');
     expect(stderr).toContain('list: local-type-name');
     expect(stderr).toContain('task: local-type-name');
   });
@@ -1716,7 +1728,7 @@ describe('CLI', () => {
     const content = await readFile(outputPath, 'utf-8');
     expect(content).toContain('export interface ListData');
     expect(content).toContain('export const TodoCodecs');
-    expect(content).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+    expect(content).toContain('export const TodoModule = defineModule({\n  definition: TodoDefinition,\n  codecs: TodoCodecs,\n});');
 
     // Clean up
     const { unlinkSync } = await import('node:fs');

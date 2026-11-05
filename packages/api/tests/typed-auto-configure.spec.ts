@@ -21,7 +21,7 @@ const definition = {
   },
 } as const satisfies ModuleDefinition;
 
-const module = defineModule(definition, { note: recordCodecs.json<unknown>() });
+const module = defineModule({ definition: definition, codecs: { note: recordCodecs.json<unknown>() } });
 
 type FakeStatus = { code: number; detail: string };
 

@@ -50,7 +50,7 @@ describe('TypedEnbox.records.patch() integration', () => {
       subtitle?: string;
       title: string;
     };
-    const module = defineModule(definition, { note: recordCodecs.json<Note>() });
+    const module = defineModule({ definition: definition, codecs: { note: recordCodecs.json<Note>() } });
     const context = await createEnboxTestContext({
       application: defineApplicationManifest({ modules: [module] }),
     });
@@ -95,7 +95,7 @@ describe('TypedEnbox.records.patch() integration', () => {
       structure: { secret: {} },
     } as const satisfies ModuleDefinition;
     type Secret = { pin: string; title: string };
-    const module = defineModule(definition, { secret: recordCodecs.json<Secret>() });
+    const module = defineModule({ definition: definition, codecs: { secret: recordCodecs.json<Secret>() } });
     const context = await createEnboxTestContext({
       application: defineApplicationManifest({ modules: [module] }),
     });

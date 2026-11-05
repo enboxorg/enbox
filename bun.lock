@@ -512,6 +512,7 @@
       },
       "dependencies": {
         "@enbox/common": "workspace:*",
+        "@enbox/dwn-sdk-js": "workspace:*",
         "ajv": "8.18.0",
         "ajv-formats": "3.0.1",
         "esbuild": "0.28.2",
@@ -520,7 +521,6 @@
       "devDependencies": {
         "@enbox/api": "workspace:*",
         "@enbox/browser": "workspace:*",
-        "@enbox/dwn-sdk-js": "workspace:*",
         "@types/json-schema": "7.0.15",
         "@typescript-eslint/eslint-plugin": "8.72.0",
         "@typescript-eslint/parser": "8.72.0",

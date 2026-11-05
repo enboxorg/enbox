@@ -56,7 +56,7 @@ import {
   recordCodecs,
 } from '@enbox/api';
 
-const BookmarkModule = defineModule({
+const BookmarkModule = defineModule({ definition: {
   module  : 'https://example.com/bookmarks',
   published : false,
   types     : {
@@ -71,9 +71,9 @@ const BookmarkModule = defineModule({
       $tags: { category: { type: 'string' } },
     },
   },
-} as const, {
+} as const, codecs: {
   bookmark: recordCodecs.json<{ url: string; title: string; note?: string }>(),
-});
+} });
 
 const application = defineApplicationManifest({
   modules: [BookmarkModule],

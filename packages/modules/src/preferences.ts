@@ -100,13 +100,11 @@ export const PreferencesDefinition = {
 // Typed module export
 // ---------------------------------------------------------------------------
 
-/** Typed Preferences module for use with `enbox.using()`. */
-export const PreferencesModule = defineModule(
-  PreferencesDefinition,
-  {
-    theme        : recordCodecs.json<ThemeData>(),
-    locale       : recordCodecs.json<LocaleData>(),
-    privacy      : recordCodecs.json<PrivacyData>(),
-    notification : recordCodecs.json<NotificationData>(),
-  },
+/** Typed Preferences module for use with `dwn.using()`. */
+export const PreferencesModule = defineModule({ definition : PreferencesDefinition, codecs     : {
+  theme        : recordCodecs.json<ThemeData>(),
+  locale       : recordCodecs.json<LocaleData>(),
+  privacy      : recordCodecs.json<PrivacyData>(),
+  notification : recordCodecs.json<NotificationData>(),
+} }
 );

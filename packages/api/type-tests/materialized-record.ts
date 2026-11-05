@@ -41,13 +41,13 @@ type LibraryData = { name: string };
 type MetadataData = { color: string };
 type PreferenceData = { theme: string };
 
-const LibraryModule = defineModule(LibraryDefinition, {
+const LibraryModule = defineModule({ definition : LibraryDefinition, codecs     : {
   attachment : recordCodecs.blob('application/octet-stream'),
   library    : recordCodecs.json<LibraryData>(),
   metadata   : recordCodecs.json<MetadataData>(),
   preference : recordCodecs.json<PreferenceData>(),
   title      : recordCodecs.text(),
-});
+} });
 void LibraryModule;
 
 declare const typed: TypedEnbox<typeof LibraryDefinition, typeof LibraryModule.codecs>;

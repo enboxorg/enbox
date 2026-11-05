@@ -96,13 +96,11 @@ export const ProfileDefinition = {
 // Typed module export
 // ---------------------------------------------------------------------------
 
-/** Typed Profile module for use with `enbox.using()`. */
-export const ProfileModule = defineModule(
-  ProfileDefinition,
-  {
-    profile : recordCodecs.json<ProfileData>(),
-    avatar  : recordCodecs.blob(),
-    hero    : recordCodecs.blob(),
-    link    : recordCodecs.json<LinkData>(),
-  },
+/** Typed Profile module for use with `dwn.using()`. */
+export const ProfileModule = defineModule({ definition : ProfileDefinition, codecs     : {
+  profile : recordCodecs.json<ProfileData>(),
+  avatar  : recordCodecs.blob(),
+  hero    : recordCodecs.blob(),
+  link    : recordCodecs.json<LinkData>(),
+} }
 );

@@ -15,10 +15,10 @@ import type {
 } from '../typed-enbox.js';
 import type { ModulePaths, ModuleRolePaths, SingletonModulePaths, TypedModule } from '../module-types.js';
 
-import { assertValidRecordWithin } from '../record-query.js';
 import { createCommand } from './command.js';
 import { createObservedCollection } from './observed-store.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { assertValidRecordWithin, resolveRecordQueryNode } from '../record-query.js';
 import { collectModulePaths, isModuleRolePath } from '../module-paths.js';
 
 type DefinitionOf<P extends TypedModule> = P['definition'];
@@ -201,11 +201,11 @@ function createTypedModuleStore<
       }
       const key = JSON.stringify([path, canonicalValue({ ...options, pagination: { limit }, loadAll: options.loadAll === true })]);
       if (!collections.has(key)) {
-        if (path.includes('/')) {
+        if (resolveRecordQueryNode(module.resolvedGraph, path).parentPhysicalDepth > 0) {
           const parents = new Map<string, StoreCollection<DataForPath<C, Path>>>();
           const family: StoreCollectionFamily<DataForPath<C, Path>> = {
             within: (parentContextId: string): StoreCollection<DataForPath<C, Path>> => {
-              assertDirectParent(path, parentContextId);
+              assertDirectParent(module, path, parentContextId);
               let collection = parents.get(parentContextId);
               if (collection === undefined) {
                 collection = makeCollection(path, options, parentContextId);
@@ -240,9 +240,10 @@ function assertCollectionPath(definition: ModuleDefinition, path: string): void 
   }
 }
 
-function assertDirectParent(path: string, within: string): void {
-  assertValidRecordWithin(path, within, true);
-  if (within.split('/').length !== path.split('/').length - 1) {
+function assertDirectParent(module: TypedModule, path: string, within: string): void {
+  const node = resolveRecordQueryNode(module.resolvedGraph, path);
+  assertValidRecordWithin(node, within, true);
+  if (within.split('/').length !== node.parentPhysicalDepth) {
     throw new TypeError(`Store collection: '${path}' requires its exact direct parent context ID.`);
   }
 }

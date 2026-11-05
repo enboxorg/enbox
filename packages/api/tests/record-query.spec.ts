@@ -37,10 +37,16 @@ const QueryDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const QueryModule = defineModule(QueryDefinition, {
+const QueryModule = defineModule({ definition : QueryDefinition, codecs     : {
   attachment : recordCodecs.blob('image/png'),
   note       : recordCodecs.json<{ title: string }>(),
-});
+} });
+
+const NestedQueryDefinition = {
+  ...QueryDefinition,
+  types     : { ...QueryDefinition.types, root: {} },
+  structure : { root: { note: { attachment: {} } } },
+} as const satisfies ModuleDefinition;
 
 type CapturingDwn = {
   dwn: DwnApi;
@@ -235,8 +241,8 @@ describe('RecordQuery', () => {
   });
 
   it('should lower within to the canonical DWN context selector', () => {
-    const prefixParent = compileRecordQuery(QueryDefinition, 'root/note/attachment', { within: 'root/abc' });
-    const prefixSharingSibling = compileRecordQuery(QueryDefinition, 'root/note/attachment', { within: 'root/abcd' });
+    const prefixParent = compileRecordQuery(NestedQueryDefinition, 'root/note/attachment', { within: 'root/abc' });
+    const prefixSharingSibling = compileRecordQuery(NestedQueryDefinition, 'root/note/attachment', { within: 'root/abcd' });
 
     expect(prefixParent.filter.contextId).toBe('root/abc');
     expect(prefixParent.filter.parentId).toBeUndefined();
@@ -245,13 +251,13 @@ describe('RecordQuery', () => {
   });
 
   it('should validate within selectors before dispatch', () => {
-    expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment'))
+    expect(() => compileRecordQuery(NestedQueryDefinition, 'root/note/attachment'))
       .toThrow('nested module path \'root/note/attachment\' requires a within selector');
-    expect(() => compileRecordQuery(QueryDefinition, 'root/note/attachment', {
+    expect(() => compileRecordQuery(NestedQueryDefinition, 'root/note/attachment', {
       within: 'root/note/attachment/deeper',
     })).toThrow('within cannot be deeper than module path \'root/note/attachment\'');
 
-    expect(compileRecordQuery(QueryDefinition, 'root/note/attachment', {
+    expect(compileRecordQuery(NestedQueryDefinition, 'root/note/attachment', {
       within: 'root',
     }).filter.contextId).toBe('root');
   });
@@ -273,17 +279,17 @@ describe('RecordQuery', () => {
       .toThrow('RecordFilter: tags must contain at least one tag filter');
     expect(() => compileRecordQuery(QueryDefinition, 'note', { within: '' }))
       .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
-    expect(() => compileRecordQuery(QueryDefinition, 'root/note', { within: 'root//child' }))
+    expect(() => compileRecordQuery(NestedQueryDefinition, 'root/note', { within: 'root//child' }))
       .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
     expect(() => compileRecordQuery(QueryDefinition, 'note', { within: 'root-child' }))
       .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
     expect(() => compileRecordQuery(QueryDefinition, 'note', { within: 'a'.repeat(601) }))
       .toThrow('Record scope: within must be at most 600 characters of alphanumeric path segments');
-    expect(() => compileRecordQuery(QueryDefinition, 'root/note', {
+    expect(() => compileRecordQuery(NestedQueryDefinition, 'root/note', {
       filter : { contextId: 'root' } as never,
       within : 'root',
     })).toThrow('RecordFilter: use the top-level within selector instead of contextId or parentId');
-    expect(() => compileRecordQuery(QueryDefinition, 'root/note', {
+    expect(() => compileRecordQuery(NestedQueryDefinition, 'root/note', {
       filter : { parentId: 'note' } as never,
       within : 'root',
     })).toThrow('RecordFilter: use the top-level within selector instead of contextId or parentId');

@@ -1,5 +1,8 @@
+import type { DwnApi } from '../src/dwn-api.js';
+
 import { describe, expect, it } from 'bun:test';
 
+import { defineModule } from '../src/define-module.js';
 import { TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 /**
@@ -7,17 +10,17 @@ import { TypedEnbox, WalletReapprovalRequiredError } from '../src/typed-enbox.js
  * delegate configure path can be exercised without an agent.
  */
 function createDelegateTypedEnbox(queryResult: unknown): any {
-  const typed: any = Object.create((TypedEnbox as any).prototype);
-  typed._definition = { module: 'https://example.com/modules/demo', types: {}, structure: {} };
-  typed._options = {};
-  typed._dwn = {
+  const dwn = {
     connectedDid : 'did:dht:owner',
     isDelegate   : true,
     modules      : {
       query: async (): Promise<unknown> => queryResult,
     },
-  };
-  return typed;
+  } as unknown as DwnApi;
+  return new TypedEnbox(dwn, defineModule({
+    definition : { module: 'https://example.com/modules/demo', published: true, types: {}, structure: {} },
+    codecs     : {},
+  }));
 }
 
 describe('TypedEnbox delegate module ensure', () => {
@@ -48,14 +51,13 @@ describe('TypedEnbox delegate module ensure', () => {
     const requests: unknown[] = [];
     const typed = createDelegateTypedEnbox({
       status  : { code: 200, detail: 'OK' },
-      modules : [{ definition: { module: 'https://example.com/modules/demo', types: {}, structure: {} } }],
+      modules : [{ definition: { module: 'https://example.com/modules/demo', published: true, types: {}, structure: {} } }],
     });
     const query = typed._dwn.modules.query;
     typed._dwn.modules.query = async (request: unknown): Promise<unknown> => {
       requests.push(request);
       return query(request);
     };
-    typed._hasEncryptedTypes = false;
 
     await typed._autoConfigureOnce();
 

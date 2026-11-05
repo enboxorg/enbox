@@ -27,7 +27,7 @@ export class RecordSquashBackstopError extends DwnResponseError {
   }
 }
 
-/** A record write rejected because its same-module parent does not exist. */
+/** A record write rejected because its physical parent does not exist. */
 export class RecordParentNotFoundError extends DwnResponseError {
   public constructor(operation: string, status: DwnResponseStatus['status']) {
     super(operation, status);

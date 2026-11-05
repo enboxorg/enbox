@@ -65,7 +65,7 @@ describe('typed api parity batch', () => {
   /** Fresh TypedEnbox over a fresh random module URI for the current test. */
   function makeTyped(): { typed: TypedEnbox<ModuleDefinition, NestedCodecs>; definition: ModuleDefinition } {
     const definition = makeNestedDefinition(`https://example.com/modules/parity-${TestDataGenerator.randomString(15)}`);
-    const typed = new TypedEnbox(dwnAlice, defineModule(definition, nestedCodecs));
+    const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: nestedCodecs }));
     return { typed, definition };
   }
 

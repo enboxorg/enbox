@@ -5,7 +5,7 @@
  * These types are purely compile-time — they produce no runtime code.
  */
 
-import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 // ---------------------------------------------------------------------------
@@ -18,11 +18,11 @@ import type { RecordCodec, RecordCodecMap } from './record-codec.js';
  * Given a structure like `{ foo: { bar: { ... } } }`, this produces
  * `'foo' | 'foo/bar'`.  Directive keys (starting with `$`) are excluded.
  */
-export type RuleSetPaths<R, Prefix extends string = ''> = {
+export type RuleSetPaths<R, Prefix extends string = ''> = string extends keyof R ? string : {
   [K in Extract<keyof R, string>]: K extends `$${string}`
     ? never
     : R[K] extends ModuleRuleSet
-      ? `${Prefix}${K}` | RuleSetPaths<R[K], `${Prefix}${K}/`>
+      ? (R[K] extends { readonly $ref: string } ? never : `${Prefix}${K}`) | RuleSetPaths<R[K], `${Prefix}${K}/`>
       : never;
 }[Extract<keyof R, string>];
 
@@ -107,14 +107,39 @@ type RuleSetAtPath<R, Path extends string> =
 // Role extraction
 // ---------------------------------------------------------------------------
 
-/** Module paths whose literal rule declares `$role: true`. */
-export type ModuleRolePaths<D extends ModuleDefinition> = {
-  [Path in ModulePaths<D>]: RuleSetAtPath<D['structure'], Path> extends {
-    readonly $role: true;
-  }
-    ? Path
-    : never;
-}[ModulePaths<D>];
+type DeclaredPaths<R, Prefix extends string = ''> = string extends keyof R ? string : {
+  [K in Extract<keyof R, string>]: K extends `$${string}` ? never
+    : R[K] extends ModuleRuleSet ? `${Prefix}${K}` | DeclaredPaths<R[K], `${Prefix}${K}/`> : never;
+}[Extract<keyof R, string>];
+
+type ResolvedRoleAtPath<
+  D extends ModuleDefinition,
+  Deps extends ModuleDependencies,
+  Path extends string,
+  Seen extends string = never,
+> = D['module'] extends Seen ? false
+  : RuleSetAtPath<D['structure'], Path> extends infer Node
+    ? Node extends { readonly $role: true } ? true
+      : Node extends { readonly $ref: `${infer Alias}:${infer Target}` }
+        ? Alias extends keyof Deps
+          ? ResolvedRoleAtPath<Deps[Alias]['definition'], Deps[Alias]['dependencies'], Target,
+            Seen | (string extends D['module'] ? never : D['module'])>
+          : false
+        : false
+    : false;
+
+type DeclaredRolePaths<D extends ModuleDefinition, Deps extends ModuleDependencies> =
+  string extends keyof D['structure'] ? never : {
+    [Path in DeclaredPaths<D['structure']>]: ResolvedRoleAtPath<D, Deps, Path> extends true ? Path : never;
+  }[DeclaredPaths<D['structure']>];
+
+/** Local role paths and explicitly qualified role paths exposed by dependencies. */
+export type ModuleRolePaths<
+  D extends ModuleDefinition,
+  Deps extends ModuleDependencies = ModuleDependenciesFor<D>,
+> = DeclaredRolePaths<D, Deps> | {
+  [Alias in Extract<keyof Deps, string>]: `${Alias}:${DeclaredRolePaths<Deps[Alias]['definition'], Deps[Alias]['dependencies']>}`;
+}[Extract<keyof Deps, string>];
 
 /** Module paths whose literal rule declares `$squash: true`. */
 export type SquashModulePaths<D extends ModuleDefinition> = {
@@ -140,12 +165,18 @@ type DirectRolePaths<RuleSet, Root extends string> = {
     : RuleSet[Child] extends { readonly $role: true } ? `${Root}/${Child}` : never;
 }[Extract<keyof RuleSet, string>];
 
+type IsLocallyRooted<D extends ModuleDefinition, Path extends string> =
+  Path extends `${infer Head}/${string}`
+    ? D['structure'][Head] extends { readonly $ref: string } ? false : true
+    : D['structure'][Path] extends { readonly $ref: string } ? false : true;
+
 /** Encrypted audience roles directly below a root whose actions grant them read access. */
 export type ContextRolesAtPath<
   D extends ModuleDefinition,
   Root extends ModulePaths<D> & string,
 > = Root extends unknown
-  ? EncryptedTypeNames<D> extends never ? never
+  ? IsLocallyRooted<D, Root> extends false ? never
+    : EncryptedTypeNames<D> extends never ? never
     : RuleSetAtPath<D['structure'], Root> extends infer RuleSet
       ? RuleSet extends { readonly $role: true } ? never
         : RuleSet extends { readonly $actions: readonly (infer Action)[] }
@@ -240,6 +271,42 @@ export type ModuleRecordCodecs<D extends ModuleDefinition> = {
 // Typed module — output of defineModule()
 // ---------------------------------------------------------------------------
 
+/** Runtime metadata retained for one dependency; no codecs are transmitted to a DWN. */
+export type ModuleDependency = {
+  readonly definition: ModuleDefinition;
+  readonly codecs: RecordCodecMap;
+  readonly dependencies: ModuleDependencies;
+  readonly resolvedGraph: ResolvedModuleGraph;
+};
+
+/** Aliases are lexical to the module that declares them. */
+export type ModuleDependencies = Readonly<Record<string, ModuleDependency>>;
+
+/** Every declared `uses` alias must supply an artifact with its exact module URI. */
+export type ModuleDependenciesFor<D extends ModuleDefinition> = {
+  readonly [Alias in Extract<keyof NonNullable<D['uses']>, string>]: ModuleDependency & {
+    readonly definition: ModuleDefinition & { readonly module: NonNullable<D['uses']>[Alias] };
+  };
+};
+
+export type ExactModuleCodecs<D extends ModuleDefinition, C extends RecordCodecMap> =
+  Exclude<Extract<keyof C, string>, ModulePathTypeNames<D>> extends never ? C : never;
+
+export type ExactModuleDependencies<D extends ModuleDefinition, Deps extends ModuleDependencies> =
+  Exclude<Extract<keyof Deps, string>, keyof NonNullable<D['uses']>> extends never ? Deps : never;
+
+/** Inputs for one typed module, with an exact dependency map when `uses` is declared. */
+export type DefineModuleOptions<
+  D extends ModuleDefinition,
+  C extends ModuleRecordCodecs<D>,
+  Deps extends ModuleDependenciesFor<D> = ModuleDependenciesFor<D>,
+> = {
+  readonly definition: D;
+  readonly codecs: ExactModuleCodecs<D, C>;
+} & (keyof NonNullable<D['uses']> extends never
+  ? { readonly dependencies?: Record<string, never> }
+  : { readonly dependencies: ExactModuleDependencies<D, Deps> });
+
 /**
  * The return type of `defineModule()`. Bundles the raw module definition
  * with runtime codecs.
@@ -247,10 +314,17 @@ export type ModuleRecordCodecs<D extends ModuleDefinition> = {
 export type TypedModule<
   D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
+  Deps extends ModuleDependencies = ModuleDependencies,
 > = {
   /** The effective DWN module definition, including Enbox-managed module paths. */
   readonly definition: D;
 
   /** Application codecs keyed by module type name. */
   readonly codecs: C;
+
+  /** Complete typed artifacts for exactly the module's own `uses` aliases. */
+  readonly dependencies: Deps;
+
+  /** Canonical authored graph; installed cryptographic readiness is checked separately. */
+  readonly resolvedGraph: ResolvedModuleGraph;
 };

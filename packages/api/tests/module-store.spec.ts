@@ -31,12 +31,12 @@ const Definition = {
   },
 } as const satisfies ModuleDefinition;
 
-const Module = defineModule(Definition, {
+const Module = defineModule({ definition : Definition, codecs     : {
   folder   : recordCodecs.json<{ title: string }>(),
   note     : recordCodecs.json<{ title: string; completed: boolean }>(),
   settings : recordCodecs.json<{ title: string }>(),
-});
-const OtherModule = defineModule({ ...Definition, module: `${Definition.module}/other` }, Module.codecs);
+} });
+const OtherModule = defineModule({ definition: { ...Definition, module: `${Definition.module}/other` }, codecs: Module.codecs });
 const application = defineApplicationManifest({ modules: [Module] });
 
 function storeFixture(context: EnboxTestContext): {

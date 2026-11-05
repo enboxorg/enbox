@@ -49,10 +49,8 @@ export const ConnectDefinition = {
 // Typed module export
 // ---------------------------------------------------------------------------
 
-/** Typed Connect module for use with `enbox.using()`. */
-export const ConnectModule = defineModule(
-  ConnectDefinition,
-  {
-    wallet: recordCodecs.json<WalletData>(),
-  },
+/** Typed Connect module for use with `dwn.using()`. */
+export const ConnectModule = defineModule({ definition : ConnectDefinition, codecs     : {
+  wallet: recordCodecs.json<WalletData>(),
+} }
 );

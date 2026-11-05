@@ -1,13 +1,14 @@
 import type { ContextFollowIntent } from './shared-context-module.js';
 import type { ContextFollowTarget } from './typed-enbox.js';
 import type { ExpandableRecordView } from './record-view.js';
-import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { SavedContextFollow } from './context-view.js';
 import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
+import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import { ContextRetiredError } from './context-errors.js';
 import { moduleContextKey } from './shared-context-module.js';
-import { FilterUtility, resolveModuleContextRoles } from '@enbox/dwn-sdk-js';
+import { resolveRecordQueryNode } from './record-query.js';
+import { FilterUtility, resolveModuleContextRoles, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual, syncEventCoversModule } from '@enbox/agent';
 
 /** One decoded immutable decision in the recipient's private following journal. */
@@ -28,6 +29,7 @@ export type ContextFollowingOptions = {
   actorDid: string;
   append(intent: ContextFollowIntent, after?: string): Promise<ContextFollowRecord>;
   definition: ModuleDefinition;
+  resolvedGraph?: ResolvedModuleGraph;
   openView(signal: AbortSignal): Promise<ExpandableRecordView<ContextFollowRecord>>;
   read(): Promise<readonly ContextFollowRecord[]>;
   signal?: AbortSignal;
@@ -57,6 +59,7 @@ type FollowingObserver = Readonly<{
  */
 export class ContextFollowing {
   private readonly _options: ContextFollowingOptions;
+  private readonly _resolvedGraph: ResolvedModuleGraph;
   /** Completion of the last operation queued for each owner/context pair. */
   private readonly _pendingOperations = new Map<string, Promise<unknown>>();
   /** Newest known decision per context, ordered by signed timestamp and then record ID. */
@@ -65,6 +68,8 @@ export class ContextFollowing {
 
   public constructor(options: ContextFollowingOptions) {
     this._options = options;
+    this._resolvedGraph = options.resolvedGraph
+      ?? resolveModuleGraph(options.definition, () => undefined, { requireKeyAgreement: false });
   }
 
   /** Project saved choices in key order, independently of whether this device can verify their owners. */
@@ -469,7 +474,7 @@ export class ContextFollowing {
 
   /** Use the exact root's authored read order; owner-hosted records determine the available role. */
   private resolveContextRoles(path: string, contextId: string): readonly [string, ...string[]] {
-    if (path.split('/').length !== contextId.split('/').length) {
+    if (resolveRecordQueryNode(this._resolvedGraph, path).physicalDepth !== contextId.split('/').length) {
       throw new TypeError(`ContextFollowing: context ID does not identify a '${path}' root.`);
     }
     const roles = resolveModuleContextRoles(this._options.definition, path);

@@ -38,7 +38,7 @@ describe('requireDwnSuccess', () => {
     expect(error.status).toEqual(status);
   });
 
-  it('should classify both same-module parent misses', () => {
+  it('should classify parent misses across the physical record chain', () => {
     const parentMissingCodes = [
       DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
       DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain,
@@ -53,7 +53,7 @@ describe('requireDwnSuccess', () => {
     }
   });
 
-  it('should keep crossed, uncoded, and cross-module responses generic', () => {
+  it('should keep mismatched status codes and uncoded responses generic', () => {
     const responses: DwnResponseStatus['status'][] = [
       {
         code      : 400,
@@ -68,11 +68,6 @@ describe('requireDwnSuccess', () => {
       {
         code   : 400,
         detail : `${DwnErrorCode.ModuleAuthorizationParentRecordNotFound}: parent record was not found`,
-      },
-      {
-        code      : 400,
-        detail    : 'cross-module parent record was not found',
-        errorCode : DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound,
       },
     ];
 

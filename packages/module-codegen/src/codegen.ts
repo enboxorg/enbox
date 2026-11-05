@@ -14,12 +14,14 @@
  */
 
 import type { JSONSchema4 } from 'json-schema';
+import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import type { JsonSchema, SchemaResolution } from './schema-resolver.js';
 
 import { compile } from 'json-schema-to-typescript';
 import { generateStandaloneValidators } from './standalone-validator.js';
 import { resolveAllSchemas } from './schema-resolver.js';
+import { authoredModuleDefinitionsEqual, ModulesConfigure, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +33,7 @@ export type ModuleDefinitionInput = {
   types: Record<string, ModuleTypeInput>;
   structure: Record<string, unknown>;
   published?: boolean;
+  uses?: Record<string, string>;
   [key: string]: unknown;
 };
 
@@ -44,8 +47,18 @@ export type ModuleTypeInput = {
 /** Runtime package imported by the generated module. */
 export type CodegenTarget = 'api' | 'browser';
 
+/** Local metadata and a static import for one generated module dependency. No module code is executed by codegen. */
+export type CodegenDependency = {
+  definition: ModuleDefinitionInput;
+  importPath: string;
+  exportName: string;
+  dependencies?: Record<string, CodegenDependency>;
+};
+
 /** Options for the code generation. */
 export type CodegenOptions = {
+  /** Exactly the current definition's `uses` aliases, with transitive artifacts carried by their providers. */
+  dependencies?: Record<string, CodegenDependency>;
   /** Permit reachable JSON types without a local schema to fall back to `unknown`. */
   allowUnresolvedJsonSchemas?: boolean;
 
@@ -88,8 +101,11 @@ export async function generateModuleCode(
 ): Promise<CodegenResult> {
   const { allowUnresolvedJsonSchemas = false, schemasDir, moduleName, target = 'api' } = options;
   const banner = options.bannerComment ?? DEFAULT_BANNER;
-
-  const reachableTypeNames = collectReachableTypeNames(definition.structure);
+  const authoredDefinition = normalizeAuthoredDefinition(definition);
+  const graph = resolveCodegenGraph(authoredDefinition, options.dependencies ?? {});
+  const reachableTypeNames = new Set([...graph.nodesByDeclaredPath.values()]
+    .filter(node => node.kind === 'record')
+    .map(node => node.typeName));
   const unknownTypeNames = [...reachableTypeNames]
     .filter((typeName: string): boolean => definition.types[typeName] === undefined);
   if (unknownTypeNames.length > 0) {
@@ -162,11 +178,17 @@ export async function generateModuleCode(
   const runtimePackage = target === 'browser' ? '@enbox/browser' : '@enbox/api';
   const definitionPackage = target === 'browser' ? '@enbox/browser' : '@enbox/dwn-sdk-js';
   const validatorImport = validatorBlock === '' ? '' : ', type RecordValidator';
+  const dependencyEntries = Object.entries(options.dependencies ?? {});
+  const dependencyImports = dependencyEntries.map(([, dependency], index): string =>
+    `import { ${dependency.exportName} as moduleDependency${index} } from ${quoteString(dependency.importPath)};\n`);
+  const dependencyValues = dependencyEntries.map(([alias], index): readonly [string, string] =>
+    [alias, `moduleDependency${index}`]);
 
   const sections = [
     ...(banner === '' ? [] : [banner]),
     `import type { ModuleDefinition } from '${definitionPackage}';\n`,
     `import { defineModule, recordCodecs${validatorImport} } from '${runtimePackage}';\n`,
+    ...dependencyImports,
     '// ---------------------------------------------------------------------------',
     '// Data types',
     '// ---------------------------------------------------------------------------\n',
@@ -174,7 +196,7 @@ export async function generateModuleCode(
     '// ---------------------------------------------------------------------------',
     '// Module definition',
     '// ---------------------------------------------------------------------------\n',
-    `export const ${moduleName}Definition = ${formatTypeScriptValue(definition)} as const satisfies ModuleDefinition;\n`,
+    `export const ${moduleName}Definition = ${formatTypeScriptValue(authoredDefinition)} as const satisfies ModuleDefinition;\n`,
     ...(validatorBlock === '' ? [] : [validatorBlock]),
     '// ---------------------------------------------------------------------------',
     '// Runtime codecs',
@@ -183,7 +205,11 @@ export async function generateModuleCode(
     '// ---------------------------------------------------------------------------',
     '// Typed module',
     '// ---------------------------------------------------------------------------\n',
-    `export const ${moduleName}Module = defineModule(${moduleName}Definition, ${moduleName}Codecs);`,
+    `export const ${moduleName}Module = defineModule({\n` +
+      `  definition: ${moduleName}Definition,\n` +
+      `  codecs: ${moduleName}Codecs,\n` +
+      (dependencyValues.length === 0 ? '' : `  dependencies: ${formatObjectEntries(dependencyValues, 2)},\n`) +
+      '});',
   ];
 
   const code = sections.join('\n') + '\n';
@@ -202,6 +228,52 @@ const DEFAULT_BANNER = [
   ' */',
   '',
 ].join('\n');
+
+function normalizeAuthoredDefinition(input: ModuleDefinitionInput): ModuleDefinition {
+  const definition = { published: false, ...structuredClone(input) } as ModuleDefinition;
+  ModulesConfigure.validateModuleDefinition(definition, { requireKeyAgreement: false });
+  return definition;
+}
+
+function resolveCodegenGraph(
+  definition: ModuleDefinition,
+  dependencies: Record<string, CodegenDependency>,
+): ResolvedModuleGraph {
+  const definitions = new Map<string, ModuleDefinition>([[definition.module, definition]]);
+  const visited = new Set<CodegenDependency>();
+  const visit = (consumer: ModuleDefinition, providers: Record<string, CodegenDependency>): void => {
+    if (!isPlainObject(providers)) {
+      throw new TypeError('Codegen dependencies must be an object.');
+    }
+    const aliases = Object.keys(consumer.uses ?? {}).sort();
+    const supplied = Object.keys(providers).sort();
+    if (aliases.length !== supplied.length || aliases.some((alias, index) => alias !== supplied[index])) {
+      throw new TypeError(`Codegen dependencies must exactly match uses aliases for '${consumer.module}'.`);
+    }
+    for (const alias of aliases) {
+      const provider = providers[alias];
+      if (!isPlainObject(provider) || typeof provider.importPath !== 'string' || provider.importPath.length === 0
+        || typeof provider.exportName !== 'string' || !/^[$A-Z_a-z][$\w]*$/.test(provider.exportName)) {
+        throw new TypeError(`Codegen dependency '${alias}' requires an importPath and a valid exported identifier.`);
+      }
+      const target = normalizeAuthoredDefinition(provider.definition);
+      if (target.module !== consumer.uses![alias]) {
+        throw new TypeError(`Codegen dependency '${alias}' must provide '${consumer.uses![alias]}'.`);
+      }
+      const previous = definitions.get(target.module);
+      if (previous !== undefined && !authoredModuleDefinitionsEqual(previous, target)) {
+        throw new TypeError(`Conflicting codegen dependency definitions for '${target.module}'.`);
+      }
+      definitions.set(target.module, target);
+      if (!visited.has(provider)) {
+        visited.add(provider);
+        visit(target, provider.dependencies ?? {});
+      }
+    }
+  };
+  visit(definition, dependencies);
+  return resolveModuleGraph(definition, uri => definitions.get(uri), { requireKeyAgreement: false });
+}
 
 /**
  * Compile a JSON Schema to a TypeScript interface string.
@@ -622,33 +694,6 @@ function assertValidGeneratedNames(types: Record<string, ModuleTypeInput>, modul
       );
     }
   }
-}
-
-/** Collects the local type names reachable through the module structure. */
-function collectReachableTypeNames(structure: Record<string, unknown>, prefix = ''): Set<string> {
-  const typeNames = new Set<string>();
-
-  for (const [key, child] of Object.entries(structure)) {
-    if (key.startsWith('$')) {
-      continue;
-    }
-
-    const path = prefix === '' ? key : `${prefix}/${key}`;
-    if (isPlainObject(child)) {
-      if (typeof child.$ref === 'string') {
-        throw new TypeError(
-          `Cannot generate a typed codec for $ref path '${path}'; ` +
-          'use a hand-written module declaration until composition-aware codecs are supported.',
-        );
-      }
-      for (const nestedTypeName of collectReachableTypeNames(child, path)) {
-        typeNames.add(nestedTypeName);
-      }
-    }
-    typeNames.add(key);
-  }
-
-  return typeNames;
 }
 
 /** Formats raw codec expressions as a readable object literal. */

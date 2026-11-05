@@ -3,16 +3,17 @@ import type { DwnApi } from './dwn-api.js';
 import type { ObservableStore } from './observable-store.js';
 import type { Record } from './record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { ModuleDefinition, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
-import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
 import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
 import { requireDwnSuccess } from './dwn-response-error.js';
+import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
+import { resolveRecordQueryNode } from './record-query.js';
 import { projectReplicationCurrentness, syncEventCoversModule, syncRegistrationCoversModule, syncScopeCoversModule } from '@enbox/agent';
 
 type RecordViewContents<Item> = Readonly<{
@@ -82,6 +83,7 @@ type RecordViewOptions<Item> = {
   additionalWakeFilters?: readonly RecordsFilter[];
   callerSignal?: AbortSignal;
   definition: ModuleDefinition;
+  resolvedGraph?: ResolvedModuleGraph;
   dwn: DwnApi;
   expandBy?: number;
   materializeRecords: (records: Record[]) => Promise<readonly Item[]>;
@@ -136,7 +138,7 @@ type PendingLoad = {
 /** One serialized, wake-driven materialization resource. */
 class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements RecordView<Item> {
   private readonly _additionalWakeFilters: readonly RecordsFilter[];
-  private readonly _definition: ModuleDefinition;
+  private readonly _resolvedGraph: ResolvedModuleGraph;
   private readonly _isDirectRemote: boolean;
   private readonly _dwn: DwnApi;
   private readonly _expandBy?: number;
@@ -169,7 +171,8 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       current : false,
     }), options.callerSignal, options.signal);
     this._additionalWakeFilters = options.additionalWakeFilters ?? [];
-    this._definition = options.definition;
+    this._resolvedGraph = options.resolvedGraph
+      ?? resolveModuleGraph(options.definition, () => undefined, { requireKeyAgreement: false });
     this._isDirectRemote = options.query.from !== undefined && options.dwn.followedSourceId === undefined;
     this._dwn = options.dwn;
     this._expandBy = options.expandBy;
@@ -196,7 +199,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   public async open(): Promise<void> {
     try {
       const wakeFilters = [
-        structuralWakeFilter(this._definition, this._query.filter),
+        structuralWakeFilter(this._resolvedGraph, this._query.filter),
         ...this._additionalWakeFilters,
       ];
       for (const filter of wakeFilters) {
@@ -647,11 +650,12 @@ function immutableState<Item>(state: RecordViewState<Item>): RecordViewState<Ite
 
 /** Project the canonical query to the structural scope containing every dependency of its result. */
 function structuralWakeFilter(
-  definition: ModuleDefinition,
+  graph: ResolvedModuleGraph,
   filter: CompiledRecordQuery['filter'],
 ): RecordsFilter {
-  const recordLimit = getRuleSetAtPath(filter.modulePath, definition.structure)?.$recordLimit;
-  const contextId = recordLimitWakeContextId(recordLimit !== undefined, filter);
+  const node = resolveRecordQueryNode(graph, filter.modulePath);
+  const recordLimit = node.ruleSet.$recordLimit;
+  const contextId = recordLimitWakeContextId(node, recordLimit !== undefined, filter);
   return {
     module     : filter.module,
     modulePath : filter.modulePath,
@@ -662,6 +666,7 @@ function structuralWakeFilter(
 
 /** Widen a full-record scope to the parent group whose occupancy can change that record's visibility. */
 function recordLimitWakeContextId(
+  node: ResolvedModuleNode,
   isRecordLimited: boolean,
   filter: CompiledRecordQuery['filter'],
 ): string | undefined {
@@ -671,7 +676,7 @@ function recordLimitWakeContextId(
   }
 
   const contextSegments = contextId.split('/');
-  if (contextSegments.length !== filter.modulePath.split('/').length) {
+  if (contextSegments.length !== node.physicalDepth) {
     return contextId;
   }
 
