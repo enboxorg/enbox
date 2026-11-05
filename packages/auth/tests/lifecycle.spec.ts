@@ -214,7 +214,7 @@ describe('deriveSyncScopeFromGrants', () => {
       mockGrant({ interface: 'Messages', method: 'Subscribe', module: 'https://modules.example/chat' }),
     ]],
     ['expired Messages.Read grants', [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/a' }, '2020-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/a' }, '2020-01-01T00:00:00.000000Z'),
     ]],
   ])('derives an empty scope from %s', (_name, grants) => {
     expect(deriveSyncScopeFromGrants(grants)).toEqual([]);
@@ -222,8 +222,8 @@ describe('deriveSyncScopeFromGrants', () => {
 
   test('includes non-expired and excludes expired grants in the same set', () => {
     const grants = [
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/expired' }, '2020-01-01T00:00:00.000000Z'),
-      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://proto.example/valid' }, '2040-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/expired' }, '2020-01-01T00:00:00.000000Z'),
+      mockGrant({ interface: 'Messages', method: 'Read', module: 'https://modules.example/valid' }, '2040-01-01T00:00:00.000000Z'),
     ];
     expect(deriveSyncScopeFromGrants(grants)).toEqual(['https://modules.example/valid']);
   });
