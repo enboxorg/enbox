@@ -1,5 +1,19 @@
 # @enbox/browser
 
+## 0.3.87
+
+### Patch Changes
+
+- [#1822](https://github.com/enboxorg/enbox/pull/1822) [`0d5c7cc`](https://github.com/enboxorg/enbox/commit/0d5c7cce7a49ad4a69b38745084b653f37c1b2d8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add owner-authentication approval and relay/popup client adapters without creating a DWN delegate session. Combined Connect approval can return a transaction-bound owner proof alongside explicitly requested grants, while verifying the requester origin independently of display metadata.
+  
+  Expose the authentication types and error through the auth and browser entrypoints. Delegation-only client, handler, and modal options accept only connect or refresh request modes; identity-only authentication uses its dedicated entrypoint.
+- Updated dependencies [[`0d5c7cc`](https://github.com/enboxorg/enbox/commit/0d5c7cce7a49ad4a69b38745084b653f37c1b2d8), [`0d5c7cc`](https://github.com/enboxorg/enbox/commit/0d5c7cce7a49ad4a69b38745084b653f37c1b2d8)]:
+  - @enbox/connect@0.1.27
+  - @enbox/agent@0.8.52
+  - @enbox/auth@0.6.98
+  - @enbox/api@0.6.93
+  - @enbox/protocols@0.2.120
+
 ## 0.3.86
 
 ### Patch Changes

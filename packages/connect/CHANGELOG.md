@@ -1,5 +1,13 @@
 # @enbox/connect
 
+## 0.1.27
+
+### Patch Changes
+
+- [#1822](https://github.com/enboxorg/enbox/pull/1822) [`0d5c7cc`](https://github.com/enboxorg/enbox/commit/0d5c7cce7a49ad4a69b38745084b653f37c1b2d8) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add versioned owner authentication to Connect, with a separate authentication-only client/result path, strict owner-key proof verification and an optional service-owned replay store. Existing delegation and refresh results remain compatible.
+  
+  Proof verification requires an explicit expected service audience and issued challenge alongside the stored request. Legacy delegation inputs retain JSON wire semantics when captured, including reactive proxies, while authentication inputs retain strict validation. Signer acquisition failures preserve their diagnostic cause behind the fixed authentication error message.
+
 ## 0.1.26
 
 ### Patch Changes
