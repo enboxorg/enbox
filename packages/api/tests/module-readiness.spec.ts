@@ -132,10 +132,9 @@ function createFixture(options: {
     connectedDid : OWNER_DID,
     delegateDid  : options.delegateDid,
     using        : <D extends ModuleDefinition, C extends RecordCodecMap>(module: TypedModule<D, C>): TypedEnbox<D, C> => ({
-      configure       : (): Promise<unknown> => configure(module),
-      ensureInstalled : async (): Promise<unknown> => configuredResult(module),
-      definition      : module.definition,
-      module          : module.definition.module,
+      configure  : (): Promise<unknown> => configure(module),
+      definition : module.definition,
+      module     : module.definition.module,
     } as unknown as TypedEnbox<D, C>),
   });
 

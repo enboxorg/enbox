@@ -81,7 +81,6 @@ export type DependencyRef =
       messageCid?: string;
       terminal?: boolean;
     }
-  | { type: 'CrossModuleRef'; module: string; recordId: string; messageCid?: string; terminal?: boolean }
   | { type: 'RecordData'; recordId: string; dataCid: string; module?: string; messageCid?: string; terminal?: boolean };
 
 /**

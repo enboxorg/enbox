@@ -118,8 +118,6 @@ function isDependencyRef(value: unknown): value is DependencyRef {
         isEncryptionControlPath(value.modulePath) &&
         isOptionalObject(value.tags) &&
         isOptionalString(value.recipient);
-    case 'CrossModuleRef':
-      return typeof value.module === 'string' && typeof value.recordId === 'string';
     case 'RecordData':
       return typeof value.recordId === 'string' &&
         typeof value.dataCid === 'string' &&

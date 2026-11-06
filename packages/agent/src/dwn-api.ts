@@ -158,7 +158,6 @@ type RoleAudienceEncryptionParams = {
 type PublicRoleAudienceKey = {
   module: string;
   rolePath: string;
-  contextId: string;
   keyId: string;
   publicKeyJwk: PublicKeyJwk;
 };
@@ -174,7 +173,6 @@ type AudienceWriteAuthorization = Pick<
 
 type RecordEncryptionPolicy = {
   encryptionRequired: boolean;
-  moduleDefinition: ModuleDefinition;
   resolvedGraph: ResolvedModuleGraph;
   resolvedNode: ResolvedModuleNode;
   ruleSet: ModuleRuleSet;
@@ -1707,7 +1705,6 @@ export class AgentDwnApi {
     });
     if (existingAudience !== undefined) {
       return {
-        contextId    : existingAudience.payload.contextId,
         keyId        : existingAudience.payload.keyId,
         module       : existingAudience.payload.module,
         publicKeyJwk : existingAudience.payload.publicKeyJwk,
@@ -1717,7 +1714,6 @@ export class AgentDwnApi {
 
     const audienceKey = await this.getOrCreateAudienceKey(params);
     return {
-      contextId    : audienceKey.contextId,
       keyId        : audienceKey.keyId,
       module       : audienceKey.module,
       publicKeyJwk : audienceKey.keyMaterial.publicKeyJwk,
@@ -2034,7 +2030,6 @@ export class AgentDwnApi {
 
     return {
       encryptionRequired : resolvedNode.recordType.encryptionRequired === true,
-      moduleDefinition,
       resolvedGraph      : graph,
       resolvedNode,
       ruleSet            : resolvedNode.ruleSet,

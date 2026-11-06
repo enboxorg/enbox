@@ -329,7 +329,8 @@ describe('TypedEnbox.verifyInstalled()', () => {
       expect(result.error!.module).toBe(moduleUri);
       expect(result.error!.message).toContain('re-approve');
       expect(result.reason).toBe(result.error!.message);
-      // The stale definition is REPORTED, never silently imported.
+      await expect(typed.configure()).rejects.toBeInstanceOf(WalletReapprovalRequiredError);
+      // Verification and configuration both require reapproval before importing the stale definition.
       expect(fake.importCalls).toBe(0);
     });
 

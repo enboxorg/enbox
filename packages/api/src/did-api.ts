@@ -42,12 +42,8 @@ export class DidApi {
    */
   private readonly agent: EnboxAgent;
 
-  /** The DID of the tenant under which DID operations are being performed. */
-  private readonly connectedDid: string;
-
   constructor(options: { agent: EnboxAgent, connectedDid: string }) {
     this.agent = options.agent;
-    this.connectedDid = options.connectedDid;
   }
 
   /**

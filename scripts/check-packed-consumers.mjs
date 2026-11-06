@@ -210,10 +210,27 @@ async function checkServer(directory, packages) {
 }
 
 async function checkCli(directory, packages) {
-  const cwd = await consumer(directory, 'cli', ['@enbox/cli', '@enbox/module-codegen'], packages);
+  const api = packages.get('@enbox/api');
+  const cwd = await consumer(directory, 'cli', ['@enbox/cli', '@enbox/module-codegen', '@enbox/api'], packages, {
+    typescript    : api.devDependencies.typescript,
+    '@types/node' : api.devDependencies['@types/node'],
+  });
   const env = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
   const version = await run([join(cwd, 'node_modules/.bin/module-codegen'), '--version'], cwd, env);
   assert.equal(version, packages.get('@enbox/module-codegen').version);
+  for (const name of ['packed-codegen.mjs', 'packed-codegen-types.ts']) {
+    await copyFile(new URL(`./fixtures/${name}`, import.meta.url), join(cwd, name));
+  }
+  await run(['node', 'packed-codegen.mjs'], cwd, env);
+  await run([process.execPath, 'packed-codegen.mjs', 'verify'], cwd, env);
+  await build({
+    absWorkingDir : cwd,
+    entryPoints   : ['comments.generated.ts'],
+    bundle        : true,
+    platform      : 'browser',
+    format        : 'esm',
+    outfile       : 'composition.browser.mjs',
+  });
 }
 
 const directory = await mkdtemp(join(tmpdir(), 'enbox-packed-consumers-'));
@@ -222,7 +239,7 @@ try {
   await checkClient(directory, packages);
   await checkServer(directory, packages);
   await checkCli(directory, packages);
-  console.log(`Verified ${packages.size} packed packages, strict declarations, browser bundling, and installed executables.`);
+  console.log(`Verified ${packages.size} packed packages, strict declarations, browser bundling, installed executables, and generated composition.`);
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

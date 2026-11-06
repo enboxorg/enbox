@@ -466,8 +466,6 @@ class AdmitClosureContext {
       case 'Ancestor':
       case 'InitialWrite':
         return this.fetchInitialWriteDependency(ref);
-      case 'CrossModuleRef':
-        return this.fetchRecordsByRecordId(ref.recordId, ref.module);
       case 'Role':
         return this.fetchRecords({
           module     : ref.module,

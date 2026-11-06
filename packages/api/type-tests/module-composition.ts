@@ -1,7 +1,7 @@
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Enbox, ModulePaths, ModuleRolePaths } from '@enbox/api';
 
-import { defineModule, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs, TypedEnbox } from '@enbox/api';
 
 const Base = defineModule({
   definition: {
@@ -54,6 +54,10 @@ const Extension = defineModule({ definition: Definition, codecs: Codecs, depende
 
 declare const enbox: Enbox;
 const extension = enbox.using(Extension);
+// @ts-expect-error provider installation is an internal readiness operation.
+extension.ensureInstalled();
+// @ts-expect-error provider compatibility mode is selected internally, not through constructor options.
+new TypedEnbox(enbox.dwn, Extension, { dependency: true });
 const written: Promise<{ text: string }> = extension.records.create('note/comment', {
   parentContextId : 'folderId/noteId',
   data            : { text: 'hello' },
