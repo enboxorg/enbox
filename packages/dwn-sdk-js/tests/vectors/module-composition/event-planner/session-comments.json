@@ -1,0 +1,47 @@
+{
+  "module": "https://example.org/modules/events/comments",
+  "published": true,
+  "uses": {
+    "agenda": "https://example.org/modules/events/agenda",
+    "events": "https://example.org/modules/events/core"
+  },
+  "types": {
+    "comment": {
+      "schema": "https://example.org/schemas/events/comment",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "session": {
+      "$ref": "agenda:event/session",
+      "comment": {
+        "$size": {
+          "max": 32768
+        },
+        "$actions": [
+          {
+            "role": "events:event/organizer",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "events:event/attendee",
+            "can": [
+              "create",
+              "read",
+              "update",
+              "delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -668,11 +668,12 @@ describe('validation-state reader admission parity', () => {
           base: baseModuleUri,
         },
         types: {
-          mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
+          annotation: { schema: 'annotation', dataFormats: ['text/plain'] },
         },
         structure: {
           mirror: {
-            $ref: 'base:profile',
+            $ref       : 'base:profile',
+            annotation : {},
           },
         },
       };
@@ -764,7 +765,15 @@ describe('validation-state reader admission parity', () => {
       const composedV2: ModuleDefinition = {
         ...composedV1,
         uses: {
-          roles: roleModuleV2Uri,
+          updatedRoles: roleModuleV2Uri,
+        },
+        structure: {
+          comment: {
+            $actions: [
+              { who: 'anyone', can: ['create'] },
+              { role: 'updatedRoles:participant', can: ['co-update'] },
+            ],
+          },
         },
       };
 
@@ -805,7 +814,7 @@ describe('validation-state reader admission parity', () => {
       const update = await TestDataGenerator.generateFromRecordsWrite({
         author           : bob,
         existingWrite    : initialComment.recordsWrite,
-        moduleRole       : 'roles:participant',
+        moduleRole       : 'updatedRoles:participant',
         messageTimestamp : updateTimestamp,
       });
 

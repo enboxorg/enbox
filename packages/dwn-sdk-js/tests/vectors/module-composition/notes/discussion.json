@@ -1,0 +1,74 @@
+{
+  "module": "https://example.org/modules/notes/discussion/v1",
+  "published": true,
+  "uses": {
+    "core": "https://example.org/modules/notes/core/v1"
+  },
+  "types": {
+    "comment": {
+      "schema": "https://example.org/schemas/notes/comment/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    },
+    "reaction": {
+      "schema": "https://example.org/schemas/notes/reaction/v1",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "note": {
+      "$ref": "core:notebook/note",
+      "comment": {
+        "$actions": [
+          {
+            "role": "core:notebook/editor",
+            "can": [
+              "create",
+              "read",
+              "update",
+              "delete"
+            ]
+          },
+          {
+            "role": "core:notebook/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "$size": {
+          "max": 20000
+        },
+        "reaction": {
+          "$actions": [
+            {
+              "role": "core:notebook/editor",
+              "can": [
+                "create",
+                "read",
+                "delete"
+              ]
+            },
+            {
+              "role": "core:notebook/viewer",
+              "can": [
+                "create",
+                "read",
+                "delete"
+              ]
+            }
+          ],
+          "$immutable": true,
+          "$size": {
+            "max": 256
+          }
+        }
+      }
+    }
+  }
+}

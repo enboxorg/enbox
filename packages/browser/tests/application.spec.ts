@@ -6,12 +6,12 @@ import { createConnectionStore, defineModule, defineStore, recordCodecs } from '
 
 import { createApplication, getApplicationWalletOptions } from '../src/application.js';
 
-const Notes = defineModule({
+const Notes = defineModule({ definition: {
   module    : 'https://example.com/browser-application',
   published : false,
   types     : { note: { dataFormats: ['application/json'] } },
   structure : { note: {} },
-} as const, { note: recordCodecs.json<{ title: string }>() });
+} as const, codecs: { note: recordCodecs.json<{ title: string }>() } });
 
 describe('browser applications', () => {
   it('derives its manifest without running features and retains immutable wallet defaults', async () => {

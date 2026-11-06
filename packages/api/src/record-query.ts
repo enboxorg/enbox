@@ -1,7 +1,7 @@
 import type { DataFormatAtPath, ModulePaths, TagKeys, TagsAtPath } from './module-types.js';
-import type { ModuleDefinition, Pagination, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, Pagination, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 
-import { DateSort, getTypeName } from '@enbox/dwn-sdk-js';
+import { DateSort, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 type LowerBound<T extends string | number> =
   | { gt: T; gte?: never }
@@ -137,12 +137,26 @@ type CompiledRecordQuery = {
   moduleRole?: string;
 };
 
+type QueryModule = ModuleDefinition | ResolvedModuleGraph;
+
+/** @internal Resolve a local record selection without treating attachment nodes as records. */
+export function resolveRecordQueryNode(module: QueryModule, path: string): ResolvedModuleNode {
+  const graph = 'nodesByDeclaredPath' in module
+    ? module
+    : resolveModuleGraph(module, () => undefined, { requireKeyAgreement: false });
+  const node = graph.nodesByDeclaredPath.get(path);
+  if (node === undefined || node.kind !== 'record') {
+    throw new TypeError(`Record scope: '${path}' is not a locally owned record path.`);
+  }
+  return node;
+}
+
 /**
  * @internal Compile one typed record query into the low-level request
  * shape shared by query, count, and observed-view consumers.
  */
 export function compileRecordQuery(
-  definition: ModuleDefinition,
+  definition: QueryModule,
   modulePath: string,
   query: {
     from?: string;
@@ -154,7 +168,7 @@ export function compileRecordQuery(
   } = {},
 ): CompiledRecordQuery {
   assertValidQueryControls(query.dateSort, query.pagination);
-  assertValidRecordWithin(modulePath, query.within, true);
+  assertValidRecordWithin(resolveRecordQueryNode(definition, modulePath), query.within, true);
 
   return {
     from       : query.from,
@@ -167,17 +181,17 @@ export function compileRecordQuery(
 
 /** @internal Compile and validate the shared selection filter. */
 export function compileRecordFilter(
-  definition: ModuleDefinition,
+  definition: QueryModule,
   modulePath: string,
   filter: RecordFilterInput | undefined,
   within?: string,
 ): RecordsFilter & { module: string; modulePath: string } {
-  assertValidRecordWithin(modulePath, within, false);
+  assertValidRecordWithin(resolveRecordQueryNode(definition, modulePath), within, false);
   return buildRecordFilter(definition, modulePath, filter, undefined, within);
 }
 
 function buildRecordFilter(
-  definition: ModuleDefinition,
+  definition: QueryModule,
   modulePath: string,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
@@ -195,13 +209,13 @@ function buildRecordFilter(
     compiledFilter.published = true;
   }
 
-  const typeName = getTypeName(modulePath);
-  const schema = definition.types[typeName]?.schema;
+  const node = resolveRecordQueryNode(definition, modulePath);
+  const schema = node.recordType.schema;
   return {
     ...compiledFilter,
     ...(within === undefined ? {} : { contextId: within }),
-    module: definition.module,
-    modulePath,
+    module     : node.owningModuleUri,
+    modulePath : node.owningModulePath,
     ...(schema === undefined ? {} : { schema }),
   };
 }
@@ -226,13 +240,13 @@ function assertValidFilter(filter: RecordFilterInput | undefined, dateSort: Date
 
 /** @internal Validate one typed record context selector. */
 export function assertValidRecordWithin(
-  modulePath : string,
+  node : Pick<ResolvedModuleNode, 'declaringModulePath' | 'physicalDepth'>,
   within : string | undefined,
   requiredForNestedPath : boolean,
 ): void {
   if (within === undefined) {
-    if (requiredForNestedPath && modulePath.includes('/')) {
-      throw new TypeError(`Record scope: nested module path '${modulePath}' requires a within selector.`);
+    if (requiredForNestedPath && node.physicalDepth > 1) {
+      throw new TypeError(`Record scope: nested module path '${node.declaringModulePath}' requires a within selector.`);
     }
     return;
   }
@@ -241,8 +255,8 @@ export function assertValidRecordWithin(
     throw new TypeError('Record scope: within must be at most 600 characters of alphanumeric path segments.');
   }
 
-  if (within.split('/').length > modulePath.split('/').length) {
-    throw new TypeError(`Record scope: within cannot be deeper than module path '${modulePath}'.`);
+  if (within.split('/').length > node.physicalDepth) {
+    throw new TypeError(`Record scope: within cannot be deeper than module path '${node.declaringModulePath}'.`);
   }
 }
 

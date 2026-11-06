@@ -1,6 +1,10 @@
+import type { TypedModule } from '@enbox/api';
+
 import { describe, expect, it } from 'bun:test';
 
-import { validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
+import { createEnboxTestContext } from '@enbox/api/testing';
+import { defineApplicationManifest } from '@enbox/api';
+import { ModulesConfigure, validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
 
 import {
   ConnectDefinition,
@@ -15,6 +19,23 @@ describe('@enbox/modules', () => {
   it('should export catalog definitions that satisfy the module wire schema', () => {
     for (const definition of [ProfileDefinition, PreferencesDefinition, ConnectDefinition]) {
       expect(() => validateModuleDefinitionSchema(definition)).not.toThrow();
+    }
+  });
+
+  it('should configure every catalog module with valid runtime metadata on a real DWN', async () => {
+    const modules: TypedModule[] = [ProfileModule, PreferencesModule, ConnectModule];
+    const application = defineApplicationManifest({ modules });
+    const context = await createEnboxTestContext({ application });
+    try {
+      for (const module of modules) {
+        const typed = context.enbox.using(module);
+        expect((await typed.verifyInstalled()).status).toBe('up-to-date');
+        const configured = await typed.configure();
+        expect(configured.module).toBeDefined();
+        expect(() => ModulesConfigure.validateModuleDefinition(configured.module!.definition)).not.toThrow();
+      }
+    } finally {
+      await context.close();
     }
   });
 
@@ -55,7 +76,8 @@ describe('@enbox/modules', () => {
     });
 
     it('should bind the definition and codecs via defineModule()', () => {
-      expect(ProfileModule.definition).toBe(ProfileDefinition);
+      expect(ProfileModule.definition).toEqual(ProfileDefinition);
+      expect(Object.isFrozen(ProfileModule.definition)).toBe(true);
       expect(Object.keys(ProfileModule.codecs).sort()).toEqual(['avatar', 'hero', 'link', 'profile']);
     });
   });
@@ -91,7 +113,8 @@ describe('@enbox/modules', () => {
     });
 
     it('should bind the definition and codecs via defineModule()', () => {
-      expect(PreferencesModule.definition).toBe(PreferencesDefinition);
+      expect(PreferencesModule.definition).toEqual(PreferencesDefinition);
+      expect(Object.isFrozen(PreferencesModule.definition)).toBe(true);
       expect(Object.keys(PreferencesModule.codecs).sort()).toEqual(['locale', 'notification', 'privacy', 'theme']);
     });
   });
@@ -122,7 +145,8 @@ describe('@enbox/modules', () => {
     });
 
     it('should bind the definition and codecs via defineModule()', () => {
-      expect(ConnectModule.definition).toBe(ConnectDefinition);
+      expect(ConnectModule.definition).toEqual(ConnectDefinition);
+      expect(Object.isFrozen(ConnectModule.definition)).toBe(true);
       expect(Object.keys(ConnectModule.codecs)).toEqual(['wallet']);
     });
   });

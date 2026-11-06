@@ -550,7 +550,7 @@ describe('observed store selections', () => {
   });
 
   it('binds fresh family owners to canonical native collections and their real session lifetime', async () => {
-    const module = defineModule({
+    const module = defineModule({ definition: {
       module    : 'https://example.com/modules/collection-selection',
       published : true,
       types     : {
@@ -558,10 +558,10 @@ describe('observed store selections', () => {
         note   : { dataFormats: ['application/json'] },
       },
       structure: { folder: { note: {} } },
-    } as const, {
+    } as const, codecs: {
       folder : recordCodecs.json<{ title: string }>(),
       note   : recordCodecs.json<{ text: string }>(),
-    });
+    } });
     const context = await createEnboxTestContext({ application: defineApplicationManifest({ modules: [module] }) });
     const callbacks = new Set<() => void | Promise<void>>();
     const scope: StoreScope = {

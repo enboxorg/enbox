@@ -56,7 +56,7 @@ import {
   recordCodecs,
 } from '@enbox/api';
 
-const BookmarkModule = defineModule({
+const BookmarkModule = defineModule({ definition: {
   module  : 'https://example.com/bookmarks',
   published : false,
   types     : {
@@ -71,9 +71,9 @@ const BookmarkModule = defineModule({
       $tags: { category: { type: 'string' } },
     },
   },
-} as const, {
+} as const, codecs: {
   bookmark: recordCodecs.json<{ url: string; title: string; note?: string }>(),
-});
+} });
 
 const application = defineApplicationManifest({
   modules: [BookmarkModule],
@@ -213,6 +213,8 @@ Do not open public issues for vulnerabilities. Email
 ## Resources
 
 - [Documentation](https://enbox-docs.pages.dev)
+- [Module composition](./docs/MODULE-COMPOSITION.md)
+- [Module format cutover](./docs/MODULE-CUTOVER.md)
 - [DWN Specification](https://identity.foundation/decentralized-web-node/spec/)
 - [DID Core Specification](https://www.w3.org/TR/did-core/)
 

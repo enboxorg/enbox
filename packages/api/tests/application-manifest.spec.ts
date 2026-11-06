@@ -18,9 +18,9 @@ const NotesDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const NotesModule = defineModule(NotesDefinition, {
+const NotesModule = defineModule({ definition : NotesDefinition, codecs     : {
   note: recordCodecs.json<{ body: string }>(),
-});
+} });
 
 const PhotosDefinition = {
   module    : 'https://example.com/modules/photos',
@@ -33,9 +33,9 @@ const PhotosDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const PhotosModule = defineModule(PhotosDefinition, {
+const PhotosModule = defineModule({ definition : PhotosDefinition, codecs     : {
   photo: recordCodecs.blob('image/jpeg'),
-});
+} });
 
 describe('application manifest', () => {
   it('should normalize typed module shorthands and explicit permission policies', () => {
@@ -78,7 +78,53 @@ describe('application manifest', () => {
     expect(second[1]).toEqual({ definition: PhotosDefinition, permissions: ['read'] });
   });
 
-  it('should freeze copied manifest containers without freezing caller-owned modules', () => {
+  it('should include transitive installation-only providers before consumers without granting provider feeds', () => {
+    const Comments = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/comments',
+        published : true,
+        uses      : { notes: NotesModule.definition.module },
+        types     : { comment: { dataFormats: ['text/plain'] } },
+        structure : { note: { $ref: 'notes:note', comment: {} } },
+      },
+      codecs       : { comment: recordCodecs.text() },
+      dependencies : { notes: NotesModule },
+    });
+    const Reactions = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/reactions',
+        published : true,
+        uses      : { comments: Comments.definition.module },
+        types     : { reaction: { dataFormats: ['text/plain'] } },
+        structure : { comment: { $ref: 'comments:note/comment', reaction: {} } },
+      },
+      codecs       : { reaction: recordCodecs.text() },
+      dependencies : { comments: Comments },
+    });
+    const application = defineApplicationManifest({ modules: [{ module: Reactions, permissions: ['read'] }] });
+    const requests = getApplicationModuleRequests(application);
+    expect(requests).toEqual([
+      { definition: NotesModule.definition, permissions: [], installationOnly: true },
+      { definition: Comments.definition, permissions: [], installationOnly: true },
+      { definition: Reactions.definition, permissions: ['read'] },
+    ]);
+    const wire = normalizeModuleRequests(requests);
+    expect(wire.map(request => request.permissionScopes.length)).toEqual([0, 0, 3]);
+    expect(wire.flatMap(request => request.permissionScopes).every(scope => scope.module === Reactions.definition.module)).toBe(true);
+    expect(JSON.stringify(wire)).not.toContain('codecs');
+    expect(JSON.stringify(wire)).not.toContain('installationOnly');
+
+    const explicitProvider = defineApplicationManifest({
+      modules: [{ module: Reactions, permissions: ['read'] }, { module: NotesModule, permissions: [] }],
+    });
+    const explicitRequests = getApplicationModuleRequests(explicitProvider);
+    expect(explicitRequests).toHaveLength(3);
+    expect(explicitRequests[0]).toEqual({ definition: NotesModule.definition, permissions: [] });
+    // Explicitly registered empty policies retain auth's existing sync-only meaning.
+    expect(normalizeModuleRequests(explicitRequests).map(request => request.permissionScopes.length)).toEqual([2, 0, 3]);
+  });
+
+  it('should freeze copied manifest containers and retain immutable module artifacts', () => {
     const permissions = Object.freeze(['read'] as const);
     const application = defineApplicationManifest({
       modules: [{ module: NotesModule, permissions }],
@@ -90,9 +136,11 @@ describe('application manifest', () => {
     expect(Object.isFrozen(application.modules[0].permissions)).toBe(true);
     expect(application.modules[0].permissions).not.toBe(permissions);
     expect(permissions).toEqual(['read']);
-    expect(Object.isFrozen(NotesModule)).toBe(false);
-    expect(Object.isFrozen(NotesModule.definition)).toBe(false);
-    expect(Object.isFrozen(NotesModule.codecs)).toBe(false);
+    expect(application.modules[0].module).toBe(NotesModule);
+    expect(Object.isFrozen(NotesModule)).toBe(true);
+    expect(Object.isFrozen(NotesModule.definition)).toBe(true);
+    expect(Object.isFrozen(NotesModule.codecs)).toBe(true);
+    expect(Object.isFrozen(NotesDefinition)).toBe(false);
   });
 
   it('should reject a raw definition because application manifests require typed modules', () => {
@@ -179,7 +227,7 @@ describe('application manifest', () => {
       published : NotesDefinition.published,
       module    : NotesDefinition.module,
     } as const satisfies ModuleDefinition;
-    const reorderedModule = defineModule(reorderedDefinition, NotesModule.codecs);
+    const reorderedModule = defineModule({ definition: reorderedDefinition, codecs: NotesModule.codecs });
 
     expect(() => defineApplicationManifest({
       modules: [NotesModule, reorderedModule],
@@ -193,7 +241,7 @@ describe('application manifest', () => {
       ...NotesDefinition,
       published: false,
     } as const satisfies ModuleDefinition;
-    const conflictingModule = defineModule(conflictingDefinition, NotesModule.codecs);
+    const conflictingModule = defineModule({ definition: conflictingDefinition, codecs: NotesModule.codecs });
 
     expect(() => defineApplicationManifest({
       modules: [NotesModule, conflictingModule],

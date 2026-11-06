@@ -1,10 +1,10 @@
 import type { DwnServerConfig } from '../src/config.js';
 import type { DidDocument, DidResolutionResult, DidResolver } from '@enbox/dids';
-import type { Dwn, GenericMessage, ModuleDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition, RecordsQueryMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message, Poller } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
 import { DeliveryService } from '../src/delivery-service.js';
@@ -127,10 +127,10 @@ function moduleWriteMessage(opts: {
       messageTimestamp : new Date().toISOString(),
       module           : opts.module,
       modulePath       : opts.modulePath,
-      contextId        : opts.contextId,
       recipient        : opts.recipient,
     },
-    recordId: opts.recordId ?? 'test-record-id',
+    contextId : opts.contextId,
+    recordId  : opts.recordId ?? 'test-record-id',
   } as unknown as GenericMessage;
 }
 
@@ -718,7 +718,7 @@ describe('DeliveryService — coverage', () => {
         },
         structure: {
           thread: {
-            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            participant : { $role: true, $actions: [{ role: 'thread/participant', can: ['read'] }] },
             message     : {
               $delivery : 'direct',
               $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
@@ -765,11 +765,11 @@ describe('DeliveryService — coverage', () => {
           messageTimestamp : new Date().toISOString(),
           module           : 'http://example.com/chat',
           modulePath       : 'thread/message',
-          contextId        : 'ctx-data-1',
           dataCid          : 'bafy-delivered-data',
           dataSize,
         },
-        recordId: 'deliver-data-1',
+        contextId : 'ctx-data-1/deliver-data-1',
+        recordId  : 'deliver-data-1',
       } as unknown as GenericMessage;
 
       svc.dispatchIfNeeded(tenant, message, 202);
@@ -916,7 +916,7 @@ describe('DeliveryService — coverage', () => {
         },
         structure: {
           thread: {
-            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            participant : { $role: true, $actions: [{ role: 'thread/participant', can: ['read'] }] },
             message     : {
               $delivery : 'direct',
               $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
@@ -962,6 +962,64 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.firstCall.args[0]).toBe('http://bob-dwn.example.com');
     });
 
+    it('should complete one role lookup before querying the next delivery action', async () => {
+      const tenant = 'did:test:alice';
+      const firstRecipient = 'did:test:first';
+      const secondRecipient = 'did:test:second';
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'https://example.com/ordered-delivery',
+        published : true,
+        types     : { first: {}, second: {}, message: {} },
+        structure : {
+          first   : { $role: true },
+          second  : { $role: true },
+          message : {
+            $delivery : 'direct',
+            $actions  : [{ role: 'first', can: ['read'] }, { role: 'second', can: ['read'] }],
+          },
+        },
+      };
+      const lookups: string[] = [];
+      let releaseFirstLookup!: () => void;
+      const firstLookupGate = new Promise<void>(resolve => {
+        releaseFirstLookup = resolve;
+      });
+      let announceFirstLookup!: () => void;
+      const firstLookupStarted = new Promise<void>(resolve => {
+        announceFirstLookup = resolve;
+      });
+      const processStub = sinon.stub().callsFake(async (_tenant: string, message: GenericMessage) => {
+        if (message.descriptor.interface === DwnInterfaceName.Modules) {
+          return { status: { code: 200 }, entries: [{ descriptor: { definition: moduleDefinition } }] };
+        }
+        const path = (message as RecordsQueryMessage).descriptor.filter.modulePath!;
+        lookups.push(path);
+        if (path === 'first') {
+          announceFirstLookup();
+          await firstLookupGate;
+        }
+        return { status: { code: 200 }, entries: [{ descriptor: { recipient: path === 'first' ? firstRecipient : secondRecipient } }] };
+      });
+      const fetchStub = sinon.stub(globalThis, 'fetch').resolves(new Response(null, { status: 200 }));
+      const resolver = fakeResolver({
+        [firstRecipient]  : didDocWithDwnService(firstRecipient, ['http://first.example.com']),
+        [secondRecipient] : didDocWithDwnService(secondRecipient, ['http://second.example.com']),
+      });
+      const service = DeliveryService.create(mockDwn(processStub), resolver, testConfig({ forwardingEnabled: false, deliveryEnabled: true }));
+      service.dispatchIfNeeded(tenant, moduleWriteMessage({ module: moduleDefinition.module, modulePath: 'message' }), 202);
+      try {
+        await firstLookupStarted;
+        expect(lookups).toEqual(['first']);
+        expect(fetchStub.callCount).toBe(0);
+      } finally {
+        releaseFirstLookup();
+        await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+          expect(fetchStub.callCount).toBe(2);
+        });
+      }
+      expect(lookups).toEqual(['first', 'second']);
+    });
+
     it('should deliver to explicit recipient on the record', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
         new Response(null, { status: 200 }),
@@ -975,9 +1033,10 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/dm',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
             $actions  : [
               { who: 'recipient', of: 'message', can: ['read'] },
@@ -1041,7 +1100,7 @@ describe('DeliveryService — coverage', () => {
         },
         structure: {
           thread: {
-            participant : { $actions: [{ role: 'thread/participant', can: ['read'] }] },
+            participant : { $role: true, $actions: [{ role: 'thread/participant', can: ['read'] }] },
             message     : {
               $delivery : 'direct',
               $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
@@ -1099,11 +1158,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1146,11 +1206,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1190,11 +1251,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1240,11 +1302,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1306,11 +1369,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1353,11 +1417,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1447,7 +1512,7 @@ describe('DeliveryService — coverage', () => {
         },
         structure: {
           thread: {
-            participant : {},
+            participant : { $role: true },
             message     : {
               $delivery : 'direct',
               $actions  : [{ role: 'thread/participant', can: ['create', 'read'] }],
@@ -1495,11 +1560,12 @@ describe('DeliveryService — coverage', () => {
       const moduleDef: ModuleDefinition = {
         module    : 'http://example.com/chat',
         published : true,
-        types     : { message: {} },
+        types     : { message: {}, member: {} },
         structure : {
-          message: {
+          member  : { $role: true },
+          message : {
             $delivery : 'direct',
-            $actions  : [{ role: 'message', can: ['read'] }],
+            $actions  : [{ role: 'member', can: ['read'] }],
           },
         },
       };
@@ -1664,7 +1730,7 @@ describe('DeliveryService — coverage', () => {
         types     : { friend: {}, moderator: {}, post: {} },
         structure : {
           friend: {
-            moderator : {},
+            moderator : { $role: true },
             post      : {
               $delivery : 'direct',
               $actions  : [
@@ -1740,7 +1806,7 @@ describe('DeliveryService — coverage', () => {
         types     : { friend: {}, moderator: {}, post: {} },
         structure : {
           friend: {
-            moderator : {},
+            moderator : { $role: true },
             post      : {
               $delivery : 'direct',
               $actions  : [
@@ -1887,48 +1953,63 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.callCount).toBe(0);
     });
 
-    it('should skip cross-module of references (deferred)', async () => {
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-
+    it('should resolve publicly readable foreign roles and actors through a chained attachment', async () => {
+      const fetchStub = sinon.stub(globalThis, 'fetch').callsFake(async () => new Response(null, { status: 200 }));
       const tenant = 'did:test:alice';
-
-      const moduleDef: ModuleDefinition = {
-        module    : 'http://example.com/composed',
-        published : true,
-        types     : { message: {} },
-        structure : {
-          message: {
-            $delivery : 'direct',
-            $actions  : [{ who: 'author', of: 'threads:thread', can: ['read'] }],
-          },
-        },
+      const member = 'did:test:bob';
+      const author = 'did:test:carol';
+      const threads: ModuleDefinition = {
+        module    : 'https://example.com/delivery/threads', published : true,
+        types     : { thread: {}, member: {} },
+        structure : { thread: { $actions: [{ who: 'anyone', can: ['read'] }], member: { $role: true, $actions: [{ who: 'anyone', can: ['read'] }] } } },
       };
-
-      const processStub = sinon.stub();
-      processStub.onFirstCall().resolves({
-        status  : { code: 200 },
-        entries : [{ descriptor: { definition: moduleDef } }],
+      const discussions: ModuleDefinition = {
+        module    : 'https://example.com/delivery/discussions', published : true,
+        uses      : { threads: threads.module }, types     : { discussion: {} },
+        structure : { thread: { $ref: 'threads:thread', discussion: {} } },
+      };
+      const posts: ModuleDefinition = {
+        module    : 'https://example.com/delivery/posts', published : true,
+        uses      : { threads: threads.module, discussions: discussions.module }, types     : { post: {} },
+        structure : { discussion: {
+          $ref : 'discussions:thread/discussion',
+          post : { $delivery : 'direct', $actions  : [
+            { role: 'threads:thread/member', can: ['read'] },
+            { who: 'author', of: 'threads:thread', can: ['read'] },
+          ] },
+        } },
+      };
+      const definitions = new Map([threads, discussions, posts].map(definition => [definition.module, definition]));
+      // Existing unsigned delivery discovery only sees published records. This
+      // fixture intentionally publishes the thread and membership metadata.
+      const processStub = sinon.stub().callsFake(async (_tenant, message) => {
+        const filter = message.descriptor.filter;
+        if (message.descriptor.interface === DwnInterfaceName.Modules) {
+          return { status: { code: 200 }, entries: [{ descriptor: { definition: definitions.get(filter.module) } }] };
+        }
+        return {
+          status  : { code: 200 },
+          entries : filter.modulePath === 'thread/member'
+            ? [{ contextId: 'thread-id/member-id', descriptor: { module: threads.module, modulePath: 'thread/member', recipient: member, published: true } }]
+            : [{ ...ancestorEntry({ author }), contextId: 'thread-id', descriptor: { module: threads.module, modulePath: 'thread', published: true } }],
+        };
       });
-      // No second call should happen — cross-module refs are skipped.
+      const service = DeliveryService.create(mockDwn(processStub), fakeResolver({
+        [member] : didDocWithDwnService(member, ['https://bob.example']),
+        [author] : didDocWithDwnService(author, ['https://carol.example']),
+      }), testConfig({ forwardingEnabled: false, deliveryEnabled: true }));
 
-      const dwn = mockDwn(processStub);
-      const resolver = fakeResolver({});
-      const svc = DeliveryService.create(dwn, resolver, testConfig({
-        forwardingEnabled : false,
-        deliveryEnabled   : true,
-      }));
-
-      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
-        module     : 'http://example.com/composed',
-        modulePath : 'message',
-        contextId  : 'ctx-1',
-        recordId   : 'cross-module-skip',
+      service.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : posts.module, modulePath : 'discussion/post',
+        contextId  : 'thread-id/discussion-id/post-id', recordId   : 'post-id',
       }), 202);
-      await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 200));
 
-      // Only the ModulesQuery should have been called, not an ancestor query.
-      expect(processStub.callCount).toBe(1);
-      expect(fetchStub.callCount).toBe(0);
+      expect(fetchStub.callCount).toBe(2);
+      const filters = processStub.getCalls().filter(call => call.args[1].descriptor.interface === DwnInterfaceName.Records)
+        .map(call => call.args[1].descriptor.filter);
+      expect(filters).toContainEqual({ module: threads.module, modulePath: 'thread/member', contextId: 'thread-id' });
+      expect(filters).toContainEqual({ module: threads.module, modulePath: 'thread', contextId: 'thread-id', recordId: 'thread-id' });
     });
 
     it('should not trigger actor resolution for who: "anyone" rules', async () => {

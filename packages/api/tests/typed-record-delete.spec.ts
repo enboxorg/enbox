@@ -19,9 +19,9 @@ const definition = {
   },
 } as const;
 
-const module = defineModule(definition, {
+const module = defineModule({ definition : definition, codecs     : {
   note: recordCodecs.json<{ title: string }>(),
-});
+} });
 
 function createTypedDelete(deleteRecord: sinon.SinonStub): TypedEnbox<typeof definition, typeof module.codecs> {
   const dwn = {

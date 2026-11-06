@@ -33,14 +33,14 @@ import { Ed25519 } from '@enbox/crypto';
 import { assertConnectPermissionRequests, assertExpectedProviderDid, randomToken } from '@enbox/connect';
 import { Convert, logger, nowMs, timed } from '@enbox/common';
 import { Did, DidJwk } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, Modules, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { createGrantKeyRecordsForGrants } from './dwn-encryption.js';
 import { assertVerifiedConnectRequesterOrigin, prepareConnectAuthenticationProof } from './connect-authentication.js';
-import { hasEncryptedModuleTypes, prepareModule } from './connect-module-preparation.js';
 import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
 import { mapConcurrent, mapConcurrentSettled } from './utils.js';
+import { prepareModule, resolveConnectModulePreparationPlan } from './connect-module-preparation.js';
 import { resolveConnectDelegateEncryptionKeyInfo, resolveConnectDwnEndpointUrls } from './connect-network.js';
 
 // ---------------------------------------------------------------------------
@@ -321,8 +321,8 @@ function isConnectReadScope(scope: DwnPermissionScope): scope is DwnRecordsPermi
   return isRecordPermissionScope(scope) && scope.method === DwnMethodName.Read;
 }
 
-function permissionRequestHasEncryptedReadScopes(permissionRequest: ConnectPermissionRequest): boolean {
-  return hasEncryptedModuleTypes(permissionRequest.moduleDefinition) &&
+function permissionRequestRequiresGrantKeys(permissionRequest: ConnectPermissionRequest): boolean {
+  return Modules.requiresKeyAgreement(permissionRequest.moduleDefinition) &&
     permissionRequest.permissionScopes.some(isConnectReadScope);
 }
 
@@ -802,6 +802,10 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
   );
 
   try {
+    validatePermissionRequestModuleUris(request.permissionRequests);
+    const preparation = await resolveConnectModulePreparationPlan({
+      agent, ownerDid: providerDid, permissionRequests: request.permissionRequests, approvedModuleOverrides,
+    });
     const sessionTtlSeconds = resolveSessionTtlSeconds({
       approvedSessionTtlSeconds  : params.approvedSessionTtlSeconds,
       requestedSessionTtlSeconds : request.requestedSessionTtlSeconds,
@@ -832,10 +836,8 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       grantedDelegateDid = delegateBearerDid.uri;
     }
 
-    validatePermissionRequestModuleUris(request.permissionRequests);
-
     const preSuppliedDelegateRootPublicKey = preSuppliedDelegateDid !== undefined &&
-      request.permissionRequests.some(permissionRequestHasEncryptedReadScopes)
+      request.permissionRequests.some(permissionRequestRequiresGrantKeys)
       ? (await timed(
         `${CONNECT_PERF_LOG_PREFIX} delegateDid.encryptionKey.resolve`,
         () => resolveConnectDelegateEncryptionKeyInfo(agent, grantedDelegateDid),
@@ -866,15 +868,16 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
         // installed, so dependencies must fully converge (across all endpoints)
         // before their dependents fan out. Independent modules within a level
         // are still prepared concurrently.
-        for (const level of orderPermissionRequestsByUsesDependencies(request.permissionRequests)) {
+        for (const level of orderPermissionRequestsByUsesDependencies(preparation.permissionRequests)) {
           await Promise.all(level.map(
             ({ moduleDefinition }) => prepareModule(
               providerDid,
               agent,
               moduleDefinition,
               {
-                allowDefinitionOverride : approvedModuleOverrides.has(moduleDefinition.module),
-                resolvedDwnEndpointUrls : dwnEndpointUrls,
+                allowDefinitionOverride: !preparation.inferredProviderUris.has(moduleDefinition.module)
+                  && approvedModuleOverrides.has(moduleDefinition.module),
+                resolvedDwnEndpointUrls: dwnEndpointUrls,
               },
             )
           ));
@@ -911,7 +914,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       `${CONNECT_PERF_LOG_PREFIX} grantKeys.create (modules=${numModules})`,
       async () => (await Promise.all(requestsWithGrants.map(
         async ({ grants, permissionRequest }) => {
-          if (!permissionRequestHasEncryptedReadScopes(permissionRequest)) {
+          if (!permissionRequestRequiresGrantKeys(permissionRequest)) {
             return [];
           }
 

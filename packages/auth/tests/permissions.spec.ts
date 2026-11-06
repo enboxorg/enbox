@@ -51,6 +51,27 @@ describe('normalizeModuleRequests', () => {
     }
   });
 
+  test('keeps installation-only dependencies entirely outside granted scopes', () => {
+    const requests = normalizeModuleRequests([
+      { definition: TestModule, permissions: [], installationOnly: true },
+      { definition: OtherModule, permissions: ['read'] },
+    ]);
+    expect(requests[0]).toEqual({ moduleDefinition: TestModule, permissionScopes: [] });
+    expect(requests[1].permissionScopes).toHaveLength(3);
+    expect(requests.flatMap(request => request.permissionScopes).every(scope => scope.module === OtherModule.module)).toBe(true);
+  });
+
+  test('rejects malformed installation-only policies before creating any scopes', () => {
+    for (const entry of [
+      { definition: TestModule, installationOnly: true },
+      { definition: TestModule, permissions: ['read'], installationOnly: true },
+      { definition: TestModule, permissions: [], installationOnly: false },
+    ]) {
+      expect(() => normalizeModuleRequests([entry as unknown as ModuleRequest]))
+        .toThrow('installationOnly requires true and explicit empty permissions');
+    }
+  });
+
   test('normalizes a bare module definition with default permissions', () => {
     const result = normalizeModuleRequests([TestModule]);
 

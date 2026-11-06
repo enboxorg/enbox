@@ -1,0 +1,37 @@
+{
+  "module": "https://example.org/modules/events/planning",
+  "published": true,
+  "uses": {
+    "events": "https://example.org/modules/events/core"
+  },
+  "types": {
+    "plan": {
+      "schema": "https://example.org/schemas/events/plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "event": {
+      "$ref": "events:event",
+      "plan": {
+        "$size": {
+          "max": 262144
+        },
+        "$actions": [
+          {
+            "role": "events:event/organizer",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

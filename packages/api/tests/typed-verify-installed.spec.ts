@@ -139,7 +139,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report owner-can-update when the module is not installed', async () => {
       const definition = makePlainDefinition(moduleUri);
-      const typed = new TypedEnbox(dwnAlice, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: plainCodecs }));
 
       const result = await typed.verifyInstalled();
 
@@ -152,7 +152,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report up-to-date for a matching plain installation', async () => {
       const definition = makePlainDefinition(moduleUri);
-      const typed = new TypedEnbox(dwnAlice, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: plainCodecs }));
 
       const { status } = await typed.configure();
       expect(status.code).toBe(202);
@@ -183,10 +183,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
           attachment: {},
         },
       };
-      const typed = new TypedEnbox(dwnAlice, defineModule(revisedDefinition, {
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition : revisedDefinition, codecs     : {
         attachment: recordCodecs.bytes(),
         ...plainCodecs,
-      }));
+      } }));
 
       const result = await typed.verifyInstalled();
 
@@ -199,7 +199,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should report up-to-date for an encrypted install with full $keyAgreement coverage', async () => {
       const definition = makeEncryptedDefinition(moduleUri);
-      const typed = new TypedEnbox(dwnAlice, defineModule(definition, encryptedCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: encryptedCodecs }));
 
       // configure() auto-enables encryption for encrypted types, deriving and
       // injecting $keyAgreement at the root and every structure path.
@@ -254,10 +254,10 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const rawReply = await testHarness.agent.dwn.processRawMessage(aliceDid.uri, modulesConfigure.message);
       expect(rawReply.status.code).toBe(202);
 
-      const typed = new TypedEnbox(dwnAlice, defineModule(codeDefinition, {
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition : codeDefinition, codecs     : {
         note   : recordCodecs.json<unknown>(),
         secret : recordCodecs.json<unknown>(),
-      }));
+      } }));
       const result = await typed.verifyInstalled();
 
       expect(result.status).toBe('owner-can-update');
@@ -276,7 +276,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
 
     it('should not change configure() auto-configure state (read-only)', async () => {
       const definition = makePlainDefinition(moduleUri);
-      const typed = new TypedEnbox(dwnAlice, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: plainCodecs }));
 
       await typed.verifyInstalled();
 
@@ -293,7 +293,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
     it('should report up-to-date when the wallet-installed definition matches', async () => {
       const definition = makePlainDefinition(moduleUri);
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: definition });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: plainCodecs }));
 
       const result = await typed.verifyInstalled();
 
@@ -318,7 +318,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         },
       };
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: staleWalletDefinition });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: plainCodecs }));
 
       const result = await typed.verifyInstalled();
 
@@ -336,7 +336,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
     it('should return wallet-reapproval-required when the wallet never installed the module', async () => {
       const definition = makePlainDefinition(moduleUri);
       const fake = makeFakeDwn({ isDelegate: true });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: plainCodecs }));
 
       const result = await typed.verifyInstalled();
 
@@ -349,7 +349,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
       const definition = makeEncryptedDefinition(moduleUri);
       // Wallet installed the right shape but never injected encryption keys.
       const fake = makeFakeDwn({ isDelegate: true, installedDefinition: definition });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, encryptedCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: encryptedCodecs }));
 
       const result = await typed.verifyInstalled();
 
@@ -377,15 +377,14 @@ describe('TypedEnbox.verifyInstalled()', () => {
         },
       } as const satisfies ModuleDefinition;
       const codecs = {
-        comment : recordCodecs.json<unknown>(),
-        thread  : recordCodecs.json<unknown>(),
+        comment: recordCodecs.json<unknown>(),
       };
 
-      expect(() => defineModule(definition, codecs)).toThrow(
-        'Typed modules do not yet support $ref at \'thread\'',
+      expect(() => defineModule({ definition, codecs } as never)).toThrow(
+        'dependencies must exactly match the declared uses aliases',
       );
-      expect(() => new TypedEnbox({} as DwnApi, { definition, codecs })).toThrow(
-        'Typed modules do not yet support $ref at \'thread\'',
+      expect(() => new TypedEnbox({} as DwnApi, { definition, codecs, dependencies: {} } as never)).toThrow(
+        'dependencies must exactly match the declared uses aliases',
       );
     });
 
@@ -395,7 +394,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         isDelegate  : true,
         queryStatus : { code: 401, detail: 'grant revoked' },
       });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: plainCodecs }));
 
       await expect(typed.verifyInstalled()).rejects.toMatchObject({
         status: { code: 401, detail: 'grant revoked' },
@@ -408,7 +407,7 @@ describe('TypedEnbox.verifyInstalled()', () => {
         isDelegate  : false,
         queryStatus : { code: 500, detail: 'store unavailable' },
       });
-      const typed = new TypedEnbox(fake.dwn, defineModule(definition, plainCodecs));
+      const typed = new TypedEnbox(fake.dwn, defineModule({ definition: definition, codecs: plainCodecs }));
 
       // A failed local read must never be classified as "not installed".
       await expect(typed.verifyInstalled()).rejects.toMatchObject({

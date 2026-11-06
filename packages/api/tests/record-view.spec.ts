@@ -70,14 +70,14 @@ const ViewDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const ViewModule = defineModule(ViewDefinition, {
+const ViewModule = defineModule({ definition : ViewDefinition, codecs     : {
   folder     : recordCodecs.json<{ name: string }>(),
   item       : recordCodecs.json<{ value: string }>(),
   label      : recordCodecs.text(),
   note       : recordCodecs.json<{ title: string }>(),
   preference : recordCodecs.text(),
   section    : recordCodecs.json<{ name: string }>(),
-});
+} });
 const TENANT_DID = 'did:example:alice';
 
 type QueryFactory = (request: RecordsQueryRequest, call: number) => Promise<RecordsQueryResponse>;

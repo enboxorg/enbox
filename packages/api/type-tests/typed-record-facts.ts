@@ -29,10 +29,10 @@ const Definition = {
   },
 } as const satisfies ModuleDefinition;
 
-const _Module = defineModule(Definition, {
+const _Module = defineModule({ definition : Definition, codecs     : {
   document : recordCodecs.json<{ title: string }>(),
   snapshot : recordCodecs.json<{ revision: number }>(),
-});
+} });
 
 declare const typed: TypedEnbox<typeof Definition, typeof _Module.codecs>;
 declare const widened: TypedEnbox<ModuleDefinition, typeof _Module.codecs>;

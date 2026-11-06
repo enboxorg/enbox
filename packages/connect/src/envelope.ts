@@ -23,12 +23,13 @@
 
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
-import { validateModuleDefinitionSchema, validatePermissionScope } from '@enbox/dwn-sdk-js';
+import { ModulesConfigure, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
 import { signJwt, verifyJwt } from './jwt.js';
@@ -195,7 +196,7 @@ export function assertConnectPermissionRequests(requests: unknown): asserts requ
     if (!isPlainObject(request.moduleDefinition)) {
       fail(ctx, `${field}.moduleDefinition`, 'must be an object');
     }
-    validateModuleDefinitionSchema(request.moduleDefinition);
+    ModulesConfigure.validateModuleDefinition(request.moduleDefinition as ModuleDefinition, { requireKeyAgreement: false });
     if (!Array.isArray(request.permissionScopes)) {
       fail(ctx, `${field}.permissionScopes`, 'must be an array');
     }

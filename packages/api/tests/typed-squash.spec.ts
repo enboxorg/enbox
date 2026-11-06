@@ -37,10 +37,10 @@ const SquashDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const SquashModule = defineModule(SquashDefinition, {
+const SquashModule = defineModule({ definition : SquashDefinition, codecs     : {
   doc      : recordCodecs.json<{ n?: string }>(),
   snapshot : recordCodecs.json<{ v?: string }>(),
-});
+} });
 
 /** A fake DwnApi that records every `records.write` request and returns one accepted record. */
 function makeCapturingDwn(): { dwn: DwnApi; record: Record; writes: RecordsWriteRequest[] } {
@@ -73,8 +73,9 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
 
   it('forwards squash: true to the low-level records.write', async () => {
     const created = await typed.records.create('doc/snapshot', {
-      data   : { v: 's1' },
-      squash : true,
+      data            : { v: 's1' },
+      parentContextId : 'parentcontext',
+      squash          : true,
     });
 
     expect(created).toBe(record);
@@ -83,7 +84,7 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
   });
 
   it('passes squash as undefined (never a falsy false) when not requested', async () => {
-    await typed.records.create('doc/snapshot', { data: { v: 's1' } });
+    await typed.records.create('doc/snapshot', { data: { v: 's1' }, parentContextId: 'parentcontext' });
 
     expect(writes[0].squash).toBeUndefined();
     // explicitly NOT `false` — parity with omitting the field entirely
@@ -94,7 +95,7 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
     await typed.records.create('doc/snapshot', {
       data            : { v: 's1' },
       squash          : true,
-      parentContextId : 'parent-ctx',
+      parentContextId : 'parentcontext',
       recipient       : 'did:example:bob',
       moduleRole      : 'collaborator',
       tags            : { kind: 'snapshot' },
@@ -103,7 +104,7 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
 
     const req = writes[0];
     expect(req.squash).toBe(true);
-    expect(req.parentContextId).toBe('parent-ctx');
+    expect(req.parentContextId).toBe('parentcontext');
     expect(req.recipient).toBe('did:example:bob');
     expect(req.moduleRole).toBe('collaborator');
     expect(req.tags).toEqual({ kind: 'snapshot' });
@@ -116,8 +117,8 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
 
   it('scopes squash per-call — only the create that sets it carries it', async () => {
     await typed.records.create('doc', { data: { n: 'd' } }); // no squash
-    await typed.records.create('doc/snapshot', { data: { v: 's' }, squash: true });
-    await typed.records.create('doc/snapshot', { data: { v: 's2' } }); // no squash
+    await typed.records.create('doc/snapshot', { data: { v: 's' }, parentContextId: 'parentcontext', squash: true });
+    await typed.records.create('doc/snapshot', { data: { v: 's2' }, parentContextId: 'parentcontext' }); // no squash
 
     expect(writes.map((w) => w.squash)).toEqual([undefined, true, undefined]);
   });

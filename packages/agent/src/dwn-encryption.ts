@@ -13,6 +13,8 @@ import type {
   ModuleDefinition,
   PermissionGrant,
   RecordsWriteMessage,
+  ResolvedModuleGraph,
+  ResolvedRoleReference,
   RoleAudienceKeyMaterial,
   WrappedGrantKeyEnvelope,
 } from '@enbox/dwn-sdk-js';
@@ -44,14 +46,13 @@ import {
   EncryptionModule,
   getGrantKeyDeliveryScopes,
   getRoleAudienceContextId,
-  getRoleContextPrefix,
   grantKeyScopeCoversDeliveredScope,
   HdKey,
-  isCrossModuleRef,
   isGrantKeyEligibleRecordsScope,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
+  PermissionScopeMatcher,
   Records,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   SEAL_DERIVATION_SCHEME,
@@ -64,6 +65,7 @@ import type { RemoteReadOutcome } from './dwn-read-through.js';
 
 import { AudienceControlWriteError } from './audience-key-delivery.js';
 import { DwnInterface } from './types/dwn.js';
+import { loadAgentModuleGraph } from './dwn-module-graph.js';
 import {
   processDwnRequestWithRemoteFallback as processDwnReadThrough,
   processDwnRequestWithRemoteFallbackDetailed as processDwnReadThroughDetailed,
@@ -1278,12 +1280,12 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
 
   if (granteeDid !== undefined) {
     // An exact invoked role selects its audience route; its delivery or source seal supplies the key.
-    const invokedRolePath = targetDid !== undefined &&
+    const invokedAudience = targetDid !== undefined &&
       targetDid !== authorDid &&
       moduleRole !== undefined
-      ? getLocalRoleAudiencePath(recordsWrite, moduleRole)
+      ? await getResolvedRoleAudienceTarget({ agent, targetDid, authorDid, granteeDid, recordsWrite, moduleRole })
       : undefined;
-    if (invokedRolePath !== undefined) {
+    if (invokedAudience !== undefined) {
       // The delegate's owner key opens the role-holder delivery, not the foreign tenant's record.
       const audienceDecrypter = await resolveRoleAudienceDecrypter({
         agent,
@@ -1292,7 +1294,8 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
         granteeDid,
         delegatedGrant,
         recordsWrite,
-        rolePath       : invokedRolePath,
+        resolvedRole   : invokedAudience.role,
+        resolvedGraph  : invokedAudience.graph,
         preferDelivery : true,
         delegateDecryptionKeyCache,
         audienceDecryptionKeyCache,
@@ -1303,7 +1306,7 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
       }
 
       throw failureAccumulator.toError({
-        fallbackDetail : `no audience key for invoked role '${invokedRolePath}' opens encrypted record '${recordsWrite.recordId}'.`,
+        fallbackDetail : `no audience key for invoked role '${moduleRole}' opens encrypted record '${recordsWrite.recordId}'.`,
         module         : recordsWrite.descriptor.module,
         recipientDid   : authorDid,
         recordId       : recordsWrite.recordId,
@@ -1375,21 +1378,25 @@ export async function resolveKeyDecrypter(params: ResolveKeyDecrypterParams): Pr
   return getKeyDecrypter(agent, authorDid);
 }
 
-/** Returns a local invoked role only when the encryption envelope contains its exact audience route. */
-function getLocalRoleAudiencePath(recordsWrite: RecordsWriteMessage, moduleRole: string): string | undefined {
-  const module = recordsWrite.descriptor.module;
-  if (module === undefined || isCrossModuleRef(moduleRole)) {
+/** Resolves an invoked role to its exact owning module and encryption route. */
+async function getResolvedRoleAudienceTarget(params: {
+  agent: EnboxPlatformAgent;
+  targetDid: string;
+  authorDid: string;
+  granteeDid?: string;
+  recordsWrite: RecordsWriteMessage;
+  moduleRole: string;
+}): Promise<{ graph: ResolvedModuleGraph; role: ResolvedRoleReference } | undefined> {
+  const module = params.recordsWrite.descriptor.module;
+  if (module === undefined || !recordHasRoleAudienceKeyEncryption(params.recordsWrite)) {
     return undefined;
   }
-
-  return recordsWrite.encryption?.keyEncryption.some(
-    (entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-      'rolePath' in entry &&
-      entry.module === module &&
-      entry.rolePath === moduleRole,
-  ) === true
-    ? moduleRole
-    : undefined;
+  const graph = await loadAgentModuleGraph({ ...params, module });
+  const role = graph.resolveInvokedRole(params.moduleRole);
+  return params.recordsWrite.encryption?.keyEncryption.some(entry =>
+    entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
+    'rolePath' in entry && entry.module === role.owningModuleUri && entry.rolePath === role.owningModulePath
+  ) === true ? { graph, role } : undefined;
 }
 
 /** Whether the record's encryption envelope wraps its data key to any role-audience key. */
@@ -1462,7 +1469,8 @@ async function resolveRoleAudienceDecrypter(params: {
   sourceDid: string | undefined;
   recipientDid: string;
   recordsWrite: RecordsWriteMessage;
-  rolePath?: string;
+  resolvedRole?: ResolvedRoleReference;
+  resolvedGraph?: ResolvedModuleGraph;
   preferDelivery?: boolean;
   granteeDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
@@ -1480,13 +1488,28 @@ async function resolveRoleAudienceDecrypter(params: {
     rolePath: string;
   } => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     'rolePath' in entry &&
-    (params.rolePath === undefined || (
-      entry.module === params.recordsWrite.descriptor.module &&
-      entry.rolePath === params.rolePath
+    (params.resolvedRole === undefined || (
+      entry.module === params.resolvedRole.owningModuleUri &&
+      entry.rolePath === params.resolvedRole.owningModulePath
     )));
 
+  if (roleAudienceEntries.length === 0) {
+    return undefined;
+  }
+  const graph = params.resolvedGraph ?? await loadAgentModuleGraph({
+    agent      : params.agent,
+    authorDid  : params.recipientDid,
+    granteeDid : params.granteeDid,
+    module     : params.recordsWrite.descriptor.module,
+    targetDid  : params.sourceDid,
+  });
   for (const entry of roleAudienceEntries) {
-    const contextId = getRoleAudienceContextId(entry.rolePath, params.recordsWrite.contextId);
+    const role = params.resolvedRole ?? [...(graph.nodesByDeclaredPath.get(params.recordsWrite.descriptor.modulePath)?.rolesByRawRef.values() ?? [])]
+      .find(candidate => candidate.owningModuleUri === entry.module && candidate.owningModulePath === entry.rolePath);
+    if (role === undefined) {
+      continue;
+    }
+    const contextId = getRoleAudienceContextId(role, params.recordsWrite.contextId);
     if (contextId === undefined) {
       continue;
     }
@@ -1505,7 +1528,7 @@ async function resolveRoleAudienceDecrypter(params: {
     }
     // Each role-audience entry is one decryption route; its observations are scoped so the
     // final error can aggregate per-route outcomes conservatively.
-    params.failureAccumulator?.beginRoute(entry.rolePath);
+    params.failureAccumulator?.beginRoute(`${entry.module}:${entry.rolePath}`);
     const hydratedKey = await hydrateAudienceKey({
       agent                      : params.agent,
       sourceDid                  : params.sourceDid,
@@ -1615,9 +1638,10 @@ async function hydrateAudienceKeyFromDeliveryMessages(
   params: HydrateAudienceKeyParams,
   audienceRecord: AudienceRecordCandidate,
 ): Promise<AudienceDecryptionKeyEntry | undefined> {
-  const deliveryReadActor = getAudienceDeliveryReadActor(params);
+  let deliveryReadActor: AudienceDeliveryReadActor;
   let deliveryLookup: { messages: EncodedRecordsWriteMessage[]; remote: RemoteReadOutcome; replyStatusCode: number };
   try {
+    deliveryReadActor = await getAudienceDeliveryReadActor(params);
     deliveryLookup = await queryAudienceDeliveryMessagesDetailed(params, deliveryReadActor);
   } catch (error) {
     recordFailedLookup(params, '$encryption/delivery', error);
@@ -2066,22 +2090,38 @@ async function decryptAudienceDelivery(input: {
   };
 }
 
-function getAudienceDeliveryReadActor(params: {
+/** Select a grant that authorizes both role verification and the existing role-key disclosure policy. */
+async function getAudienceDeliveryReadActor(params: {
+  agent: EnboxPlatformAgent;
   recipientDid: string;
+  module: string;
+  rolePath: string;
+  contextId: string;
   granteeDid?: string;
   delegatedGrant?: DataEncodedRecordsWriteMessage;
-}): AudienceDeliveryReadActor {
-  if (params.granteeDid !== undefined &&
-      params.granteeDid !== params.recipientDid &&
-      params.delegatedGrant !== undefined) {
-    return {
-      authorDid      : params.recipientDid,
-      delegatedGrant : params.delegatedGrant,
-      granteeDid     : params.granteeDid,
-    };
+}): Promise<AudienceDeliveryReadActor> {
+  if (params.granteeDid === undefined || params.granteeDid === params.recipientDid) {
+    return { authorDid: params.recipientDid };
   }
 
-  return { authorDid: params.granteeDid ?? params.recipientDid };
+  let delegatedGrant = params.delegatedGrant;
+  const scope = delegatedGrant === undefined ? undefined : DwnPermissionGrant.parse(delegatedGrant).scope;
+  const contextId = params.contextId === '' ? undefined : params.contextId;
+  if (scope?.module !== params.module || scope.interface !== 'Records' || scope.method !== 'Read' ||
+      !PermissionScopeMatcher.matches(scope, { module: params.module, modulePath: params.rolePath, contextId }) ||
+      !isGrantKeyEligibleRecordsScope(scope)) {
+    const permission = await params.agent.permissions.getPermissionForRequest({
+      connectedDid : params.recipientDid,
+      delegateDid  : params.granteeDid,
+      messageType  : DwnInterface.RecordsRead,
+      module       : params.module,
+      // Context-bound key custody is not supported. Select an approved module/role-path grant.
+      modulePath   : params.rolePath,
+      delegate     : true,
+    });
+    delegatedGrant = permission.message;
+  }
+  return { authorDid: params.recipientDid, delegatedGrant, granteeDid: params.granteeDid };
 }
 
 async function getAudienceDeliveryEncryptedData(
@@ -2451,10 +2491,7 @@ async function verifyAudienceKeyRoleAssignment(params: {
   contextId: string;
   rolePath: string;
 }): Promise<void> {
-  const contextIdPrefix = getRoleContextPrefix(params.rolePath, params.contextId);
-  if (contextIdPrefix === undefined && params.rolePath.includes('/')) {
-    throw new AudienceRoleNotHeldError();
-  }
+  const contextIdPrefix = params.contextId === '' ? undefined : params.contextId;
 
   let roleLookup: { response: DwnResponse<DwnInterface.RecordsQuery>; remote: RemoteReadOutcome };
   try {

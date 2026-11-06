@@ -29,6 +29,7 @@
 
 export { generateModuleCode } from './codegen.js';
 export type {
+  CodegenDependency,
   CodegenOptions,
   CodegenResult,
   CodegenTarget,

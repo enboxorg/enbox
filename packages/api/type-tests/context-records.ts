@@ -58,7 +58,7 @@ const ContextDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const ContextModule = defineModule(ContextDefinition, {
+const ContextModule = defineModule({ definition : ContextDefinition, codecs     : {
   invite    : recordCodecs.json<{ code: string }>(),
   live      : recordCodecs.json<{ active: boolean }>(),
   member    : recordCodecs.json<{ label: string }>(),
@@ -69,7 +69,7 @@ const ContextModule = defineModule(ContextDefinition, {
   title     : recordCodecs.json<{ text: string }>(),
   viewer    : recordCodecs.json<{ expires: boolean }>(),
   workspace : recordCodecs.json<{ name: string }>(),
-});
+} });
 void ContextModule;
 
 declare const context:

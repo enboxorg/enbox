@@ -596,7 +596,7 @@ describe('readRoleReplicationSupport', () => {
   it('accepts historical module configurations alongside exactly one current version', async () => {
     const fixture = await createFixture();
     const current = await ModulesConfigure.create({
-      definition : { module: MODULE, published: false, structure: {}, types: {} },
+      definition : { ...fixture.configure.message.descriptor.definition, published: false },
       signer     : ownerSigner,
     });
     fixture.support[0].isLatestBaseState = false;
@@ -614,10 +614,21 @@ describe('readRoleReplicationSupport', () => {
     ]);
   });
 
+  it('rejects historical configurations signed by a different tenant', async () => {
+    const fixture = await createFixture();
+    const foreignHistorical = await ModulesConfigure.create({
+      definition : fixture.configure.message.descriptor.definition,
+      signer     : peerSigner,
+    });
+    fixture.support.push({ isLatestBaseState: false, message: foreignHistorical.message });
+
+    await expect(readFixture(fixture)).rejects.toBeInstanceOf(RoleReplicationSupportError);
+  });
+
   it('rejects a support response that identifies multiple current module configurations', async () => {
     const fixture = await createFixture();
     const extra = await ModulesConfigure.create({
-      definition : { module: MODULE, published: true, structure: {}, types: {} },
+      definition : fixture.configure.message.descriptor.definition,
       signer     : ownerSigner,
     });
     fixture.support.splice(1, 0, {
@@ -626,6 +637,59 @@ describe('readRoleReplicationSupport', () => {
     });
 
     await expect(readFixture(fixture)).rejects.toThrow('exactly one current module configuration');
+  });
+
+  it('accepts chained foreign ancestry and a role owned by the base module', async () => {
+    const fixture = await createFixture();
+    const contextRoot = fixture.root;
+    const documentsModule = 'https://example.com/role-support/documents';
+    const commentsModule = 'https://example.com/role-support/comments';
+    const documentsConfigure = await ModulesConfigure.create({
+      definition: {
+        module    : documentsModule, published : true, uses      : { core: MODULE },
+        types     : { document: { dataFormats: ['text/plain'] } },
+        structure : { notebook: { $ref: 'core:notebook', document: {} } },
+      },
+      signer: ownerSigner,
+    });
+    const commentsConfigure = await ModulesConfigure.create({
+      definition: {
+        module    : commentsModule, published : true, uses      : { core: MODULE, documents: documentsModule },
+        types     : { comment: { dataFormats: ['text/plain'] } },
+        structure : { document: {
+          $ref    : 'documents:notebook/document',
+          comment : { $actions: [{ role: `core:${ROLE_PATH}`, can: ['read'] }] },
+        } },
+      },
+      signer: ownerSigner,
+    });
+    const document = await RecordsWrite.create({
+      module          : documentsModule, modulePath      : 'notebook/document', parentContextId : contextRoot.message.contextId,
+      data            : new TextEncoder().encode('document'), dataFormat      : 'text/plain', signer          : ownerSigner,
+    });
+    fixture.rootData = new TextEncoder().encode('comment');
+    fixture.root = await RecordsWrite.create({
+      module          : commentsModule, modulePath      : 'document/comment', parentContextId : document.message.contextId,
+      data            : fixture.rootData, dataFormat      : 'text/plain', signer          : ownerSigner,
+    });
+    fixture.support.push(
+      { isLatestBaseState: true, message: documentsConfigure.message },
+      { isLatestBaseState: true, message: commentsConfigure.message },
+      { isLatestBaseState: false, message: contextRoot.message },
+      { isLatestBaseState: false, message: document.message },
+    );
+    const result = await readRoleReplicationSupport({
+      actorDid       : actor.uri, agent          : responseAgent(fixture) as any,
+      contextId      : fixture.root.message.contextId!, dwnUrl         : 'https://owner.example.com',
+      permissionsApi : { getPermissionForRequest: sinon.stub() } as any,
+      module         : commentsModule, modulePath     : 'document/comment', moduleRole     : `core:${ROLE_PATH}`, sourceDid      : owner.uri,
+    });
+
+    expect(result.resolvedGraph.resolveInvokedRole(`core:${ROLE_PATH}`).owningModuleUri).toBe(MODULE);
+    expect(result.resolvedGraph.nodesByDeclaredPath.get('document/comment')?.physicalDepth).toBe(3);
+    expect(result.dependencies.map(entry => entry.message)).toContainEqual(document.message);
+    expect(result.dependencies.map(entry => entry.message)).toContainEqual(contextRoot.message);
+    expect(result.roleRecordId).toBe(fixture.role.message.recordId);
   });
 
   it('accepts exact compound-context ancestry while binding the role at its parent context', async () => {
@@ -874,8 +938,17 @@ describe('readRoleReplicationSupport', () => {
       signer          : ownerSigner,
     });
     const configure = await ModulesConfigure.create({
-      definition : { module: MODULE, published: true, structure: {}, types: {} },
-      signer     : ownerSigner,
+      definition: {
+        module    : MODULE,
+        published : true,
+        types     : { notebook: {}, page: {}, viewer: {}, editor: {} },
+        structure : { notebook: {
+          viewer : { $role: true },
+          editor : { $role: true },
+          page   : {},
+        } },
+      },
+      signer: ownerSigner,
     });
     const read = await RecordsRead.create({
       filter: {

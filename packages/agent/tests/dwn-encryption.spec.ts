@@ -1,4 +1,4 @@
-import type { DataEncodedRecordsWriteMessage, DerivedPrivateJwk, ModuleDefinition, PrivateKeyJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DerivedPrivateJwk, ModuleDefinition, PrivateKeyJwk, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -304,6 +304,20 @@ describe('dwn-encryption', () => {
         processDwnRequest?: sinon.SinonStub,
         options: { locallyManagedSource?: boolean } = {},
       ): any {
+        const process = processDwnRequest ?? sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } });
+        const keyAgreement = { publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'A'.repeat(43) } };
+        process.withArgs(sinon.match({ messageType: DwnInterface.ModulesQuery })).resolves({
+          reply: { status  : { code: 200, detail: 'OK' }, entries : [{ descriptor: { definition: {
+            module        : TAXONOMY_MODULE, published     : true, $keyAgreement : keyAgreement,
+            types         : { note: { encryptionRequired: true }, admin: {}, collaborator: {}, viewer: {} },
+            structure     : {
+              admin        : { $role: true, $keyAgreement: keyAgreement },
+              collaborator : { $role: true, $keyAgreement: keyAgreement },
+              viewer       : { $role: true, $keyAgreement: keyAgreement },
+              note         : { $keyAgreement: keyAgreement, $actions: ['admin', 'collaborator', 'viewer'].map(role => ({ role, can: ['read'] })) },
+            },
+          } } }] },
+        });
         return {
           did: {
             // Whether the source tenant counts as one of this agent's own (locally managed) tenants.
@@ -328,7 +342,7 @@ describe('dwn-encryption', () => {
             derivePrivateKeyBytes : sinon.stub().resolves(crypto.getRandomValues(new Uint8Array(32))),
             getKeyUri             : sinon.stub().resolves('key-uri-bob'),
           },
-          processDwnRequest: processDwnRequest ?? sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [] } }),
+          processDwnRequest: process,
           sendDwnRequest,
         };
       }
@@ -851,7 +865,12 @@ describe('dwn-encryption', () => {
       const sourceDid = 'did:example:alice';
       const recipientDid = 'did:example:bob';
       const granteeDid = 'did:example:bob-delegate';
-      const delegatedGrant = { recordId: 'bob-delegate-grant' } as unknown as DataEncodedRecordsWriteMessage;
+      const delegatedGrant = (await TestDataGenerator.generateGrantCreate({
+        author    : await TestDataGenerator.generateDidKeyPersona(),
+        grantedTo : await TestDataGenerator.generateDidKeyPersona(),
+        delegated : true,
+        scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module },
+      })).dataEncodedMessage;
       const audiencePrivateKeyJwk = await X25519.generateKey();
       const audiencePublicKeyJwk = await X25519.getPublicKey({ key: audiencePrivateKeyJwk });
       const audienceKeyId = await Encryption.getKeyId(audiencePublicKeyJwk);
@@ -927,6 +946,20 @@ describe('dwn-encryption', () => {
       let deliveryAvailable = true;
       const processDwnRequest = sinon.stub().callsFake(async (request: any): Promise<any> => {
         const filter = request.messageParams.filter;
+        if (request.messageType === DwnInterface.ModulesQuery) {
+          const keyAgreement = { publicKeyJwk: audiencePublicKeyJwk };
+          return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{ descriptor: { definition: {
+            module, published     : true, $keyAgreement : keyAgreement,
+            types         : { chat: {}, member: {}, admin: {}, message: { encryptionRequired: true } },
+            structure     : { chat: {
+              $keyAgreement : keyAgreement,
+              member        : { $role: true, $keyAgreement: keyAgreement },
+              admin         : { $role: true, $keyAgreement: keyAgreement },
+              message       : { $keyAgreement: keyAgreement, $actions: [{ role: rolePath, can: ['read'] }, { role: 'chat/admin', can: ['read'] }] },
+            } },
+          } } }] } };
+        }
+
         if (request.messageType === DwnInterface.RecordsQuery && filter.modulePath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
           return {
             reply: {

@@ -6,7 +6,9 @@ import type { MessageStore, RecordLimitOccupancy } from '../types/message-store.
 import type { RecordsFilter, RecordsWriteMessage } from '../types/records-types.js';
 
 import { getRuleSetAtPath } from './modules.js';
+import { preloadModuleDefinitions } from '../core/module-graph-loader.js';
 import { Records } from './records.js';
+import { resolveModuleGraph } from '../core/module-graph.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
@@ -115,23 +117,23 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
     return undefined;
   }
 
-  const recordLimitDefinition = await getRecordLimit({
+  const policy = await getRecordLimit({
     validationStateReader : input.validationStateReader,
     tenant                : input.tenant,
     module,
     modulePath,
     messageTimestamp      : input.messageTimestamp,
   });
-  if (recordLimitDefinition === undefined) {
+  if (policy === undefined) {
     return undefined;
   }
-
+  const recordLimitDefinition = policy.recordLimit;
   const recordLimit: RecordLimitOccupancy = {
     module,
     modulePath,
     max: recordLimitDefinition.max,
   };
-  if (!modulePath.includes('/')) {
+  if (policy.physicalDepth === 1) {
     return recordLimit;
   }
   if (parentId !== undefined) {
@@ -142,7 +144,7 @@ export async function resolveRecordLimitOccupancy(input: RecordLimitPolicyDepend
   }
 
   const contextDepth = contextId.split('/').length;
-  const modulePathDepth = modulePath.split('/').length;
+  const modulePathDepth = policy.physicalDepth;
   recordLimit.contextId = contextDepth === modulePathDepth
     ? Records.getParentContextFromOfContextId(contextId)
     : contextId;
@@ -160,13 +162,14 @@ async function getRecordLimitForMessage(input: RecordLimitOccupancyDependencies 
     return undefined;
   }
 
-  return getRecordLimit({
+  const policy = await getRecordLimit({
     validationStateReader : input.validationStateReader,
     tenant                : input.tenant,
     module,
     modulePath,
     messageTimestamp      : input.messageTimestamp,
   });
+  return policy?.recordLimit;
 }
 
 async function getRecordLimit(input: {
@@ -175,7 +178,7 @@ async function getRecordLimit(input: {
   module: string;
   modulePath: string;
   messageTimestamp: string;
-}): Promise<ModuleRecordLimitDefinition | undefined> {
+}): Promise<{ recordLimit: ModuleRecordLimitDefinition; physicalDepth: number } | undefined> {
   let moduleDefinition;
   try {
     moduleDefinition = await input.validationStateReader.fetchModuleDefinition(
@@ -192,7 +195,14 @@ async function getRecordLimit(input: {
 
   const ruleSet = getRuleSetAtPath(input.modulePath, moduleDefinition.structure);
   const recordLimit = ruleSet?.$recordLimit;
-  return recordLimit;
+  if (recordLimit === undefined) {
+    return undefined;
+  }
+  const definitions = await preloadModuleDefinitions(moduleDefinition,
+    uri => input.validationStateReader.fetchModuleDefinition(input.tenant, uri, input.messageTimestamp));
+  const graph = resolveModuleGraph(moduleDefinition, uri => definitions.get(uri));
+  const node = graph.nodesByDeclaredPath.get(input.modulePath)!;
+  return { recordLimit, physicalDepth: node.physicalDepth };
 }
 
 /**

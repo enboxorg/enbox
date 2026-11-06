@@ -1,14 +1,14 @@
 import type { DwnServerConfig } from './config.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver, DidService, DidServiceEndpoint } from '@enbox/dids';
-import type { Dwn, GenericMessage, ModuleDefinition, ModuleRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition, RecordsQueryReplyEntry, RecordsWriteMessage, ResolvedModuleNode, ResolvedRoleReference } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { sleep } from '@enbox/common';
-import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, getRuleSetAtPath, Message, Records } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, getRoleContextPrefix, getRuleSetAtPath, Message, preloadModuleDefinitions, Records, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
 function stripTrailingSlashes(value: string): string {
@@ -248,59 +248,61 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     const ruleSet = getRuleSetAtPath(descriptor.modulePath, moduleDefinition.structure);
-    if (!ruleSet?.$delivery) {
+    // Subscription delivery is driven by participants; only direct delivery pushes from this node.
+    if (ruleSet?.$delivery !== 'direct') {
       return;
     }
 
-    // For 'direct' strategy: resolve targets and push.
-    if (ruleSet.$delivery === 'direct') {
-      const targets = await this.#resolveDeliveryTargets(
-        tenant, moduleDefinition, ruleSet, descriptor.modulePath, descriptor.contextId, descriptor.recipient,
-      );
+    const definitions = await preloadModuleDefinitions(moduleDefinition, uri => this.#getModuleDefinition(tenant, uri));
+    const graph = resolveModuleGraph(moduleDefinition, uri => definitions.get(uri));
+    const node = graph.nodesByDeclaredPath.get(descriptor.modulePath);
+    if (node === undefined || node.kind !== 'record') {
+      return;
+    }
+    const contextId = (message as RecordsWriteMessage).contextId;
+    const targets = await this.#resolveDeliveryTargets(
+      tenant, node, contextId, descriptor.recipient,
+    );
 
-      if (targets.length === 0) {
-        return;
-      }
-
-      // Filter out the tenant itself (they already have the record).
-      const externalTargets = targets.filter((t: DeliveryTarget): boolean => t.did !== tenant);
-      if (externalTargets.length === 0) {
-        return;
-      }
-
-      const concurrency = this.#config.deliveryMaxConcurrency;
-      const allEndpoints: DwnEndpoint[] = [];
-      const endpointTargetMap = new Map<string, string>(); // url -> target DID
-
-      for (const target of externalTargets) {
-        for (const ep of target.endpoints) {
-          allEndpoints.push(ep);
-          endpointTargetMap.set(ep.url, target.did);
-        }
-      }
-
-      // Deduplicate per-target.
-      const uniqueEndpoints = allEndpoints.filter((ep: DwnEndpoint): boolean => {
-        const targetDid = endpointTargetMap.get(ep.url)!;
-        const dedupKey = `dlv:${targetDid}:${messageCid}`;
-        if (this.#isRecentlyForwarded(dedupKey)) {
-          return false;
-        }
-        this.#markForwarded(dedupKey);
-        return true;
-      });
-
-      if (uniqueEndpoints.length === 0) {
-        return;
-      }
-
-      // For delivery, the target is the participant DID (not the tenant).
-      // We need to send to each participant's DWN with the *participant* as the target.
-      await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, tenant, message, concurrency);
+    if (targets.length === 0) {
+      return;
     }
 
-    // 'subscribe' strategy: no outbound push needed from the origin.
-    // Participant providers are responsible for establishing RecordsSubscribe connections.
+    // Filter out the tenant itself (they already have the record).
+    const externalTargets = targets.filter((t: DeliveryTarget): boolean => t.did !== tenant);
+    if (externalTargets.length === 0) {
+      return;
+    }
+
+    const concurrency = this.#config.deliveryMaxConcurrency;
+    const allEndpoints: DwnEndpoint[] = [];
+    const endpointTargetMap = new Map<string, string>(); // url -> target DID
+
+    for (const target of externalTargets) {
+      for (const ep of target.endpoints) {
+        allEndpoints.push(ep);
+        endpointTargetMap.set(ep.url, target.did);
+      }
+    }
+
+    // Deduplicate per-target.
+    const uniqueEndpoints = allEndpoints.filter((ep: DwnEndpoint): boolean => {
+      const targetDid = endpointTargetMap.get(ep.url)!;
+      const dedupKey = `dlv:${targetDid}:${messageCid}`;
+      if (this.#isRecentlyForwarded(dedupKey)) {
+        return false;
+      }
+      this.#markForwarded(dedupKey);
+      return true;
+    });
+
+    if (uniqueEndpoints.length === 0) {
+      return;
+    }
+
+    // For delivery, the target is the participant DID (not the tenant).
+    // We need to send to each participant's DWN with the *participant* as the target.
+    await this.#sendToEndpointsGrouped(uniqueEndpoints, endpointTargetMap, tenant, message, concurrency);
   }
 
   // -------------------------------------------------------------------------
@@ -317,9 +319,7 @@ export class DeliveryService implements MessageProcessedHook {
    */
   async #resolveDeliveryTargets(
     tenant: string,
-    moduleDefinition: ModuleDefinition,
-    ruleSet: ModuleRuleSet,
-    modulePath: string,
+    node: ResolvedModuleNode,
     contextId?: string,
     recipient?: string,
   ): Promise<DeliveryTarget[]> {
@@ -331,7 +331,7 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     // Method 2 & 3: Role-based and actor-based discovery from $actions rules.
-    await this.#collectRoleAndActorTargets(tenant, moduleDefinition, ruleSet, contextId, targetDids);
+    await this.#collectRoleAndActorTargets(tenant, node, contextId, targetDids);
 
     // Resolve endpoints for each target DID.
     const targets: DeliveryTarget[] = [];
@@ -353,39 +353,35 @@ export class DeliveryService implements MessageProcessedHook {
    */
   async #collectRoleAndActorTargets(
     tenant: string,
-    moduleDefinition: ModuleDefinition,
-    ruleSet: ModuleRuleSet,
+    node: ResolvedModuleNode,
     contextId: string | undefined,
     targetDids: Set<string>,
   ): Promise<void> {
-    const actionRules = ruleSet.$actions ?? [];
-
-    for (const rule of actionRules) {
-      // Role-based rules: query for role records at the role path.
-      if (rule.role !== undefined) {
-        const roleDids = await this.#queryRoleRecipients(
-          tenant, moduleDefinition.module, rule.role, contextId,
-        );
-        for (const did of roleDids) {
-          targetDids.add(did);
-        }
-      }
-
-      // Method 3: Actor-based discovery — `who: "author"/"recipient"` + `of` path.
-      // Find the ancestor record at the `of` module path within the same context,
-      // then extract its author or recipient as a delivery target.
-      if (rule.who !== undefined && rule.of !== undefined && rule.who !== 'anyone') {
-        // Skip cross-module `of` references (e.g., "threads:thread") for now.
-        if (!rule.of.includes(':')) {
-          const actorDid = await this.#queryActorFromAncestor(
-            tenant, moduleDefinition.module, rule.of, rule.who as string, contextId,
-          );
-          if (actorDid) {
-            targetDids.add(actorDid);
-          }
-        }
+    for (const action of node.actions) {
+      const recipients = await this.#queryActionRecipients(tenant, action, contextId); // NOSONAR: S9382 — one DWN lookup at a time.
+      for (const did of recipients) {
+        targetDids.add(did);
       }
     }
+  }
+
+  /** Resolve one action's role holders and ancestor actor without changing action-order target precedence. */
+  async #queryActionRecipients(
+    tenant: string,
+    { resolvedRole, resolvedActor }: ResolvedModuleNode['actions'][number],
+    contextId: string | undefined,
+  ): Promise<string[]> {
+    const recipients = resolvedRole === undefined ? [] : await this.#queryRoleRecipients(tenant, resolvedRole, contextId);
+    if (resolvedActor !== undefined) {
+      const actorDid = await this.#queryActorFromAncestor(
+        tenant, resolvedActor.owningModuleUri, resolvedActor.owningModulePath,
+        resolvedActor.who, resolvedActor.physicalDepth, contextId,
+      );
+      if (actorDid !== undefined) {
+        recipients.push(actorDid);
+      }
+    }
+    return recipients;
   }
 
   /**
@@ -394,28 +390,19 @@ export class DeliveryService implements MessageProcessedHook {
    */
   async #queryRoleRecipients(
     tenant: string,
-    moduleUri: string,
-    rolePath: string,
+    role: ResolvedRoleReference,
     contextId?: string,
   ): Promise<string[]> {
     try {
-      // Build a RecordsQuery to find role records.
-      const filter: Record<string, unknown> = {
-        module     : moduleUri,
-        modulePath : rolePath,
-      };
-
-      // Scope to context if the role is nested (has ancestors).
-      if (contextId !== undefined && rolePath.includes('/')) {
-        // For a nested role like 'thread/participant', the role record's contextId
-        // shares the same prefix as the target record's contextId.
-        const roleDepth = rolePath.split('/').length - 1;
-        const contextSegments = contextId.split('/');
-        if (contextSegments.length >= roleDepth) {
-          const contextPrefix = contextSegments.slice(0, roleDepth).join('/');
-          filter.contextId = contextPrefix;
-        }
+      const contextPrefix = getRoleContextPrefix(role, contextId);
+      if (role.parentPhysicalDepth > 0 && contextPrefix === undefined) {
+        return [];
       }
+      const filter: Record<string, unknown> = {
+        module     : role.owningModuleUri,
+        modulePath : role.owningModulePath,
+        ...(contextPrefix === undefined ? {} : { contextId: contextPrefix }),
+      };
 
       // Use the DWN's processMessage to query for role records.
       const queryMessage = {
@@ -445,7 +432,7 @@ export class DeliveryService implements MessageProcessedHook {
 
       return Array.from(dids);
     } catch (err) {
-      log.warn(`DeliveryService: failed to query role recipients for ${rolePath}`, err);
+      log.warn(`DeliveryService: failed to query role recipients for ${role.owningModulePath}`, err);
       return [];
     }
   }
@@ -465,6 +452,7 @@ export class DeliveryService implements MessageProcessedHook {
     moduleUri: string,
     ofPath: string,
     actorType: string,
+    physicalDepth: number,
     contextId?: string,
   ): Promise<string | undefined> {
     try {
@@ -478,11 +466,12 @@ export class DeliveryService implements MessageProcessedHook {
       // record's contextId. For a top-level `of` path (no slashes), the ancestor
       // IS the context root — its recordId equals the first contextId segment.
       if (contextId !== undefined) {
-        const ofDepth = ofPath.split('/').length;
+        const ofDepth = physicalDepth;
         const contextSegments = contextId.split('/');
         // The ancestor at depth N has a contextId formed by the first N segments.
         if (contextSegments.length >= ofDepth) {
           filter.contextId = contextSegments.slice(0, ofDepth).join('/');
+          filter.recordId = contextSegments[ofDepth - 1];
         }
       }
 

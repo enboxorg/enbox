@@ -124,9 +124,9 @@ const definition = {
   },
 } as const;
 
-const FilesModule = defineModule(definition, {
+const FilesModule = defineModule({ definition: definition, codecs: {
   attachment: attachmentCodec,
-});
+} });
 ```
 
 `maxEncodedBytesFor()` reserves enough record bytes for the supplied content

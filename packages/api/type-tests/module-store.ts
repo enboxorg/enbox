@@ -18,12 +18,12 @@ const Definition = {
     settings : { $recordLimit: { max: 1 } },
   },
 } as const satisfies ModuleDefinition;
-const Module = defineModule(Definition, {
+const Module = defineModule({ definition : Definition, codecs     : {
   folder   : recordCodecs.json<{ name: string }>(),
   member   : recordCodecs.json<{}>(),
   note     : recordCodecs.json<{ title: string; completed: boolean }>(),
   settings : recordCodecs.json<{ enabled: boolean }>(),
-});
+} });
 const Feature = defineStore({ modules: { notes: Module }, create: ({ modules }) => modules.notes });
 void Feature;
 declare const store: StoreInstance<typeof Feature>;

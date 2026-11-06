@@ -40,11 +40,11 @@ const definition = {
   structure: { ignored: {}, label: {}, note: {} },
 } as const satisfies ModuleDefinition;
 
-const module = defineModule(definition, {
+const module = defineModule({ definition : definition, codecs     : {
   ignored : recordCodecs.json<{ value: string }>(),
   label   : recordCodecs.json<{ text: string }>(),
   note    : recordCodecs.json<{ title: string }>(),
-});
+} });
 const application = defineApplicationManifest({ modules: [module] } as const);
 
 function testRecord(

@@ -300,7 +300,7 @@ describe('audience key delivery propagation', () => {
   describe('TypedEnbox records.create() and Record.update()', () => {
     it('should forward recipientRolePublicKey on typed create', async () => {
       const definition = makeChatDefinition();
-      const typed = new TypedEnbox(dwnAlice, defineModule(definition, chatCodecs));
+      const typed = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: chatCodecs }));
 
       const { status: configureStatus } = await typed.configure();
       expect(configureStatus.code).toBe(202);

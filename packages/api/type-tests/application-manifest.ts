@@ -28,9 +28,9 @@ const NotesDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const NotesModule = defineModule(NotesDefinition, {
+const NotesModule = defineModule({ definition : NotesDefinition, codecs     : {
   note: recordCodecs.json<{ body: string }>(),
-});
+} });
 
 const PhotosDefinition = {
   module    : 'https://example.com/modules/manifest-photos',
@@ -43,9 +43,9 @@ const PhotosDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const PhotosModule = defineModule(PhotosDefinition, {
+const PhotosModule = defineModule({ definition : PhotosDefinition, codecs     : {
   photo: recordCodecs.blob('image/jpeg'),
-});
+} });
 
 const application = defineApplicationManifest({
   modules: [

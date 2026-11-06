@@ -45,12 +45,21 @@ export function normalizeModuleRequests(
       `normalizeModuleRequests: modules[${index}].permissions`,
     );
 
-    return { definition, permissions };
+    const installationOnly = isObjectRecord(entry) && Object.hasOwn(entry, 'installationOnly');
+    if (installationOnly && (!explicit || entry.installationOnly !== true || permissions.length !== 0)) {
+      throw new TypeError(
+        `normalizeModuleRequests: modules[${index}].installationOnly requires true and explicit empty permissions.`,
+      );
+    }
+    return { definition, permissions, installationOnly };
   });
 
   assertUniqueModuleUris(normalized);
 
-  return normalized.map(({ definition, permissions }) => {
+  return normalized.map(({ definition, permissions, installationOnly }) => {
+    if (installationOnly) {
+      return { moduleDefinition: definition, permissionScopes: [] };
+    }
     return WalletConnect.createPermissionRequestForModule({
       definition,
       permissions,
@@ -61,6 +70,7 @@ export function normalizeModuleRequests(
 type NormalizedModuleRequest = {
   definition: DwnModuleDefinition;
   permissions: Permission[];
+  installationOnly: boolean;
 };
 
 /** Reject duplicate requests before producing any agent-level permission request. */

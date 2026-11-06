@@ -123,15 +123,15 @@ export function testModulesConfigureHandler(): void {
         expect(reply.status.code).toBe(202);
       });
 
-      it('stops dependency reads before later aliases when the first dependency is missing', async () => {
+      it('stops dependency reads at the first missing module in canonical order', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const missing = 'https://example.com/dependency-order/missing';
-        const later = 'https://example.com/dependency-order/later';
+        const missing = 'https://example.com/dependency-order/a-missing';
+        const later = 'https://example.com/dependency-order/z-later';
         const configuration = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           moduleDefinition : {
             module    : 'https://example.com/dependency-order/consumer', published : true,
-            uses      : { missing, later }, types     : {}, structure : {},
+            uses      : { later, missing }, types     : {}, structure : {},
           },
         });
         const reads = sinon.spy(StoreValidationStateReader.prototype, 'fetchModuleDefinition');
@@ -456,7 +456,7 @@ export function testModulesConfigureHandler(): void {
         expect(removedRecord.messages).toHaveLength(1);
       });
 
-      it('should reject changing a policy imported by a composing module with existing records', async () => {
+      it('should reject changing an imported policy before any consumer records exist', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const referencedModule = 'http://config-validity.example/referenced-encryption-policy';
         const composingModule = 'http://config-validity.example/composing-encryption-policy';
@@ -498,21 +498,6 @@ export function testModulesConfigureHandler(): void {
         });
         expect((await dwn.processMessage(alice.did, composingConfigure.message)).status.code).toBe(202);
 
-        const composedWrite = await TestDataGenerator.generateRecordsWrite({
-          author           : alice,
-          data             : Encoder.stringToBytes('composed thread'),
-          dataFormat       : 'text/plain',
-          dateCreated      : '2025-04-03T00:00:00.000000Z',
-          messageTimestamp : '2025-04-03T00:00:00.000000Z',
-          module           : composingModule,
-          modulePath       : 'thread',
-        });
-        expect((await dwn.processMessage(
-          alice.did,
-          composedWrite.message,
-          { dataStream: composedWrite.dataStream },
-        )).status.code).toBe(202);
-
         const encryptedReferencedDefinition = await Modules.deriveAndInjectPublicEncryptionKeys({
           ...referencedDefinition,
           types: { thread: { dataFormats: ['text/plain'], encryptionRequired: true } },
@@ -524,8 +509,8 @@ export function testModulesConfigureHandler(): void {
         });
         const changedReferencedReply = await dwn.processMessage(alice.did, changedReferencedConfigure.message);
         expect(changedReferencedReply.status.code).toBe(400);
-        expect(changedReferencedReply.status.detail).toContain(DwnErrorCode.ModulesConfigureEncryptionPolicyImmutable);
-        expect(changedReferencedReply.status.detail).toContain(`imported by module '${composingModule}'`);
+        expect(changedReferencedReply.status.detail).toContain(DwnErrorCode.ModulesConfigureIncompatibleContractUpdate);
+        expect(changedReferencedReply.status.detail).toContain(composingModule);
       });
 
       it('should store all module versions with identical timestamps and query should only return the newest (by CID tiebreak)', async () => {
@@ -636,9 +621,17 @@ export function testModulesConfigureHandler(): void {
         const historicalConfig = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           moduleDefinition : validHistoricalDefinition,
-          messageTimestamp : '2025-05-01T00:00:00.000000Z'
+          messageTimestamp : '2025-04-30T00:00:00.000000Z'
         });
-        const historicalIndexes = ModulesConfigureHandler.constructIndexes(historicalConfig.modulesConfigure, true);
+        // Only a valid graph can be an active head after the fresh-format cutover.
+        // The deliberately malformed row is retained historical input, not active authority.
+        const activeConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : validHistoricalDefinition,
+          messageTimestamp : '2025-05-01T00:00:00.000000Z',
+        });
+        expect((await dwn.processMessage(alice.did, activeConfig.message)).status.code).toBe(202);
+        const historicalIndexes = ModulesConfigureHandler.constructIndexes(historicalConfig.modulesConfigure, false);
         historicalConfig.message.descriptor.definition = invalidHistoricalDefinition;
         await messageStore.put(alice.did, historicalConfig.message, historicalIndexes);
 
@@ -666,8 +659,10 @@ export function testModulesConfigureHandler(): void {
           module,
           isLatestBaseState : false
         }]);
-        expect(historicalConfigs.messages).toHaveLength(1);
-        expect(await Message.getCid(historicalConfigs.messages[0])).toBe(await Message.getCid(historicalConfig.message));
+        expect(historicalConfigs.messages).toHaveLength(2);
+        const historicalCids = await Promise.all(historicalConfigs.messages.map(message => Message.getCid(message)));
+        expect(historicalCids).toContain(await Message.getCid(historicalConfig.message));
+        expect(historicalCids).toContain(await Message.getCid(activeConfig.message));
       });
 
       it('should purge records invalidated by a newly learned module config', async () => {

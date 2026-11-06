@@ -89,7 +89,6 @@ const SharedDefinition = {
     outside: {
       $actions: [
         { who: 'anyone', can: ['read'] },
-        { role: moduleRole, can: ['read'] },
       ],
       outsider: {
         $role: true,
@@ -98,7 +97,7 @@ const SharedDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const SharedModule = defineModule(SharedDefinition, {
+const SharedModule = defineModule({ definition : SharedDefinition, codecs     : {
   blindMember : recordCodecs.json<unknown>(),
   member      : recordCodecs.json<unknown>(),
   note        : recordCodecs.json<{ title: string }>(),
@@ -109,7 +108,7 @@ const SharedModule = defineModule(SharedDefinition, {
   viewer      : recordCodecs.json<unknown>(),
   workspace   : recordCodecs.json<unknown>(),
   writeOnly   : recordCodecs.json<unknown>(),
-});
+} });
 
 const NestedDefinition = {
   module    : `${SharedDefinition.module}/nested`,
@@ -129,11 +128,11 @@ const NestedDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const NestedModule = defineModule(NestedDefinition, {
+const NestedModule = defineModule({ definition : NestedDefinition, codecs     : {
   member   : recordCodecs.json<unknown>(),
   notebook : recordCodecs.json<unknown>(),
   page     : recordCodecs.json<unknown>(),
-});
+} });
 
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
@@ -2215,12 +2214,12 @@ describe('TypedEnbox contexts', () => {
 
   it('rejects unsupported saved-choice operations before preparing module records', async () => {
     const withoutSync = new TypedEnbox(dwn, SharedModule);
-    const unshared = defineModule({
+    const unshared = defineModule({ definition: {
       module    : 'https://example.com/modules/local-notes',
       published : false,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: {} },
-    }, { note: recordCodecs.json<unknown>() });
+    }, codecs: { note: recordCodecs.json<unknown>() } });
     const withoutJournal = new TypedEnbox(dwn, unshared, { sync });
 
     await expect(withoutSync.contexts.forget({ ownerDid: sourceDid, id: contextId }))

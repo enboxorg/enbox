@@ -401,7 +401,7 @@ import {
   recordCodecs,
 } from '@enbox/api';
 
-const NotesModule = defineModule({
+const NotesModule = defineModule({ definition: {
   module  : 'https://example.com/notes',
   published : false,
   types     : {
@@ -415,9 +415,9 @@ const NotesModule = defineModule({
       $tags: { category: { type: 'string' } },
     },
   },
-} as const, {
+} as const, codecs: {
   note: recordCodecs.json<{ title: string; body: string }>(),
-});
+} });
 
 const manifest = defineApplicationManifest({ modules: [NotesModule] });
 const store = createConnectionStore({ application: manifest, password: userPassword });
@@ -551,9 +551,17 @@ target must be controlled by the same agent so it can sign the configuration.
 The lower-level
 `enbox.using(module).configure()` never publishes to a hosted DWN.
 
-Typed module composition through `$ref` is not inferred from incomplete
-local metadata. `defineModule()` rejects it for now; use the raw `enbox.dwn`
-API when an application needs explicit module composition.
+Typed module composition supplies complete provider artifacts explicitly:
+`defineModule({ definition, codecs, dependencies: { core: CoreModule } })`.
+The dependency keys exactly match the definition's `uses` aliases, and providers
+carry their own dependencies. Installation prepares providers before consumers
+without adding data grants to the application manifest.
+
+A `$ref` node is an attachment point, not a local record path. Use the owning
+module for parent records and the extension's local path for its children.
+Creation takes the parent's returned `contextId` as `parentContextId`; queries
+and observed views use `within`. Codecs cover local records only, and physical
+depth comes from the resolved graph rather than the local path's slash count.
 
 ## Integration Testing
 

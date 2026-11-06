@@ -1,0 +1,50 @@
+{
+  "module": "https://example.org/modules/chat/message-extras",
+  "published": true,
+  "uses": {
+    "messages": "https://example.org/modules/chat/messages",
+    "team": "https://example.org/modules/chat/team"
+  },
+  "types": {
+    "reaction": {
+      "schema": "https://example.org/schemas/chat/reaction",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    },
+    "file": {
+      "dataFormats": ["application/octet-stream", "image/png", "image/jpeg", "application/pdf"],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "message": {
+      "$ref": "messages:channel/message",
+      "reaction": {
+        "$size": { "max": 1024 },
+        "$actions": [
+          {
+            "role": "team:team/member",
+            "can": ["create", "read", "update", "delete"]
+          },
+          {
+            "role": "team:team/moderator",
+            "can": ["create", "read", "update", "delete", "co-delete"]
+          }
+        ]
+      },
+      "file": {
+        "$size": { "max": 20971520 },
+        "$actions": [
+          {
+            "role": "team:team/member",
+            "can": ["create", "read", "update", "delete"]
+          },
+          {
+            "role": "team:team/moderator",
+            "can": ["create", "read", "update", "delete", "co-delete"]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,9 +1,12 @@
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
+import type { ResolvedModuleNode } from './module-graph.js';
 import type { SourceRoleAudienceKeyEncryption } from '../utils/encryption.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet, ModuleType, ModuleTypes } from '../types/modules-types.js';
+import type { ModuleDefinition, ModuleRuleSet, ModuleType, ModuleTypes } from '../types/modules-types.js';
 
+import { getRoleAudienceContextId } from './module-role-records.js';
+import { getTypeName } from '../utils/modules.js';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
 import { ModuleAction } from '../types/modules-types.js';
 import { Records } from '../utils/records.js';
@@ -11,7 +14,6 @@ import { validateModuleTags } from '../utils/module-tags.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { ENCRYPTION_MODULE_GRANT_KEY_PATH, ENCRYPTION_MODULE_URI } from './constants.js';
-import { getRoleAudienceContextId, getRuleSetAtPath, getTypeName, parseCrossModuleRef } from '../utils/modules.js';
 
 type ResolvedRoleAudience = {
   contextId: string;
@@ -33,202 +35,40 @@ export async function verifyModulePathAndContextId(
   tenant: string,
   inboundMessage: RecordsWrite,
   validationStateReader: ValidationStateReader,
-  moduleDefinitionTimestamp?: string,
+  node: ResolvedModuleNode,
 ): Promise<void> {
-  const declaredModulePath = inboundMessage.message.descriptor.modulePath;
-  const declaredTypeName = getTypeName(declaredModulePath);
-
-  const parentId = inboundMessage.message.descriptor.parentId;
+  const { parentId, modulePath } = inboundMessage.message.descriptor;
+  const expectedParent = node.expectedParent;
   if (parentId === undefined) {
-    if (declaredModulePath !== declaredTypeName) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationParentlessIncorrectModulePath,
-        `Declared module path '${declaredModulePath}' is not valid for records with no parent'.`
-      );
+    if (expectedParent !== undefined) {
+      throw new DwnError(DwnErrorCode.ModuleAuthorizationParentlessIncorrectModulePath,
+        `declared module path '${modulePath}' requires a physical parent.`);
     }
-
     return;
   }
-
-  // Else `parentId` is defined, so we need to verify both modulePath and contextId
-
-  // Determine the module URI for the parent query.
-  // If the parent path segment has a `$ref` in the composing module, the parent lives in a different module.
-  const childModule = inboundMessage.message.descriptor.module;
-  const parentModuleUri = await resolveParentModuleUri(
-    tenant, childModule, declaredModulePath, validationStateReader, moduleDefinitionTimestamp
-  );
-
-  // fetch the parent message
+  if (expectedParent === undefined) {
+    throw new DwnError(DwnErrorCode.ModuleAuthorizationIncorrectModulePath,
+      `root module path '${modulePath}' cannot have a parent.`);
+  }
   const parentMessage = await validationStateReader.fetchParentRecord({
     tenant,
-    parentModuleUri,
+    parentModuleUri: expectedParent.owningModuleUri,
     parentId,
   });
-
   if (parentMessage === undefined) {
-    // A missing parent and a pruned parent are indistinguishable here; the replication apply
-    // layer classifies a prune tombstone as terminal locally via `parentRecordPrunedFromReply`. This
-    // keeps the client-facing reply from leaking whether a record was pruned.
-    // If this is a cross-module composition lookup, use a more descriptive error.
-    if (parentModuleUri !== childModule) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound,
-        `Could not find parent record '${parentId}' in module '${parentModuleUri}' ` +
-        `for cross-module child at path '${declaredModulePath}'.`
-      );
-    }
-
-    throw new DwnError(
-      DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
-      `Could not find parent record '${parentId}' to verify declared module path '${declaredModulePath}'.`
-    );
+    throw new DwnError(DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
+      `could not find parent record '${parentId}' in module '${expectedParent.owningModuleUri}' for '${modulePath}'.`);
   }
-
-  // verifying modulePath of incoming message is a child of the parent message's modulePath
-  const parentModulePath = parentMessage.descriptor.modulePath;
-  const expectedModulePath = `${parentModulePath}/${declaredTypeName}`;
-  if (expectedModulePath !== declaredModulePath) {
-    throw new DwnError(
-      DwnErrorCode.ModuleAuthorizationIncorrectModulePath,
-      `Could not find matching parent record to verify declared module path '${declaredModulePath}'.`
-    );
+  if (parentMessage.descriptor.module !== expectedParent.owningModuleUri ||
+      parentMessage.descriptor.modulePath !== expectedParent.owningModulePath) {
+    throw new DwnError(DwnErrorCode.ModuleAuthorizationIncorrectModulePath,
+      `parent record does not match the resolved parent of module path '${modulePath}'.`);
   }
-
-  // verifying contextId of incoming message is a child of the parent message's contextId
   const expectedContextId = `${parentMessage.contextId}/${inboundMessage.message.recordId}`;
-  const actualContextId = inboundMessage.message.contextId;
-  if (actualContextId !== expectedContextId) {
-    throw new DwnError(
-      DwnErrorCode.ModuleAuthorizationIncorrectContextId,
-      `Declared contextId '${actualContextId}' is not the same as expected: '${expectedContextId}'.`
-    );
+  if (inboundMessage.message.contextId !== expectedContextId) {
+    throw new DwnError(DwnErrorCode.ModuleAuthorizationIncorrectContextId,
+      `declared contextId '${inboundMessage.message.contextId}' is not expected context '${expectedContextId}'.`);
   }
-
-}
-
-/**
- * Resolves the module URI that should be used when querying for the parent record.
- * For standard (non-composed) records, this is the same as the child's module.
- * For cross-module composition, the parent may live in a different module
- * (resolved via `$ref` in the composing module's definition).
- *
- * Logic: Given a child at modulePath `a/b/c`, the parent is at `a/b`.
- * Walk up the composing module's structure from root to `a/b`.
- * If any segment along the way has a `$ref`, the parent (and its ancestors up to the `$ref` boundary)
- * live in the referenced module. Specifically, the `$ref` at the topmost ancestor tells us
- * the parent's module URI.
- */
-export async function resolveParentModuleUri(
-  tenant: string,
-  childModuleUri: string,
-  childModulePath: string,
-  validationStateReader: ValidationStateReader,
-  moduleDefinitionTimestamp?: string,
-): Promise<string> {
-  const segments = childModulePath.split('/');
-
-  // A root-level record (no `/` in path) has no parent or uses the same module
-  if (segments.length <= 1) {
-    return childModuleUri;
-  }
-
-  // Fetch the composing module's definition at the incoming message timestamp
-  const composingDefinition = await validationStateReader.fetchModuleDefinition(
-    tenant, childModuleUri, moduleDefinitionTimestamp
-  );
-
-  // Walk the structure to find the parent's path segment
-  // The parent's position in the structure is at segments[0..n-2]
-  // We check if the first segment has a `$ref`, which means the parent is in a different module
-  const firstSegmentRuleSet = composingDefinition.structure[segments[0]];
-  if (firstSegmentRuleSet?.$ref !== undefined) {
-    const parsed = parseCrossModuleRef(firstSegmentRuleSet.$ref);
-    if (parsed !== undefined && composingDefinition.uses !== undefined) {
-      const resolvedUri = composingDefinition.uses[parsed.alias];
-      if (resolvedUri !== undefined) {
-        // The parent path is within the `$ref` boundary — check if the parent IS the `$ref` node
-        // or is a descendant of it (which would still be in the composing module).
-        // If segments.length === 2, parent is at segments[0] which IS the $ref node → parent's module is the referenced one.
-        // If segments.length > 2, parent is at segments[0..n-2]. If segments[0] is $ref, the parent could be:
-        //   - Still the $ref node itself (segments.length === 2) → referenced module
-        //   - A child of the $ref node defined in the composing module (segments.length > 2) → composing module
-        if (segments.length === 2) {
-          // Parent is the $ref node itself (e.g., child is "thread/comment", parent is "thread")
-          return resolvedUri;
-        }
-        // else: parent is a deeper child defined in the composing module
-        return childModuleUri;
-      }
-    }
-  }
-
-  return childModuleUri;
-}
-
-/**
- * Verifies the `dataFormat` and `schema` declared in the given message matches the type in the module.
- * For cross-module composition, if the type is at a `$ref` position in the structure,
- * the type definition is looked up in the referenced module's `types` map instead.
- */
-export async function verifyTypeWithComposition(
-  tenant: string,
-  inboundMessage: RecordsWriteMessage,
-  moduleDefinition: ModuleDefinition,
-  validationStateReader: ValidationStateReader,
-  moduleDefinitionTimestamp?: string,
-): Promise<void> {
-  const declaredModulePath = inboundMessage.descriptor.modulePath;
-  const declaredTypeName = getTypeName(declaredModulePath);
-
-  // Resolve which module types map to use.
-  // If the first path segment has `$ref`, this record's type might be defined in a referenced module.
-  const moduleTypes = await resolveModuleTypesForPath(
-    tenant, declaredModulePath, moduleDefinition, validationStateReader, moduleDefinitionTimestamp
-  );
-
-  const moduleType = verifyType(inboundMessage, moduleTypes, declaredTypeName);
-  await verifyModulePathEncryptionIfNeeded(
-    tenant,
-    inboundMessage,
-    moduleDefinition,
-    moduleType,
-    validationStateReader,
-  );
-}
-
-/**
- * Resolves the `ModuleTypes` map that contains the type definition for the given module path.
- * For non-composed records, this is the module definition's own `types` map.
- * For records at a `$ref` position, this is the referenced module's `types` map.
- */
-export async function resolveModuleTypesForPath(
-  tenant: string,
-  modulePath: string,
-  moduleDefinition: ModuleDefinition,
-  validationStateReader: ValidationStateReader,
-  moduleDefinitionTimestamp?: string,
-): Promise<ModuleTypes> {
-  const segments = modulePath.split('/');
-
-  // Check if the first segment has a `$ref`
-  const firstSegmentRuleSet = moduleDefinition.structure[segments[0]];
-  if (firstSegmentRuleSet?.$ref !== undefined && segments.length === 1) {
-    // This record IS the $ref node itself — its type is defined in the referenced module
-    const parsed = parseCrossModuleRef(firstSegmentRuleSet.$ref);
-    if (parsed !== undefined && moduleDefinition.uses !== undefined) {
-      const refModuleUri = moduleDefinition.uses[parsed.alias];
-      if (refModuleUri !== undefined) {
-        const refDefinition = await validationStateReader.fetchModuleDefinition(
-          tenant, refModuleUri, moduleDefinitionTimestamp
-        );
-        return refDefinition.types;
-      }
-    }
-  }
-
-  // Default: use the composing module's own types
-  return moduleDefinition.types;
 }
 
 /**
@@ -289,10 +129,11 @@ export function verifyType(
   return moduleType;
 }
 
-async function verifyModulePathEncryptionIfNeeded(
+export async function verifyModulePathEncryptionIfNeeded(
   tenant: string,
   inboundMessage: RecordsWriteMessage,
   moduleDefinition: ModuleDefinition,
+  resolvedNode: ResolvedModuleNode,
   moduleType: ModuleType,
   validationStateReader: ValidationStateReader,
 ): Promise<void> {
@@ -300,7 +141,7 @@ async function verifyModulePathEncryptionIfNeeded(
     return;
   }
 
-  const ruleSet = getRuleSetAtPath(inboundMessage.descriptor.modulePath, moduleDefinition.structure);
+  const ruleSet = resolvedNode.ruleSet;
   if (ruleSet?.$keyAgreement?.publicKeyJwk === undefined) {
     const usesDynamicCoreRecipientKey = moduleDefinition.module === ENCRYPTION_MODULE_URI &&
       inboundMessage.descriptor.modulePath === ENCRYPTION_MODULE_GRANT_KEY_PATH;
@@ -327,29 +168,31 @@ async function verifyModulePathEncryptionIfNeeded(
     );
   }
 
-  await verifyRoleAudienceEncryptionIfNeeded(tenant, inboundMessage, moduleDefinition, ruleSet, validationStateReader);
+  await verifyRoleAudienceEncryptionIfNeeded(tenant, inboundMessage, resolvedNode, validationStateReader);
 }
 
 async function verifyRoleAudienceEncryptionIfNeeded(
   tenant: string,
   inboundMessage: RecordsWriteMessage,
-  moduleDefinition: ModuleDefinition,
-  ruleSet: ModuleRuleSet,
+  node: ResolvedModuleNode,
   validationStateReader: ValidationStateReader,
 ): Promise<void> {
-  const readRoleRules = (ruleSet.$actions ?? []).filter((actionRule): boolean =>
-    actionRule.role !== undefined && actionRule.can.includes(ModuleAction.Read)
-  );
-
-  for (const actionRule of readRoleRules) {
-    const roleAudience = resolveRoleAudience(actionRule, inboundMessage, moduleDefinition);
-    if (roleAudience === undefined) {
+  for (const action of node.actions) {
+    if (action.resolvedRole === undefined || !action.rule.can.includes(ModuleAction.Read)) {
       continue;
     }
-
+    const role = action.resolvedRole;
+    const contextId = getRoleAudienceContextId(role, inboundMessage.contextId);
+    if (contextId === undefined) {
+      throw new DwnError(DwnErrorCode.ModuleAuthorizationMissingContextId,
+        `could not resolve the encryption audience context for '${role.rawRole}'.`);
+    }
     await verifyResolvedRoleAudienceEncryption( // NOSONAR: S9382 — bound storage reads and stop at the first invalid role.
-      tenant, inboundMessage, roleAudience, validationStateReader,
-    );
+      tenant, inboundMessage, {
+        module   : role.owningModuleUri,
+        rolePath : role.owningModulePath,
+        contextId,
+      }, validationStateReader);
   }
 }
 
@@ -411,29 +254,6 @@ async function validateSourceRoleAudienceEntry(
   return { hasAudience: false, hasEntry: true };
 }
 
-function resolveRoleAudience(
-  actionRule: ModuleActionRule,
-  inboundMessage: RecordsWriteMessage,
-  moduleDefinition: ModuleDefinition,
-): ResolvedRoleAudience | undefined {
-  const roleRef = actionRule.role;
-  if (roleRef === undefined) {
-    return undefined;
-  }
-
-  const parsed = parseCrossModuleRef(roleRef);
-  const module = parsed === undefined
-    ? inboundMessage.descriptor.module
-    : moduleDefinition.uses?.[parsed.alias];
-  const rolePath = parsed === undefined ? roleRef : parsed.modulePath;
-  if (module === undefined) {
-    return undefined;
-  }
-
-  const contextId = getRoleAudienceContextId(rolePath, inboundMessage.contextId);
-  return contextId === undefined ? undefined : { module, rolePath, contextId };
-}
-
 /**
  * Verifies that writes adhere to the $size constraints if provided
  * @throws {Error} if size is exceeded.
@@ -490,10 +310,10 @@ export function verifyTagsIfNeeded(
 export async function verifyAsRoleRecordIfNeeded(
   tenant: string,
   incomingMessage: RecordsWrite,
-  ruleSet: ModuleRuleSet,
+  node: ResolvedModuleNode,
   validationStateReader: ValidationStateReader,
 ): Promise<void> {
-  if (!ruleSet.$role) {
+  if (!node.ruleSet.$role) {
     return;
   }
 

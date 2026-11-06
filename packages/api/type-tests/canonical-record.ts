@@ -36,23 +36,23 @@ interface TaskData {
   note?: string;
 }
 
-const CanonicalRecordModule = defineModule(CanonicalRecordDefinition, {
+const CanonicalRecordModule = defineModule({ definition : CanonicalRecordDefinition, codecs     : {
   task       : recordCodecs.json<TaskData>(),
   attachment : recordCodecs.blob('application/octet-stream'),
-});
+} });
 void CanonicalRecordModule;
 
 // @ts-expect-error every reachable module record type requires a codec.
-defineModule(CanonicalRecordDefinition, {
+defineModule({ definition : CanonicalRecordDefinition, codecs     : {
   task: recordCodecs.json<TaskData>(),
-});
+} });
 
 // @ts-expect-error codecs for types outside the module structure are rejected.
-defineModule(CanonicalRecordDefinition, {
+defineModule({ definition : CanonicalRecordDefinition, codecs     : {
   task       : recordCodecs.json<TaskData>(),
   attachment : recordCodecs.blob('application/octet-stream'),
   orphan     : recordCodecs.json<unknown>(),
-});
+} });
 
 declare const record: Record<TaskData>;
 declare const untypedRecord: Record;

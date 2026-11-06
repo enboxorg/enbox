@@ -4,8 +4,9 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
-import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
+import type { ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
+import type { ResolvedModuleAction, ResolvedModuleGraph, ResolvedModuleNode, ResolvedRoleReference } from './module-graph.js';
 
 import { checkActor } from './module-authorization-action.js';
 import { DwnConstant } from './dwn-constant.js';
@@ -20,19 +21,23 @@ import { PermissionConditionPublication } from '../types/permission-types.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { Records } from '../utils/records.js';
+import { resolveModuleGraph } from './module-graph.js';
 import { selectOccupantRecordIds } from '../utils/record-limit-occupancy.js';
 import { SortDirection } from '../types/query-types.js';
 import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, isEncryptionControlPath } from './constants.js';
-import { getRoleContextPrefix, getRuleSetAtPath, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
+import { getRoleAudienceContextId, getRoleContextPrefix } from './module-role-records.js';
 import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope } from '../utils/grant-key-coverage.js';
+import { loadModuleGraph, preloadModuleDefinitions } from './module-graph-loader.js';
 import { ModuleAction, ModuleActor } from '../types/modules-types.js';
 
 type RoleAudienceDefinition = {
   moduleDefinition: ModuleDefinition;
   ruleSet: ModuleRuleSet;
+  graph: ResolvedModuleGraph;
+  node: ResolvedModuleNode;
 };
 
 type ValidatedAudiencePayload = {
@@ -308,7 +313,7 @@ export class EncryptionControl {
   ): Promise<void> {
     const recordType = EncryptionControl.getRecordType(recordsWrite.message);
     const tags = EncryptionControl.getRoleAudienceKeyId(recordsWrite.message, recordType);
-    const { moduleDefinition, ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(
+    const { graph, node } = await EncryptionControl.verifyRoleAudienceDefinition(
       tenant, tags, recordsWrite.message, validationStateReader, recordType
     );
     const actor = await EncryptionControl.resolveEffectiveControlActor(tenant, recordsWrite, validationStateReader);
@@ -317,8 +322,8 @@ export class EncryptionControl {
       tenant,
       actor,
       tags,
-      moduleDefinition,
-      ruleSet,
+      graph,
+      node,
       validationStateReader,
       message: recordsWrite.message,
     });
@@ -395,8 +400,11 @@ export class EncryptionControl {
     }
 
     const newestDefinition = await validationStateReader.fetchModuleDefinition(tenant, tags.module);
-    const newestRuleSet = getRuleSetAtPath(tags.rolePath, newestDefinition.structure);
-    if (newestRuleSet?.$role !== true) {
+    const newestDefinitions = await preloadModuleDefinitions(newestDefinition,
+      uri => validationStateReader.fetchModuleDefinition(tenant, uri));
+    const newestGraph = resolveModuleGraph(newestDefinition, uri => newestDefinitions.get(uri), { requireKeyAgreement: false });
+    const newestNode = newestGraph.nodesByDeclaredPath.get(tags.rolePath);
+    if (newestNode?.kind !== 'record' || newestNode.ruleSet.$role !== true) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
         `role audience path '${tags.rolePath}' no longer exists as a role in module '${tags.module}'.`
@@ -629,13 +637,10 @@ export class EncryptionControl {
     });
   }
 
-  private static verifyRoleAudienceContext(rolePath: string, contextId: string): void {
-    const parentDepth = rolePath.split('/').length - 1;
-    if ((parentDepth === 0 && contextId !== '') || (parentDepth > 0 && contextId === '')) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateAudienceContextIdInvalid,
-        'role audience contextId is inconsistent with role path depth.'
-      );
+  private static verifyRoleAudienceContext(role: Pick<ResolvedRoleReference, 'parentPhysicalDepth'>, contextId: string): void {
+    if (getRoleAudienceContextId(role, contextId) !== contextId) {
+      throw new DwnError(DwnErrorCode.EncryptionControlValidateAudienceContextIdInvalid,
+        'role audience contextId must identify the role\'s resolved physical parent.');
     }
   }
 
@@ -697,19 +702,19 @@ export class EncryptionControl {
     tenant: string;
     actor: EffectiveControlActor;
     tags: RoleAudienceKeyId;
-    moduleDefinition: ModuleDefinition;
-    ruleSet: ModuleRuleSet;
+    graph: ResolvedModuleGraph;
+    node: ResolvedModuleNode;
     validationStateReader: ValidationStateReader;
     message: RecordsWriteMessage;
   }): Promise<void> {
-    const { tenant, actor, tags, moduleDefinition, ruleSet, validationStateReader, message } = input;
+    const { tenant, actor, tags, graph, node, validationStateReader, message } = input;
     const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
     if (await EncryptionControl.actorCanCreateRole({
       tenant,
       actor,
       tags,
-      moduleDefinition,
-      ruleSet,
+      graph,
+      node,
       validationStateReader,
       invokedRole: signaturePayload.moduleRole,
     })) {
@@ -726,12 +731,12 @@ export class EncryptionControl {
     tenant: string;
     actor: EffectiveControlActor;
     tags: RoleAudienceKeyId;
-    moduleDefinition: ModuleDefinition;
-    ruleSet: ModuleRuleSet;
+    graph: ResolvedModuleGraph;
+    node: ResolvedModuleNode;
     validationStateReader: ValidationStateReader;
     invokedRole: string | undefined;
   }): Promise<boolean> {
-    const { tenant, actor, tags, moduleDefinition, ruleSet, validationStateReader, invokedRole } = input;
+    const { tenant, actor, tags, graph, node, validationStateReader, invokedRole } = input;
     if (actor.did === tenant) {
       return true;
     }
@@ -745,7 +750,8 @@ export class EncryptionControl {
     }
 
     const recordChain = await EncryptionControl.constructRoleParentChain(tenant, tags, validationStateReader);
-    for (const actionRule of ruleSet.$actions ?? []) {
+    for (const action of node.actions) {
+      const actionRule = action.rule;
       if (!actionRule.can.includes(ModuleAction.Create)) {
         continue;
       }
@@ -757,16 +763,16 @@ export class EncryptionControl {
       if (await EncryptionControl.roleRuleAllowsActor(
         tenant,
         actor.did,
-        actionRule,
-        tags,
-        moduleDefinition,
+        action,
+        tags.contextId,
+        graph,
         validationStateReader,
         invokedRole,
       )) {
         return true;
       }
 
-      if (await checkActor(actor.did, actionRule, recordChain, moduleDefinition)) {
+      if (await checkActor(actor.did, action, recordChain)) {
         return true;
       }
     }
@@ -803,13 +809,12 @@ export class EncryptionControl {
     tags: EncryptionControlDeliveryTags;
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
+    const graph = await loadModuleGraph(
+      input.tenant, input.tags.module, input.validationStateReader, input.message.descriptor.messageTimestamp,
+    );
+    const role = graph.resolveInvokedRole(input.tags.rolePath);
     return EncryptionControl.hasRoleRecord(
-      input.tenant,
-      input.message.descriptor.recipient!,
-      input.tags.module,
-      input.tags.rolePath,
-      input.tags.contextId,
-      input.validationStateReader,
+      input.tenant, input.message.descriptor.recipient!, role, input.tags.contextId, input.validationStateReader,
     );
   }
 
@@ -845,7 +850,7 @@ export class EncryptionControl {
       return true;
     }
 
-    const { moduleDefinition, ruleSet } = await EncryptionControl.resolveRoleAudienceDefinition({
+    const { graph, node } = await EncryptionControl.resolveRoleAudienceDefinition({
       tenant,
       tags,
       messageTimestamp: incomingMessage.descriptor.messageTimestamp,
@@ -859,8 +864,8 @@ export class EncryptionControl {
       tenant,
       actor: { did: actorDid },
       tags,
-      moduleDefinition,
-      ruleSet,
+      graph,
+      node,
       validationStateReader,
       invokedRole,
     });
@@ -980,23 +985,14 @@ export class EncryptionControl {
     validationStateReader: ValidationStateReader;
   }): Promise<RoleAudienceDefinition> {
     const { tenant, tags, messageTimestamp, validationStateReader } = input;
-    EncryptionControl.verifyRoleAudienceContext(tags.rolePath, tags.contextId);
-
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      tags.module,
-      messageTimestamp,
-    );
-    const ruleSet = getRuleSetAtPath(tags.rolePath, moduleDefinition.structure);
-
-    if (ruleSet?.$role !== true || ruleSet.$keyAgreement === undefined) {
-      throw new DwnError(
-        DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
-        `role audience path '${tags.rolePath}' must be a role path with $keyAgreement.`
-      );
+    const graph = await loadModuleGraph(tenant, tags.module, validationStateReader, messageTimestamp);
+    const node = graph.nodesByDeclaredPath.get(tags.rolePath);
+    if (node?.kind !== 'record' || node.ruleSet.$role !== true || node.ruleSet.$keyAgreement === undefined) {
+      throw new DwnError(DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
+        `role audience path '${tags.rolePath}' must be a locally owned role path with $keyAgreement.`);
     }
-
-    return { moduleDefinition, ruleSet };
+    EncryptionControl.verifyRoleAudienceContext(node, tags.contextId);
+    return { graph, node, moduleDefinition: graph.definitionsByUri.get(tags.module)!, ruleSet: node.ruleSet };
   }
 
   private static verifyGrantConditions(message: RecordsWriteMessage, grant: PermissionGrant): void {
@@ -1035,66 +1031,53 @@ export class EncryptionControl {
   private static async roleRuleAllowsActor(
     tenant: string,
     actor: string,
-    actionRule: ModuleActionRule,
-    tags: RoleAudienceKeyId,
-    moduleDefinition: ModuleDefinition,
+    action: ResolvedModuleAction,
+    contextId: string,
+    graph: ResolvedModuleGraph,
     validationStateReader: ValidationStateReader,
     invokedRole: string | undefined,
   ): Promise<boolean> {
-    if (actionRule.role === undefined || invokedRole !== actionRule.role) {
+    const expected = action.resolvedRole;
+    if (expected === undefined || invokedRole === undefined) {
       return false;
     }
-
-    const resolved = EncryptionControl.resolveRoleReference(actionRule.role, tags.module, moduleDefinition);
-    if (resolved === undefined) {
+    let invoked;
+    try {
+      invoked = graph.resolveInvokedRole(invokedRole);
+    } catch (error) {
+      if (error instanceof DwnError && [
+        DwnErrorCode.ModulesConfigureInvalidRefAlias,
+        DwnErrorCode.ModulesConfigureInvalidRefModulePath,
+        DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+      ].includes(error.code as DwnErrorCode)) {
+        return false;
+      }
+      throw error;
+    }
+    if (expected.owningModuleUri !== invoked.owningModuleUri || expected.owningModulePath !== invoked.owningModulePath) {
       return false;
     }
-
-    return EncryptionControl.hasRoleRecord(tenant, actor, resolved.module, resolved.modulePath, tags.contextId, validationStateReader);
+    return EncryptionControl.hasRoleRecord(tenant, actor, invoked, contextId, validationStateReader);
   }
 
   private static async hasRoleRecord(
     tenant: string,
     actor: string,
-    module: string,
-    rolePath: string,
+    role: ResolvedRoleReference,
     contextId: string,
     validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
-    const contextIdPrefix = getRoleContextPrefix(rolePath, contextId);
-    if (contextIdPrefix === undefined && rolePath.includes('/')) {
+    const contextIdPrefix = getRoleContextPrefix(role, contextId);
+    if (role.parentPhysicalDepth > 0 && contextIdPrefix === undefined) {
       return false;
     }
-
     return validationStateReader.hasMatchingRoleRecord({
       tenant,
-      module,
-      modulePath : rolePath,
+      module     : role.owningModuleUri,
+      modulePath : role.owningModulePath,
       recipient  : actor,
       contextIdPrefix,
     });
-  }
-
-  private static resolveRoleReference(
-    roleRef: string,
-    currentModule: string,
-    moduleDefinition: ModuleDefinition,
-  ): { module: string; modulePath: string } | undefined {
-    if (!isCrossModuleRef(roleRef)) {
-      return { module: currentModule, modulePath: roleRef };
-    }
-
-    const parsed = parseCrossModuleRef(roleRef);
-    if (parsed === undefined) {
-      return undefined;
-    }
-
-    const module = moduleDefinition.uses?.[parsed.alias];
-    if (module === undefined) {
-      return undefined;
-    }
-
-    return { module, modulePath: parsed.modulePath };
   }
 
   private static getRoleAudienceKeyId(message: RecordsWriteMessage, recordType: 'audience' | 'delivery'): RoleAudienceKeyId {

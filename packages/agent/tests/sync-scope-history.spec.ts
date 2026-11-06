@@ -59,13 +59,11 @@ describe('Sync scope closure — delegated module history', () => {
 
   beforeEach(async () => {
     sinon.restore();
-    await syncEngine.clear();
     await testHarness.clearDwnStores();
+    await syncEngine.clear();
 
-    const owner = await testHarness.agent.identity.create({
-      didMethod : 'jwk',
-      metadata  : { name: 'History Owner' },
-    });
+    // Plaintext role providers still publish owner-derived key-agreement metadata.
+    const owner = await testHarness.createIdentity({ name: 'History Owner' });
     const delegate = await testHarness.agent.identity.create({
       didMethod : 'jwk',
       metadata  : { connectedDid: owner.did.uri, name: 'History Delegate' },
@@ -242,11 +240,13 @@ function threadsModuleDefinition(): ModuleDefinition {
     module    : threadsModule,
     published : true,
     types     : {
+      reader      : {},
       participant : { schema: `${threadsModule}/schemas/participant`, dataFormats: ['application/json'] },
       thread      : { schema: `${threadsModule}/schemas/thread`, dataFormats: ['application/json'] },
     },
     structure: {
-      thread: {
+      reader : { $role: true },
+      thread : {
         $actions    : [{ who: 'anyone', can: ['create', 'read'] }],
         participant : {
           $role    : true,
@@ -269,14 +269,11 @@ function commentsModuleWithHistoricalDependency(): ModuleDefinition {
       comment: { schema: `${commentsModule}/schemas/comment-v0`, dataFormats: ['application/json'] },
     },
     structure: {
-      thread: {
-        $ref    : 'threads:thread',
-        comment : {
-          $actions: [
-            { who: 'anyone', can: ['create'] },
-            { role: 'threads:thread/participant', can: ['read'] },
-          ],
-        },
+      comment: {
+        $actions: [
+          { who: 'anyone', can: ['create'] },
+          { role: 'threads:reader', can: ['read'] },
+        ],
       },
     },
   };

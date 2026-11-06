@@ -22,8 +22,9 @@ import { createModuleReadinessApi } from './module-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
+import { orderTypedModuleDependencies } from './define-module.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { collectModulePaths, isEncryptedRoleAudiencePath } from './module-paths.js';
+import { collectModulePaths, isModuleRolePath } from './module-paths.js';
 
 /**
  * The main Enbox API interface. It provides module-scoped access to
@@ -198,14 +199,17 @@ export class Enbox {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
-    const rolePaths = [...collectModulePaths(module.definition.structure)]
-      .filter(path => isEncryptedRoleAudiencePath(module.definition, path));
-    if (rolePaths.length > 0) {
-      this.agent.dwn.registerAudienceKeyDeliveryModule({
-        ...deliverySession,
-        granteeDid: this._delegateDid,
-        rolePaths,
-      });
+    for (const artifact of orderTypedModuleDependencies([module])) {
+      const rolePaths = [...collectModulePaths(artifact.definition.structure)]
+        .filter(path => isModuleRolePath(artifact.definition, path));
+      if (rolePaths.length > 0) {
+        this.agent.dwn.registerAudienceKeyDeliveryModule({
+          ...deliverySession,
+          module     : artifact.definition.module,
+          granteeDid : this._delegateDid,
+          rolePaths,
+        });
+      }
     }
     this._typedInstances.set(module, instance);
     return instance;

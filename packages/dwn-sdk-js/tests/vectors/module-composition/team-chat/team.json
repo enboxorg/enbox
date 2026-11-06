@@ -1,0 +1,54 @@
+{
+  "module": "https://example.org/modules/chat/team",
+  "published": true,
+  "types": {
+    "team": {
+      "schema": "https://example.org/schemas/chat/team",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    },
+    "member": {
+      "schema": "https://example.org/schemas/chat/member",
+      "dataFormats": ["application/json"]
+    },
+    "moderator": {
+      "schema": "https://example.org/schemas/chat/moderator",
+      "dataFormats": ["application/json"]
+    },
+    "channel": {
+      "schema": "https://example.org/schemas/chat/channel",
+      "dataFormats": ["application/json"],
+      "encryptionRequired": true
+    }
+  },
+  "structure": {
+    "team": {
+      "$actions": [
+        { "role": "team/member", "can": ["read"] },
+        { "role": "team/moderator", "can": ["read"] }
+      ],
+      "member": {
+        "$role": true,
+        "$actions": [
+          { "who": "recipient", "of": "team/member", "can": ["read"] }
+        ]
+      },
+      "moderator": {
+        "$role": true,
+        "$actions": [
+          { "who": "recipient", "of": "team/moderator", "can": ["read"] }
+        ]
+      },
+      "channel": {
+        "$size": { "max": 16384 },
+        "$actions": [
+          { "role": "team/member", "can": ["read"] },
+          {
+            "role": "team/moderator",
+            "can": ["create", "read", "update", "delete", "co-update", "co-delete"]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ import type { CoreModule } from './core/core-module.js';
 import type { DataStore } from './types/data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './types/message-store.js';
+import type { ResolvedModuleGraph } from './core/module-graph.js';
 import type { ResumableTaskStore } from './types/resumable-task-store.js';
 import type { TenantGate } from './core/tenant-gate.js';
 import type { UnionMessageReply } from './core/message-reply.js';
@@ -18,7 +19,7 @@ import type {
   MessagesSubscribeMessageOptions,
   MessagesSubscribeReply,
 } from './types/messages-types.js';
-import type { ModuleDefinition, ModulesConfigureMessage, ModulesQueryMessage, ModulesQueryReply } from './types/modules-types.js';
+import type { ModulesConfigureMessage, ModulesQueryMessage, ModulesQueryReply } from './types/modules-types.js';
 import type {
   RecordsCountMessage,
   RecordsCountReply,
@@ -42,6 +43,7 @@ import { CoreModuleRegistry } from './core/core-module.js';
 import { DataStream } from './utils/data-stream.js';
 import { DwnConstant } from './core/dwn-constant.js';
 import { EncryptionModule } from './modules/encryption.js';
+import { loadModuleGraph } from './core/module-graph-loader.js';
 import { Message } from './core/message.js';
 import { messageReplyFromError } from './core/message-reply.js';
 import { MessagesQueryHandler } from './handlers/messages-query.js';
@@ -351,11 +353,11 @@ export class Dwn {
     }
     let result = await this.storeReplicatedWriteBeatenByDelete(tenant, rawMessage, reply, options);
     if (result === undefined) {
-      const moduleDefinition = await this.getReplicationApplyModuleDefinition(tenant, rawMessage, reply);
+      const resolvedGraph = await this.getReplicationApplyModuleGraph(tenant, rawMessage, reply);
       const missingAncestorRecordIds = await this.getReplicationApplyMissingAncestors(tenant, rawMessage, reply);
       const parentRecordPruned = await this.getReplicationApplyParentPruned(tenant, rawMessage, reply);
       result = replicationApplyResultFromReply(rawMessage, reply, {
-        moduleDefinition,
+        resolvedGraph,
         missingAncestorRecordIds,
         parentRecordPruned,
       });
@@ -622,15 +624,19 @@ export class Dwn {
     return byteLength;
   }
 
-  private async getReplicationApplyModuleDefinition(
+  private async getReplicationApplyModuleGraph(
     tenant: string,
     message: GenericMessage,
     reply: { status: { detail?: string } },
-  ): Promise<ModuleDefinition | undefined> {
+  ): Promise<ResolvedModuleGraph | undefined> {
     const detail = reply.status.detail ?? '';
-    if (
-      !detail.startsWith(`${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}:`)
-    ) {
+    const graphRelevantErrors = [
+      DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound,
+      DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
+      DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain,
+      DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing,
+    ];
+    if (!graphRelevantErrors.some(code => detail.startsWith(`${code}:`))) {
       return undefined;
     }
 
@@ -640,11 +646,7 @@ export class Dwn {
     }
 
     try {
-      return await this.validationStateReader.fetchModuleDefinition(
-        tenant,
-        lookup.module,
-        lookup.messageTimestamp,
-      );
+      return await loadModuleGraph(tenant, lookup.module, this.validationStateReader, lookup.messageTimestamp);
     } catch {
       return undefined;
     }

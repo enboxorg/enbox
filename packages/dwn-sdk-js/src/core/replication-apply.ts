@@ -1,7 +1,7 @@
 import type { EncryptionControlPath } from './constants.js';
 import type { GenericMessage } from '../types/message-types.js';
-import type { ModuleDefinition } from '../types/modules-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
+import type { ResolvedModuleGraph } from './module-graph.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
 import { DwnErrorCode } from './dwn-error.js';
@@ -11,7 +11,7 @@ import { Message } from './message.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
-import { getRoleAudienceContextId, getRoleContextPrefix, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
+import { getRoleAudienceContextId, getRoleContextPrefix } from './module-role-records.js';
 
 export type ReplicationApplyOptions = {
   dataStream?: ReadableStream<Uint8Array>;
@@ -45,7 +45,7 @@ export type ReplicationApplyResult =
     };
 
 export type ReplicationApplyResultContext = {
-  moduleDefinition?: ModuleDefinition;
+  resolvedGraph?: ResolvedModuleGraph;
 
   /**
    * Complete set of locally-missing ancestor recordIds for a missing-ancestor failure
@@ -119,8 +119,7 @@ export function replicationApplyResultFromReply(
 
   if (
     context.parentRecordPruned === true
-    && (getDwnErrorCode(detail) === DwnErrorCode.ModuleAuthorizationParentRecordNotFound
-      || getDwnErrorCode(detail) === DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound)
+    && getDwnErrorCode(detail) === DwnErrorCode.ModuleAuthorizationParentRecordNotFound
   ) {
     return { kind: 'Superseded' };
   }
@@ -212,8 +211,6 @@ function dependencyRefsFromStatus(
     return toRefList(moduleDependencyFromMessage(message, detail));
   case DwnErrorCode.ModuleAuthorizationParentRecordNotFound:
     return parentDependenciesFromMessage(message, detail, context);
-  case DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound:
-    return toRefList(parentDependencyFromMessage(message, detail));
   case DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain:
     return ancestorDependenciesFromMessage(message, detail, context);
   case DwnErrorCode.RecordsWriteGetInitialWriteNotFound:
@@ -223,7 +220,7 @@ function dependencyRefsFromStatus(
   case DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound:
     return toRefList(roleDependencyFromMessage(message, context));
   case DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing:
-    return encryptionAudienceDependenciesFromRoleAudienceEntries(message);
+    return encryptionAudienceDependenciesFromRoleAudienceEntries(message, context);
   case DwnErrorCode.EncryptionControlValidateDeliveryAudienceMissing:
     return toRefList(encryptionAudienceDependencyFromDelivery(message));
   case DwnErrorCode.EncryptionControlValidateDeliveryRecipientRoleRecordMissing:
@@ -260,8 +257,7 @@ export async function parentRecordPrunedFromReply(
 ): Promise<boolean> {
   const detail = reply.status.detail ?? '';
   const errorCode = getDwnErrorCode(detail);
-  if (errorCode !== DwnErrorCode.ModuleAuthorizationParentRecordNotFound
-    && errorCode !== DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound) {
+  if (errorCode !== DwnErrorCode.ModuleAuthorizationParentRecordNotFound) {
     return false;
   }
 
@@ -319,11 +315,9 @@ function parentDependenciesFromMessage(
     return [];
   }
 
-  const module = dependencyModuleFromMessage(message);
-  const moduleProperty = typeof module === 'string' ? { module } : {};
   const ancestorRefs = (context.missingAncestorRecordIds ?? [])
     .filter((recordId): boolean => recordId !== parentRef.recordId)
-    .map((recordId): DependencyRef => ({ type: 'Ancestor', recordId, ...moduleProperty }));
+    .map((recordId): DependencyRef => ancestorDependency(message, context, recordId));
 
   return [...ancestorRefs, parentRef];
 }
@@ -361,12 +355,9 @@ function ancestorDependenciesFromMessage(
   detail: string,
   context: ReplicationApplyResultContext,
 ): DependencyRef[] {
-  const module = dependencyModuleFromMessage(message);
-  const moduleProperty = typeof module === 'string' ? { module } : {};
-
   const batchedRecordIds = context.missingAncestorRecordIds;
   if (batchedRecordIds !== undefined && batchedRecordIds.length > 0) {
-    return batchedRecordIds.map((recordId): DependencyRef => ({ type: 'Ancestor', recordId, ...moduleProperty }));
+    return batchedRecordIds.map((recordId): DependencyRef => ancestorDependency(message, context, recordId));
   }
 
   const namedRecordId = ancestorRecordIdFromDetail(detail);
@@ -374,7 +365,16 @@ function ancestorDependenciesFromMessage(
     return [];
   }
 
-  return [{ type: 'Ancestor', recordId: namedRecordId, ...moduleProperty }];
+  return [ancestorDependency(message, context, namedRecordId)];
+}
+
+function ancestorDependency(message: GenericMessage, context: ReplicationApplyResultContext, recordId: string): DependencyRef {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  const contextId = (message as { contextId?: string }).contextId;
+  const index = contextId?.split('/').indexOf(recordId) ?? -1;
+  const node = typeof descriptor.modulePath === 'string' ? context.resolvedGraph?.nodesByDeclaredPath.get(descriptor.modulePath) : undefined;
+  const module = index < 0 ? undefined : node?.physicalAncestors[index]?.owningModuleUri;
+  return { type: 'Ancestor', recordId, ...(module === undefined ? {} : { module }) };
 }
 
 function ancestorRecordIdFromDetail(detail: string): string | undefined {
@@ -443,29 +443,25 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
     return undefined;
   }
 
-  let roleModule = module;
-  let roleModulePath = moduleRole;
-  if (isCrossModuleRef(moduleRole)) {
-    const parsed = parseCrossModuleRef(moduleRole);
-    const referencedModule = parsed === undefined ? undefined : context.moduleDefinition?.uses?.[parsed.alias];
-    if (parsed !== undefined && referencedModule !== undefined) {
-      roleModule = referencedModule;
-      roleModulePath = parsed.modulePath;
-    }
+  if (context.resolvedGraph === undefined) {
+    return { type: 'Module', module };
   }
-
+  const role = context.resolvedGraph.resolveInvokedRole(moduleRole);
+  const topLevelContext = (message as { contextId?: unknown }).contextId;
   let contextId: string | undefined;
-  if (typeof descriptor.contextId === 'string') {
-    contextId = descriptor.contextId;
+  if (typeof topLevelContext === 'string') {
+    contextId = topLevelContext;
   } else if (typeof filter?.contextId === 'string') {
     contextId = filter.contextId;
   }
-  const contextPrefix = getRoleContextPrefix(roleModulePath, contextId);
-
+  const contextPrefix = getRoleContextPrefix(role, contextId);
+  if (role.parentPhysicalDepth > 0 && contextPrefix === undefined) {
+    return undefined;
+  }
   return {
     type       : 'Role',
-    module     : roleModule,
-    modulePath : roleModulePath,
+    module     : role.owningModuleUri,
+    modulePath : role.owningModulePath,
     recipient,
     ...(contextPrefix === undefined ? {} : { contextPrefix }),
   };
@@ -473,7 +469,8 @@ function roleDependencyFromMessage(message: GenericMessage, context: Replication
 
 function encryptionAudienceDependenciesFromRoleAudienceEntries(
   message: GenericMessage,
-): Extract<DependencyRef, { type: 'EncryptionControl' }>[] {
+  context: ReplicationApplyResultContext,
+): DependencyRef[] {
   const descriptor = message.descriptor as Record<string, unknown>;
   const messageContextId = (message as { contextId?: unknown }).contextId;
   const contextId = typeof messageContextId === 'string' ? messageContextId : descriptor.contextId;
@@ -486,7 +483,16 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
     return [];
   }
 
-  const refs: Extract<DependencyRef, { type: 'EncryptionControl' }>[] = [];
+  if (context.resolvedGraph === undefined) {
+    const module = dependencyModuleFromMessage(message);
+    return typeof module === 'string' ? [{ type: 'Module', module }] : [];
+  }
+  const graph = context.resolvedGraph;
+  const node = typeof descriptor.modulePath === 'string' ? graph.nodesByDeclaredPath.get(descriptor.modulePath) : undefined;
+  const requiredRoles = new Map((node?.actions ?? [])
+    .filter(action => action.resolvedRole !== undefined && action.rule.can.includes('read'))
+    .map(action => [JSON.stringify([action.resolvedRole!.owningModuleUri, action.resolvedRole!.owningModulePath]), action.resolvedRole!]));
+  const refs: DependencyRef[] = [];
   const sourceEntries = keyEncryption.filter((candidate): boolean =>
     candidate.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
     typeof candidate.module === 'string' &&
@@ -495,7 +501,11 @@ function encryptionAudienceDependenciesFromRoleAudienceEntries(
   );
   for (const sourceEntry of sourceEntries) {
     const rolePath = sourceEntry.rolePath as string;
-    const audienceContextId = getRoleAudienceContextId(rolePath, contextId);
+    const role = requiredRoles.get(JSON.stringify([sourceEntry.module, rolePath]));
+    if (role === undefined) {
+      continue;
+    }
+    const audienceContextId = getRoleAudienceContextId(role, contextId);
     if (audienceContextId === undefined) {
       continue;
     }

@@ -52,13 +52,13 @@ const QueryDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const QueryModule = defineModule(QueryDefinition, {
+const QueryModule = defineModule({ definition : QueryDefinition, codecs     : {
   arrayTagged : recordCodecs.json<{ value: string }>(),
   attachment  : recordCodecs.blob('image/png'),
   comment     : recordCodecs.text(),
   flexible    : recordCodecs.json<{ value: string }>(),
   note        : recordCodecs.json<{ title: string }>(),
-});
+} });
 
 type QueryCodecs = typeof QueryModule.codecs;
 void QueryModule;
@@ -187,7 +187,7 @@ void typed.records.query('note/comment', { filter: { parentContextId: 'root/note
 // @ts-expect-error parentId is a raw structural edge, not a typed context selector.
 void typed.records.query('note/comment', { filter: { parentId: 'note' } });
 
-const InlineModule = defineModule({
+const InlineModule = defineModule({ definition: {
   module    : 'https://example.com/modules/inline-query-types',
   published : true,
   types     : {
@@ -200,9 +200,9 @@ const InlineModule = defineModule({
       },
     },
   },
-}, {
+}, codecs: {
   item: recordCodecs.json<{ id: string }>(),
-});
+} });
 void InlineModule;
 
 declare const inlineTyped: TypedEnbox<typeof InlineModule.definition, typeof InlineModule.codecs>;

@@ -26,9 +26,9 @@ type Note = {
   body?: string;
 };
 
-const module = defineModule(definition, {
+const module = defineModule({ definition : definition, codecs     : {
   note: recordCodecs.json<Note>(),
-});
+} });
 
 type FakeRecord = {
   record: Record<Note>;

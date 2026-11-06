@@ -1,19 +1,20 @@
-import type { GenericMessage, GenericSignaturePayload, ModuleDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, GenericSignaturePayload, ModuleDefinition, ResolvedModuleGraph, ResolvedRoleReference } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import {
+  DwnError,
   DwnInterfaceName,
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
   EncryptionModule,
+  getRecordsWriteRoleIdentity,
   getRoleAudienceContextId,
   getRoleRecordIdentity,
-  isCrossModuleRef,
   Jws,
   Message,
-  parseCrossModuleRef,
   PermissionsModule,
+  resolveModuleGraph,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 
@@ -49,6 +50,7 @@ type DependencyIndexes<T> = {
   grantIndex: Map<string, number>;
   roleIndex: Map<string, number>;
   sourceAudienceIndex: Map<string, number>;
+  resolvedGraphs: Map<string, ResolvedModuleGraph | undefined>;
 };
 
 /**
@@ -124,30 +126,18 @@ function getContextId(message: GenericMessage): string | undefined {
 }
 
 export function getRoleKey(module: string, modulePath: string, recipient: string, contextPrefix?: string): string {
-  return getRoleRecordIdentity({
-    contextId: contextPrefix,
-    module,
-    modulePath,
-    recipient,
-  }).key;
+  return JSON.stringify([module, modulePath, recipient, contextPrefix === '' ? undefined : contextPrefix]);
 }
 
 function getRoleRecordKey(message: GenericMessage): string | undefined {
-  const { descriptor } = message;
-  if (!isRecordsWriteDescriptor(descriptor)) {
+  if (!isRecordsWriteDescriptor(message.descriptor)) {
     return undefined;
   }
-
-  const { module, modulePath, recipient } = descriptor;
-  if (module === undefined || modulePath === undefined || recipient === undefined) {
-    return undefined;
-  }
-
-  return getRoleKey(module, modulePath, recipient, getContextId(message));
+  return getRecordsWriteRoleIdentity(message as Parameters<typeof getRecordsWriteRoleIdentity>[0])?.key;
 }
 
 function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
-  return `${tags.module}|${tags.rolePath}|${tags.contextId}|${tags.keyId}`;
+  return JSON.stringify([tags.module, tags.rolePath, tags.contextId, tags.keyId]);
 }
 
 function getSourceAudienceKey(message: GenericMessage): string | undefined {
@@ -223,42 +213,85 @@ function getSignaturePayload(message: GenericMessage): GenericSignaturePayload |
   }
 }
 
-function getInvokedRoleKey(
-  message: GenericMessage,
-  moduleDefinitionsByModule: Map<string, Partial<ModuleDefinition>>,
-): string | undefined {
+/** An incomplete feed page may omit definitions; admission repair remains the authority for missing graph evidence. */
+function getOrderingGraph<T>(module: string, indexes: DependencyIndexes<T>): ResolvedModuleGraph | undefined {
+  if (indexes.resolvedGraphs.has(module)) {
+    return indexes.resolvedGraphs.get(module);
+  }
+  const definition = indexes.moduleDefinitionsByModule.get(module);
+  let graph: ResolvedModuleGraph | undefined;
+  if (definition?.structure !== undefined && definition.types !== undefined && typeof definition.published === 'boolean') {
+    try {
+      graph = resolveModuleGraph(definition as ModuleDefinition,
+        uri => indexes.moduleDefinitionsByModule.get(uri) as ModuleDefinition | undefined,
+        { requireKeyAgreement: false });
+    } catch (error) {
+      if (!(error instanceof DwnError)) {
+        throw error;
+      }
+      // Sorting does not decide whether a configuration is valid. The receiver's
+      // normal admission path rejects invalid graphs or repairs absent definitions.
+    }
+  }
+  indexes.resolvedGraphs.set(module, graph);
+  return graph;
+}
+
+function getInvokedRoleKey<T>(message: GenericMessage, indexes: DependencyIndexes<T>): string | undefined {
   const { descriptor } = message;
   if (!isRecordsDescriptor(descriptor) || descriptor.module === undefined) {
     return undefined;
   }
-
-  const baseModule = descriptor.module;
-  const contextId = getContextId(message);
   const moduleRole = getSignaturePayload(message)?.moduleRole;
   const recipient = Message.getAuthor(message);
   if (typeof moduleRole !== 'string' || recipient === undefined) {
     return undefined;
   }
-
-  let roleModule = baseModule;
-  let roleModulePath = moduleRole;
-  if (isCrossModuleRef(moduleRole)) {
-    const parsed = parseCrossModuleRef(moduleRole);
-    const referencedModule = parsed === undefined
-      ? undefined
-      : moduleDefinitionsByModule.get(baseModule)?.uses?.[parsed.alias];
-    if (parsed === undefined || referencedModule === undefined) {
-      return undefined;
-    }
-
-    roleModule = referencedModule;
-    roleModulePath = parsed.modulePath;
+  const contextId = getContextId(message);
+  const graph = getOrderingGraph(descriptor.module, indexes);
+  if (graph !== undefined) {
+    const role = getOrderingRole(graph, moduleRole);
+    return role === undefined ? undefined : getRoleRecordIdentity({ role, recipient, contextId }).key;
   }
-
-  return getRoleKey(roleModule, roleModulePath, recipient, contextId);
+  // Direct role records already carry their actual parent. They can establish a
+  // local ordering edge without guessing depth when a page omits its configure.
+  return [...indexes.roleIndex.keys()].find(key => {
+    const [module, path, did, parent] = JSON.parse(key) as [string, string, string, string | null];
+    return module === descriptor.module && path === moduleRole && did === recipient &&
+      (parent === null || contextId === parent || contextId?.startsWith(`${parent}/`) === true);
+  });
 }
 
-function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] {
+/** Retired or invalid role references remain in the page for normal receiver admission. */
+function getOrderingRole(graph: ResolvedModuleGraph, rawRole: string): ResolvedRoleReference | undefined {
+  try {
+    return graph.resolveInvokedRole(rawRole);
+  } catch (error) {
+    if (!(error instanceof DwnError)) {
+      throw error;
+    }
+    return undefined;
+  }
+}
+
+/** Match retained audience metadata when this admission batch has no governing module definition. */
+function findIndexedAudienceKeys(
+  selector: { moduleUri: string; rolePath: string; keyId: string; contextId: string | undefined },
+  audienceKeys: Iterable<string>,
+): string[] {
+  const matches: string[] = [];
+  for (const key of audienceKeys) {
+    const [moduleUri, rolePath, audienceContextId, keyId] = JSON.parse(key) as [string, string, string, string];
+    if (moduleUri === selector.moduleUri && rolePath === selector.rolePath && keyId === selector.keyId &&
+        (audienceContextId === '' || selector.contextId === audienceContextId ||
+          selector.contextId?.startsWith(`${audienceContextId}/`) === true)) {
+      matches.push(key);
+    }
+  }
+  return matches;
+}
+
+function getSourceAudienceKeysFromEncryption<T>(message: GenericMessage, indexes: DependencyIndexes<T>): string[] {
   const keyEncryption = (message as {
     encryption?: {
       keyEncryption?: Record<string, unknown>[];
@@ -279,7 +312,18 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
       continue;
     }
 
-    const contextId = getRoleAudienceContextId(entry.rolePath, getContextId(message));
+    const graph = getOrderingGraph(entry.module, indexes);
+    if (graph === undefined) {
+      keys.push(...findIndexedAudienceKeys({
+        moduleUri : entry.module,
+        rolePath  : entry.rolePath,
+        keyId     : entry.keyId,
+        contextId : getContextId(message),
+      }, indexes.sourceAudienceIndex.keys()));
+      continue;
+    }
+    const role = getOrderingRole(graph, entry.rolePath);
+    const contextId = role === undefined ? undefined : getRoleAudienceContextId(role, getContextId(message));
     if (contextId === undefined) {
       continue;
     }
@@ -336,6 +380,7 @@ function buildDependencyIndexes<T extends { message: GenericMessage }>(messages:
     grantIndex                : new Map(),
     roleIndex                 : new Map(),
     sourceAudienceIndex       : new Map(),
+    resolvedGraphs            : new Map(),
   };
 
   for (let i = 0; i < messages.length; i++) {
@@ -572,7 +617,7 @@ function addRoleEdge<T>(
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
-  const roleKey = getInvokedRoleKey(message, indexes.moduleDefinitionsByModule);
+  const roleKey = getInvokedRoleKey(message, indexes);
   const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
   if (roleIndex !== undefined) {
     addEdge(roleIndex, index);
@@ -585,7 +630,7 @@ function addSourceAudienceEdges<T>(
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
-  for (const audienceKey of getSourceAudienceKeysFromEncryption(message)) {
+  for (const audienceKey of getSourceAudienceKeysFromEncryption(message, indexes)) {
     const audienceIndex = indexes.sourceAudienceIndex.get(audienceKey);
     if (audienceIndex !== undefined) {
       addEdge(audienceIndex, index);

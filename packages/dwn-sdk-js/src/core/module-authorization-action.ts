@@ -1,3 +1,4 @@
+import type { ModuleActionRule } from '../types/modules-types.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsDelete } from '../interfaces/records-delete.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
@@ -5,12 +6,12 @@ import type { RecordsRead } from '../interfaces/records-read.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
+import type { ResolvedModuleAction, ResolvedModuleGraph, ResolvedModuleNode } from './module-graph.js';
 
 import { DwnMethodName } from '../enums/dwn-interface-method.js';
+import { getRoleContextPrefix } from './module-role-records.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
-import { getRoleContextPrefix, getRuleSetAtPath, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
 import { ModuleAction, ModuleActor } from '../types/modules-types.js';
 
 /**
@@ -35,84 +36,38 @@ export type ResolvedModuleRole = {
 export async function verifyInvokedRole(
   tenant: string,
   incomingMessage: ModuleAuthorizableMessage,
-  moduleUri: string,
   contextId: string | undefined,
-  moduleDefinition: ModuleDefinition,
+  graph: ResolvedModuleGraph,
   validationStateReader: ValidationStateReader,
-  moduleDefinitionTimestamp?: string,
 ): Promise<ResolvedModuleRole | undefined> {
   const moduleRole = incomingMessage.signaturePayload?.moduleRole;
-
-  // Only verify role if there is a role being invoked
   if (moduleRole === undefined) {
     return undefined;
   }
-
-  // Determine the module URI and module path for the role record.
-  // For cross-module roles (e.g., "threads:thread/participant"), resolve the alias.
-  let roleModuleUri = moduleUri;
-  let roleModulePath = moduleRole;
-
-  if (isCrossModuleRef(moduleRole)) {
-    const parsed = parseCrossModuleRef(moduleRole);
-    if (parsed === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationNotARole,
-        `Cross-module role '${moduleRole}' could not be parsed as a valid 'alias:path' format.`
-      );
+  let role;
+  try {
+    role = graph.resolveInvokedRole(moduleRole);
+  } catch (error) {
+    if (error instanceof DwnError && [
+      DwnErrorCode.ModulesConfigureInvalidRefAlias,
+      DwnErrorCode.ModulesConfigureInvalidRefModulePath,
+      DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+    ].includes(error.code as DwnErrorCode)) {
+      throw new DwnError(DwnErrorCode.ModuleAuthorizationNotARole, `module role '${moduleRole}' does not identify a role record.`);
     }
-
-    if (moduleDefinition.uses?.[parsed.alias] === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationNotARole,
-        `Cross-module role alias '${parsed.alias}' in '${moduleRole}' does not exist in the module's 'uses' map.`
-      );
-    }
-
-    roleModuleUri = moduleDefinition.uses[parsed.alias];
-    roleModulePath = parsed.modulePath;
-
-    // Fetch the referenced module's definition to validate the role exists
-    const refDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant, roleModuleUri, moduleDefinitionTimestamp
-    );
-    const roleRuleSet = getRuleSetAtPath(roleModulePath, refDefinition.structure);
-    if (!roleRuleSet?.$role) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationNotARole,
-        `Cross-module role path ${moduleRole} does not match role record type.`
-      );
-    }
-  } else {
-    // Local role: validate in the composing module's definition
-    const roleRuleSet = getRuleSetAtPath(moduleRole, moduleDefinition.structure);
-    if (!roleRuleSet?.$role) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationNotARole,
-        `Module path ${moduleRole} does not match role record type.`
-      );
-    }
+    throw error;
   }
-
-  const contextIdPrefix = getRoleContextPrefix(roleModulePath, contextId);
-  if (contextIdPrefix === undefined && roleModulePath.includes('/')) {
-    throw new DwnError(
-      DwnErrorCode.ModuleAuthorizationMissingContextId,
-      'Could not verify role because contextId is missing.'
-    );
+  const contextIdPrefix = getRoleContextPrefix(role, contextId);
+  if (role.parentPhysicalDepth > 0 && contextIdPrefix === undefined) {
+    throw new DwnError(DwnErrorCode.ModuleAuthorizationMissingContextId,
+      `could not verify contextual role '${moduleRole}' without its complete parent context.`);
   }
-
   const resolvedRole: ResolvedModuleRole = {
     contextIdPrefix,
-    module     : roleModuleUri,
-    modulePath : roleModulePath,
+    module     : role.owningModuleUri,
+    modulePath : role.owningModulePath,
   };
-  resolvedRole.roleRecordId = await verifyModuleRoleRecord(
-    tenant,
-    incomingMessage.author!,
-    resolvedRole,
-    validationStateReader,
-  );
+  resolvedRole.roleRecordId = await verifyModuleRoleRecord(tenant, incomingMessage.author!, resolvedRole, validationStateReader);
   return resolvedRole;
 }
 
@@ -303,20 +258,20 @@ export function getInitialWriteActionsSeekingARuleMatch(
 
 /**
  * Verifies the given message is authorized by one of the action rules in the given module rule set.
- * @param moduleDefinition Optional module definition for resolving cross-module `of` and `role` references.
+ * @param node The resolved local node and its canonical role and actor bindings.
  * @throws {Error} if action not allowed.
  */
 export async function authorizeAgainstAllowedActions(
   tenant: string,
   incomingMessage: ModuleAuthorizableMessage,
-  ruleSet: ModuleRuleSet,
+  node: ResolvedModuleNode,
   recordChain: RecordsWriteMessage[],
   validationStateReader: ValidationStateReader,
-  moduleDefinition?: ModuleDefinition,
+  invokedRole?: ResolvedModuleRole,
 ): Promise<void> {
   const incomingMessageMethod = incomingMessage.message.descriptor.method;
   const author = incomingMessage.author;
-  const actionRules = ruleSet.$actions;
+  const actionRules = node.declaredRuleSet.$actions;
 
   // NOTE: We have already checked that the message is not from tenant, owner, or permission grant authorized prior to this method being called.
 
@@ -331,12 +286,10 @@ export async function authorizeAgainstAllowedActions(
     tenant, incomingMessage, validationStateReader, actionRules
   );
 
-  const invokedRole = incomingMessage.signaturePayload?.moduleRole;
-
   // Iterate through the action rules to find a rule that authorizes the incoming message.
-  for (const actionRule of actionRules) {
+  for (const action of node.actions) {
     const actionRuleAuthorizes = await actionRuleAuthorizesMessage(
-      actionRule, actionsSeekingARuleMatch, author, invokedRole, incomingMessage, recordChain, moduleDefinition
+      action, actionsSeekingARuleMatch, author, invokedRole, incomingMessage, recordChain
     );
     if (actionRuleAuthorizes) {
       return;
@@ -357,14 +310,14 @@ export async function authorizeAgainstAllowedActions(
  * `false` when the rule does not match and the caller should move on to the next rule.
  */
 async function actionRuleAuthorizesMessage(
-  actionRule: ModuleActionRule,
+  action: ResolvedModuleAction,
   actionsSeekingARuleMatch: ModuleAction[],
   author: string | undefined,
-  invokedRole: string | undefined,
+  invokedRole: ResolvedModuleRole | undefined,
   incomingMessage: ModuleAuthorizableMessage,
   recordChain: RecordsWriteMessage[],
-  moduleDefinition?: ModuleDefinition,
 ): Promise<boolean> {
+  const actionRule = action.rule;
   // If the action rule does not have an allowed action that matches an action that can authorize the message, skip to evaluate next action rule.
   const ruleHasAMatchingAllowedAction = actionRule.can.some(
     (allowedAction: string): boolean => actionsSeekingARuleMatch.includes(allowedAction as ModuleAction)
@@ -387,7 +340,8 @@ async function actionRuleAuthorizesMessage(
   // go through role validation path if a role is invoked by the incoming message
   if (invokedRole !== undefined) {
     // When a module role is being invoked, we require that there is a matching `role` rule.
-    return actionRule.role === invokedRole;
+    return action.resolvedRole?.owningModuleUri === invokedRole.module &&
+      action.resolvedRole.owningModulePath === invokedRole.modulePath;
   }
 
   // Configuration validation permits a recipient without `of` only for co-update,
@@ -405,7 +359,7 @@ async function actionRuleAuthorizesMessage(
   }
 
   // validate the actor is allowed by the current action rule
-  return checkActor(author, actionRule, recordChain, moduleDefinition);
+  return checkActor(author, action, recordChain);
 }
 
 /**
@@ -416,49 +370,21 @@ async function actionRuleAuthorizesMessage(
  */
 export async function checkActor(
   author: string,
-  actionRule: ModuleActionRule,
+  action: ResolvedModuleAction,
   recordChain: RecordsWriteMessage[],
-  composingDefinition?: ModuleDefinition,
 ): Promise<boolean> {
-  const ofValue = actionRule.of;
-
-  // `of` should always be defined when `checkActor` is called, but guard defensively
-  if (ofValue === undefined) {
+  const target = action.resolvedActor;
+  if (target === undefined) {
     return false;
   }
-
-  let ancestorRecordsWrite: RecordsWriteMessage | undefined;
-
-  if (isCrossModuleRef(ofValue) && composingDefinition?.uses !== undefined) {
-    // Cross-module `of`: resolve alias to module URI and match by both module + modulePath
-    const parsed = parseCrossModuleRef(ofValue);
-    if (parsed !== undefined) {
-      const refModuleUri = composingDefinition.uses[parsed.alias];
-      if (refModuleUri !== undefined) {
-        ancestorRecordsWrite = recordChain.find((msg: RecordsWriteMessage): boolean =>
-          msg.descriptor.module === refModuleUri && msg.descriptor.modulePath === parsed.modulePath
-        );
-      }
-    }
-  } else {
-    // Local `of`: match by modulePath only (same module assumed)
-    ancestorRecordsWrite = recordChain.find((msg: RecordsWriteMessage): boolean =>
-      msg.descriptor.modulePath === ofValue
-    );
-  }
-
-  if (ancestorRecordsWrite === undefined) {
-    // No matching ancestor found in the record chain. Return false to allow the caller
-    // to continue evaluating other action rules that might authorize the request.
+  const ancestor = recordChain.find(message =>
+    message.descriptor.module === target.owningModuleUri && message.descriptor.modulePath === target.owningModulePath
+  );
+  if (ancestor === undefined) {
     return false;
   }
-
-  if (actionRule.who === ModuleActor.Recipient) {
-    // author of the incoming message must be the recipient of the ancestor message
-    return author === ancestorRecordsWrite.descriptor.recipient;
-  } else { // actionRule.who === ModuleActor.Author
-    // author of the incoming message must be the author of the ancestor message
-    const ancestorAuthor = (await RecordsWrite.parse(ancestorRecordsWrite)).author;
-    return author === ancestorAuthor;
+  if (target.who === ModuleActor.Recipient) {
+    return author === ancestor.descriptor.recipient;
   }
+  return author === (await RecordsWrite.parse(ancestor)).author;
 }

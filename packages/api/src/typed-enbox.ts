@@ -46,6 +46,8 @@ import type {
   ContextRolesAtPath,
   ContextRootPath,
   DirectSingletonChildPaths,
+  ModuleDependencies,
+  ModuleDependency,
   ModulePaths,
   ModuleRolePaths,
   SingletonModulePaths,
@@ -56,7 +58,7 @@ import type {
 import type { DwnApi, ModulesConfigureResponse } from './dwn-api.js';
 import type { ExpandableRecordView, RecordView } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
-import type { ModuleDefinition, ModuleType, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
 import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
@@ -70,22 +72,23 @@ import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { mergeRecordPatch } from './record-patch.js';
 import { RecordConflictError } from './record-conflict-error.js';
 import { removeUndefinedProperties } from '@enbox/common';
-import {
-  assertTypedModuleStructureSupported,
-  collectModulePaths,
-  isModuleRolePath,
-} from './module-paths.js';
-import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, isValidRecordContextId } from './record-query.js';
+import { resolveTypedModuleGraph } from './define-module.js';
+import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, isValidRecordContextId, resolveRecordQueryNode } from './record-query.js';
 import {
   authoredModuleDefinitionsEqual,
   DateSort,
   getRuleSetAtPath,
   getTypeName,
+  Modules,
+  preloadModuleDefinitions,
   resolveModuleContextRoles,
+  resolveModuleGraph,
   resolveModuleRoleContextScope,
   Time,
+  validateImportedModuleContracts,
 } from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue, RecordValidationError } from './record-codec.js';
+import { collectModulePaths, hasManagedSharedContext, isModuleRolePath } from './module-paths.js';
 import { combineAbortSignals, whileSignalsActive } from './view-opening.js';
 import {
   CONTEXT_FOLLOW_PATH,
@@ -418,6 +421,10 @@ export type RecordObserveRequest<
 
 /** @internal Runtime resources owned by the Enbox session that created this typed API. */
 type TypedEnboxOptions = {
+  /** Shared installation bindings used when a module prepares its explicit providers. */
+  dependencyApis?: Map<ModuleDependency, TypedEnbox>;
+  /** An internal provider binding verifies imported contracts without overwriting compatible definitions. */
+  dependency?: boolean;
   /** Tenant and root scope injected by an owner or member context. */
   context?: {
     contextId: string;
@@ -1183,7 +1190,7 @@ export class WalletReapprovalRequiredError extends Error {
  * `status` semantics:
  * - **`'up-to-date'`** — the installed definition canonically matches the
  *   code definition (runtime encryption blocks stripped before comparison)
- *   and, when the module declares encrypted types, every path the
+ *   and, when the module declares encrypted types or roles, every path the
  *   encryption-key injection covers carries a `$keyAgreement.publicKeyJwk`.
  * - **`'owner-can-update'`** — the connected identity owns the tenant and
  *   the installation is missing, drifted, or lacking `$keyAgreement` keys;
@@ -1215,7 +1222,7 @@ export type VerifyInstalledResult = {
    * Module paths the encryption-key injection should cover whose
    * `$keyAgreement.publicKeyJwk` is missing from the installed definition.
    * The empty string denotes the module root. Checked only when the
-   * definition declares encrypted types (`encryptionRequired: true`) and an
+   * definition declares encrypted types or roles and an
    * installation was found; empty otherwise. `$ref` composition nodes are
    * exempt — their records are governed by the referenced module's keys.
    */
@@ -1273,6 +1280,14 @@ export class TypedEnbox<
   private readonly _definition: D;
   /** @internal */
   private readonly _codecs: C;
+  /** @internal Authored identities and physical ancestry for this module. */
+  private readonly _resolvedGraph: ResolvedModuleGraph;
+  /** @internal Explicit providers retained for ordered readiness. */
+  private readonly _dependencies: ModuleDependencies;
+  /** @internal */
+  private readonly _dependencyApis: Map<ModuleDependency, TypedEnbox>;
+  /** @internal */
+  private _dependenciesReady: Promise<void> | undefined;
   /** @internal */
   private _configured: boolean = false;
   /** @internal */
@@ -1283,8 +1298,10 @@ export class TypedEnbox<
   private readonly _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedRecordsApi<D, C>;
-  /** @internal — cached result of the `hasEncryptedTypes` scan (definition is immutable). */
-  private readonly _hasEncryptedTypes: boolean;
+  /** @internal Whether this module owns the managed invitation/follow lifecycle. */
+  private readonly _hasManagedSharedContext: boolean;
+  /** @internal Plaintext role providers also require public key-agreement metadata. */
+  private readonly _requiresKeyAgreement: boolean;
   /** @internal */
   private readonly _options: TypedEnboxOptions;
 
@@ -1295,15 +1312,17 @@ export class TypedEnbox<
    * @param options - Optional session-owned lifecycle and sync resources.
    */
   constructor(dwn: DwnApi, module: TypedModule<D, C>, options: TypedEnboxOptions = {}) {
-    assertTypedModuleStructureSupported(module.definition.structure);
+    this._resolvedGraph = resolveTypedModuleGraph(module);
     this._dwn = dwn;
     this._definition = module.definition;
     this._codecs = module.codecs;
+    this._dependencies = module.dependencies;
+    this._dependencyApis = options.dependencyApis ?? new Map();
     this._options = options;
     this._configured = options.context !== undefined;
     this._validPaths = collectModulePaths(this._definition.structure);
-    this._hasEncryptedTypes = Object.values(this._definition.types)
-      .some((type: ModuleType) => type.encryptionRequired === true);
+    this._hasManagedSharedContext = hasManagedSharedContext(this._definition);
+    this._requiresKeyAgreement = Modules.requiresKeyAgreement(this._definition);
   }
 
   /**
@@ -1363,6 +1382,7 @@ export class TypedEnbox<
    */
   public async configure(): Promise<DwnResponseStatus & { module?: Module }> {
     this._assertActive();
+    await this.ensureDependenciesReady();
     if (this._dwn.isDelegate) {
       return this._autoConfigureDelegateModule();
     }
@@ -1377,7 +1397,7 @@ export class TypedEnbox<
     // If already installed with the same definition, return it as-is.
     if (modules.length > 0) {
       const existing = modules[0];
-      const encryptionKeysComplete = !this._hasEncryptedTypes
+      const encryptionKeysComplete = !this._requiresKeyAgreement
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
       if (authoredModuleDefinitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
         this._configured = true;
@@ -1394,6 +1414,25 @@ export class TypedEnbox<
     }
 
     return result;
+  }
+
+  /** @internal Prepare an installation dependency while retaining an already-installed compatible provider. */
+  public async ensureInstalled(): Promise<ModulesConfigureResponse> {
+    this._assertActive();
+    if (this._dwn.isDelegate) {
+      return this._autoConfigureDelegateModule(true);
+    }
+    const query = await this._dwn.modules.query({ filter: { module: this._definition.module } });
+    requireDwnSuccess('TypedEnbox dependency installation query', query);
+    const module = query.modules[0];
+    if (module !== undefined) {
+      assertInstalledDependencyKeys(module.definition);
+      this._configured = true;
+      return { status: query.status, module };
+    }
+    // Only a missing provider needs its packaged dependencies installed. An
+    // existing provider may have intentionally removed unrelated old imports.
+    return this.configure();
   }
 
   /**
@@ -1443,13 +1482,14 @@ export class TypedEnbox<
         throw new TypeError('TypedEnbox.contexts: this module does not support saved following choices.');
       }
       following ??= new ContextFollowing({
-        actorDid   : this._dwn.connectedDid,
-        append     : (intent, after): Promise<ContextFollowRecord> => this.appendContextFollow(intent, after),
-        openView   : (signal): Promise<ExpandableRecordView<ContextFollowRecord>> => this.observeContextFollows(signal),
-        definition : this._definition,
-        read       : (): Promise<ContextFollowRecord[]> => this.readContextFollows(),
-        signal     : this._options.signal,
-        sync       : this._options.sync,
+        actorDid      : this._dwn.connectedDid,
+        append        : (intent, after): Promise<ContextFollowRecord> => this.appendContextFollow(intent, after),
+        openView      : (signal): Promise<ExpandableRecordView<ContextFollowRecord>> => this.observeContextFollows(signal),
+        definition    : this._definition,
+        resolvedGraph : this._resolvedGraph,
+        read          : (): Promise<ContextFollowRecord[]> => this.readContextFollows(),
+        signal        : this._options.signal,
+        sync          : this._options.sync,
       });
       return following;
     };
@@ -1476,7 +1516,7 @@ export class TypedEnbox<
       if (this.getContextRoles(path).length === 0) {
         throw new TypeError(`TypedEnbox.contexts.follow: '${path}' has no contextual read roles.`);
       }
-      if (target.id.split('/').length !== path.split('/').length) {
+      if (target.id.split('/').length !== this.resolveRecordNode(path).physicalDepth) {
         throw new TypeError(`TypedEnbox.contexts.follow: id must identify a '${path}' context.`);
       }
       const coordinator = getFollowing();
@@ -1555,7 +1595,7 @@ export class TypedEnbox<
       if (id.split('/').length !== normalizedPath.split('/').length) {
         throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
       }
-      assertValidRecordWithin(normalizedPath, id, true);
+      assertValidRecordWithin(this.resolveRecordNode(normalizedPath), id, true);
       await this._ensureReady(normalizedPath);
       return bindOwnedContext(normalizedPath, id);
     };
@@ -1589,12 +1629,17 @@ export class TypedEnbox<
       await this._ensureReady(path);
       let parentContexts: Array<string | undefined> = [undefined];
       let contextIds: string[] = [];
-      const segments = path.split('/');
-      for (let depth = 1; depth <= segments.length; depth++) {
-        const modulePath = segments.slice(0, depth).join('/');
+      const node = this.resolveRecordNode(path);
+      const steps = [...node.physicalAncestors, node];
+      for (const step of steps) {
+        const modulePath = step.owningModulePath;
         const results = await Promise.all(parentContexts.map(async (within) => {
           const result = await this._dwn.records.query({
-            filter: compileRecordFilter(this._definition, modulePath, undefined, within),
+            filter: {
+              module: step.owningModuleUri,
+              modulePath,
+              ...(within === undefined ? {} : { contextId: within }),
+            },
           });
           requireDwnSuccess('TypedEnbox.contexts.list', result);
           return result.records;
@@ -1753,7 +1798,7 @@ export class TypedEnbox<
    *
    * 1. canonically compares the installed definition against the code
    *    definition with runtime `$encryption`/`$keyAgreement` blocks stripped;
-   * 2. when the definition declares encrypted types, verifies a
+   * 2. when the definition declares encrypted types or roles, verifies a
    *    `$keyAgreement.publicKeyJwk` is present at every path the
    *    encryption-key injection covers (module root and every non-`$ref`
    *    structure path);
@@ -1776,6 +1821,7 @@ export class TypedEnbox<
    */
   public async verifyInstalled(): Promise<VerifyInstalledResult> {
     this._assertActive();
+    await this.verifyDependencyContracts();
     const isDelegate = this._dwn.isDelegate;
 
     // Owners verify their local installation; delegates verify the
@@ -1813,9 +1859,8 @@ export class TypedEnbox<
 
     const definitionsMatch = authoredModuleDefinitionsEqual(installedDefinition, this._definition);
 
-    // `$keyAgreement` injection only happens for encrypted installs, so key
-    // coverage is only expected when the definition declares encrypted types.
-    const missingKeyAgreementPaths = this._hasEncryptedTypes
+    // Encrypted records and plaintext role providers both require key coverage.
+    const missingKeyAgreementPaths = (this._requiresKeyAgreement || Modules.requiresKeyAgreement(installedDefinition))
       ? collectMissingKeyAgreementPaths(installedDefinition)
       : [];
 
@@ -1889,9 +1934,14 @@ export class TypedEnbox<
     }
   }
 
+  private resolveRecordNode(path: string): ResolvedModuleNode {
+    this._assertValidPath(path);
+    return resolveRecordQueryNode(this._resolvedGraph, path);
+  }
+
   /** Resolve the codec assigned to one validated module path. */
   private resolveCodec(path: string): RecordCodec<unknown> {
-    const codec = this._codecs[getTypeName(path)];
+    const codec = this._codecs[this.resolveRecordNode(path).typeName];
     if (codec === undefined) {
       throw new Error(`TypedEnbox: module path '${path}' does not have a record codec.`);
     }
@@ -1911,7 +1961,7 @@ export class TypedEnbox<
     path : string,
     record : Record<Existing>,
   ): TypedRecord<DataForPath<C, Path>> {
-    const dataFormats = this._definition.types[getTypeName(path)]?.dataFormats;
+    const dataFormats = this.resolveRecordNode(path).recordType.dataFormats;
     return bindRecordCodec(
       record,
       this.getCodec<Path>(path),
@@ -2031,7 +2081,7 @@ export class TypedEnbox<
 
       const childType = this._definition.types[childName];
       const filter = compileRecordFilter(
-        this._definition,
+        this._resolvedGraph,
         childPath,
         undefined,
         source.within,
@@ -2355,15 +2405,16 @@ export class TypedEnbox<
       throw new TypeError(`TypedEnbox.records.set: path '${path}' must declare $recordLimit.max: 1.`);
     }
 
-    if (!path.includes('/')) {
+    const node = this.resolveRecordNode(path);
+    if (node.parentPhysicalDepth === 0) {
       if (within !== undefined) {
         throw new TypeError('TypedEnbox.records.set: a root singleton does not accept within.');
       }
       return;
     }
 
-    assertValidRecordWithin(path, within, true);
-    if (within.split('/').length !== path.split('/').length - 1) {
+    assertValidRecordWithin(node, within, true);
+    if (within.split('/').length !== node.parentPhysicalDepth) {
       throw new TypeError('TypedEnbox.records.set: within must identify the singleton\'s direct parent context.');
     }
   }
@@ -2384,8 +2435,16 @@ export class TypedEnbox<
     }
     await this._ensureReady(normalizedPath);
     const parentContextId = this.resolveCreateParentContext(normalizedPath, request.parentContextId);
-    const typeName = getTypeName(normalizedPath);
-    const typeEntry = this._definition.types[typeName];
+    const node = this.resolveRecordNode(normalizedPath);
+    if (node.parentPhysicalDepth > 0) {
+      assertValidRecordWithin(node, parentContextId, true);
+      if (parentContextId!.split('/').length !== node.parentPhysicalDepth) {
+        throw new TypeError(`TypedEnbox.records.create: parentContextId must identify the direct parent of '${normalizedPath}'.`);
+      }
+    } else if (parentContextId !== undefined) {
+      throw new TypeError(`TypedEnbox.records.create: root path '${normalizedPath}' does not accept parentContextId.`);
+    }
+    const typeEntry = node.recordType;
 
     const codec = this.getCodec<Path>(normalizedPath);
     const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats, {
@@ -2464,7 +2523,9 @@ export class TypedEnbox<
 
   /** Read the shared root policy; paths outside the encrypted context surface have no member roles. */
   private getContextRoles(path: string): readonly string[] {
-    return this._hasEncryptedTypes && this._validPaths.has(path) && !isModuleRolePath(this._definition, path)
+    const root = this._definition.structure[path.split('/')[0]];
+    return this._hasManagedSharedContext && this._validPaths.has(path) && typeof root?.$ref !== 'string'
+      && !isModuleRolePath(this._definition, path)
       ? resolveModuleContextRoles(this._definition, path) : [];
   }
 
@@ -2499,12 +2560,13 @@ export class TypedEnbox<
     return createExpandableRecordView<ContextFollowRecord>({
       callerSignal       : signal,
       definition         : this._definition,
+      resolvedGraph      : this._resolvedGraph,
       dwn                : this._dwn,
       materializeRecords : async (records): Promise<ContextFollowRecord[]> => {
         const rows = await Promise.all(records.map(record => this.readContextFollow(record)));
         return rows.filter((row): row is ContextFollowRecord => row !== undefined);
       },
-      query  : compileRecordQuery(this._definition, CONTEXT_FOLLOW_PATH, CONTEXT_FOLLOW_QUERY),
+      query  : compileRecordQuery(this._resolvedGraph, CONTEXT_FOLLOW_PATH, CONTEXT_FOLLOW_QUERY),
       signal : this._options.signal,
       sync   : this._options.sync,
     });
@@ -2576,6 +2638,7 @@ export class TypedEnbox<
     return createRecordView<ModuleContextInvitation<D, C>>({
       callerSignal       : signal,
       definition         : this._definition,
+      resolvedGraph      : this._resolvedGraph,
       dwn                : this._dwn,
       materializeRecords : records => this.projectContextInvitations(records, follow),
       query              : this.contextInvitationQuery(limit),
@@ -2586,7 +2649,7 @@ export class TypedEnbox<
 
   /** Compile the canonical own-tenant invitation selection once per operation. */
   private contextInvitationQuery(limit: number | undefined): ReturnType<typeof compileRecordQuery> {
-    return compileRecordQuery(this._definition, CONTEXT_INVITATION_PATH, {
+    return compileRecordQuery(this._resolvedGraph, CONTEXT_INVITATION_PATH, {
       dateSort   : DateSort.CreatedDescending,
       filter     : { recipient: this._dwn.connectedDid },
       pagination : { limit: normalizeContextInvitationLimit(limit) },
@@ -2701,7 +2764,7 @@ export class TypedEnbox<
       }
       throw error;
     }
-    if (this.getContextRoles(envelope.path).length === 0 || !isValidContextId(envelope.path, envelope.contextId)) {
+    if (this.getContextRoles(envelope.path).length === 0 || !isValidContextId(this.resolveRecordNode(envelope.path), envelope.contextId)) {
       return undefined;
     }
     return {
@@ -2829,13 +2892,14 @@ export class TypedEnbox<
         );
         return createRecordView<ContextMember<D, C, Role>>({
           additionalWakeFilters: additionalRoles.map(role => compileRecordFilter(
-            this._definition,
+            this._resolvedGraph,
             role,
             undefined,
             contextId,
           )),
           callerSignal       : options?.signal,
           definition         : this._definition,
+          resolvedGraph      : this._resolvedGraph,
           dwn                : this._dwn,
           materializeRecords : async (records): Promise<ContextMember<D, C, Role>[]> => {
             const additional = await Promise.all(additionalRoles.map(role => loadRole(role)));
@@ -2844,7 +2908,7 @@ export class TypedEnbox<
               ...additional.flat(),
             ]);
           },
-          query            : compileRecordQuery(this._definition, primaryRole, { within: contextId }),
+          query            : compileRecordQuery(this._resolvedGraph, primaryRole, { within: contextId }),
           signal           : this._options.signal,
           subscribeToWakes : this._options.roleDelivery?.subscribe,
           sync             : this._options.sync,
@@ -3014,7 +3078,12 @@ export class TypedEnbox<
   ): ContextRecordsApi<D, C, Root> {
     return new TypedEnbox<D, C>(
       dwn,
-      { codecs: this._codecs, definition: this._definition },
+      {
+        codecs        : this._codecs,
+        definition    : this._definition,
+        dependencies  : this._dependencies,
+        resolvedGraph : this._resolvedGraph,
+      },
       {
         context,
         signal,
@@ -3103,6 +3172,7 @@ export class TypedEnbox<
    * subsequent calls reuse the same Promise via `_ensureReadyPromise`.
    */
   private async _autoConfigureOnce(): Promise<void> {
+    await this.ensureDependenciesReady();
     const query = await this._dwn.modules.query({
       filter: { module: this._definition.module },
     });
@@ -3112,7 +3182,7 @@ export class TypedEnbox<
     if (modules.length > 0) {
       const existing = modules[0];
       const definitionsMatch = authoredModuleDefinitionsEqual(existing.definition, this._definition);
-      const encryptionKeysComplete = !this._hasEncryptedTypes
+      const encryptionKeysComplete = !(this._requiresKeyAgreement || Modules.requiresKeyAgreement(existing.definition))
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
       if (definitionsMatch && encryptionKeysComplete) {
         this._configured = true;
@@ -3120,6 +3190,13 @@ export class TypedEnbox<
       }
 
       if (!this._dwn.isDelegate && !definitionsMatch) {
+        await this.assertComposedLocalRepresentations(existing.definition);
+        if (!encryptionKeysComplete) {
+          throw new Error(
+            `TypedEnbox: installed module '${this._definition.module}' has incomplete $keyAgreement metadata; ` +
+            'the owner must repair its installed definition.',
+          );
+        }
         // Installed but definitions differ — allow operations but warn.
         console.warn(
           `TypedEnbox: installed module '${this._definition.module}' differs from the provided definition. ` +
@@ -3143,6 +3220,86 @@ export class TypedEnbox<
     this._configured = true;
   }
 
+  private dependencyApi(module: ModuleDependency): TypedEnbox {
+    let api = this._dependencyApis.get(module);
+    if (api === undefined) {
+      api = new TypedEnbox(this._dwn, module, {
+        dependency     : true,
+        dependencyApis : this._dependencyApis,
+        signal         : this._options.signal,
+        sync           : this._options.sync,
+      });
+      this._dependencyApis.set(module, api);
+    }
+    return api;
+  }
+
+  private async ensureDependenciesReady(): Promise<void> {
+    this._dependenciesReady ??= this.prepareDependencies().catch((cause: unknown): never => {
+      this._dependenciesReady = undefined;
+      throw cause;
+    });
+    await this._dependenciesReady;
+  }
+
+  private async prepareDependencies(): Promise<void> {
+    for (const dependency of Object.values(this._dependencies)) {
+      const api = this.dependencyApi(dependency);
+      if (!api.isConfigured) {
+        await api.ensureInstalled(); // NOSONAR: S9382 — complete shared prerequisite installs before advancing.
+      }
+    }
+    await this.verifyDependencyContracts();
+  }
+
+  private async verifyDependencyContracts(): Promise<void> {
+    if (Object.keys(this._dependencies).length === 0) {
+      return;
+    }
+    const installedGraph = await this.resolveInstalledGraph(this._definition);
+    // Only this binding's explicit imports are consumed contracts. Providers'
+    // unrelated records and actions can evolve without changing those imports.
+    validateImportedModuleContracts(this._resolvedGraph, installedGraph);
+  }
+
+  private async resolveInstalledGraph(definition: ModuleDefinition): Promise<ResolvedModuleGraph> {
+    const definitions = await preloadModuleDefinitions(definition, async uri => {
+      const query = await this._dwn.modules.query({
+        ...(this._dwn.isDelegate ? { from: this._dwn.connectedDid } : {}),
+        filter: { module: uri },
+      });
+      requireDwnSuccess(`TypedEnbox dependency query '${uri}'`, query);
+      const installed = query.modules[0]?.definition;
+      if (installed !== undefined) {
+        assertInstalledDependencyKeys(installed);
+      }
+      return installed;
+    });
+    return resolveModuleGraph(definition, uri => definitions.get(uri), { requireKeyAgreement: false });
+  }
+
+  /** A composing binding must not apply its local codecs to a different installed representation. */
+  private async assertComposedLocalRepresentations(installed: ModuleDefinition): Promise<void> {
+    if (Object.keys(this._dependencies).length === 0) {
+      return;
+    }
+    const graph = await this.resolveInstalledGraph(installed);
+    for (const [path, expected] of this._resolvedGraph.nodesByDeclaredPath) {
+      if (expected.kind !== 'record') {
+        continue;
+      }
+      const actual = graph.nodesByDeclaredPath.get(path);
+      if (actual?.kind !== 'record' || !installedModuleDefinitionsEqual(
+        consumedRecordRepresentation(expected), consumedRecordRepresentation(actual),
+      )) {
+        throw new Error(
+          `TypedEnbox: installed module '${installed.module}' changed the consumed representation at '${path}'; ` +
+          'update the application binding before using its record APIs.',
+        );
+      }
+    }
+  }
+
   /**
    * For delegates: fetch the owner's signed ModulesConfigure message through
    * normal routing and import that same wallet-owned message locally.
@@ -3150,7 +3307,7 @@ export class TypedEnbox<
    * The wallet definition is validated before import, and the active local
    * definition is checked afterward before this instance is marked configured.
    */
-  private async _autoConfigureDelegateModule(): Promise<ModulesConfigureResponse> {
+  private async _autoConfigureDelegateModule(asDependency = false): Promise<ModulesConfigureResponse> {
     const remote = await this._dwn.modules.query({
       filter : { module: this._definition.module },
       from   : this._dwn.connectedDid,
@@ -3162,37 +3319,58 @@ export class TypedEnbox<
 
     const remoteModules = remote.modules;
     const remoteModule = remoteModules[0];
-    const verification = this._assessInstalledDefinition(remoteModule?.definition, true);
-    if (verification.error !== undefined) {
-      throw verification.error;
+    if (!asDependency && this._options.dependency !== true) {
+      const verification = this._assessInstalledDefinition(remoteModule?.definition, true);
+      if (verification.error !== undefined) {
+        throw verification.error;
+      }
     }
     if (remoteModule === undefined) {
       throw new Error(`TypedEnbox: verified wallet module '${this._definition.module}' is unavailable.`);
     }
-
-    // The remote message includes the wallet's signature and, for encrypted
-    // modules, `$keyAgreement` keys injected by the wallet during configure.
-    // Import that exact message locally so the delegate can validate/encrypt
-    // owner-tenant records without receiving Modules.Configure permission.
-    const result = await this._dwn.importModuleConfiguration(remoteModule.toJSON());
-
-    if ((result.status.code < 200 || result.status.code > 299) && result.status.code !== 409) {
-      throw new DwnResponseError(
-        `TypedEnbox delegate module import for '${this._definition.module}'`,
-        result.status,
-      );
+    if (remoteModule.definition.module !== this._definition.module) {
+      throw new Error(`TypedEnbox: wallet returned a different module for '${this._definition.module}'.`);
     }
 
-    const local = await this._dwn.modules.query({
-      filter: { module: this._definition.module },
+    assertInstalledDependencyKeys(remoteModule.definition);
+    const remoteModulesByUri = new Map<string, Module>([[remoteModule.definition.module, remoteModule]]);
+    const definitions = await preloadModuleDefinitions(remoteModule.definition, async uri => {
+      const query = await this._dwn.modules.query({ filter: { module: uri }, from: this._dwn.connectedDid });
+      requireDwnSuccess(`TypedEnbox delegate dependency query '${uri}'`, query);
+      const dependency = query.modules[0];
+      if (dependency !== undefined) {
+        assertInstalledDependencyKeys(dependency.definition);
+        remoteModulesByUri.set(uri, dependency);
+      }
+      return dependency?.definition;
     });
-    requireDwnSuccess(`TypedEnbox delegate local module query for '${this._definition.module}'`, local);
-    if (!installedModuleDefinitionsEqual(local.modules[0]?.definition, remoteModule.definition)) {
-      throw new Error(
-        `TypedEnbox: wallet module '${this._definition.module}' was imported but is not the active local definition.`,
-      );
-    }
+    resolveModuleGraph(remoteModule.definition, uri => definitions.get(uri), { requireKeyAgreement: false });
 
+    // Import current wallet-signed metadata in its actual dependency order.
+    // No packaged codec or extra grant is needed for an unrelated new import.
+    const imported = new Map<string, ModulesConfigureResponse>();
+    const importModule = async (module: Module): Promise<ModulesConfigureResponse> => {
+      const uri = module.definition.module;
+      const previous = imported.get(uri);
+      if (previous !== undefined) {
+        return previous;
+      }
+      for (const target of Object.values(module.definition.uses ?? {})) {
+        await importModule(remoteModulesByUri.get(target)!); // NOSONAR: S9382 — import prerequisite metadata before its dependent.
+      }
+      const result = await this._dwn.importModuleConfiguration(module.toJSON());
+      if ((result.status.code < 200 || result.status.code > 299) && result.status.code !== 409) {
+        throw new DwnResponseError(`TypedEnbox delegate module import for '${uri}'`, result.status);
+      }
+      const local = await this._dwn.modules.query({ filter: { module: uri } });
+      requireDwnSuccess(`TypedEnbox delegate local module query for '${uri}'`, local);
+      if (!installedModuleDefinitionsEqual(local.modules[0]?.definition, module.definition)) {
+        throw new Error(`TypedEnbox: wallet module '${uri}' was imported but is not the active local definition.`);
+      }
+      imported.set(uri, result);
+      return result;
+    };
+    const result = await importModule(remoteModule);
     this._configured = true;
     return result;
   }
@@ -3209,7 +3387,7 @@ export class TypedEnbox<
     const readRequest = {
       from   : request.from,
       filter : compileRecordFilter(
-        this._definition,
+        this._resolvedGraph,
         normalizedPath,
         request.filter,
         within,
@@ -3352,7 +3530,7 @@ export class TypedEnbox<
           capturedRequest?.pagination?.limit,
         );
         await this._ensureReady(normalizedPath);
-        const canonicalQuery = compileRecordQuery(this._definition, normalizedPath, {
+        const canonicalQuery = compileRecordQuery(this._resolvedGraph, normalizedPath, {
           ...capturedRequest,
           within,
         });
@@ -3439,9 +3617,9 @@ export class TypedEnbox<
           materialize,
           query.pagination.limit,
         );
-        const compiled = structuredClone(compileRecordQuery(this._definition, normalizedPath, { ...query, within }));
+        const compiled = structuredClone(compileRecordQuery(this._resolvedGraph, normalizedPath, { ...query, within }));
         const additionalWakeFilters = childPaths.map((childPath): RecordsFilter => compileRecordFilter(
-          this._definition,
+          this._resolvedGraph,
           childPath,
           undefined,
           within,
@@ -3455,6 +3633,7 @@ export class TypedEnbox<
           additionalWakeFilters,
           callerSignal       : signal,
           definition         : this._definition,
+          resolvedGraph      : this._resolvedGraph,
           dwn                : this._dwn,
           materializeRecords : async (records): Promise<readonly RecordRepresentation<
             D,
@@ -3511,7 +3690,7 @@ export class TypedEnbox<
       ): Promise<number> => {
         const normalizedPath = normalizePath(path);
         await this._ensureReady(normalizedPath);
-        const compiled = compileRecordQuery(this._definition, normalizedPath, {
+        const compiled = compileRecordQuery(this._resolvedGraph, normalizedPath, {
           ...request,
           within: this.resolveContextWithin(normalizedPath, request?.within),
         });
@@ -3633,7 +3812,7 @@ export class TypedEnbox<
           throw new TypeError('TypedEnbox.records.set: module roles are not supported.');
         }
         await this._ensureReady(normalizedPath);
-        const query = compileRecordQuery(this._definition, normalizedPath, {
+        const query = compileRecordQuery(this._resolvedGraph, normalizedPath, {
           pagination: { limit: 1 },
           within,
         });
@@ -3695,7 +3874,7 @@ export class TypedEnbox<
           throw new TypeError('TypedDeleteRequest: use within instead of contextId.');
         }
         const within = this.resolveContextWithin(normalizedPath, request.within);
-        assertValidRecordWithin(normalizedPath, within, false);
+        assertValidRecordWithin(this.resolveRecordNode(normalizedPath), within, false);
         if (this._options.context !== undefined) {
           const { record, tombstonePrune } = await this.readTypedRecord(path, {
             filter     : { recordId: request.recordId },
@@ -3774,10 +3953,10 @@ function normalizeContextInvitationPreview(
   return Object.freeze({ ...preview });
 }
 
-function isValidContextId(path: string, contextId: string): boolean {
-  if (contextId.split('/').length !== path.split('/').length) { return false; }
+function isValidContextId(node: ResolvedModuleNode, contextId: string): boolean {
+  if (contextId.split('/').length !== node.physicalDepth) { return false; }
   try {
-    assertValidRecordWithin(path, contextId, true);
+    assertValidRecordWithin(node, contextId, true);
     return true;
   } catch {
     return false;
@@ -3790,6 +3969,33 @@ function compareInvitationRecords(left: Record, right: Record): number {
     return left.timestamp > right.timestamp ? -1 : 1;
   }
   return compareCodeUnits(right.id, left.id);
+}
+
+/** Representation and physical placement are codec contracts; mutable access policies are not. */
+function consumedRecordRepresentation(node: ResolvedModuleNode): unknown {
+  return {
+    owner     : [node.owningModuleUri, node.owningModulePath],
+    ancestors : node.physicalAncestors.map(parent => [parent.owningModuleUri, parent.owningModulePath]),
+    schema    : node.recordType.schema,
+    formats   : node.recordType.dataFormats === undefined ? undefined : [...new Set(node.recordType.dataFormats)].sort(compareCodeUnits),
+    encrypted : node.recordType.encryptionRequired === true,
+    role      : node.ruleSet.$role === true,
+    squash    : node.ruleSet.$squash === true,
+  };
+}
+
+/** Existing providers must retain usable keys without replacing their current policy. */
+function assertInstalledDependencyKeys(definition: ModuleDefinition): void {
+  if (!Modules.requiresKeyAgreement(definition)) {
+    return;
+  }
+  const missing = collectMissingKeyAgreementPaths(definition);
+  if (missing.length > 0) {
+    throw new Error(
+      `TypedEnbox: installed dependency '${definition.module}' is missing $keyAgreement at ` +
+      `${missing.map(path => path === '' ? '(root)' : path).join(', ')}; the owner must repair its installed definition.`,
+    );
+  }
 }
 
 /**
@@ -3828,7 +4034,7 @@ function collectMissingKeyAgreementPaths(definition: ModuleDefinition): string[]
       const nodeRecord = node as globalThis.Record<string, unknown>;
       const path = prefix ? `${prefix}/${key}` : key;
 
-      if (!hasKeyAgreementKey(nodeRecord)) {
+      if (typeof nodeRecord.$ref !== 'string' && !hasKeyAgreementKey(nodeRecord)) {
         missing.push(path);
       }
 

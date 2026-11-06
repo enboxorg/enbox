@@ -7,11 +7,12 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ResolvedModuleRole } from './module-authorization-action.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { ModuleAction, ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
+import type { ModuleAction, ModuleActionRule, ModuleRuleSet } from '../types/modules-types.js';
+import type { ResolvedModuleGraph, ResolvedModuleNode, ResolvedRoleReference } from './module-graph.js';
 
 import { EncryptionControl } from './encryption-control.js';
-import { getRuleSetAtPath } from '../utils/modules.js';
 import { isEncryptionControlPath } from './constants.js';
+import { loadModuleGraph } from './module-graph-loader.js';
 import { ModuleActor } from '../types/modules-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 
@@ -24,10 +25,11 @@ import {
   verifyAsRoleRecordIfNeeded,
   verifyImmutability,
   verifyModulePathAndContextId,
+  verifyModulePathEncryptionIfNeeded,
   verifySizeLimit,
   verifySquashEligibility,
   verifyTagsIfNeeded,
-  verifyTypeWithComposition,
+  verifyType,
 } from './module-authorization-validation.js';
 
 export class ModuleAuthorization {
@@ -49,34 +51,24 @@ export class ModuleAuthorization {
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the module definition active at the incoming message timestamp
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      incomingMessage.message.descriptor.module,
-      moduleDefinitionTimestamp,
+    const resolvedGraph = await loadModuleGraph(
+      tenant, incomingMessage.message.descriptor.module, validationStateReader, moduleDefinitionTimestamp,
     );
+    const moduleDefinition = resolvedGraph.definitionsByUri.get(resolvedGraph.rootModuleUri)!;
 
-    // verify declared module type exists in module and that it conforms to type specification.
-    // For cross-module composition, the type may be defined in a referenced module.
-    await verifyTypeWithComposition(
-      tenant, incomingMessage.message, moduleDefinition, validationStateReader, moduleDefinitionTimestamp
+    const resolvedNode = ModuleAuthorization.getRecordNode(incomingMessage.message.descriptor.modulePath, resolvedGraph, true);
+    const ruleSet = resolvedNode.ruleSet;
+    const moduleType = verifyType(incomingMessage.message, moduleDefinition.types);
+    await verifyModulePathEncryptionIfNeeded(
+      tenant, incomingMessage.message, moduleDefinition, resolvedNode, moduleType, validationStateReader,
     );
-
-    // validate `modulePath`
-    await verifyModulePathAndContextId(
-      tenant, incomingMessage, validationStateReader, moduleDefinitionTimestamp,
-    );
-
-    // get the rule set for the inbound message
-    const ruleSet = ModuleAuthorization.getRuleSet(
-      incomingMessage.message.descriptor.modulePath,
-      moduleDefinition,
-    );
+    await verifyModulePathAndContextId(tenant, incomingMessage, validationStateReader, resolvedNode);
 
     // Validate as a role record if the incoming message is writing a role record
     await verifyAsRoleRecordIfNeeded(
       tenant,
       incomingMessage,
-      ruleSet,
+      resolvedNode,
       validationStateReader,
     );
 
@@ -118,31 +110,31 @@ export class ModuleAuthorization {
       const governingRuleSet = await EncryptionControl.validateStoredControlRecord(
         tenant, incomingMessage, validationStateReader
       );
-      ModuleAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, governingRuleSet);
+      const controlGraph = await loadModuleGraph(
+        tenant, incomingMessage.message.descriptor.module, validationStateReader, incomingMessage.message.descriptor.messageTimestamp,
+      );
+      ModuleAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, governingRuleSet, controlGraph);
       return;
     }
 
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      incomingMessage.message.descriptor.module,
-      moduleDefinitionTimestamp,
+    const resolvedGraph = await loadModuleGraph(
+      tenant, incomingMessage.message.descriptor.module, validationStateReader, moduleDefinitionTimestamp,
     );
+    const moduleDefinition = resolvedGraph.definitionsByUri.get(resolvedGraph.rootModuleUri)!;
 
-    await verifyTypeWithComposition(
-      tenant, incomingMessage.message, moduleDefinition, validationStateReader, moduleDefinitionTimestamp
-    );
-
-    const ruleSet = ModuleAuthorization.getRuleSet(
-      incomingMessage.message.descriptor.modulePath,
-      moduleDefinition,
+    const resolvedNode = ModuleAuthorization.getRecordNode(incomingMessage.message.descriptor.modulePath, resolvedGraph, true);
+    const ruleSet = resolvedNode.ruleSet;
+    const moduleType = verifyType(incomingMessage.message, moduleDefinition.types);
+    await verifyModulePathEncryptionIfNeeded(
+      tenant, incomingMessage.message, moduleDefinition, resolvedNode, moduleType, validationStateReader,
     );
 
     ModuleAuthorization.verifyStoredInitialWriteRoleRecipientIfNeeded(incomingMessage, ruleSet);
     verifySizeLimit(incomingMessage, ruleSet);
     verifyTagsIfNeeded(incomingMessage, ruleSet);
     await verifySquashEligibility(incomingMessage, ruleSet);
-    ModuleAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, ruleSet);
+    ModuleAuthorization.verifyStoredInitialWriteCreateAction(tenant, incomingMessage, ruleSet, resolvedGraph);
   }
 
   /**
@@ -169,37 +161,30 @@ export class ModuleAuthorization {
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the module definition active at the incoming message timestamp
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      incomingMessage.message.descriptor.module,
-      moduleDefinitionTimestamp,
+    const resolvedGraph = await loadModuleGraph(
+      tenant, incomingMessage.message.descriptor.module, validationStateReader, moduleDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
-    const ruleSet = ModuleAuthorization.getRuleSet(
+    const resolvedNode = ModuleAuthorization.getRecordNode(
       incomingMessage.message.descriptor.modulePath,
-      moduleDefinition,
+      resolvedGraph,
+      true,
     );
 
     // If the incoming message has `moduleRole` in the descriptor, validate the invoked role
-    await verifyInvokedRole(
-      tenant,
-      incomingMessage,
-      incomingMessage.message.descriptor.module,
-      incomingMessage.message.contextId,
-      moduleDefinition,
-      validationStateReader,
-      moduleDefinitionTimestamp,
+    const resolvedRole = await verifyInvokedRole(
+      tenant, incomingMessage, incomingMessage.message.contextId, resolvedGraph, validationStateReader,
     );
 
     // verify method invoked against the allowed actions in the rule set
     await authorizeAgainstAllowedActions(
       tenant,
       incomingMessage,
-      ruleSet,
+      resolvedNode,
       recordChain,
       validationStateReader,
-      moduleDefinition,
+      resolvedRole,
     );
   }
 
@@ -221,37 +206,29 @@ export class ModuleAuthorization {
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the module definition active at the incoming message timestamp
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      newestRecordsWrite.message.descriptor.module,
-      moduleDefinitionTimestamp,
+    const resolvedGraph = await loadModuleGraph(
+      tenant, newestRecordsWrite.message.descriptor.module, validationStateReader, moduleDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
-    const ruleSet = ModuleAuthorization.getRuleSet(
+    const resolvedNode = ModuleAuthorization.getRecordNode(
       newestRecordsWrite.message.descriptor.modulePath,
-      moduleDefinition,
+      resolvedGraph,
     );
 
     // If the incoming message has `moduleRole` in the descriptor, validate the invoked role
     const resolvedRole = await verifyInvokedRole(
-      tenant,
-      incomingMessage,
-      newestRecordsWrite.message.descriptor.module,
-      newestRecordsWrite.message.contextId,
-      moduleDefinition,
-      validationStateReader,
-      moduleDefinitionTimestamp,
+      tenant, incomingMessage, newestRecordsWrite.message.contextId, resolvedGraph, validationStateReader,
     );
 
     // verify method invoked against the allowed actions in the rule set
     await authorizeAgainstAllowedActions(
       tenant,
       incomingMessage,
-      ruleSet,
+      resolvedNode,
       recordChain,
       validationStateReader,
-      moduleDefinition,
+      resolvedRole,
     );
 
     return resolvedRole;
@@ -266,37 +243,25 @@ export class ModuleAuthorization {
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the module definition
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      module!, // `authorizeQueryOrSubscribe` is only called if `module` is present
-      moduleDefinitionTimestamp,
-    );
+    const resolvedGraph = await loadModuleGraph(tenant, module!, validationStateReader, moduleDefinitionTimestamp);
 
     // get the rule set for the inbound message
-    const ruleSet = ModuleAuthorization.getRuleSet(
+    const resolvedNode = ModuleAuthorization.getRecordNode(
       modulePath!, // presence of `modulePath` is verified in `parse()`
-      moduleDefinition,
+      resolvedGraph,
     );
 
     // If the incoming message has `moduleRole` in the descriptor, validate the invoked role
-    const resolvedRole = await verifyInvokedRole(
-      tenant,
-      incomingMessage,
-      module!,
-      contextId,
-      moduleDefinition,
-      validationStateReader,
-      moduleDefinitionTimestamp,
-    );
+    const resolvedRole = await verifyInvokedRole(tenant, incomingMessage, contextId, resolvedGraph, validationStateReader);
 
     // verify method invoked against the allowed actions in the rule set
     await authorizeAgainstAllowedActions(
       tenant,
       incomingMessage,
-      ruleSet,
+      resolvedNode,
       [], // record chain is not relevant to queries or subscriptions
       validationStateReader,
-      moduleDefinition,
+      resolvedRole,
     );
 
     return resolvedRole;
@@ -320,53 +285,46 @@ export class ModuleAuthorization {
     const moduleDefinitionTimestamp = incomingMessage.message.descriptor.messageTimestamp;
 
     // fetch the module definition active at the incoming message timestamp
-    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
-      tenant,
-      recordsWrite.message.descriptor.module,
-      moduleDefinitionTimestamp,
+    const resolvedGraph = await loadModuleGraph(
+      tenant, recordsWrite.message.descriptor.module, validationStateReader, moduleDefinitionTimestamp,
     );
 
     // get the rule set for the inbound message
-    const ruleSet = ModuleAuthorization.getRuleSet(
+    const resolvedNode = ModuleAuthorization.getRecordNode(
       recordsWrite.message.descriptor.modulePath,
-      moduleDefinition,
+      resolvedGraph,
     );
 
     // If the incoming message has `moduleRole` in the descriptor, validate the invoked role
-    await verifyInvokedRole(
-      tenant,
-      incomingMessage,
-      recordsWrite.message.descriptor.module,
-      recordsWrite.message.contextId,
-      moduleDefinition,
-      validationStateReader,
-      moduleDefinitionTimestamp,
+    const resolvedRole = await verifyInvokedRole(
+      tenant, incomingMessage, recordsWrite.message.contextId, resolvedGraph, validationStateReader,
     );
 
     // verify method invoked against the allowed actions in the rule set
     await authorizeAgainstAllowedActions(
       tenant,
       incomingMessage,
-      ruleSet,
+      resolvedNode,
       recordChain,
       validationStateReader,
-      moduleDefinition,
+      resolvedRole,
     );
   }
 
   /**
    * Gets the rule set corresponding to the given modulePath.
    */
-  private static getRuleSet(
-    modulePath: string,
-    moduleDefinition: ModuleDefinition,
-  ): ModuleRuleSet {
-    const ruleSet = getRuleSetAtPath(modulePath, moduleDefinition.structure);
-    if (ruleSet === undefined) {
-      throw new DwnError(DwnErrorCode.ModuleAuthorizationMissingRuleSet,
-        `No rule set defined for modulePath ${modulePath}`);
+  private static getRecordNode(modulePath: string, graph: ResolvedModuleGraph, forWrite = false): ResolvedModuleNode {
+    const node = graph.nodesByDeclaredPath.get(modulePath);
+    if (node === undefined) {
+      const code = forWrite ? DwnErrorCode.ModuleAuthorizationInvalidType : DwnErrorCode.ModuleAuthorizationMissingRuleSet;
+      throw new DwnError(code, `no local record type defined for modulePath ${modulePath}`);
     }
-    return ruleSet;
+    if (node.kind === 'ref') {
+      const code = forWrite ? DwnErrorCode.ModuleAuthorizationRefNodeWriteNotAllowed : DwnErrorCode.ModuleAuthorizationMissingRuleSet;
+      throw new DwnError(code, `modulePath '${modulePath}' is a virtual reference, not a local record.`);
+    }
+    return node;
   }
 
   private static async verifyStoredInitialWrite(incomingMessage: RecordsWrite): Promise<void> {
@@ -398,6 +356,7 @@ export class ModuleAuthorization {
     tenant: string,
     incomingMessage: RecordsWrite,
     ruleSet: ModuleRuleSet,
+    graph: ResolvedModuleGraph,
   ): void {
     if (ModuleAuthorization.isStoredInitialWriteDirectlyAuthorized(tenant, incomingMessage)) {
       return;
@@ -412,34 +371,65 @@ export class ModuleAuthorization {
     }
     const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage, actionRules);
 
-    const invokedRole = incomingMessage.signaturePayload?.moduleRole;
-    for (const actionRule of actionRules) {
-      if (!actionRule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ModuleAction))) {
-        continue;
-      }
-
-      if (invokedRole !== undefined) {
-        if (actionRule.role === invokedRole) {
-          return;
-        }
-        continue;
-      }
-
-      if (actionRule.who === ModuleActor.Anyone) {
-        return;
-      }
-
-      // Author/recipient-of rules depend on the parent chain. This repair path preserves
-      // instead of hard-purging when validity depends on mutable or missing dependency records.
-      if (actionRule.who === ModuleActor.Author || actionRule.who === ModuleActor.Recipient) {
-        return;
-      }
+    const invokedRole = ModuleAuthorization.resolveStoredInitialWriteRole(incomingMessage, graph);
+    if (actionRules.some(rule => ModuleAuthorization.storedCreateRuleAllowsRecord(rule, actions, invokedRole, graph))) {
+      return;
     }
 
     throw new DwnError(
       DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
       `stored RecordsWrite by author ${incomingMessage.author} is not allowed by the resolved module config`
     );
+  }
+
+  /** Only conclusive governing-configuration failures prove that the signed role is invalid. */
+  private static resolveStoredInitialWriteRole(
+    incomingMessage: RecordsWrite,
+    graph: ResolvedModuleGraph,
+  ): ResolvedRoleReference | undefined {
+    const rawInvokedRole = incomingMessage.signaturePayload?.moduleRole;
+    if (rawInvokedRole === undefined) {
+      return undefined;
+    }
+    try {
+      return graph.resolveInvokedRole(rawInvokedRole);
+    } catch (error) {
+      // The complete governing graph is already loaded. Other errors can still
+      // reflect unavailable dependencies, so preserve their conservative classification.
+      if (error instanceof DwnError && [
+        DwnErrorCode.ModulesConfigureInvalidRefAlias,
+        DwnErrorCode.ModulesConfigureInvalidRefModulePath,
+        DwnErrorCode.ModulesConfigureRoleDoesNotExistAtGivenPath,
+      ].includes(error.code as DwnErrorCode)) {
+        throw new DwnError(
+          DwnErrorCode.ModuleAuthorizationStoredInitialWriteActionNotAllowed,
+          `stored RecordsWrite invokes role '${rawInvokedRole}' which is invalid under the governing module config`
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Match immutable role identity while leaving parent-dependent actor rules to live authorization. */
+  private static storedCreateRuleAllowsRecord(
+    rule: ModuleActionRule,
+    actions: readonly ModuleAction[],
+    invokedRole: ResolvedRoleReference | undefined,
+    graph: ResolvedModuleGraph,
+  ): boolean {
+    if (!rule.can.some((allowedAction: string): boolean => actions.includes(allowedAction as ModuleAction))) {
+      return false;
+    }
+    if (invokedRole !== undefined) {
+      if (rule.role === undefined) {
+        return false;
+      }
+      const expected = graph.resolveInvokedRole(rule.role);
+      return expected.owningModuleUri === invokedRole.owningModuleUri && expected.owningModulePath === invokedRole.owningModulePath;
+    }
+    // Author/recipient rules depend on mutable parent records. Reconciliation
+    // must not hard-purge a record whose validity needs that live evidence.
+    return rule.who === ModuleActor.Anyone || rule.who === ModuleActor.Author || rule.who === ModuleActor.Recipient;
   }
 
   private static isStoredInitialWriteDirectlyAuthorized(tenant: string, incomingMessage: RecordsWrite): boolean {

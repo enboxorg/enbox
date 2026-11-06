@@ -15,12 +15,12 @@ import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-const NotesModule = defineModule({
+const NotesModule = defineModule({ definition: {
   module    : 'https://example.com/modules/application-store-connection',
   published : false,
   types     : { note: { dataFormats: ['application/json'], encryptionRequired: true } },
   structure : { note: {} },
-} as const, { note: recordCodecs.json<{ title: string }>() });
+} as const, codecs: { note: recordCodecs.json<{ title: string }>() } });
 
 const NotesStore = defineStore({
   modules : { notes: NotesModule },

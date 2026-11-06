@@ -85,63 +85,59 @@ describe('Module utility functions — fuzz', () => {
 
   describe('getRoleAudienceContextId', () => {
     it('should return an empty context id for a root role path', () => {
-      expect(getRoleAudienceContextId('member')).toBe('');
-      expect(getRoleAudienceContextId('member', 'thread/message')).toBe('');
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 0 })).toBe('');
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 0 }, 'thread/message')).toBe('');
     });
 
     it('should return the ancestor context prefix at the role parent depth', () => {
-      expect(getRoleAudienceContextId('thread/member', 'thread-record/message-record')).toBe('thread-record');
-      expect(getRoleAudienceContextId('thread/message/member', 'thread-record/message-record/reply-record')).toBe('thread-record/message-record');
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 1 }, 'thread-record/message-record')).toBe('thread-record');
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 2 }, 'thread-record/message-record/reply-record')).toBe('thread-record/message-record');
     });
 
     it('should return undefined when a nested role path has no covering context id', () => {
-      expect(getRoleAudienceContextId('thread/member')).toBeUndefined();
-      expect(getRoleAudienceContextId('thread/message/member', 'thread-record')).toBeUndefined();
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 1 })).toBeUndefined();
+      expect(getRoleAudienceContextId({ parentPhysicalDepth: 2 }, 'thread-record')).toBeUndefined();
     });
   });
 
   describe('getRoleContextPrefix', () => {
     it('should return undefined for a root role path', () => {
-      expect(getRoleContextPrefix('member')).toBeUndefined();
-      expect(getRoleContextPrefix('member', 'thread/message')).toBeUndefined();
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 0 })).toBeUndefined();
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 0 }, 'thread/message')).toBeUndefined();
     });
 
     it('should return the ancestor context prefix at the role parent depth', () => {
-      expect(getRoleContextPrefix('thread/member', 'thread-record/message-record')).toBe('thread-record');
-      expect(getRoleContextPrefix('thread/message/member', 'thread-record/message-record/reply-record')).toBe('thread-record/message-record');
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 1 }, 'thread-record/message-record')).toBe('thread-record');
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 2 }, 'thread-record/message-record/reply-record')).toBe('thread-record/message-record');
     });
 
     it('should return undefined when a nested role path has no covering context id', () => {
-      expect(getRoleContextPrefix('thread/member')).toBeUndefined();
-      expect(getRoleContextPrefix('thread/message/member', 'thread-record')).toBeUndefined();
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 1 })).toBeUndefined();
+      expect(getRoleContextPrefix({ parentPhysicalDepth: 2 }, 'thread-record')).toBeUndefined();
     });
   });
 
   describe('getRoleRecordIdentity', () => {
     it('normalizes root and nested role contexts into stable keys', () => {
       const rootFromRecord = getRoleRecordIdentity({
-        contextId  : 'role-record',
-        module     : 'https://example.com/forum',
-        modulePath : 'admin',
-        recipient  : 'did:example:alice',
+        contextId : 'role-record',
+        role      : { owningModuleUri: 'https://example.com/forum', owningModulePath: 'admin', parentPhysicalDepth: 0 },
+        recipient : 'did:example:alice',
       });
       const rootFromContent = getRoleRecordIdentity({
-        contextId  : 'thread/message',
-        module     : 'https://example.com/forum',
-        modulePath : 'admin',
-        recipient  : 'did:example:alice',
+        contextId : 'thread/message',
+        role      : { owningModuleUri: 'https://example.com/forum', owningModulePath: 'admin', parentPhysicalDepth: 0 },
+        recipient : 'did:example:alice',
       });
       const nestedFromRole = getRoleRecordIdentity({
-        contextId  : 'thread/role-record',
-        module     : 'https://example.com/forum',
-        modulePath : 'thread/participant',
-        recipient  : 'did:example:alice',
+        contextId : 'thread/role-record',
+        role      : { owningModuleUri: 'https://example.com/forum', owningModulePath: 'thread/participant', parentPhysicalDepth: 1 },
+        recipient : 'did:example:alice',
       });
       const nestedFromContent = getRoleRecordIdentity({
-        contextId  : 'thread/role-record/message',
-        module     : 'https://example.com/forum',
-        modulePath : 'thread/participant',
-        recipient  : 'did:example:alice',
+        contextId : 'thread/role-record/message',
+        role      : { owningModuleUri: 'https://example.com/forum', owningModulePath: 'thread/participant', parentPhysicalDepth: 1 },
+        recipient : 'did:example:alice',
       });
 
       expect(rootFromRecord.contextIdPrefix).toBeUndefined();

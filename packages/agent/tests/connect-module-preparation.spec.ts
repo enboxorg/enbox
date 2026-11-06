@@ -1,14 +1,13 @@
 import type { DwnModuleDefinition } from '../src/types/dwn.js';
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 
-import { KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
+import { KeyDerivationScheme, Modules } from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '../src/types/dwn.js';
 import {
   getModuleSetupStatus,
-  hasEncryptedModuleTypes,
   inspectConnectModule,
   prepareModule,
 } from '../src/connect-module-preparation.js';
@@ -163,9 +162,9 @@ describe('connect module preparation', () => {
   });
 
   describe('setup-status analysis', () => {
-    it('should detect encrypted modules', () => {
-      expect(hasEncryptedModuleTypes(encryptedModule)).toBe(true);
-      expect(hasEncryptedModuleTypes(notesModule)).toBe(false);
+    it('should detect modules requiring owner key agreement', () => {
+      expect(Modules.requiresKeyAgreement(encryptedModule)).toBe(true);
+      expect(Modules.requiresKeyAgreement(notesModule)).toBe(false);
     });
 
     it('should treat owner-injected encryption metadata as policy-identical', () => {

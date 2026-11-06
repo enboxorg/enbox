@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { CodegenResult, CodegenTarget, ModuleDefinitionInput } from './codegen.js';
+import type { CodegenDependency, CodegenResult, CodegenTarget, ModuleDefinitionInput } from './codegen.js';
 
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -45,6 +45,7 @@ Options:
   -s, --schemas     Directory containing .json schema files.              [required]
   -n, --name        PascalCase name for the module (e.g. Inventory).  [required]
   -o, --output      Output file path. If omitted, prints to stdout.
+      --dependencies  JSON artifact/import registry for the definition's uses aliases.
       --allow-unresolved  Permit reachable JSON types without local schemas.
       --target      Runtime import target: api or browser. Default: api.
   -h, --help        Show help
@@ -57,6 +58,7 @@ Options:
   -s, --schemas     Directory containing .json schema files.              [required]
   -n, --name        PascalCase name for the module (e.g. Inventory).  [required]
   -o, --output      Generated output file to verify.                    [required]
+      --dependencies  JSON artifact/import registry for the definition's uses aliases.
       --allow-unresolved  Permit reachable JSON types without local schemas.
       --target      Runtime import target: api or browser. Default: api.
   -h, --help        Show help
@@ -71,6 +73,7 @@ export type CliIo = {
 export type GenerateArgs = {
   allowUnresolvedJsonSchemas? : boolean;
   definition : string;
+  dependencies? : string;
   name : string;
   output? : string;
   schemas : string;
@@ -131,6 +134,7 @@ function parseCodegenArgs(args: string[], helpText: string, io: CliIo): Generate
       options          : {
         'allow-unresolved' : { type: 'boolean' },
         definition         : { type: 'string', short: 'd' },
+        dependencies       : { type: 'string' },
         help               : { type: 'boolean', short: 'h' },
         name               : { type: 'string', short: 'n' },
         output             : { type: 'string', short: 'o' },
@@ -154,6 +158,7 @@ function parseCodegenArgs(args: string[], helpText: string, io: CliIo): Generate
   return {
     ...(parsed.values['allow-unresolved'] === true ? { allowUnresolvedJsonSchemas: true } : {}),
     ...(target === undefined ? {} : { target }),
+    ...(typeof parsed.values.dependencies === 'string' ? { dependencies: parsed.values.dependencies } : {}),
     definition : readRequiredOption(parsed.values, 'definition'),
     name       : readRequiredOption(parsed.values, 'name'),
     output     : typeof parsed.values.output === 'string' ? parsed.values.output : undefined,
@@ -291,9 +296,13 @@ async function prepareGeneration(args: GenerateArgs, io: CliIo): Promise<Prepare
   // Read the module definition JSON.
   const definitionJson = await readFile(definitionPath, 'utf-8');
   const definition = JSON.parse(definitionJson) as ModuleDefinitionInput;
+  const dependencies = args.dependencies === undefined
+    ? undefined
+    : JSON.parse(await readFile(await resolveExistingFilePath(args.dependencies, cwd, 'dependencies'), 'utf-8')) as Record<string, CodegenDependency>;
 
   const result = await generateModuleCode(definition, {
     allowUnresolvedJsonSchemas : args.allowUnresolvedJsonSchemas,
+    dependencies,
     schemasDir,
     moduleName                 : args.name,
     target                     : args.target,

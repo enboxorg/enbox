@@ -26,9 +26,9 @@ const NotesDefinition = {
   structure : { note: {} },
 } as const satisfies ModuleDefinition;
 
-const NotesModule = defineModule(NotesDefinition, {
+const NotesModule = defineModule({ definition : NotesDefinition, codecs     : {
   note: recordCodecs.json<{ text: string }>(),
-});
+} });
 const Application = defineApplicationManifest({ modules: [NotesModule] });
 
 type ConfigureMessage = DwnMessage[DwnInterface.ModulesConfigure];
@@ -70,20 +70,27 @@ function createFixture(options: {
   delegateDid?: string;
   publishStatus?: { code: number; detail: string };
   retainPublishedDefinition?: boolean;
+  localDefinitions?: ReadonlyMap<string, ModuleDefinition>;
 } = {}): {
   api: ReturnType<typeof createModuleReadinessApi>;
   configure: sinon.SinonStub;
   hosted: Map<string, ModuleDefinition>;
-  operations: string[];
   processDwnRequest: sinon.SinonStub;
   sendDwnRequest: sinon.SinonStub;
+  operations: string[];
 } {
   const hosted = new Map<string, ModuleDefinition>();
   const operations: string[] = [];
-  const processDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => ({
-    message : messageFor(request.messageParams!.definition!),
-    reply   : { status: { code: 202, detail: 'Accepted' } },
-  }));
+  const processDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => {
+    if (request.messageType === DwnInterface.ModulesQuery) {
+      const definition = options.localDefinitions?.get(request.messageParams!.filter!.module!);
+      return { reply: { status: { code: 200, detail: 'OK' }, entries: definition === undefined ? [] : [messageFor(definition)] } };
+    }
+    return {
+      message : messageFor(request.messageParams!.definition!),
+      reply   : { status: { code: 202, detail: 'Accepted' } },
+    };
+  });
   const sendDwnRequest = sinon.stub().callsFake(async (request: AgentRequest): Promise<unknown> => {
     if (request.messageType === DwnInterface.ModulesQuery) {
       const module = request.messageParams!.filter!.module!;
@@ -109,53 +116,69 @@ function createFixture(options: {
     return { reply: { status } };
   });
   const agent = { processDwnRequest, sendDwnRequest } as unknown as EnboxPlatformAgent;
-  const configure = sinon.stub().callsFake(async (moduleArtifact: TypedModule): Promise<unknown> => {
-    operations.push(`install:${moduleArtifact.definition.module}`);
-    return {
-      module: {
-        definition : moduleArtifact.definition,
-        toJSON     : (): ConfigureMessage => messageFor(moduleArtifact.definition),
-      },
-      status: { code: 200, detail: 'OK' },
-    };
+  const configuredResult = (module: TypedModule): unknown => ({
+    module: {
+      definition : module.definition,
+      toJSON     : (): ConfigureMessage => messageFor(module.definition),
+    },
+    status: { code: 200, detail: 'OK' },
+  });
+  const configure = sinon.stub().callsFake(async (module: TypedModule): Promise<unknown> => {
+    operations.push(`install:${module.definition.module}`);
+    return configuredResult(module);
   });
   const api = createModuleReadinessApi({
     agent,
     connectedDid : OWNER_DID,
     delegateDid  : options.delegateDid,
-    using        : <D extends ModuleDefinition, C extends RecordCodecMap>(moduleArtifact: TypedModule<D, C>): TypedEnbox<D, C> => ({
-      configure  : (): Promise<unknown> => configure(moduleArtifact),
-      definition : moduleArtifact.definition,
-      module     : moduleArtifact.definition.module,
+    using        : <D extends ModuleDefinition, C extends RecordCodecMap>(module: TypedModule<D, C>): TypedEnbox<D, C> => ({
+      configure       : (): Promise<unknown> => configure(module),
+      ensureInstalled : async (): Promise<unknown> => configuredResult(module),
+      definition      : module.definition,
+      module          : module.definition.module,
     } as unknown as TypedEnbox<D, C>),
   });
 
-  return { api, configure, hosted, operations, processDwnRequest, sendDwnRequest };
+  return { api, configure, hosted, processDwnRequest, sendDwnRequest, operations };
 }
 
 describe('ModuleReadinessApi', () => {
-  it('should complete each manifest entry before installing the next entry', async () => {
-    const otherModule = defineModule({ ...NotesDefinition, module: 'https://example.com/modules/readiness-other' }, NotesModule.codecs);
-    const application = defineApplicationManifest({ modules: [NotesModule, otherModule] });
+  it('installs the requested modules before publishing and verifies each publication before the next', async () => {
+    const secondModule = defineModule({
+      definition : { ...NotesDefinition, module: 'https://example.com/modules/readiness-second' },
+      codecs     : NotesModule.codecs,
+    });
+    const application = defineApplicationManifest({ modules: [NotesModule, secondModule] });
     const fixture = createFixture();
 
     await fixture.api.ensureReady({ application });
 
     expect(fixture.operations).toEqual([
-      `install:${NotesDefinition.module}`, `publish:${NotesDefinition.module}`, `query:${NotesDefinition.module}`,
-      `install:${otherModule.definition.module}`, `publish:${otherModule.definition.module}`, `query:${otherModule.definition.module}`,
+      `install:${NotesDefinition.module}`,
+      `install:${secondModule.definition.module}`,
+      `publish:${NotesDefinition.module}`,
+      `query:${NotesDefinition.module}`,
+      `publish:${secondModule.definition.module}`,
+      `query:${secondModule.definition.module}`,
     ]);
   });
 
-  it('should stop later manifest writes when an earlier publication fails', async () => {
-    const otherModule = defineModule({ ...NotesDefinition, module: 'https://example.com/modules/readiness-other' }, NotesModule.codecs);
-    const application = defineApplicationManifest({ modules: [NotesModule, otherModule] });
+  it('stops later publications when an earlier requested module fails to publish', async () => {
+    const secondModule = defineModule({
+      definition : { ...NotesDefinition, module: 'https://example.com/modules/readiness-second' },
+      codecs     : NotesModule.codecs,
+    });
+    const application = defineApplicationManifest({ modules: [NotesModule, secondModule] });
     const fixture = createFixture({ publishStatus: { code: 503, detail: 'Unavailable' } });
 
-    await expect(fixture.api.ensureReady({ application })).rejects.toMatchObject({ operation: 'publish', module: NotesDefinition.module });
+    await expect(fixture.api.ensureReady({ application })).rejects.toBeInstanceOf(ModuleReadinessError);
 
-    expect(fixture.operations).toEqual([`install:${NotesDefinition.module}`, `publish:${NotesDefinition.module}`]);
-    expect(fixture.configure.callCount).toBe(1);
+    expect(fixture.operations).toEqual([
+      `install:${NotesDefinition.module}`,
+      `install:${secondModule.definition.module}`,
+      `publish:${NotesDefinition.module}`,
+    ]);
+    expect(fixture.hosted.size).toBe(0);
   });
 
   it('should install, publish, verify, and accept an idempotent rerun', async () => {
@@ -237,6 +260,88 @@ describe('ModuleReadinessApi', () => {
       status    : cause.status,
       targetDid : OWNER_DID,
     });
+  });
+
+  it('should reuse a target provider and its new dependency without publishing stale packaged metadata', async () => {
+    const comments = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/readiness-comments',
+        published : true,
+        uses      : { notes: NotesModule.definition.module },
+        types     : { comment: { dataFormats: ['text/plain'] } },
+        structure : { note: { $ref: 'notes:note', comment: {} } },
+      },
+      codecs       : { comment: recordCodecs.text() },
+      dependencies : { notes: NotesModule },
+    });
+    const application = defineApplicationManifest({ modules: [comments] });
+    const extra: ModuleDefinition = {
+      module    : 'https://example.com/modules/target-extra',
+      published : true,
+      types     : { extra: { dataFormats: ['text/plain'] } },
+      structure : { extra: {} },
+    };
+    const provider = {
+      ...NotesDefinition,
+      uses      : { extra: extra.module },
+      types     : { ...NotesDefinition.types, extra: { dataFormats: ['text/plain'] } },
+      structure : { ...NotesDefinition.structure, extra: {} },
+    };
+    const fixture = createFixture();
+    fixture.hosted.set(hostedKey(TARGET_DID, provider.module), provider);
+    fixture.hosted.set(hostedKey(TARGET_DID, extra.module), extra);
+
+    await fixture.api.ensureReady({ application, targetDid: TARGET_DID });
+
+    expect(fixture.hosted.get(hostedKey(TARGET_DID, provider.module))).toBe(provider);
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ModulesConfigure)
+      .map(call => (call.args[0] as AgentRequest).rawMessage!.descriptor.definition.module)).toEqual([comments.definition.module]);
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ModulesQuery)
+      .map(call => (call.args[0] as AgentRequest).messageParams!.filter!.module)).toContain(extra.module);
+    expect(fixture.configure.callCount).toBe(1);
+    expect(fixture.processDwnRequest.callCount).toBe(1);
+
+    fixture.hosted.set(hostedKey(TARGET_DID, provider.module), {
+      ...provider,
+      types: { ...provider.types, note: { dataFormats: ['text/plain'] } },
+    });
+    fixture.sendDwnRequest.resetHistory();
+    await expect(fixture.api.ensureReady({ application, targetDid: TARGET_DID }))
+      .rejects.toThrow('incompatible attachment');
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ModulesConfigure)).toHaveLength(0);
+  });
+
+  it('should publish newly discovered actual local dependencies before their providers on a fresh target', async () => {
+    const comments = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/fresh-target-comments',
+        published : true,
+        uses      : { notes: NotesModule.definition.module },
+        types     : { comment: { dataFormats: ['text/plain'] } },
+        structure : { note: { $ref: 'notes:note', comment: {} } },
+      },
+      codecs       : { comment: recordCodecs.text() },
+      dependencies : { notes: NotesModule },
+    });
+    const extra: ModuleDefinition = {
+      module    : 'https://example.com/modules/fresh-target-extra',
+      published : true,
+      types     : { extra: { dataFormats: ['text/plain'] } },
+      structure : { extra: {} },
+    };
+    const provider = { ...NotesDefinition, uses: { extra: extra.module } };
+    const fixture = createFixture({ localDefinitions: new Map([[provider.module, provider], [extra.module, extra]]) });
+
+    await fixture.api.ensureReady({ application: defineApplicationManifest({ modules: [comments] }), targetDid: TARGET_DID });
+
+    const expectedOrder = [extra.module, provider.module, comments.definition.module];
+    expect(callsFor(fixture.sendDwnRequest, DwnInterface.ModulesConfigure)
+      .map(call => (call.args[0] as AgentRequest).rawMessage!.descriptor.definition.module)).toEqual(expectedOrder);
+    expect(callsFor(fixture.processDwnRequest, DwnInterface.ModulesConfigure)
+      .map(call => (call.args[0] as AgentRequest).messageParams!.definition!.module)).toEqual(expectedOrder);
+    expect(callsFor(fixture.processDwnRequest, DwnInterface.ModulesConfigure).every(call =>
+      (call.args[0] as AgentRequest).target === TARGET_DID && (call.args[0] as AgentRequest).store === false)).toBe(true);
+    expect(fixture.hosted.get(hostedKey(TARGET_DID, provider.module))).toEqual(provider);
   });
 
   it('should keep the local install and avoid storing an override target artifact', async () => {

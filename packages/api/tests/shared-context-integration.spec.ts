@@ -90,7 +90,7 @@ const moduleDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const SharedNotebookModule = defineModule(moduleDefinition, {
+const SharedNotebookModule = defineModule({ definition : moduleDefinition, codecs     : {
   admin    : recordCodecs.json<{ name: string }>(),
   change   : recordCodecs.json<{ body: string }>(),
   member   : recordCodecs.json<{ name: string }>(),
@@ -98,7 +98,7 @@ const SharedNotebookModule = defineModule(moduleDefinition, {
   page     : recordCodecs.json<{ body: string }>(),
   title    : recordCodecs.json<{ title: string }>(),
   viewer   : recordCodecs.json<{ name: string }>(),
-});
+} });
 
 async function waitForView<Item>(
   view: RecordView<Item>,

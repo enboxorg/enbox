@@ -2,24 +2,26 @@ import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { HandlerDependencies } from '../types/method-handler.js';
 import type { ModulesConfigureMessage } from '../types/modules-types.js';
+import type { ResolvedModuleGraph } from './module-graph.js';
 import type { ResolvedModuleRole } from './module-authorization-action.js';
 import type { RoleRecordIdentity } from '../utils/modules.js';
 import type { RecordsDeleteMessage, RecordsReadReplicationSupportEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
 import { EncryptionControl } from './encryption-control.js';
-import { lexicographicalCompare } from '../utils/string.js';
+import { loadModuleGraph } from './module-graph-loader.js';
 import { Message } from './message.js';
 import { Messages } from '../utils/messages.js';
 import { queryModuleConfigure } from './module-configure-lookup.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
+import { resolveModuleGraph } from './module-graph.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRecordsWriteRoleIdentity, getRoleAudienceContextId, getRoleRecordIdentity, isCrossModuleRef } from '../utils/modules.js';
+import { getRecordsWriteRoleIdentity, getRoleAudienceContextId, getRoleRecordIdentity } from '../utils/modules.js';
 
 const MAX_SUPPORT_RECORDS_PER_KIND = 16;
 const MAX_SUPPORT_MODULE_CONFIGS = 64;
@@ -41,11 +43,12 @@ export class RecordsReadReplicationSupport {
     const contextId = resolvedRole.contextIdPrefix;
     const roleRecordId = resolvedRole.roleRecordId;
 
-    if (resolvedRole.module !== module || contextId === undefined || roleRecordId === undefined) {
+    if (contextId === undefined || roleRecordId === undefined) {
       throw RecordsReadReplicationSupport.unsupported(
-        'replication support requires a context-scoped role in the record module with a concrete active assignment.'
+        'replication support requires a context-scoped role with a concrete active assignment.'
       );
     }
+    const graph = await loadModuleGraph(tenant, module, deps.validationStateReader, matchedRecordsWrite.descriptor.messageTimestamp);
 
     const [recordChain, roleRecord, audienceRecords] = await Promise.all([
       deps.validationStateReader.constructRecordChain(tenant, matchedRecordsWrite.recordId),
@@ -55,13 +58,21 @@ export class RecordsReadReplicationSupport {
         includeCurrentRoleAudience : input.recordsDelete === undefined,
         matchedRecordsWrite,
         contextId,
-        module,
+        graph,
+        module                     : resolvedRole.module,
         rolePath                   : resolvedRole.modulePath,
         tenant,
       }),
     ]);
-    if (recordChain.some((record): boolean => record.descriptor.module !== module)) {
-      throw RecordsReadReplicationSupport.unsupported('cross-module record ancestry is not supported by this bootstrap response.');
+    const node = graph.nodesByDeclaredPath.get(matchedRecordsWrite.descriptor.modulePath);
+    if (node?.kind !== 'record') {
+      throw RecordsReadReplicationSupport.unsupported('the matched record has no concrete module path.');
+    }
+    const expectedChain = [...node.physicalAncestors, node];
+    if (recordChain.length !== expectedChain.length || recordChain.some((record, index): boolean =>
+      record.descriptor.module !== expectedChain[index].owningModuleUri ||
+      record.descriptor.modulePath !== expectedChain[index].owningModulePath)) {
+      throw RecordsReadReplicationSupport.unsupported('record ancestry does not match the resolved module graph.');
     }
     const authorRoleInitialWrites = await RecordsReadReplicationSupport.fetchAuthorRoleInitialWrites(
       input,
@@ -75,15 +86,16 @@ export class RecordsReadReplicationSupport {
         throw RecordsReadReplicationSupport.unsupported('the current audience record has incomplete role-audience tags.');
       }
 
-      const delivery = input.recordsDelete === undefined &&
+      const audienceModule = audienceRecord.descriptor.module;
+      const delivery = input.recordsDelete === undefined && audienceModule === resolvedRole.module &&
         rolePath === resolvedRole.modulePath && audienceContextId === contextId
         ? await RecordsReadReplicationSupport.fetchDelivery({
           deps,
           tenant,
           requester,
-          module,
+          module    : audienceModule,
           rolePath,
-          contextId: audienceContextId,
+          contextId : audienceContextId,
           keyId,
         })
         : undefined;
@@ -149,34 +161,35 @@ export class RecordsReadReplicationSupport {
     tenant: string;
   }, recordChain: readonly RecordsWriteMessage[]): Promise<RecordsWriteMessage[]> {
     const { deps, matchedRecordsWrite, recordsDelete, requester, resolvedRole, tenant } = input;
-    const module = matchedRecordsWrite.descriptor.module;
     const selectors = new Map<string, AuthorRoleSelector>();
-    const addSelector = (
+    const graphs = new Map<string, Promise<ResolvedModuleGraph>>();
+    const addSelector = async (
       moduleRole: string | undefined,
       recipient: string | undefined,
       contextId: string | undefined,
-    ): void => {
+      module: string,
+      messageTimestamp: string,
+    ): Promise<void> => {
       if (moduleRole === undefined) {
         return;
-      }
-      if (isCrossModuleRef(moduleRole)) {
-        throw RecordsReadReplicationSupport.unsupported('cross-module author role proofs are not supported.');
       }
       if (recipient === undefined) {
         throw RecordsReadReplicationSupport.unsupported('role-authored record has no logical author.');
       }
-      const identity = getRoleRecordIdentity({
-        contextId,
-        module,
-        modulePath: moduleRole,
-        recipient,
-      });
-      if (identity.contextIdPrefix === undefined && moduleRole.includes('/')) {
+      const graphKey = JSON.stringify([module, messageTimestamp]);
+      let loading = graphs.get(graphKey);
+      if (loading === undefined) {
+        loading = loadModuleGraph(tenant, module, deps.validationStateReader, messageTimestamp);
+        graphs.set(graphKey, loading);
+      }
+      const role = (await loading).resolveInvokedRole(moduleRole);
+      const identity = getRoleRecordIdentity({ contextId, role, recipient });
+      if (identity.contextIdPrefix === undefined && role.parentPhysicalDepth > 0) {
         throw RecordsReadReplicationSupport.unsupported(`record author role '${moduleRole}' has no context.`);
       }
       if (recipient === requester &&
-        resolvedRole.module === module &&
-        resolvedRole.modulePath === moduleRole &&
+        resolvedRole.module === role.owningModuleUri &&
+        resolvedRole.modulePath === role.owningModulePath &&
         resolvedRole.contextIdPrefix === identity.contextIdPrefix) {
         return;
       }
@@ -185,18 +198,22 @@ export class RecordsReadReplicationSupport {
 
     for (const record of [matchedRecordsWrite, ...recordChain]) {
       const parsed = await RecordsWrite.parse(record);
-      addSelector(
+      await addSelector( // NOSONAR: S9382 — retain proof order while resolving each governing snapshot.
         parsed.signaturePayload?.moduleRole,
         parsed.author,
         record.contextId,
+        record.descriptor.module,
+        record.descriptor.messageTimestamp,
       );
     }
     if (recordsDelete !== undefined) {
       const parsed = await RecordsDelete.parse(recordsDelete);
-      addSelector(
+      await addSelector(
         parsed.signaturePayload?.moduleRole,
         parsed.author,
         matchedRecordsWrite.contextId,
+        matchedRecordsWrite.descriptor.module,
+        recordsDelete.descriptor.messageTimestamp,
       );
     }
 
@@ -263,6 +280,7 @@ export class RecordsReadReplicationSupport {
     deps: HandlerDependencies;
     includeCurrentRoleAudience: boolean;
     matchedRecordsWrite: RecordsWriteMessage;
+    graph: ResolvedModuleGraph;
     tenant: string;
     module: string;
     rolePath: string;
@@ -270,9 +288,9 @@ export class RecordsReadReplicationSupport {
   }): Promise<RecordsWriteMessage[]> {
     const rootAudienceEntries = input.matchedRecordsWrite.encryption?.keyEncryption
       .filter((entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-        'module' in entry && entry.module === input.module) ?? [];
+        'module' in entry && input.graph.definitionsByUri.has(entry.module)) ?? [];
     if (input.includeCurrentRoleAudience && input.matchedRecordsWrite.encryption !== undefined &&
-      !rootAudienceEntries.some((entry): boolean => 'rolePath' in entry && entry.rolePath === input.rolePath)) {
+      !rootAudienceEntries.some((entry): boolean => 'rolePath' in entry && entry.module === input.module && entry.rolePath === input.rolePath)) {
       throw RecordsReadReplicationSupport.unsupported('the encrypted record is not wrapped for the invoked role.');
     }
 
@@ -292,16 +310,16 @@ export class RecordsReadReplicationSupport {
       if (!('rolePath' in entry)) {
         continue;
       }
-      const audienceContextId = getRoleAudienceContextId(
-        entry.rolePath,
-        input.matchedRecordsWrite.contextId,
-      );
+      const providerDefinition = input.graph.definitionsByUri.get(entry.module)!;
+      const providerGraph = resolveModuleGraph(providerDefinition, uri => input.graph.definitionsByUri.get(uri));
+      const role = providerGraph.resolveInvokedRole(entry.rolePath);
+      const audienceContextId = getRoleAudienceContextId(role, input.matchedRecordsWrite.contextId);
       if (audienceContextId === undefined) {
         throw RecordsReadReplicationSupport.unsupported(
           `the encrypted record has no audience context for role '${entry.rolePath}'.`
         );
       }
-      const reference = JSON.stringify([entry.rolePath, audienceContextId, entry.keyId]);
+      const reference = JSON.stringify([entry.module, entry.rolePath, audienceContextId, entry.keyId]);
       if (queried.has(reference)) {
         continue;
       }
@@ -309,7 +327,7 @@ export class RecordsReadReplicationSupport {
       const exact = await input.deps.validationStateReader.queryAudienceRecords({
         contextId : audienceContextId,
         keyId     : entry.keyId,
-        module    : input.module,
+        module    : entry.module,
         rolePath  : entry.rolePath,
         tenant    : input.tenant,
       });
@@ -332,28 +350,42 @@ export class RecordsReadReplicationSupport {
     deps: HandlerDependencies,
     tenant: string,
     module: string,
-    records: readonly { descriptor: { messageTimestamp: string } }[],
+    records: readonly { descriptor: { messageTimestamp: string; module?: string } }[],
   ): Promise<{ isLatestBaseState: boolean; message: ModulesConfigureMessage }[]> {
-    const latest = await RecordsReadReplicationSupport.fetchModuleConfigure(deps, tenant, module);
-    const timestamps = [...new Set(records.map((record): string => record.descriptor.messageTimestamp))]
-      .sort(lexicographicalCompare);
-    const historical = await Promise.all(timestamps.map((messageTimestamp) =>
-      RecordsReadReplicationSupport.fetchModuleConfigure(deps, tenant, module, messageTimestamp)));
-    const latestCid = await Message.getCid(latest);
     const unique = new Map<string, ModulesConfigureMessage>();
-    for (const configure of [...historical, latest]) {
-      unique.set(await Message.getCid(configure), configure);
-    }
-    if (unique.size > MAX_SUPPORT_MODULE_CONFIGS) {
-      throw RecordsReadReplicationSupport.unsupported(
-        `replication support requires more than ${MAX_SUPPORT_MODULE_CONFIGS} module configurations.`
+    const latestCids = new Set<string>();
+    const visited = new Set<string>();
+    const collect = async (uri: string, timestamp?: string): Promise<void> => {
+      const key = JSON.stringify([uri, timestamp]);
+      if (visited.has(key) || deps.coreModules?.getDefinition(uri) !== undefined) {
+        return;
+      }
+      visited.add(key);
+      const message = await RecordsReadReplicationSupport.fetchModuleConfigure(deps, tenant, uri, timestamp);
+      const cid = await Message.getCid(message);
+      unique.set(cid, message);
+      if (timestamp === undefined) {
+        latestCids.add(cid);
+      }
+      if (unique.size > MAX_SUPPORT_MODULE_CONFIGS) {
+        throw RecordsReadReplicationSupport.unsupported(
+          `replication support requires more than ${MAX_SUPPORT_MODULE_CONFIGS} module configurations.`
+        );
+      }
+      for (const dependency of Object.values(message.descriptor.definition.uses ?? {})) {
+        await collect(dependency, timestamp); // NOSONAR: S9382 — enforce the closure bound before loading the next dependency.
+      }
+      if (timestamp !== undefined) {
+        await collect(uri);
+      }
+    };
+    await collect(module);
+    for (const record of records) {
+      await collect( // NOSONAR: S9382 — bound history reads and retain per-record proof order.
+        record.descriptor.module ?? module, record.descriptor.messageTimestamp,
       );
     }
-
-    return [...unique].map(([cid, message]) => ({
-      isLatestBaseState: cid === latestCid,
-      message,
-    }));
+    return [...unique].map(([cid, message]) => ({ isLatestBaseState: latestCids.has(cid), message }));
   }
 
   private static async fetchModuleConfigure(

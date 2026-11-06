@@ -72,11 +72,11 @@ const TodoModuleDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const TodoModule = defineModule(TodoModuleDefinition, {
+const TodoModule = defineModule({ definition : TodoModuleDefinition, codecs     : {
   attachment : recordCodecs.blob(),
   list       : recordCodecs.json<{ name: string; description?: string }>(),
   task       : recordCodecs.json<{ title: string; completed: boolean }>(),
-});
+} });
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -163,10 +163,12 @@ describe('TypedModule API', () => {
     const defineSharedModule = (): {
       codecs: globalThis.Record<string, RecordCodec<unknown>>;
       definition: ModuleDefinition;
-    } => defineModule(SharedDefinition, SharedCodecs);
+    } => defineModule({ definition: SharedDefinition, codecs: SharedCodecs });
 
-    it('should return a TypedModule with the original definition', () => {
-      expect(TodoModule.definition).toBe(TodoModuleDefinition);
+    it('should return a TypedModule with an immutable snapshot of the authored definition', () => {
+      expect(TodoModule.definition).toEqual(TodoModuleDefinition);
+      expect(TodoModule.definition).not.toBe(TodoModuleDefinition);
+      expect(Object.isFrozen(TodoModule.definition)).toBe(true);
       expect(TodoModule.definition.module).toBe('https://example.com/modules/todo');
     });
 
@@ -178,19 +180,15 @@ describe('TypedModule API', () => {
     it('should reject missing, unexpected, and invalid runtime codecs', () => {
       const missing = { ...TodoModule.codecs } as Partial<typeof TodoModule.codecs>;
       delete missing.attachment;
-      expect(() => defineModule(TodoModuleDefinition, missing as typeof TodoModule.codecs))
+      expect(() => defineModule({ definition: TodoModuleDefinition, codecs: missing as typeof TodoModule.codecs }))
         .toThrow('missing: attachment');
 
       const unexpected = { ...TodoModule.codecs, orphan: recordCodecs.json<unknown>() };
-      expect(() => defineModule(
-        TodoModuleDefinition,
-        unexpected as unknown as typeof TodoModule.codecs,
+      expect(() => defineModule({ definition: TodoModuleDefinition, codecs: unexpected as unknown as typeof TodoModule.codecs }
       )).toThrow('unexpected: orphan');
 
       const invalid = { ...TodoModule.codecs, task: {} };
-      expect(() => defineModule(
-        TodoModuleDefinition,
-        invalid as unknown as typeof TodoModule.codecs,
+      expect(() => defineModule({ definition: TodoModuleDefinition, codecs: invalid as unknown as typeof TodoModule.codecs }
       )).toThrow('invalid: task');
     });
 
@@ -238,7 +236,7 @@ describe('TypedModule API', () => {
     });
 
     it('derives shared-context support from the authored definition', () => {
-      const module = defineModule(SharedDefinition, SharedCodecs);
+      const module = defineModule({ definition: SharedDefinition, codecs: SharedCodecs });
 
       expect(isTypedModule(module)).toBe(true);
       expect(new TypedEnbox(dwnAlice, module).contexts).toHaveProperty('invitations');
@@ -337,7 +335,7 @@ describe('TypedModule API', () => {
             [CONTEXT_INVITATION_PATH]: {},
           },
         } as unknown as typeof TodoModuleDefinition;
-        expect(() => defineModule(definition, TodoModule.codecs)).toThrow(
+        expect(() => defineModule({ definition: definition, codecs: TodoModule.codecs })).toThrow(
           `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
         );
       }
@@ -352,7 +350,7 @@ describe('TypedModule API', () => {
             [CONTEXT_FOLLOW_PATH]: {},
           },
         } as unknown as typeof TodoModuleDefinition;
-        expect(() => defineModule(definition, TodoModule.codecs)).toThrow(
+        expect(() => defineModule({ definition: definition, codecs: TodoModule.codecs })).toThrow(
           `'${CONTEXT_FOLLOW_PATH}' is reserved for shared-context following`,
         );
       }
@@ -372,7 +370,7 @@ describe('TypedModule API', () => {
 
     it('should expose the module definition', () => {
       const typed = new TypedEnbox(dwnAlice, TodoModule);
-      expect(typed.definition).toBe(TodoModuleDefinition);
+      expect(typed.definition).toBe(TodoModule.definition);
     });
 
     it('should return the same records object on repeated access', () => {
@@ -537,7 +535,7 @@ describe('TypedModule API', () => {
           },
         };
 
-        const updatedModule = defineModule(updatedDefinition, TodoModule.codecs);
+        const updatedModule = defineModule({ definition: updatedDefinition, codecs: TodoModule.codecs });
         const updatedTyped = new TypedEnbox(dwnAlice, updatedModule);
 
         const { status } = await updatedTyped.configure();
@@ -597,10 +595,10 @@ describe('TypedModule API', () => {
           (value: unknown): boolean => (value as { name?: unknown }).name !== rejectedName,
           { errors: [failure] },
         ) as RecordValidator;
-        const validated = new TypedEnbox(dwnAlice, defineModule(TodoModuleDefinition, {
+        const validated = new TypedEnbox(dwnAlice, defineModule({ definition : TodoModuleDefinition, codecs     : {
           ...TodoModule.codecs,
           list: recordCodecs.json<{ name: string }>({ validator }),
-        }));
+        } }));
 
         await expect(validated.records.create('list', { data: { name: '' } })).rejects.toMatchObject({
           name       : 'RecordValidationError',
@@ -661,7 +659,7 @@ describe('TypedModule API', () => {
             return Number((await data.text()).slice('counter:'.length));
           },
         };
-        const custom = new TypedEnbox(dwnAlice, defineModule(definition, { counter: codec }));
+        const custom = new TypedEnbox(dwnAlice, defineModule({ definition: definition, codecs: { counter: codec } }));
 
         const created = await custom.records.create('counter', { data: 1 });
         expect(await created.value()).toBe(1);
@@ -698,10 +696,10 @@ describe('TypedModule API', () => {
         },
       } as const satisfies ModuleDefinition;
 
-      const SquashModule = defineModule(SquashDefinition, {
+      const SquashModule = defineModule({ definition : SquashDefinition, codecs     : {
         doc      : recordCodecs.json<{ n?: string }>(),
         snapshot : recordCodecs.json<{ v?: string }>(),
-      });
+      } });
 
       let squashed: TypedEnbox<typeof SquashDefinition, typeof SquashModule.codecs>;
 
@@ -810,10 +808,10 @@ describe('TypedModule API', () => {
           },
         },
       } as const satisfies ModuleDefinition;
-      const RoleModule = defineModule(RoleDefinition, {
+      const RoleModule = defineModule({ definition : RoleDefinition, codecs     : {
         member    : recordCodecs.json<{ label: string }>(),
         workspace : recordCodecs.json<{ name: string }>(),
-      });
+      } });
       const DeliveryDefinition = {
         ...RoleDefinition,
         module : `${RoleDefinition.module}/delivery`,
@@ -835,11 +833,11 @@ describe('TypedModule API', () => {
           },
         },
       } as const satisfies ModuleDefinition;
-      const DeliveryModule = defineModule(DeliveryDefinition, {
+      const DeliveryModule = defineModule({ definition : DeliveryDefinition, codecs     : {
         ...RoleModule.codecs,
         blind  : recordCodecs.json<{ note: string }>(),
         viewer : recordCodecs.json<{ readonly: boolean }>(),
-      });
+      } });
       type DeliveryRole = 'workspace/member' | 'workspace/viewer';
       type DeliveryMembers = ContextMembersApi<
         typeof DeliveryDefinition,
@@ -1376,7 +1374,7 @@ describe('TypedModule API', () => {
             },
           };
 
-          const modifiedModule = defineModule(modifiedDefinition, TodoModule.codecs);
+          const modifiedModule = defineModule({ definition: modifiedDefinition, codecs: TodoModule.codecs });
           const modifiedTyped = new TypedEnbox(dwnAlice, modifiedModule);
 
           const result = await modifiedTyped.configure();

@@ -83,7 +83,7 @@ const ProfileDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const ProfileModule = defineModule(ProfileDefinition, {
+const ProfileModule = defineModule({ definition : ProfileDefinition, codecs     : {
   avatar  : recordCodecs.blob(),
   hero    : recordCodecs.blob(),
   link    : recordCodecs.json<{ url: string; title: string; icon?: string; sortOrder?: number }>(),
@@ -95,7 +95,7 @@ const ProfileModule = defineModule(ProfileDefinition, {
     website?: string;
     pronouns?: string;
   }>(),
-});
+} });
 
 const ConnectDefinition = {
   module    : 'https://identity.foundation/modules/connect',
@@ -116,9 +116,9 @@ const ConnectDefinition = {
   },
 } as const satisfies ModuleDefinition;
 
-const ConnectModule = defineModule(ConnectDefinition, {
+const ConnectModule = defineModule({ definition : ConnectDefinition, codecs     : {
   wallet: recordCodecs.json<{ webWallets: string[] }>(),
-});
+} });
 
 // ---------------------------------------------------------------------------
 // Test setup

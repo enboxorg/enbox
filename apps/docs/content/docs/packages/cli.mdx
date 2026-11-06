@@ -38,9 +38,9 @@ const NotesDefinition = {
   },
 } as const;
 
-const NotesModule = defineModule(NotesDefinition, {
+const NotesModule = defineModule({ definition: NotesDefinition, codecs: {
   note: recordCodecs.json<{ body: string }>(),
-});
+} });
 
 const application = defineApplicationManifest({
   modules: [{ module: NotesModule, permissions: ['write'] }],

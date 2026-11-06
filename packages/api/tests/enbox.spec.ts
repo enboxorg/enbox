@@ -135,9 +135,9 @@ describe('Enbox API', () => {
         },
       } as const satisfies ModuleDefinition;
 
-      const TestModule = defineModule(TestModuleDef, {
+      const TestModule = defineModule({ definition : TestModuleDef, codecs     : {
         item: recordCodecs.json<{ name: string }>(),
-      });
+      } });
 
       const RoleModuleDef = {
         module    : 'https://example.com/modules/roles',
@@ -152,10 +152,10 @@ describe('Enbox API', () => {
         },
       } as const satisfies ModuleDefinition;
 
-      const RoleModule = defineModule(RoleModuleDef, {
+      const RoleModule = defineModule({ definition : RoleModuleDef, codecs     : {
         member : recordCodecs.json<{ name: string }>(),
         secret : recordCodecs.json<{ value: string }>(),
-      });
+      } });
 
       it('should cache typed instances and wire authored role delivery lifecycles', async () => {
         const identity = await testHarness.agent.identity.create({
@@ -201,9 +201,9 @@ describe('Enbox API', () => {
           structure: { thing: {} },
         } as const satisfies ModuleDefinition;
 
-        const OtherModule = defineModule(OtherModuleDef, {
+        const OtherModule = defineModule({ definition : OtherModuleDef, codecs     : {
           thing: recordCodecs.json<{ value: number }>(),
-        });
+        } });
 
         const identity = await testHarness.agent.identity.create({
           metadata  : { name: 'CacheTest2' },
@@ -232,12 +232,12 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : identity.did.uri,
         });
-        const firstModule = defineModule(TestModuleDef, {
+        const firstModule = defineModule({ definition : TestModuleDef, codecs     : {
           item: recordCodecs.json<{ name: string }>(),
-        });
-        const secondModule = defineModule(TestModuleDef, {
+        } });
+        const secondModule = defineModule({ definition : TestModuleDef, codecs     : {
           item: recordCodecs.json<{ label: string }>(),
-        });
+        } });
 
         expect(enbox.using(firstModule)).not.toBe(enbox.using(secondModule));
       });
@@ -277,9 +277,9 @@ describe('Enbox API', () => {
         structure : { item: {} },
       } as const satisfies ModuleDefinition;
 
-      const CloseModule = defineModule(CloseModuleDef, {
+      const CloseModule = defineModule({ definition : CloseModuleDef, codecs     : {
         item: recordCodecs.json<unknown>(),
-      });
+      } });
 
       it('should release only facade-owned resources', async () => {
         const identity = await testHarness.agent.identity.create({

@@ -3693,7 +3693,7 @@ export function testRecordsWriteHandler(): void {
           const reply = await dwn.processMessage(alice.did, credentialApplication.message, { dataStream: credentialApplication.dataStream });
           expect(reply.status.code).toBe(400);
           expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationParentlessIncorrectModulePath);
-          expect(reply.status.detail).toContain('is not valid for records with no parent');
+          expect(reply.status.detail).toContain('requires a physical parent');
         });
 
         it('#690 - should only allow data format of a module-space record to be updated to any value allowed by the module configuration', async () => {
@@ -4666,8 +4666,8 @@ export function testRecordsWriteHandler(): void {
           const failedCredentialResponseReply =
             await dwn.processMessage(alice.did, failedCredentialResponse.message, { dataStream: failedCredentialResponse.dataStream });
           expect(failedCredentialResponseReply.status.code).toBe(400);
-          expect(failedCredentialResponseReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
-          expect(failedCredentialResponseReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
+          expect(failedCredentialResponseReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationInvalidType);
+          expect(failedCredentialResponseReply.status.errorCode).toBe(DwnErrorCode.ModuleAuthorizationInvalidType);
 
           // Successfully write a 'credentialApplication' at the top level of the of the record hierarchy
           const credentialApplication = await TestDataGenerator.generateRecordsWrite({
@@ -4695,7 +4695,7 @@ export function testRecordsWriteHandler(): void {
           const failedCredentialApplicationReply2 =
             await dwn.processMessage(alice.did, failedCredentialApplication.message, { dataStream: failedCredentialApplication.dataStream });
           expect(failedCredentialApplicationReply2.status.code).toBe(400);
-          expect(failedCredentialApplicationReply2.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
+          expect(failedCredentialApplicationReply2.status.detail).toContain(DwnErrorCode.ModuleAuthorizationInvalidType);
 
           // Successfully write a 'credentialResponse' below the 'credentialApplication'
           const credentialResponse = await TestDataGenerator.generateRecordsWrite({
@@ -4725,7 +4725,7 @@ export function testRecordsWriteHandler(): void {
           const nestedCredentialApplicationReply =
             await dwn.processMessage(alice.did, nestedCredentialApplication.message, { dataStream: nestedCredentialApplication.dataStream });
           expect(nestedCredentialApplicationReply.status.code).toBe(400);
-          expect(nestedCredentialApplicationReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMissingRuleSet);
+          expect(nestedCredentialApplicationReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationInvalidType);
         });
 
         it('should only allow DWN owner to write if record does not have an action rule defined', async () => {

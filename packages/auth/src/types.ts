@@ -477,11 +477,15 @@ export type ModulePermissionRequest =
     /** A raw definition, preserving the original explicit request shape. */
     readonly definition: DwnModuleDefinition | ModuleDefinitionCarrier;
     readonly permissions: readonly Permission[];
+    /** Install a dependency without grants. Requires an explicit empty permissions array. */
+    readonly installationOnly?: true;
   }
   | {
     /** A raw definition or higher-level definition carrier. */
     readonly module: DwnModuleDefinition | ModuleDefinitionCarrier;
     readonly permissions: readonly Permission[];
+    /** Install a dependency without grants. Requires an explicit empty permissions array. */
+    readonly installationOnly?: true;
   };
 
 /**

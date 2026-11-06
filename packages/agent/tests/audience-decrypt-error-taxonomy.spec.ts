@@ -416,10 +416,9 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     expect(delivered).toBe(true);
     const noteWrite = await writeEncryptedNote(definition, 'note whose delivery is hidden from the session');
 
-    // The session's delegated grant is contextId-scoped — grantKey-INELIGIBLE for delivery
-    // visibility — so the delivery query is authorized but the DWN filters the existing delivery
-    // out of its results: a visibility-filtered empty with the remote consulted must never
-    // classify as a missing delivery.
+    // A context-only data grant cannot authorize role-key disclosure. With no approved
+    // role-path grant available, route selection is inconclusive; it must never claim
+    // the existing delivery is absent or reuse this data grant as broader authority.
     const delegate = await testHarness.agent.identity.create({
       didMethod : 'jwk',
       metadata  : { name: 'Context-Scoped Session Delegate' },
@@ -443,11 +442,11 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         delegatedGrant : contextScopedGrant.message,
         granteeDid     : delegate.did.uri,
       }),
-      'unknown',
+      'remote-unverifiable',
     );
     expect(decryptError.cause).not.toBe('delivery-missing');
-    expect(decryptError.detail).toContain('visibility-filtered');
-    expect(decryptError.detail).toContain('no delivered decryption key covers');
+    expect(decryptError.detail).toContain('$encryption/delivery lookup');
+    expect(decryptError.detail).toContain('absence cannot be asserted');
   }, 30000);
 
   it('reports audience-superseded when the record wraps a non-current audience key', async () => {

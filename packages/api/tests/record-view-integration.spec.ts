@@ -41,13 +41,11 @@ const ViewIntegrationDefinition = {
 
 type NoteData = { title: string };
 
-const ViewIntegrationModule = defineModule(
-  ViewIntegrationDefinition,
-  {
-    label      : recordCodecs.text(),
-    note       : recordCodecs.json<NoteData>(),
-    preference : recordCodecs.text(),
-  },
+const ViewIntegrationModule = defineModule({ definition : ViewIntegrationDefinition, codecs     : {
+  label      : recordCodecs.text(),
+  note       : recordCodecs.json<NoteData>(),
+  preference : recordCodecs.text(),
+} }
 );
 const ViewIntegrationApplication = defineApplicationManifest({ modules: [ViewIntegrationModule] });
 const LABEL_PATH = 'note/label';

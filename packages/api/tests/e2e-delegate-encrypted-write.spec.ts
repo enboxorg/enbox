@@ -277,7 +277,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -298,7 +298,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -333,7 +333,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -356,7 +356,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -411,7 +411,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -431,7 +431,7 @@ describe('E2E: Delegate writes to module with encrypted types', () => {
       const moduleDef = createEncryptedModule(moduleUri);
       const { dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+      const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
       const typed = dappEnbox.using(EncTestModule);
 
@@ -633,7 +633,7 @@ describe('E2E: AuthManager.connect() with encrypted module', () => {
     const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const moduleDef = createEncryptedModule(moduleUri);
 
-    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+    const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
     // Create the auth manager with the dapp's agent and our in-process
     // wallet handler — this is the same shape a real dapp would use with
@@ -698,7 +698,7 @@ describe('E2E: AuthManager.connect() with encrypted module', () => {
 
     const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const moduleDef = createEncryptedModule(moduleUri);
-    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+    const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
     const auth = await AuthManager.create({
       agent          : dappAgent,
@@ -746,7 +746,7 @@ describe('E2E: AuthManager.connect() with encrypted module', () => {
     const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
     const moduleDef = createEncryptedModule(moduleUri);
 
-    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
+    const EncTestModule = defineModule({ definition: moduleDef as ModuleDefinition, codecs: encryptedCodecs });
 
     try {
       const auth = await AuthManager.create({

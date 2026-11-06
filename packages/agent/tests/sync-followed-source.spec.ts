@@ -11,7 +11,7 @@ import sinon from 'sinon';
 
 import { DidResolutionErrorCause } from '@enbox/dids';
 import { Level } from 'level';
-import { DwnErrorCode, Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, Message, resolveModuleGraph, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
@@ -89,10 +89,25 @@ function sourceInput(followed = source()): FollowedSyncSourceInput {
   };
 }
 
+function followedModuleGraph(): ReturnType<typeof resolveModuleGraph> {
+  return resolveModuleGraph({
+    module    : MODULE,
+    published : true,
+    types     : { notebook: {}, page: {}, delta: {}, collaborator: {}, viewer: {} },
+    structure : { notebook: {
+      $actions     : [{ role: 'notebook/collaborator', can: ['read'] }, { role: 'notebook/viewer', can: ['read'] }],
+      collaborator : { $role: true },
+      viewer       : { $role: true },
+      page         : { delta: {}, viewer: { $role: true } },
+    } },
+  }, () => undefined);
+}
+
 function supportBatch(roleRecordId: string): RoleReplicationSupportBatch {
   return {
     dependencies     : [],
-    moduleDefinition : {} as any,
+    resolvedGraph    : followedModuleGraph(),
+    moduleDefinition : followedModuleGraph().definitionsByUri.get(MODULE)!,
     roleRecordId,
     root             : { message: { descriptor: {} }, isLatestBaseState: true } as any,
     rootCid          : `root-${roleRecordId}`,
@@ -565,6 +580,18 @@ describe('SyncEngineLevel — followed sources', () => {
   it('should resolve the context root for an exact nested role context', () => {
     expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', 'notebook/page/viewer'))
       .toEqual({ modulePath: 'notebook/page' });
+  });
+
+  it('resolves a foreign immediate parent when canonical role metadata is supplied', () => {
+    const provider = followedModuleGraph().definitionsByUri.get(MODULE)!;
+    const graph = resolveModuleGraph({
+      module    : 'https://example.com/followed-extension', published : true,
+      uses      : { provider: MODULE }, types     : { viewer: {} },
+      structure : { page: { $ref: 'provider:notebook/page', viewer: { $role: true } } },
+    }, uri => uri === MODULE ? provider : undefined);
+
+    expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', 'page/viewer', graph.resolveInvokedRole('page/viewer')))
+      .toEqual({ module: MODULE, modulePath: 'notebook/page' });
   });
 
   it('should pull one followed source from its accepted endpoint under the sync lock', async () => {

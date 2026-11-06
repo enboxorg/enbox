@@ -21,9 +21,9 @@ const NotesDefinition = {
   structure: { note: {} },
 } as const satisfies ModuleDefinition;
 
-const NotesModule = defineModule(NotesDefinition, {
+const NotesModule = defineModule({ definition : NotesDefinition, codecs     : {
   note: recordCodecs.json<{ text: string }>(),
-});
+} });
 const Application = defineApplicationManifest({ modules: [NotesModule] } as const);
 
 describe('createEnboxTestContext()', () => {
