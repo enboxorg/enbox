@@ -1099,7 +1099,6 @@ export class RemoteApplyPushContext {
       case 'InitialWrite':
       case 'Parent':
       case 'Ancestor':
-      case 'CrossModuleRef':
         return this.fetchRecordsByRecordId(ref.recordId, ref.module);
       case 'Role':
         return this.fetchRoleRecord(ref);

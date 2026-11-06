@@ -423,8 +423,6 @@ export type RecordObserveRequest<
 type TypedEnboxOptions = {
   /** Shared installation bindings used when a module prepares its explicit providers. */
   dependencyApis?: Map<ModuleDependency, TypedEnbox>;
-  /** An internal provider binding verifies imported contracts without overwriting compatible definitions. */
-  dependency?: boolean;
   /** Tenant and root scope injected by an owner or member context. */
   context?: {
     contextId: string;
@@ -1416,8 +1414,8 @@ export class TypedEnbox<
     return result;
   }
 
-  /** @internal Prepare an installation dependency while retaining an already-installed compatible provider. */
-  public async ensureInstalled(): Promise<ModulesConfigureResponse> {
+  /** Prepare an installation dependency while retaining an already-installed compatible provider. */
+  private async ensureInstalled(): Promise<ModulesConfigureResponse> {
     this._assertActive();
     if (this._dwn.isDelegate) {
       return this._autoConfigureDelegateModule(true);
@@ -3224,7 +3222,6 @@ export class TypedEnbox<
     let api = this._dependencyApis.get(module);
     if (api === undefined) {
       api = new TypedEnbox(this._dwn, module, {
-        dependency     : true,
         dependencyApis : this._dependencyApis,
         signal         : this._options.signal,
         sync           : this._options.sync,
@@ -3319,7 +3316,7 @@ export class TypedEnbox<
 
     const remoteModules = remote.modules;
     const remoteModule = remoteModules[0];
-    if (!asDependency && this._options.dependency !== true) {
+    if (!asDependency) {
       const verification = this._assessInstalledDefinition(remoteModule?.definition, true);
       if (verification.error !== undefined) {
         throw verification.error;

@@ -105,4 +105,19 @@ describe('parseReplicationApplyResult', () => {
       }],
     })).toThrow(DwnRpcError);
   });
+
+  it.each(['Parent', 'Ancestor'])('accepts a canonical foreign %s dependency', (type) => {
+    const result = {
+      kind    : 'Incomplete',
+      missing : [{ type, module: 'https://example.com/provider', recordId: 'foreign-record' }],
+    };
+    expect(parseReplicationApplyResult(result)).toEqual(result);
+  });
+
+  it('rejects the retired cross-module dependency discriminator', () => {
+    expect(() => parseReplicationApplyResult({
+      kind    : 'Incomplete',
+      missing : [{ type: 'CrossModuleRef', module: 'https://example.com/provider', recordId: 'foreign-record' }],
+    })).toThrow(DwnRpcError);
+  });
 });

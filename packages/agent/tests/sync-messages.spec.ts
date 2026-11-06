@@ -2195,11 +2195,16 @@ describe('sync-messages', () => {
         Message.getCid(call.args[0].message)))).toEqual([rootCid, roleCid, rootCid]);
     });
 
-    it('should use the remote-provided module for cross-module record refs', async () => {
+    it('should use the remote-provided module when fetching a foreign parent', async () => {
       const childModule = 'https://example.com/child-module';
       const referencedModule = 'https://example.com/referenced-module';
-      const root = await TestDataGenerator.generateRecordsWrite({ module: childModule });
-      const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule });
+      const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule, modulePath: 'parent' });
+      const root = await TestDataGenerator.generateRecordsWrite({
+        author          : referenced.author,
+        module          : childModule,
+        modulePath      : 'attachment/child',
+        parentContextId : referenced.message.contextId,
+      });
       const rootCid = await Message.getCid(root.message);
       const referencedCid = await Message.getCid(referenced.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
@@ -2209,7 +2214,7 @@ describe('sync-messages', () => {
         ]),
         recordsByRecordId : new Map([[referenced.message.recordId, [referenced.message]]]),
         applyResults      : [
-          { kind: 'Incomplete', missing: [{ type: 'CrossModuleRef', module: referencedModule, recordId: referenced.message.recordId }] },
+          { kind: 'Incomplete', missing: [{ type: 'Parent', module: referencedModule, recordId: referenced.message.recordId }] },
           { kind: 'Applied' },
           { kind: 'Applied' },
         ],

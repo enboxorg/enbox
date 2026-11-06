@@ -584,11 +584,16 @@ describe('admitClosure', () => {
     expect(appliedCids).toEqual(new Set(cids));
   });
 
-  it('fetches cross-module record references by record ID and module', async () => {
+  it.each(['Parent', 'Ancestor'] as const)('fetches a foreign %s by record ID and module', async (type) => {
     const module = 'https://example.com/module';
     const referencedModule = 'https://example.com/referenced-module';
-    const root = await TestDataGenerator.generateRecordsWrite({ module });
-    const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule });
+    const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule, modulePath: 'parent' });
+    const root = await TestDataGenerator.generateRecordsWrite({
+      author          : referenced.author,
+      module,
+      modulePath      : 'attachment/child',
+      parentContextId : referenced.message.contextId,
+    });
     const rootCid = await Message.getCid(root.message);
     const referencedCid = await Message.getCid(referenced.message);
     const agent = createMockAgent();
@@ -601,7 +606,7 @@ describe('admitClosure', () => {
       .onFirstCall().resolves({
         kind    : 'Incomplete',
         missing : [{
-          type     : 'CrossModuleRef',
+          type,
           module   : referencedModule,
           recordId : referenced.message.recordId,
         }],
