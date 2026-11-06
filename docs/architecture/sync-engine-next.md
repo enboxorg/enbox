@@ -1,8 +1,8 @@
 # Checkpoint-based sync progress
 
-Status: durable progress store, bounded pull and push pages, and explicit
-one-row retry primitives. The replacement runtime and public engine selection
-are still to be built.
+Status: durable progress store, bounded transfer/retry primitives, and an
+internal one-shot engine. Live wake scheduling and public engine selection are
+still to be built.
 
 ## Purpose
 
@@ -215,10 +215,12 @@ Inbound quarantine has one active retry owner per tenant and projection across
 all bindings; this adds no durable claim or second queue.
 
 The runner resumes from the progress store after restart and returns whether
-work remains, plus the target and operation for any failure. Detailed per-target
-status belongs to the later runtime, which can read authoritative checkpoints
-and pending rows from the store. Pending quarantine must schedule another run
-and keep the runtime from reporting caught up, even after its feed is drained.
+work remains, whether durable progress was made, endpoints blocked for the
+rest of the call, plus the target and operation for any failure. Detailed
+per-target status belongs to the later runtime, which can read authoritative
+checkpoints and pending rows from the store. Pending quarantine must schedule
+another run and keep the runtime from reporting caught up, even after its feed
+is drained.
 A retry's `appliedEntries` is notification detail, not exhaustive mutation
 accounting: dependencies can be committed before their root remains pending.
 Runtime progress must therefore use durable progress-store and DWN state rather
@@ -226,3 +228,46 @@ than that list alone. The runner owns no target discovery, subscription setup,
 wake queue, timer, public status API, or engine selection. Those runtime and
 cutover layers must preserve this progress-store contract and treat socket
 events only as requests for another run.
+
+## Bounded one-shot engine
+
+`SyncEngineNext` obtains a complete target snapshot from the existing target
+planner, creates the corresponding exact links, and retires links missing from
+an authoritative plan. A partial resolution may still run its usable targets,
+but cannot retire existing links or report the target set current. The engine
+captures the topology generation before resolution; a snapshot invalidated
+while resolution is in flight is not written to the ledger or executed.
+Retiring a link preserves central quarantine and removes its endpoint-specific
+delivery obligations; a later recreation starts from an empty checkpoint and
+safely rescans its feeds. Transient delegated role-grant material is refreshed
+before pull execution and may not change the target's exact durable identity.
+Equivalent grant lookups coalesce within the call; one unavailable role remains
+unfinished without blocking healthy targets or removing its planned link.
+
+One engine call serializes against another call on the same instance and
+alternates bounded pull and push runner calls under remote-request and turn
+budgets. The turn bound also covers pages that advance through local-only work.
+Progress in either direction invalidates the other direction's observed feed
+coverage because applying a remote message can advance the local feed and
+delivering a local message can advance the remote feed. The call stops when
+both directions remain covered, no attempted work makes progress, the target
+plan changes, cancellation is observed, or either bound is exhausted. Caller
+cancellation rejects with `SyncWorkInterruptedError`; already committed work
+remains durable for the next call.
+Endpoint failures are not retried again during that call, so a healthy endpoint
+can continue without creating a failure loop. A target-specific failure parks
+only that target and direction for the rest of the call.
+Per-target runner results let the engine stop re-querying targets already
+covered in the current call. The engine rotates the first budget-deferred target
+to the front of the next turn or call, so a long ordered target list cannot
+permanently hide its tail behind the runner's request bound.
+
+The result keeps feed coverage, pending quarantine, pending delivery,
+target-plan currentness, failures, request-budget exhaustion, and turn-limit
+exhaustion separate. It never equates a drained feed with complete
+local materialization or outbound delivery. Queue-presence checks are bounded,
+and quarantine retained after its last exact link retires remains visible.
+
+This engine intentionally owns no subscription, wake queue, timer, public
+selector, or legacy-engine behavior. Those remain later slices; the one-shot
+engine is the internal comparison seam they will drive.
