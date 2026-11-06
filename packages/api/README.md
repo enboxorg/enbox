@@ -557,6 +557,20 @@ The dependency keys exactly match the definition's `uses` aliases, and providers
 carry their own dependencies. Installation prepares providers before consumers
 without adding data grants to the application manifest.
 
+When `createConnectionStore` owns auth, its default owner sync scope includes
+the complete typed dependency graph and dependencies found in retained local
+configuration history. It reconciles the scope after installation and pulls.
+Explicit `identitySyncModules` arrays remain exact and must include their
+dependencies; `'all'` remains an explicit choice. Delegate scopes continue to
+require approved grants for each provider and consumer.
+
+A cold owner connection checks hosted DWNs before installing missing implicit providers.
+It restores existing configurations through sync and verifies their original
+CIDs locally. Unavailable hosted metadata keeps that connection unready; cached
+providers and endpoint-less owners remain usable locally.
+Modules listed directly in the manifest remain explicit configuration requests;
+implicit dependency providers reuse compatible installed definitions.
+
 A `$ref` node is an attachment point, not a local record path. Use the owning
 module for parent records and the extension's local path for its children.
 Creation takes the parent's returned `contextId` as `parentContextId`; queries

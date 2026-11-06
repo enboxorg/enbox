@@ -77,6 +77,7 @@ export interface MockAgentOverrides {
   dwnProcessRawMessage?: (tenant: string, message: any, options?: any) => Promise<any>;
   dwnIsRemoteMode?: boolean;
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
+  syncResolveOwnerModuleScope?: (params: any, lifecycleOptions?: any) => Promise<[string, ...string[]]>;
   syncSetIdentityOptions?: (params: any, lifecycleOptions?: any) => Promise<void>;
   syncRemoveIdentity?: (did: string, lifecycleOptions?: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
@@ -200,6 +201,9 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
     },
 
     sync: {
+      resolveOwnerModuleScope: overrides.syncResolveOwnerModuleScope ?? (
+        async ({ roots }: { roots: [string, ...string[]] }): Promise<[string, ...string[]]> => [...roots]
+      ),
       pauseIdentity          : async (): Promise<boolean> => true,
       setIdentityOptions     : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
       ensureIdentityOptions  : async (): Promise<boolean> => true,

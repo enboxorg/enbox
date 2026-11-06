@@ -47,6 +47,7 @@ export async function importFromPortable(
       delegateDid,
       signal               : ctx.sessionSignal,
       identityName         : identity.metadata.name,
+      identitySyncModules  : sync !== 'off' ? identitySyncModules : undefined,
       identityConnectedDid : identity.metadata.connectedDid,
     });
 

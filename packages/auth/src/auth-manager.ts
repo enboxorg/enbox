@@ -65,7 +65,7 @@ import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
 import { walletConnect } from './connect/wallet.js';
-import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, finalizeSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './connect/lifecycle.js';
+import { applyIdentitySyncScope, deriveActiveSyncScope, ensureVaultReady, finalizeDelegateSession, finalizeSession, getOwnerSyncModuleRootsForSession, importDelegateAndSetupSync, processDelegateGrantsForExistingIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncInBackgroundIfEnabled } from './connect/lifecycle.js';
 import {
   clearLocalDwnEjection,
   createLocalDwnRpcClient,
@@ -607,6 +607,21 @@ export class AuthManager {
   }
 
   /**
+   * Effective dependency-root policy for the current owner session. Literal
+   * scopes, delegates, agent-only sessions, and an in-flight replacement expose
+   * no roots. Consumers may reconcile this policy after admitting new metadata.
+   */
+  get ownerSyncModuleRoots(): Readonly<[string, ...string[]]> | undefined {
+    const session = this._session;
+    if (this._isConnecting || this._isShuttingDown || this._isShutDown ||
+        session === undefined || session.signal.aborted || session.delegateDid !== undefined) {
+      return undefined;
+    }
+    return getOwnerSyncModuleRootsForSession(session);
+  }
+
+
+  /**
    * Lock the auth manager.
    *
    * Stops sync, clears the active session, and locks the underlying vault
@@ -969,6 +984,7 @@ export class AuthManager {
           connectedDid,
           delegateDid,
           identityName         : identity.metadata.name,
+          identitySyncModules  : this._defaultIdentitySyncModules,
           identityConnectedDid : identity.metadata.connectedDid,
           emitIdentityAdded    : false,
           signal               : guard.sessionLifetime.signal,

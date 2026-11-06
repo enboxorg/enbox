@@ -120,7 +120,7 @@
       "type": "boolean"
     },
     "$ref": {
-      "$comment": "References a type from an external module declared in `uses`. Format: 'alias:typePath'. A $ref node is a pure attachment point and must not have $actions, $role, $size, $tags, or $keyAgreement.",
+      "$comment": "Attaches local children to an external record path declared in `uses`. Format: 'alias:typePath'. Explicit $actions are inert at this virtual node; record-policy overrides such as $role, $size, $tags, and $keyAgreement are forbidden.",
       "type": "string",
       "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*:.+$"
     },

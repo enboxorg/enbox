@@ -120,6 +120,8 @@ export type {
   RestoreSessionOptions,
   ShutdownOptions,
   StorageAdapter,
+  IdentitySyncModules,
+  OwnerSyncModuleRoots,
   SyncIntervalString,
   SyncOption,
   VaultConnectOptions,

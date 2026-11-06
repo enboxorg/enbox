@@ -306,8 +306,8 @@ to revalidate routing and retry quota-blocked messages for that endpoint.
 
 Owner connections are local-first. Use `runtime.connection.connectVault()` for
 an explicit owner/vault flow. Hosted module publication is opt-in through
-`requireHostedReadiness`; an offline or endpoint-less owner can otherwise use
-the app locally. Invitation receiving does require the module to have been
+`requireHostedReadiness`; an owner with local providers or without hosted
+endpoints can use the app locally. Invitation receiving requires the module to have been
 installed on the recipient's hosted DWN, so apps should perform hosted
 readiness when enabling receiving and surface delivery failures for retry.
 Lower-level owner lifecycles call `enbox.modules.ensureReady()` with
@@ -315,14 +315,25 @@ Lower-level owner lifecycles call `enbox.modules.ensureReady()` with
 hosted publication by default.
 
 When the store creates its own `AuthManager`, local identity sync defaults to
-every module URI in the application manifest. Restoration reapplies that
-default, replacing any older broader registration. Configure
+the application modules and their transitive typed dependencies. It also
+includes dependencies discovered in retained local configuration history,
+including older provider configurations needed to replay existing records.
+The store reconciles that scope after installation and completed pulls;
+restoration reapplies it, replacing any older broader registration. Configure
 `identitySyncModules: 'all'` or an explicit non-empty URI list on the store
 when a broader scope must survive reloads; a per-call `connectVault` override
-applies only to that call. Include cross-module dependencies in the manifest
-or explicit scope. The store does not discover additional modules, and a
-caller-provided `auth` manager keeps its own sync configuration. `sync: 'off'`
-still disables live sync.
+applies only to that call. Explicit URI lists must contain their dependency
+closure. A caller-provided `auth` manager keeps its own sync configuration,
+and delegates remain limited to approved grants. `sync: 'off'` still disables
+live sync.
+
+For composed apps with missing local implicit providers, an owner connection checks
+advertised hosted DWNs before installing packaged definitions. Existing hosted
+providers must first arrive through sync. If those endpoints cannot be checked,
+the connection stays unready rather than creating replacement configurations.
+Warm replicas and owners without hosted endpoints can still work locally.
+Modules listed directly in the manifest remain explicit configuration requests;
+implicit dependency providers reuse compatible installed definitions.
 
 ## Typed records
 

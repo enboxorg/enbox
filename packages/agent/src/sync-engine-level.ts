@@ -19,6 +19,7 @@ import type { SyncLinkRepairRetryOptions } from './sync-link-recovery-coordinato
 import type { SyncMessageEntry } from './sync-messages.js';
 import type {
   DeadLetterEntry,
+  NonEmptyStringArray,
   PushFailure,
   PushResult,
   ReplicationLinkSnapshot,
@@ -895,6 +896,18 @@ export class SyncEngineLevel implements SyncEngine {
         await this.doSetIdentityOptions(params, deadline);
       },
       lifecycleOptions,
+    );
+  }
+
+  public resolveOwnerModuleScope(
+    { did, roots }: { did: string; roots: NonEmptyStringArray },
+    lifecycleOptions: SyncLifecycleOptions = {},
+  ): Promise<NonEmptyStringArray> {
+    const deadline = SyncEngineLevel.createLifecycleDeadline(lifecycleOptions);
+    return this.waitForLifecycleBarrier(
+      this._scopeClosureValidator.resolveOwnerModuleScope(did, roots),
+      deadline,
+      'Owner module scope resolution did not complete',
     );
   }
 
@@ -4053,8 +4066,20 @@ export class SyncEngineLevel implements SyncEngine {
     if (effectiveOptions === 'skip') {
       return { aborted: true };
     }
-    const link = await this.getOrCreateReplicationLink(target);
+    let link = await this.getOrCreateReplicationLink(target);
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+    const initialization = this._linkInitializations.get(linkKey);
+    if (initialization !== undefined) {
+      // Startup establishes its baseline directly, without this entry point or
+      // acquiring the exclusive sync lock. Join that work before interpreting an
+      // initializing controller as unavailable to this explicit sync request.
+      const current = this.captureTransitionFence();
+      await initialization;
+      if (!current()) {
+        throw new SyncRunCancelledError('SyncEngineLevel: sync waiting for link initialization was cancelled by a runtime transition.');
+      }
+      link = await this.getOrCreateReplicationLink(target);
+    }
     const controller = this.getLinkController(linkKey);
     if (controller?.isActive !== true) {
       return this.reconcileUnownedTarget(target, link, effectiveOptions, shouldContinue);

@@ -13,7 +13,7 @@ import { describe, expect, it } from 'bun:test';
 import { SyncConnectivityManager } from '../src/sync-connectivity-manager.js';
 import { SyncFeedConvergenceManager } from '../src/sync-feed-convergence-manager.js';
 import { SyncRunCoordinator } from '../src/sync-run-coordinator.js';
-import { SyncPushFailuresError, SyncRunFailedError } from '../src/sync-runtime-errors.js';
+import { SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from '../src/sync-runtime-errors.js';
 
 import { deferred } from './utils/deferred.js';
 
@@ -98,6 +98,17 @@ describe('SyncRunCoordinator', () => {
     expect(operations.reconcileTarget.notCalled).toBe(true);
     expect(connectivityManager.recordSuccess.notCalled).toBe(true);
     expect(connectivityManager.recordFailure.notCalled).toBe(true);
+  });
+
+  it('preserves lifecycle cancellation without reporting a transport failure', async () => {
+    const { connectivityManager, coordinator, operations } = createFixture();
+    const cancellation = new SyncRunCancelledError('runtime ended during link initialization');
+    operations.reconcileTarget.rejects(cancellation);
+
+    await expect(coordinator.run('pull')).rejects.toBe(cancellation);
+    expect(operations.reportError.notCalled).toBe(true);
+    expect(connectivityManager.recordFailure.notCalled).toBe(true);
+    expect(connectivityManager.recordSuccess.notCalled).toBe(true);
   });
 
   it('reconciles only the scoped identity when options.did is provided', async () => {
