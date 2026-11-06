@@ -1,5 +1,23 @@
 # @enbox/cli
 
+## 0.1.47
+
+### Patch Changes
+
+- [#1826](https://github.com/enboxorg/enbox/pull/1826) [`6c99fa1`](https://github.com/enboxorg/enbox/commit/6c99fa1675db5b1411a23cccb2b96164b549bcdb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace the protocol vocabulary with data modules across signed messages, storage,
+  SDKs, connect, sync, encryption identifiers, packages, and tooling. This is a
+  coordinated breaking cutover requiring fresh stores, sessions, configurations,
+  records, grants, and encryption material. Old wire formats and package aliases
+  are not supported.
+  
+  The codegen package exports `generateModuleCode` to generate TypeScript source
+  from a DWN module definition and its schemas.
+- Updated dependencies [[`c9ac9f4`](https://github.com/enboxorg/enbox/commit/c9ac9f49cc6211bd605896acc09629bc9d570d38), [`d389231`](https://github.com/enboxorg/enbox/commit/d389231a2a1e877e92cce0e555d4c4278f308687), [`70bdbb3`](https://github.com/enboxorg/enbox/commit/70bdbb37350d2ad42381d4637ef96326320d4f69), [`6c99fa1`](https://github.com/enboxorg/enbox/commit/6c99fa1675db5b1411a23cccb2b96164b549bcdb)]:
+  - @enbox/agent@0.8.53
+  - @enbox/auth@0.6.99
+  - @enbox/api@0.6.94
+  - @enbox/connect@0.1.28
+
 ## 0.1.46
 
 ### Patch Changes
