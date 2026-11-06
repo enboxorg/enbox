@@ -7,11 +7,11 @@ import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { persistLocalDwnPairingRecord } from '../src/discovery.js';
-import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
 import { readPersistedSession, readRevocationRetryEntries } from '../src/connect/session-state.js';
 import { retryOrphanedRevocations, restoreSession as runRestoreSession } from '../src/connect/restore.js';
+import { setStoredRetryContext, setStoredSession } from './helpers/session.js';
 
 function restoreSession(
   context: Parameters<typeof createFlowContext>[0],
@@ -53,7 +53,7 @@ describe('restoreSession', () => {
       revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
     }]);
     await setStoredSession(storage, 'did:dht:testuser123');
-    await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+    await setStoredRetryContext(storage, retryContext);
     const agent = createMockAgent({ firstLaunch: async () => true });
 
     expect(await restoreSession({ userAgent: agent, emitter, storage })).toBeUndefined();
@@ -417,7 +417,7 @@ describe('restoreSession', () => {
             return {
               reply: {
                 status  : { code: 200, detail: 'OK' },
-                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+                entries : [buildMockGrantEntry('https://modules.example.com/notes')],
               },
             };
           }
@@ -431,7 +431,7 @@ describe('restoreSession', () => {
 
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.protocols).toContain('https://proto.example.com/notes');
+      expect(registerCalls[0].options.modules).toContain('https://modules.example.com/notes');
       expect(lifecycleOptions).toHaveLength(1);
       expect(lifecycleOptions[0].timeout).toBeGreaterThan(0);
       expect(lifecycleOptions[0].timeout).toBeLessThanOrEqual(10_000);
@@ -503,7 +503,7 @@ describe('restoreSession', () => {
             return {
               reply: {
                 status  : { code: 200, detail: 'OK' },
-                entries : [buildMockGrantEntry('https://proto.example.com/notes')],
+                entries : [buildMockGrantEntry('https://modules.example.com/notes')],
               },
             };
           }
@@ -537,7 +537,7 @@ describe('restoreSession', () => {
         syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
         syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
         // Default processDwnRequest returns empty entries for RecordsQuery,
-        // so deriveProtocolsFromGrants returns [] → unregister stale registration.
+        // so deriveModulesFromGrants returns [] → unregister stale registration.
       });
 
       const session = await restoreSession(
@@ -551,8 +551,8 @@ describe('restoreSession', () => {
     });
   });
 
-  describe('deriveProtocolsFromGrants', () => {
-    test('filters out PermissionsProtocol.uri from derived protocols', async () => {
+  describe('deriveModulesFromGrants', () => {
+    test('filters out PermissionsModule.uri from derived modules', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
@@ -561,10 +561,10 @@ describe('restoreSession', () => {
         metadata: { name: 'Wallet', tenant: 'did:dht:testagent', connectedDid: 'did:dht:external' },
       });
 
-      // Build grant entries that include one with PermissionsProtocol.uri scope
-      // and one with a normal protocol.
-      const permissionsProtoUri = 'https://identity.foundation/dwn/permissions';
-      const customProtoUri = 'https://myapp.example/proto';
+      // Build grant entries that include one with PermissionsModule.uri scope
+      // and one with a normal module.
+      const permissionsModuleUri = 'https://identity.foundation/dwn/permissions';
+      const customModuleUri = 'https://myapp.example/module';
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
@@ -577,8 +577,8 @@ describe('restoreSession', () => {
               reply: {
                 status  : { code: 200, detail: 'OK' },
                 entries : [
-                  buildMockGrantEntry(customProtoUri),
-                  buildMockGrantEntry(permissionsProtoUri),
+                  buildMockGrantEntry(customModuleUri),
+                  buildMockGrantEntry(permissionsModuleUri),
                 ],
               },
             };
@@ -593,9 +593,9 @@ describe('restoreSession', () => {
 
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
-      // Only the custom protocol should appear, not the permissions protocol.
-      expect(registerCalls[0].options.protocols).toContain(customProtoUri);
-      expect(registerCalls[0].options.protocols).not.toContain(permissionsProtoUri);
+      // Only the custom module should appear, not the permissions module.
+      expect(registerCalls[0].options.modules).toContain(customModuleUri);
+      expect(registerCalls[0].options.modules).not.toContain(permissionsModuleUri);
     });
 
     test('requests revocation-filtered grants for the restored delegate sync scope', async () => {
@@ -615,7 +615,7 @@ describe('restoreSession', () => {
         syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
         permissionsFetchGrants : async (params) => {
           grantRequests.push(params);
-          const validGrant = buildMockGrantEntry('https://proto.example/valid');
+          const validGrant = buildMockGrantEntry('https://modules.example/valid');
           return [{ grant: DwnPermissionGrant.parse(validGrant), message: validGrant }];
         },
       });
@@ -632,10 +632,10 @@ describe('restoreSession', () => {
         checkRevoked : true,
       }]);
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.protocols).toContain('https://proto.example/valid');
+      expect(registerCalls[0].options.modules).toContain('https://modules.example/valid');
     });
 
-    test('returns all for an unscoped grant (no protocol in scope)', async () => {
+    test('returns all for an unscoped grant (no module in scope)', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
@@ -668,7 +668,7 @@ describe('restoreSession', () => {
 
       expect(session).toBeDefined();
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.protocols).toBe('all');
+      expect(registerCalls[0].options.modules).toBe('all');
     });
 
     test('removes stale registration when repair fails so later sync cannot use it', async () => {
@@ -715,7 +715,7 @@ describe('restoreSession', () => {
 
       const grantData = JSON.stringify({
         dateExpires : '2040-06-25T16:09:16.693356Z',
-        scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+        scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
         delegated   : true,
       });
       const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -724,15 +724,15 @@ describe('restoreSession', () => {
         contextId   : 'grant-1',
         encodedData : encoded,
         descriptor  : {
-          interface    : 'Records',
-          method       : 'Write',
-          protocol     : 'https://identity.foundation/dwn/permissions',
-          protocolPath : 'grant',
-          recipient    : 'did:dht:external',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
-          dataFormat   : 'application/json',
-          dataCid      : 'bafytest',
-          dataSize     : 100,
+          interface   : 'Records',
+          method      : 'Write',
+          module      : 'https://identity.foundation/dwn/permissions',
+          modulePath  : 'grant',
+          recipient   : 'did:dht:external',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
+          dataFormat  : 'application/json',
+          dataCid     : 'bafytest',
+          dataSize    : 100,
         },
         authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
       };
@@ -825,7 +825,7 @@ describe('restoreSession', () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await setStoredSession(storage, 'did:dht:testuser123');
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '');
+      await setStoredRetryContext(storage, '');
       const agent = createMockAgent({ firstLaunch: async () => false });
 
       await expect(readRevocationRetryEntries(storage)).rejects.toThrow(
@@ -847,7 +847,7 @@ describe('restoreSession', () => {
         delegateDid  : 'did:jwk:delegate1',
         revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
       });
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, unsupportedObject);
+      await setStoredRetryContext(storage, unsupportedObject);
 
       const agent = createMockAgent({ firstLaunch: async () => false });
 
@@ -868,7 +868,7 @@ describe('restoreSession', () => {
     test('clears retry state when entries are empty after load', async () => {
       const storage = new MemoryStorage();
       // An empty array is valid JSON but results in zero entries.
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, '[]');
+      await setStoredRetryContext(storage, '[]');
 
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate1' },
@@ -886,7 +886,7 @@ describe('restoreSession', () => {
       const rpcCalls: any[] = [];
 
       // Seed a retry entry with one grant to revoke.
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, JSON.stringify([{
+      await setStoredRetryContext(storage, JSON.stringify([{
         delegateDid  : 'did:jwk:delegate1',
         connectedDid : 'did:dht:owner1',
         revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
@@ -966,7 +966,7 @@ describe('restoreSession', () => {
         connectedDid : 'did:dht:owner1',
         revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
       }]);
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+      await setStoredRetryContext(storage, retryContext);
 
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate1' },
@@ -989,7 +989,7 @@ describe('restoreSession', () => {
         connectedDid : 'did:dht:owner1',
         revocations  : [{ grantId: 'grant-1', revocationGrantId: 'rev-grant-1' }],
       }]);
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, retryContext);
+      await setStoredRetryContext(storage, retryContext);
       const identity = createMockIdentity({
         did      : { uri: 'did:jwk:delegate1' },
         metadata : { name: 'Delegate', tenant: 'did:dht:testagent', connectedDid: 'did:dht:different-owner' },
@@ -1018,29 +1018,29 @@ describe('restoreSession', () => {
 
 /**
  * Build a mock grant entry as returned by RecordsQuery (DwnDataEncodedRecordsWriteMessage).
- * Used by deriveProtocolsFromGrants tests.
+ * Used by deriveModulesFromGrants tests.
  */
-function buildMockGrantEntry(protocol: string): any {
+function buildMockGrantEntry(module: string): any {
   const grantData = JSON.stringify({
     dateExpires : '2040-06-25T16:09:16.693356Z',
-    scope       : { interface: 'Messages', method: 'Read', protocol },
+    scope       : { interface: 'Messages', method: 'Read', module },
     delegated   : true,
   });
   const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return {
-    recordId    : `grant-${protocol}`,
-    contextId   : `grant-${protocol}`,
+    recordId    : `grant-${module}`,
+    contextId   : `grant-${module}`,
     encodedData : encoded,
     descriptor  : {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:dht:testuser123',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:dht:testuser123',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {
@@ -1050,7 +1050,7 @@ function buildMockGrantEntry(protocol: string): any {
   };
 }
 
-/** Build an unscoped grant entry — no protocol in scope (unrestricted). */
+/** Build an unscoped grant entry — no module in scope (unrestricted). */
 function buildUnscopedMockGrantEntry(grantId: string): any {
   const grantData = JSON.stringify({
     dateExpires : '2040-06-25T16:09:16.693356Z',
@@ -1063,15 +1063,15 @@ function buildUnscopedMockGrantEntry(grantId: string): any {
     contextId   : grantId,
     encodedData : encoded,
     descriptor  : {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:dht:testuser123',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:dht:testuser123',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {
@@ -1090,19 +1090,19 @@ function buildMockGrantRecord(grantId: string): any {
     contextId   : grantId,
     encodedData : btoa(JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://test.xyz' },
+      scope       : { interface: 'Messages', method: 'Read', module: 'https://test.xyz' },
       delegated   : true,
     })),
     descriptor: {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:jwk:delegate1',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:jwk:delegate1',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {

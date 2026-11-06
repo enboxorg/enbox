@@ -1,5 +1,5 @@
-import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { ProtocolScope } from '../utils/permission-scope.js';
+import type { ModuleScope } from '../utils/permission-scope.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { PermissionConditions, RecordsPermissionScope } from '../types/permission-types.js';
 import type { RecordsCountMessage, RecordsDeleteMessage, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
@@ -89,17 +89,17 @@ export class RecordsGrantAuthorization {
       validationStateReader
     });
 
-    // The grant's protocol must match the query/subscribe filter's protocol.
+    // The grant's module must match the query/subscribe filter's module.
     // NOTE: validated the invoked permission is for Records in GrantAuthorization.performBaseValidation()
     const permissionScope = permissionGrant.scope as RecordsPermissionScope;
     const messageFilter = incomingMessage.descriptor.filter;
     if (!PermissionScopeMatcher.matches(permissionScope, {
-      protocol     : messageFilter.protocol,
-      protocolPath : messageFilter.protocolPath,
-      contextId    : messageFilter.contextId,
+      module     : messageFilter.module,
+      modulePath : messageFilter.modulePath,
+      contextId  : messageFilter.contextId,
     })) {
       throw new DwnError(
-        DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch,
+        DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch,
         `Grant scope does not match Records ${incomingMessage.descriptor.method} filter`
       );
     }
@@ -140,56 +140,56 @@ export class RecordsGrantAuthorization {
     recordsWriteMessage: RecordsWriteMessage,
     grantScope: RecordsPermissionScope
   ): void {
-    const target = RecordsGrantAuthorization.getProtocolScopeTarget(recordsWriteMessage);
+    const target = RecordsGrantAuthorization.getModuleScopeTarget(recordsWriteMessage);
 
     if (PermissionScopeMatcher.matches(grantScope, target)) {
       return;
     }
 
-    if (grantScope.protocol !== target.protocol) {
+    if (grantScope.module !== target.module) {
       throw new DwnError(
-        DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch,
-        `Grant scope specifies different protocol than what appears in the record`
+        DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch,
+        `Grant scope specifies different module than what appears in the record`
       );
     }
 
-    RecordsGrantAuthorization.throwScopeMismatchAfterProtocolMatch(grantScope, target);
+    RecordsGrantAuthorization.throwScopeMismatchAfterModuleMatch(grantScope, target);
   }
 
   /**
-   * Verifies RecordsDelete scope while preserving the delete-specific protocol mismatch code.
+   * Verifies RecordsDelete scope while preserving the delete-specific module mismatch code.
    */
   private static verifyDeleteScope(
     recordsWriteMessage: RecordsWriteMessage,
     grantScope: RecordsPermissionScope
   ): void {
-    const target = RecordsGrantAuthorization.getProtocolScopeTarget(recordsWriteMessage);
+    const target = RecordsGrantAuthorization.getModuleScopeTarget(recordsWriteMessage);
 
     if (PermissionScopeMatcher.matches(grantScope, target)) {
       return;
     }
 
-    if (grantScope.protocol !== target.protocol) {
+    if (grantScope.module !== target.module) {
       throw new DwnError(
-        DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch,
-        `Grant protocol scope ${grantScope.protocol} does not match protocol in record to delete ${target.protocol}`
+        DwnErrorCode.RecordsGrantAuthorizationDeleteModuleScopeMismatch,
+        `Grant module scope ${grantScope.module} does not match module in record to delete ${target.module}`
       );
     }
 
-    RecordsGrantAuthorization.throwScopeMismatchAfterProtocolMatch(grantScope, target);
+    RecordsGrantAuthorization.throwScopeMismatchAfterModuleMatch(grantScope, target);
   }
 
-  private static getProtocolScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {
+  private static getModuleScopeTarget(recordsWriteMessage: RecordsWriteMessage): ModuleScope {
     return {
-      protocol     : recordsWriteMessage.descriptor.protocol,
-      protocolPath : recordsWriteMessage.descriptor.protocolPath,
-      contextId    : recordsWriteMessage.contextId,
+      module     : recordsWriteMessage.descriptor.module,
+      modulePath : recordsWriteMessage.descriptor.modulePath,
+      contextId  : recordsWriteMessage.contextId,
     };
   }
 
-  private static throwScopeMismatchAfterProtocolMatch(
+  private static throwScopeMismatchAfterModuleMatch(
     grantScope: RecordsPermissionScope,
-    target: ProtocolScope
+    target: ModuleScope
   ): never {
     // If grant specifies a contextId, check that record falls under that contextId
     if (grantScope.contextId !== undefined) {
@@ -199,11 +199,11 @@ export class RecordsGrantAuthorization {
       );
     }
 
-    // If grant specifies protocolPath, check that record is at that protocolPath
-    if (grantScope.protocolPath !== undefined && grantScope.protocolPath !== target.protocolPath) {
+    // If grant specifies modulePath, check that record is at that modulePath
+    if (grantScope.modulePath !== undefined && grantScope.modulePath !== target.modulePath) {
       throw new DwnError(
-        DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch,
-        `Grant scope specifies different protocolPath than what appears in the record`
+        DwnErrorCode.RecordsGrantAuthorizationScopeModulePathMismatch,
+        `Grant scope specifies different modulePath than what appears in the record`
       );
     }
 

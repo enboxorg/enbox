@@ -4,51 +4,51 @@ import { describe, expect, it } from 'bun:test';
 import {
   dependencyKey,
   hasTerminalDependency,
-  isTenantProtocolConfig,
+  isTenantModuleConfig,
   missingDependencyDetail,
-  newestProtocolConfig,
+  newestModuleConfig,
 } from '../src/sync-fetch-helpers.js';
 
 describe('sync-fetch-helpers', () => {
   describe('dependency ref helpers', () => {
     it('dependencyKey is stable and distinguishes refs', () => {
-      expect(dependencyKey({ type: 'Protocol', protocol: 'p' }))
-        .toBe(dependencyKey({ type: 'Protocol', protocol: 'p' }));
-      expect(dependencyKey({ type: 'Protocol', protocol: 'p' }))
-        .not.toBe(dependencyKey({ type: 'Protocol', protocol: 'q' }));
+      expect(dependencyKey({ type: 'Module', module: 'p' }))
+        .toBe(dependencyKey({ type: 'Module', module: 'p' }));
+      expect(dependencyKey({ type: 'Module', module: 'p' }))
+        .not.toBe(dependencyKey({ type: 'Module', module: 'q' }));
     });
 
     it('hasTerminalDependency detects a terminal ref', () => {
-      expect(hasTerminalDependency([{ type: 'Protocol', protocol: 'p' }])).toBe(false);
-      expect(hasTerminalDependency([{ type: 'Protocol', protocol: 'p', terminal: true }])).toBe(true);
+      expect(hasTerminalDependency([{ type: 'Module', module: 'p' }])).toBe(false);
+      expect(hasTerminalDependency([{ type: 'Module', module: 'p', terminal: true }])).toBe(true);
     });
 
     it('missingDependencyDetail lists each ref', () => {
       const detail = missingDependencyDetail([
-        { type: 'Protocol', protocol: 'p' },
+        { type: 'Module', module: 'p' },
         { type: 'Grant', permissionGrantId: 'g' },
       ]);
-      expect(detail).toContain('Protocol');
+      expect(detail).toContain('Module');
       expect(detail).toContain('Grant');
     });
   });
 
-  describe('protocol config helpers', () => {
-    it('newestProtocolConfig picks the latest by timestamp', () => {
+  describe('module config helpers', () => {
+    it('newestModuleConfig picks the latest by timestamp', () => {
       const older = { descriptor: { messageTimestamp: '2024-01-01T00:00:00.000Z' } } as any;
       const newer = { descriptor: { messageTimestamp: '2024-02-01T00:00:00.000Z' } } as any;
-      expect(newestProtocolConfig([older, newer])).toBe(newer);
-      expect(newestProtocolConfig([newer, older])).toBe(newer);
-      expect(newestProtocolConfig([])).toBeUndefined();
+      expect(newestModuleConfig([older, newer])).toBe(newer);
+      expect(newestModuleConfig([newer, older])).toBe(newer);
+      expect(newestModuleConfig([])).toBeUndefined();
     });
 
-    it('isTenantProtocolConfig matches the tenant own config for the protocol', async () => {
-      const { message, author } = await TestDataGenerator.generateProtocolsConfigure();
-      const protocol = message.descriptor.definition.protocol;
+    it('isTenantModuleConfig matches the tenant own config for the module', async () => {
+      const { message, author } = await TestDataGenerator.generateModulesConfigure();
+      const module = message.descriptor.definition.module;
 
-      expect(isTenantProtocolConfig(author.did, protocol)(message)).toBe(true);
-      expect(isTenantProtocolConfig('did:example:other', protocol)(message)).toBe(false);
-      expect(isTenantProtocolConfig(author.did, 'https://other.example/proto')(message)).toBe(false);
+      expect(isTenantModuleConfig(author.did, module)(message)).toBe(true);
+      expect(isTenantModuleConfig('did:example:other', module)(message)).toBe(false);
+      expect(isTenantModuleConfig(author.did, 'https://other.example/module')(message)).toBe(false);
     });
   });
 });

@@ -2,15 +2,15 @@ import type { DerivedPrivateJwk } from '../../src/utils/hd-key.js';
 import type { DidResolver } from '@enbox/dids';
 import type { EncryptionInput } from '../../src/interfaces/records-write.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, RecordsReadReply, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ModuleRuleSet, ModulesConfigureMessage, RecordsReadReply, RecordsWriteMessage, ResumableTaskStore } from '../../src/index.js';
 
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
-import nestedProtocol from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import emailModuleDefinition from '../vectors/module-definitions/email.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
+import nestedModule from '../vectors/module-definitions/nested.json' with { type: 'json' };
 import sinon from 'sinon';
-import socialMediaProtocolDefinition from '../vectors/protocol-definitions/social-media.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import socialMediaModuleDefinition from '../vectors/module-definitions/social-media.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { authenticate } from '../../src/core/auth.js';
@@ -18,21 +18,21 @@ import { Encoder } from '../../src/utils/encoder.js';
 import { EncryptionControlDeliveryRecipientAuthority } from '../../src/types/encryption-types.js';
 import { KeyDerivationScheme } from '../../src/utils/hd-key.js';
 import { Message } from '../../src/core/message.js';
-import { ProtocolAuthorization } from '../../src/core/protocol-authorization.js';
+import { ModuleAuthorization } from '../../src/core/module-authorization.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
 import { RecordsReadReplicationSupport } from '../../src/core/records-read-replication-support.js';
-import { resolveProtocolContextRoles } from '../../src/index.js';
+import { resolveModuleContextRoles } from '../../src/index.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedModule, processControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
-import { DataStream, DateSort, Dwn, Jws, Protocols, ProtocolsConfigure, ProtocolsQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
+import { DataStream, DateSort, Dwn, Jws, Modules, ModulesConfigure, ModulesQuery, Records, RecordsDelete, RecordsRead , RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnConstant, PermissionsProtocol, Time } from '../../src/index.js';
+import { DwnConstant, PermissionsModule, Time } from '../../src/index.js';
 import { DwnError, DwnErrorCode } from '../../src/core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../../src/index.js';
 
@@ -80,7 +80,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow tenant to RecordsRead their own record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -117,7 +117,7 @@ export function testRecordsReadHandler(): void {
 
       it('should not allow non-tenant to RecordsRead a record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -142,8 +142,8 @@ export function testRecordsReadHandler(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-read-audience.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-read-audience.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -152,12 +152,12 @@ export function testRecordsReadHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
         const audience = await createAudienceControlWrite({
           author      : alice,
-          protocol    : protocolDefinition.protocol,
+          module      : moduleDefinition.module,
           rolePath    : 'member',
-          roleRuleSet : encryptedDefinition.structure.member as ProtocolRuleSet,
+          roleRuleSet : encryptedDefinition.structure.member as ModuleRuleSet,
         });
         await processControlWrite(dwn, alice.did, audience);
 
@@ -178,7 +178,7 @@ export function testRecordsReadHandler(): void {
         const replicationRead = await RecordsRead.create({
           filter                    : { recordId: audience.recordsWrite.message.recordId },
           includeReplicationSupport : true,
-          protocolRole              : 'member',
+          moduleRole                : 'member',
           signer                    : Jws.createSigner(bob),
         });
         const replicationReply = await dwn.processMessage(alice.did, replicationRead.message);
@@ -191,9 +191,9 @@ export function testRecordsReadHandler(): void {
         const author = await TestDataGenerator.generateDidKeyPersona();
         const reader = await TestDataGenerator.generateDidKeyPersona();
         const deleter = await TestDataGenerator.generateDidKeyPersona();
-        const protocol = `http://multi-member-bootstrap-${crypto.randomUUID()}.xyz`;
-        const definition: ProtocolDefinition = {
-          protocol,
+        const module = `http://multi-member-bootstrap-${crypto.randomUUID()}.xyz`;
+        const definition: ModuleDefinition = {
+          module,
           published : true,
           types     : { admin: {}, thread: {}, participant: {}, chat: {} },
           structure : {
@@ -215,7 +215,7 @@ export function testRecordsReadHandler(): void {
             },
           },
         };
-        const configure = await ProtocolsConfigure.create({
+        const configure = await ModulesConfigure.create({
           definition,
           signer: Jws.createSigner(owner),
         });
@@ -228,8 +228,8 @@ export function testRecordsReadHandler(): void {
           data             : threadData,
           dataFormat       : 'text/plain',
           messageTimestamp : threadTimestamp,
-          protocol,
-          protocolPath     : 'thread',
+          module,
+          modulePath       : 'thread',
           signer           : Jws.createSigner(owner),
         });
         expect((await dwn.processMessage(owner.did, thread.message, {
@@ -243,18 +243,18 @@ export function testRecordsReadHandler(): void {
           dataFormat       : 'text/plain',
           messageTimestamp : roleTimestamp,
           parentContextId  : thread.message.contextId,
-          protocol,
-          protocolPath     : 'thread/participant',
+          module,
+          modulePath       : 'thread/participant',
           recipient        : recipient.did,
           signer           : Jws.createSigner(owner),
         });
         const authorRole = await RecordsWrite.create({
-          data         : roleData,
-          dataFormat   : 'text/plain',
-          protocol,
-          protocolPath : 'admin',
-          recipient    : author.did,
-          signer       : Jws.createSigner(owner),
+          data       : roleData,
+          dataFormat : 'text/plain',
+          module,
+          modulePath : 'admin',
+          recipient  : author.did,
+          signer     : Jws.createSigner(owner),
         });
         const [readerRole, deleterRole] = await Promise.all([createRole(reader), createRole(deleter)]);
         for (const role of [authorRole, readerRole, deleterRole]) {
@@ -271,9 +271,9 @@ export function testRecordsReadHandler(): void {
           dataFormat       : 'text/plain',
           messageTimestamp : chatTimestamp,
           parentContextId  : thread.message.contextId,
-          protocol,
-          protocolPath     : 'thread/chat',
-          protocolRole     : 'admin',
+          module,
+          modulePath       : 'thread/chat',
+          moduleRole       : 'admin',
           signer           : Jws.createSigner(author),
         });
         expect((await dwn.processMessage(owner.did, chat.message, {
@@ -281,7 +281,7 @@ export function testRecordsReadHandler(): void {
         })).status.code).toBe(202);
         const chatUpdate = await RecordsWrite.createFrom({
           data                : chatData,
-          protocolRole        : 'thread/participant',
+          moduleRole          : 'thread/participant',
           recordsWriteMessage : chat.message,
           signer              : Jws.createSigner(reader),
         });
@@ -290,16 +290,16 @@ export function testRecordsReadHandler(): void {
         })).status.code).toBe(202);
 
         const revokeAuthor = await RecordsDelete.create({
-          protocolRole : 'admin',
-          recordId     : authorRole.message.recordId,
-          signer       : Jws.createSigner(author),
+          moduleRole : 'admin',
+          recordId   : authorRole.message.recordId,
+          signer     : Jws.createSigner(author),
         });
         expect((await dwn.processMessage(owner.did, revokeAuthor.message)).status.code).toBe(202);
 
         const read = await RecordsRead.create({
           filter                    : { recordId: chat.message.recordId },
           includeReplicationSupport : true,
-          protocolRole              : 'thread/participant',
+          moduleRole                : 'thread/participant',
           signer                    : Jws.createSigner(reader),
         });
         const reply = await dwn.processMessage(owner.did, read.message) as RecordsReadReply;
@@ -307,12 +307,12 @@ export function testRecordsReadHandler(): void {
         expect(reply.status.code).toBe(200);
         expect(reply.roleRecordId).toBe(readerRole.message.recordId);
         const roleEntries = reply.support!.filter(({ message }): boolean =>
-          (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
+          (message.descriptor as { modulePath?: string }).modulePath === 'thread/participant');
         expect(roleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           readerRole.message.recordId,
         ]);
         const authorRoleEntries = reply.support!.filter(({ message }): boolean =>
-          (message.descriptor as { protocolPath?: string }).protocolPath === 'admin');
+          (message.descriptor as { modulePath?: string }).modulePath === 'admin');
         expect(authorRoleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           authorRole.message.recordId,
         ]);
@@ -330,15 +330,15 @@ export function testRecordsReadHandler(): void {
         dataRead.restore();
 
         const deleteChat = await RecordsDelete.create({
-          protocolRole : 'thread/participant',
-          recordId     : chat.message.recordId,
-          signer       : Jws.createSigner(deleter),
+          moduleRole : 'thread/participant',
+          recordId   : chat.message.recordId,
+          signer     : Jws.createSigner(deleter),
         });
         expect((await dwn.processMessage(owner.did, deleteChat.message)).status.code).toBe(202);
         const deletedRead = await RecordsRead.create({
           filter                    : { recordId: chat.message.recordId },
           includeReplicationSupport : true,
-          protocolRole              : 'thread/participant',
+          moduleRole                : 'thread/participant',
           signer                    : Jws.createSigner(reader),
         });
         const deletedReply = await dwn.processMessage(owner.did, deletedRead.message) as RecordsReadReply;
@@ -350,13 +350,13 @@ export function testRecordsReadHandler(): void {
         expect('encodedData' in deletedReply.entry!.initialWrite!).toBe(false);
         expect(deletedReply.entry?.data).toBeUndefined();
         const deletedRoleEntries = deletedReply.support!.filter(({ message }): boolean =>
-          (message.descriptor as { protocolPath?: string }).protocolPath === 'thread/participant');
+          (message.descriptor as { modulePath?: string }).modulePath === 'thread/participant');
         expect(deletedRoleEntries.map(({ message }): string => (message as RecordsWriteMessage).recordId)).toEqual([
           readerRole.message.recordId,
           deleterRole.message.recordId,
         ]);
         const deletedAuthorRoleEntries = deletedReply.support!.filter(({ message }): boolean =>
-          (message.descriptor as { protocolPath?: string }).protocolPath === 'admin');
+          (message.descriptor as { modulePath?: string }).modulePath === 'admin');
         expect(deletedAuthorRoleEntries.map(({ message }): string =>
           (message as RecordsWriteMessage).recordId)).toEqual([authorRole.message.recordId]);
         expect(deletedAuthorRoleEntries[0].isLatestBaseState).toBe(false);
@@ -367,9 +367,9 @@ export function testRecordsReadHandler(): void {
         const owner = await TestDataGenerator.generateDidKeyPersona();
         const author = await TestDataGenerator.generateDidKeyPersona();
         const reader = await TestDataGenerator.generateDidKeyPersona();
-        const protocol = `http://nested-author-role-${crypto.randomUUID()}.xyz`;
-        const definition: ProtocolDefinition = {
-          protocol,
+        const module = `http://nested-author-role-${crypto.randomUUID()}.xyz`;
+        const definition: ModuleDefinition = {
+          module,
           published : true,
           types     : { thread: {}, participant: {}, viewer: {}, message: {} },
           structure : {
@@ -387,7 +387,7 @@ export function testRecordsReadHandler(): void {
             },
           },
         };
-        const configure = await ProtocolsConfigure.create({ definition, signer: Jws.createSigner(owner) });
+        const configure = await ModulesConfigure.create({ definition, signer: Jws.createSigner(owner) });
         expect((await dwn.processMessage(owner.did, configure.message)).status.code).toBe(202);
 
         const data = Encoder.stringToBytes('record');
@@ -397,15 +397,15 @@ export function testRecordsReadHandler(): void {
           dataFormat       : 'text/plain',
           dateCreated      : threadTimestamp,
           messageTimestamp : threadTimestamp,
-          protocol,
-          protocolPath     : 'thread',
+          module,
+          modulePath       : 'thread',
           signer           : Jws.createSigner(owner),
         });
         expect((await dwn.processMessage(owner.did, thread.message, {
           dataStream: DataStream.fromBytes(data),
         })).status.code).toBe(202);
         const createRole = (
-          protocolPath: string,
+          modulePath: string,
           recipient: typeof author,
           messageTimestamp: string,
         ): Promise<RecordsWrite> =>
@@ -415,8 +415,8 @@ export function testRecordsReadHandler(): void {
             dateCreated     : messageTimestamp,
             messageTimestamp,
             parentContextId : thread.message.contextId,
-            protocol,
-            protocolPath,
+            module,
+            modulePath,
             recipient       : recipient.did,
             signer          : Jws.createSigner(owner),
           });
@@ -437,9 +437,9 @@ export function testRecordsReadHandler(): void {
           dateCreated     : messageTimestamp,
           messageTimestamp,
           parentContextId : authorRole.message.contextId,
-          protocol,
-          protocolPath    : 'thread/participant/message',
-          protocolRole    : 'thread/participant',
+          module,
+          modulePath      : 'thread/participant/message',
+          moduleRole      : 'thread/participant',
           signer          : Jws.createSigner(author),
         });
         expect((await dwn.processMessage(owner.did, message.message, {
@@ -464,14 +464,14 @@ export function testRecordsReadHandler(): void {
         const read = await RecordsRead.create({
           filter                    : { recordId: message.message.recordId },
           includeReplicationSupport : true,
-          protocolRole              : 'thread/viewer',
+          moduleRole                : 'thread/viewer',
           signer                    : Jws.createSigner(reader),
         });
         const reply = await dwn.processMessage(owner.did, read.message) as RecordsReadReply;
 
         expect(reply.status.code).toBe(200);
         const authorProofs = reply.support!.filter(({ message: supportMessage }): boolean =>
-          (supportMessage as RecordsWriteMessage).descriptor.protocolPath === 'thread/participant' &&
+          (supportMessage as RecordsWriteMessage).descriptor.modulePath === 'thread/participant' &&
           (supportMessage as RecordsWriteMessage).descriptor.recipient === author.did);
         expect(authorProofs).toHaveLength(1);
         expect((authorProofs[0].message as RecordsWriteMessage).recordId).toBe(authorRole.message.recordId);
@@ -486,8 +486,8 @@ export function testRecordsReadHandler(): void {
         const carol = await TestDataGenerator.generateDidKeyPersona();
         const bobDelegate = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-read-delivery.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-read-delivery.xyz',
           published : false,
           types     : {
             member  : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -500,31 +500,31 @@ export function testRecordsReadHandler(): void {
             },
           },
         };
-        const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-        const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+        const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
         const audience = await createAudienceControlWrite({
           author   : alice,
-          protocol : protocolDefinition.protocol,
+          module   : moduleDefinition.module,
           rolePath : 'member',
           roleRuleSet,
         });
         await processControlWrite(dwn, alice.did, audience);
 
         const roleRecord = await TestDataGenerator.generateRecordsWrite({
-          author       : alice,
-          data         : Encoder.stringToBytes('bob is a member'),
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'member',
-          recipient    : bob.did,
-          schema       : 'http://member-schema',
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is a member'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          recipient  : bob.did,
+          schema     : 'http://member-schema',
         });
         expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
 
         const delivery = await createDeliveryControlWrite({
           author             : alice,
           keyId              : audience.keyId,
-          protocol           : protocolDefinition.protocol,
+          module             : moduleDefinition.module,
           recipient          : bob.did,
           recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
           rolePath           : 'member',
@@ -554,7 +554,7 @@ export function testRecordsReadHandler(): void {
           scope     : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
         });
         expect((await dwn.processMessage(alice.did, carolGrant.message, { dataStream: carolGrant.dataStream })).status.code).toBe(202);
@@ -572,10 +572,10 @@ export function testRecordsReadHandler(): void {
           grantedTo : bobDelegate,
           delegated : true,
           scope     : {
-            interface    : DwnInterfaceName.Records,
-            method       : DwnMethodName.Read,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'message',
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : moduleDefinition.module,
+            modulePath : 'message',
           },
         });
         const delegatedBobRead = await RecordsRead.create({
@@ -590,7 +590,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow reading of data that is published without `authorization`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -614,7 +614,7 @@ export function testRecordsReadHandler(): void {
 
       it('should allow an authenticated user to RecordRead data that is published', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert public data
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -641,7 +641,7 @@ export function testRecordsReadHandler(): void {
       it('should allow a non-tenant to read RecordsRead data they have received', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // Alice inserts data with Bob as recipient
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -670,7 +670,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 400 when fetching initial write for a deleted record fails', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // Write a record
         const { message: writeMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -710,10 +710,10 @@ export function testRecordsReadHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        // Alice installs a protocol that allows anyone to write
-        const protocolDefinition: ProtocolDefinition = {
+        // Alice installs a module that allows anyone to write
+        const moduleDefinition: ModuleDefinition = {
           published : true,
-          protocol  : 'https://example.com/foo',
+          module    : 'https://example.com/foo',
           types     : {
             foo: {}
           },
@@ -727,18 +727,18 @@ export function testRecordsReadHandler(): void {
           }
         };
 
-        const configureProtocol = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : protocolDefinition,
+        const configureModule = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : moduleDefinition,
         });
-        const configureProtocolReply = await dwn.processMessage(alice.did, configureProtocol.message);
-        expect(configureProtocolReply.status.code).toBe(202);
+        const configureModuleReply = await dwn.processMessage(alice.did, configureModule.message);
+        expect(configureModuleReply.status.code).toBe(202);
 
         // Bob writes a record to Alice's DWN
         const { message: writeMessage, dataStream } = await TestDataGenerator.generateRecordsWrite({
-          author       : bob,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo'
+          author     : bob,
+          module     : moduleDefinition.module,
+          modulePath : 'foo'
         });
         const writeReply = await dwn.processMessage(alice.did, writeMessage, { dataStream });
         expect(writeReply.status.code).toBe(202);
@@ -760,7 +760,7 @@ export function testRecordsReadHandler(): void {
 
         // Verify the response
         expect(readReply.status.code).toBe(401);
-        expect(readReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(readReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
       });
 
       it('should allow a non-tenant to read RecordsRead data they have authored', async () => {
@@ -768,10 +768,10 @@ export function testRecordsReadHandler(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        // Alice installs a protocol that allows anyone to write foo record
-        const protocolDefinition:ProtocolDefinition = {
+        // Alice installs a module that allows anyone to write foo record
+        const moduleDefinition:ModuleDefinition = {
           published : true,
-          protocol  : 'https://example.com/foo',
+          module    : 'https://example.com/foo',
           types     : {
             foo: {}
           },
@@ -785,18 +785,18 @@ export function testRecordsReadHandler(): void {
           }
         };
 
-        const configureProtocol = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : protocolDefinition,
+        const configureModule = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : moduleDefinition,
         });
-        const configureProtocolReply = await dwn.processMessage(alice.did, configureProtocol.message);
-        expect(configureProtocolReply.status.code).toBe(202);
+        const configureModuleReply = await dwn.processMessage(alice.did, configureModule.message);
+        expect(configureModuleReply.status.code).toBe(202);
 
         // Bob writes a foo record to Alice's DWN
         const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-          author       : bob,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'foo',
+          author     : bob,
+          module     : moduleDefinition.module,
+          modulePath : 'foo',
         });
         const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
         expect(writeReply.status.code).toBe(202);
@@ -831,7 +831,7 @@ export function testRecordsReadHandler(): void {
 
       it('should include `initialWrite` property if RecordsWrite is not initial write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -857,7 +857,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return a controlled error if an updated record has no initial write', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const write = await TestDataGenerator.generateRecordsWrite({ author: alice, published: false });
 
         const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
@@ -883,33 +883,33 @@ export function testRecordsReadHandler(): void {
         expect(reply.status.detail).toContain(DwnErrorCode.RecordsWriteGetInitialWriteNotFound);
       });
 
-      describe('protocol based reads', () => {
+      describe('module based reads', () => {
         it('should allow read with allow-anyone rule', async () => {
         // scenario: Alice writes an image to her DWN, then Bob reads the image because he is "anyone".
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition = socialMediaProtocolDefinition;
+          const moduleDefinition = socialMediaModuleDefinition;
 
-          // Install social-media protocol on Alice's DWN
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // Install social-media module on Alice's DWN
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // Alice writes image to her DWN
           const encodedImage = new TextEncoder().encode('cafe-aesthetic.jpg');
           const imageRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'image', // this comes from `types` in protocol definition
-            schema       : protocolDefinition.types.image.schema,
-            dataFormat   : 'image/jpeg',
-            data         : encodedImage,
-            recipient    : alice.did
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'image', // this comes from `types` in module definition
+            schema     : moduleDefinition.types.image.schema,
+            dataFormat : 'image/jpeg',
+            data       : encodedImage,
+            recipient  : alice.did
           });
           const imageReply = await dwn.processMessage(alice.did, imageRecordsWrite.message, { dataStream: imageRecordsWrite.dataStream });
           expect(imageReply.status.code).toBe(202);
@@ -926,30 +926,30 @@ export function testRecordsReadHandler(): void {
         });
 
         it('should not allow anonymous reads when there is no allow-anyone rule', async () => {
-          // scenario: Alice's writes a record to a protocol. An anonymous read his Alice's DWN and is rejected
+          // scenario: Alice's writes a record to a module. An anonymous read his Alice's DWN and is rejected
           //           because there is not an allow-anyone rule.
 
           const alice = await TestDataGenerator.generatePersona();
 
-          const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+          const moduleDefinition = emailModuleDefinition as ModuleDefinition;
 
           TestStubGenerator.stubDidResolver(didResolver, [alice]);
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
-          // Alice writes a message to the minimal protocol
+          // Alice writes a message to the minimal module
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'email',
-            schema       : protocolDefinition.types.email.schema,
-            dataFormat   : protocolDefinition.types.email.dataFormats![0],
-            data         : new TextEncoder().encode('foo')
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'email',
+            schema     : moduleDefinition.types.email.schema,
+            dataFormat : moduleDefinition.types.email.dataFormats![0],
+            data       : new TextEncoder().encode('foo')
           });
           const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(recordsWriteReply.status.code).toBe(202);
@@ -962,7 +962,7 @@ export function testRecordsReadHandler(): void {
           });
           const recordsReadReply = await dwn.processMessage(alice.did, recordsRead.message);
           expect(recordsReadReply.status.code).toBe(401);
-          expect(recordsReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+          expect(recordsReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
         });
 
         describe('recipient rules', () => {
@@ -974,26 +974,26 @@ export function testRecordsReadHandler(): void {
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const imposterBob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = emailModuleDefinition as ModuleDefinition;
 
-            // Install email protocol on Alice's DWN
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Install email module on Alice's DWN
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes an email with Bob as recipient
             const encodedEmail = new TextEncoder().encode('Dear Bob, hello!');
             const emailRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
-              data         : encodedEmail,
-              recipient    : bob.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'email', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
+              data       : encodedEmail,
+              recipient  : bob.did
             });
             const imageReply = await dwn.processMessage(alice.did, emailRecordsWrite.message, { dataStream: emailRecordsWrite.dataStream });
             expect(imageReply.status.code).toBe(202);
@@ -1017,7 +1017,7 @@ export function testRecordsReadHandler(): void {
             });
             const imposterReadReply = await dwn.processMessage(alice.did, imposterRecordsRead.message);
             expect(imposterReadReply.status.code).toBe(401);
-            expect(imposterReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(imposterReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
           });
         });
 
@@ -1029,26 +1029,26 @@ export function testRecordsReadHandler(): void {
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const imposterBob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = emailProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = emailModuleDefinition as ModuleDefinition;
 
-            // Install email protocol on Alice's DWN
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Install email module on Alice's DWN
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes an email with Bob as recipient
             const encodedEmail = new TextEncoder().encode('Dear Alice, hello!');
             const emailRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
-              data         : encodedEmail,
-              recipient    : alice.did
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'email', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
+              data       : encodedEmail,
+              recipient  : alice.did
             });
             const imageReply = await dwn.processMessage(alice.did, emailRecordsWrite.message, { dataStream: emailRecordsWrite.dataStream });
             expect(imageReply.status.code).toBe(202);
@@ -1072,7 +1072,7 @@ export function testRecordsReadHandler(): void {
             });
             const imposterReadReply = await dwn.processMessage(alice.did, imposterRecordsRead.message);
             expect(imposterReadReply.status.code).toBe(401);
-            expect(imposterReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(imposterReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
           });
         });
 
@@ -1080,30 +1080,30 @@ export function testRecordsReadHandler(): void {
           it('should return a filter based read if there is only a single result', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
 
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               signer: Jws.createSigner(alice),
             });
@@ -1116,22 +1116,22 @@ export function testRecordsReadHandler(): void {
           it('should return the most recently updated record when filter matches multiple results', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo1'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo1'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
@@ -1139,13 +1139,13 @@ export function testRecordsReadHandler(): void {
             await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo2'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo2'),
+              recipient  : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).toBe(202);
@@ -1153,8 +1153,8 @@ export function testRecordsReadHandler(): void {
             // default sort is updatedDescending, so the most recently updated record should be returned
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               signer: Jws.createSigner(alice),
             });
@@ -1166,22 +1166,22 @@ export function testRecordsReadHandler(): void {
           it('should return the oldest record when `dateSort` is `CreatedAscending` and filter matches multiple results', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo1'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo1'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
@@ -1189,13 +1189,13 @@ export function testRecordsReadHandler(): void {
             await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo2'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo2'),
+              recipient  : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).toBe(202);
@@ -1203,8 +1203,8 @@ export function testRecordsReadHandler(): void {
             // with createdAscending sort, the oldest record should be returned
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               dateSort : DateSort.CreatedAscending,
               signer   : Jws.createSigner(alice),
@@ -1217,22 +1217,22 @@ export function testRecordsReadHandler(): void {
           it('should return the newest record when `dateSort` is `CreatedDescending` and filter matches multiple results', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo1'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo1'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
@@ -1240,21 +1240,21 @@ export function testRecordsReadHandler(): void {
             await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo2'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo2'),
+              recipient  : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).toBe(202);
 
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               dateSort : DateSort.CreatedDescending,
               signer   : Jws.createSigner(alice),
@@ -1267,22 +1267,22 @@ export function testRecordsReadHandler(): void {
           it('should return the oldest updated record when `dateSort` is `UpdatedAscending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo1'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo1'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
@@ -1290,21 +1290,21 @@ export function testRecordsReadHandler(): void {
             await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo2'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo2'),
+              recipient  : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).toBe(202);
 
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               dateSort : DateSort.UpdatedAscending,
               signer   : Jws.createSigner(alice),
@@ -1317,22 +1317,22 @@ export function testRecordsReadHandler(): void {
           it('should return the most recently updated record when `dateSort` is `UpdatedDescending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = { ...nestedProtocol };
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition = { ...nestedModule };
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolConfigReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolConfigReply.status.code).toBe(202);
+            const moduleConfigReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(moduleConfigReply.status.code).toBe(202);
 
             const foo1Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo1'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo1'),
+              recipient  : alice.did
             });
             const foo1WriteReply = await dwn.processMessage(alice.did, foo1Write.message, { dataStream: foo1Write.dataStream });
             expect(foo1WriteReply.status.code).toBe(202);
@@ -1340,21 +1340,21 @@ export function testRecordsReadHandler(): void {
             await Time.minimalSleep();
 
             const foo2Write = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
-              schema       : protocolDefinition.types.foo.schema,
-              dataFormat   : protocolDefinition.types.foo.dataFormats![0],
-              data         : new TextEncoder().encode('foo2'),
-              recipient    : alice.did
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
+              schema     : moduleDefinition.types.foo.schema,
+              dataFormat : moduleDefinition.types.foo.dataFormats![0],
+              data       : new TextEncoder().encode('foo2'),
+              recipient  : alice.did
             });
             const foo2WriteReply = await dwn.processMessage(alice.did, foo2Write.message, { dataStream: foo2Write.dataStream });
             expect(foo2WriteReply.status.code).toBe(202);
 
             const fooPathRead = await RecordsRead.create({
               filter: {
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'foo',
+                module     : moduleDefinition.module,
+                modulePath : 'foo',
               },
               dateSort : DateSort.UpdatedDescending,
               signer   : Jws.createSigner(alice),
@@ -1366,7 +1366,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the earliest published record when `dateSort` is `PublishedAscending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
-            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+            await TestDataGenerator.installDefaultTestModule(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -1399,7 +1399,7 @@ export function testRecordsReadHandler(): void {
 
           it('should return the latest published record when `dateSort` is `PublishedDescending`', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
-            await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+            await TestDataGenerator.installDefaultTestModule(dwn, alice);
             const schema = 'aSchema';
 
             const write1 = await TestDataGenerator.generateRecordsWrite({
@@ -1433,7 +1433,7 @@ export function testRecordsReadHandler(): void {
           describe('broad top-1 visibility', () => {
             it('should skip an unpublished record shadowing a published match for an anonymous read', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
@@ -1457,7 +1457,7 @@ export function testRecordsReadHandler(): void {
 
             it('should skip a full page of hidden records shadowing a published match', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const publishedWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema, published: true });
@@ -1484,7 +1484,7 @@ export function testRecordsReadHandler(): void {
             it('should skip an unauthorized record shadowing a recipient-authorized match', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const visibleWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: bob.did, schema });
@@ -1509,9 +1509,9 @@ export function testRecordsReadHandler(): void {
 
             it('should skip a non-occupant record shadowing the occupant under $recordLimit', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
-              const protocol = 'http://example.com/record-limit-read';
-              const protocolDefinition: ProtocolDefinition = {
-                protocol,
+              const module = 'http://example.com/record-limit-read';
+              const moduleDefinition: ModuleDefinition = {
+                module,
                 published : true,
                 types     : { post: {} },
                 structure : {
@@ -1520,13 +1520,13 @@ export function testRecordsReadHandler(): void {
                   }
                 }
               };
-              const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
-              const protocolsReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-              expect(protocolsReply.status.code).toBe(202);
+              const modulesConfig = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
+              const modulesReply = await dwn.processMessage(alice.did, modulesConfig.message);
+              expect(modulesReply.status.code).toBe(202);
 
               const writes = [];
               for (let index = 0; index < 3; index += 1) {
-                const write = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'post' });
+                const write = await TestDataGenerator.generateRecordsWrite({ author: alice, module, modulePath: 'post' });
                 const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
                 expect(writeReply.status.code).toBe(202);
                 writes.push(write);
@@ -1534,7 +1534,7 @@ export function testRecordsReadHandler(): void {
               }
 
               const read = await RecordsRead.create({
-                filter   : { protocol, protocolPath: 'post' },
+                filter   : { module, modulePath: 'post' },
                 dateSort : DateSort.CreatedDescending,
                 signer   : Jws.createSigner(alice),
               });
@@ -1545,7 +1545,7 @@ export function testRecordsReadHandler(): void {
 
             it('should return the tombstone for an authorized deleted record matching a broad filter', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
@@ -1568,7 +1568,7 @@ export function testRecordsReadHandler(): void {
 
             it('should propagate malformed retained state instead of skipping it on a broad read', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const visibleWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
@@ -1601,14 +1601,14 @@ export function testRecordsReadHandler(): void {
             it('should propagate operational authorization failures instead of hiding them on a broad read', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
               const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
               expect(writeReply.status.code).toBe(202);
 
-              sinon.stub(ProtocolAuthorization, 'authorizeRead').rejects(new Error('store down'));
+              sinon.stub(ModuleAuthorization, 'authorizeRead').rejects(new Error('store down'));
 
               const read = await RecordsRead.create({
                 filter : { schema },
@@ -1620,14 +1620,14 @@ export function testRecordsReadHandler(): void {
             it('should map operational authorization failures to 401 for exact-record reads', async () => {
               const alice = await TestDataGenerator.generateDidKeyPersona();
               const bob = await TestDataGenerator.generateDidKeyPersona();
-              await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+              await TestDataGenerator.installDefaultTestModule(dwn, alice);
               const schema = 'aSchema';
 
               const write = await TestDataGenerator.generateRecordsWrite({ author: alice, schema });
               const writeReply = await dwn.processMessage(alice.did, write.message, { dataStream: write.dataStream });
               expect(writeReply.status.code).toBe(202);
 
-              sinon.stub(ProtocolAuthorization, 'authorizeRead').rejects(new Error('store down'));
+              sinon.stub(ModuleAuthorization, 'authorizeRead').rejects(new Error('store down'));
 
               const read = await RecordsRead.create({
                 filter : { recordId: write.message.recordId },
@@ -1639,12 +1639,12 @@ export function testRecordsReadHandler(): void {
           });
         });
 
-        describe('protocolRole based reads', () => {
+        describe('moduleRole based reads', () => {
           it('preserves role authorization when the stored context preference is reordered', async () => {
             const owner = await TestDataGenerator.generateDidKeyPersona();
             const member = await TestDataGenerator.generateDidKeyPersona();
             const definition = {
-              protocol  : 'https://example.com/protocols/notebook',
+              module    : 'https://example.com/modules/notebook',
               published : false,
               types     : { notebook: {}, page: {}, editor: {}, viewer: {} },
               structure : {
@@ -1659,47 +1659,47 @@ export function testRecordsReadHandler(): void {
                   },
                 },
               },
-            } satisfies ProtocolDefinition;
-            const configure = await ProtocolsConfigure.create({ definition, signer: Jws.createSigner(owner) });
+            } satisfies ModuleDefinition;
+            const configure = await ModulesConfigure.create({ definition, signer: Jws.createSigner(owner) });
             expect((await dwn.processMessage(owner.did, configure.message)).status.code).toBe(202);
 
             const notebook = await TestDataGenerator.generateRecordsWrite({
-              author       : owner,
-              protocol     : definition.protocol,
-              protocolPath : 'notebook',
+              author     : owner,
+              module     : definition.module,
+              modulePath : 'notebook',
             });
             expect((await dwn.processMessage(owner.did, notebook.message, { dataStream: notebook.dataStream })).status.code).toBe(202);
             const page = await TestDataGenerator.generateRecordsWrite({
               author          : owner,
               parentContextId : notebook.message.contextId,
-              protocol        : definition.protocol,
-              protocolPath    : 'notebook/page',
+              module          : definition.module,
+              modulePath      : 'notebook/page',
             });
             expect((await dwn.processMessage(owner.did, page.message, { dataStream: page.dataStream })).status.code).toBe(202);
             const viewer = await TestDataGenerator.generateRecordsWrite({
               author          : owner,
               parentContextId : page.message.contextId,
-              protocol        : definition.protocol,
-              protocolPath    : 'notebook/page/viewer',
+              module          : definition.module,
+              modulePath      : 'notebook/page/viewer',
               recipient       : member.did,
             });
             expect((await dwn.processMessage(owner.did, viewer.message, { dataStream: viewer.dataStream })).status.code).toBe(202);
 
             const assertStoredPreferenceAndAccess = async (expectedRoles: string[]): Promise<void> => {
-              const query = await ProtocolsQuery.create({
-                filter : { protocol: definition.protocol },
+              const query = await ModulesQuery.create({
+                filter : { module: definition.module },
                 signer : Jws.createSigner(owner),
               });
               const stored = await dwn.processMessage(owner.did, query.message);
               expect(stored.status.code).toBe(200);
               expect(stored.entries).toHaveLength(1);
-              const installed = (stored.entries![0] as ProtocolsConfigureMessage).descriptor.definition;
-              expect(resolveProtocolContextRoles(installed, 'notebook/page')).toEqual(expectedRoles);
+              const installed = (stored.entries![0] as ModulesConfigureMessage).descriptor.definition;
+              expect(resolveModuleContextRoles(installed, 'notebook/page')).toEqual(expectedRoles);
 
-              for (const [protocolRole, status] of [['notebook/page/viewer', 200], ['notebook/page/editor', 401]] as const) {
+              for (const [moduleRole, status] of [['notebook/page/viewer', 200], ['notebook/page/editor', 401]] as const) {
                 const read = await RecordsRead.create({
                   filter : { recordId: page.message.recordId },
-                  protocolRole,
+                  moduleRole,
                   signer : Jws.createSigner(member),
                 });
                 const reply = await dwn.processMessage(owner.did, read.message);
@@ -1711,7 +1711,7 @@ export function testRecordsReadHandler(): void {
             await assertStoredPreferenceAndAccess(['notebook/page/editor', 'notebook/page/viewer']);
             const reordered = structuredClone(definition);
             reordered.structure.notebook.page.$actions.reverse();
-            const update = await ProtocolsConfigure.create({ definition: reordered, signer: Jws.createSigner(owner) });
+            const update = await ModulesConfigure.create({ definition: reordered, signer: Jws.createSigner(owner) });
             expect((await dwn.processMessage(owner.did, update.message)).status.code).toBe(202);
             await assertStoredPreferenceAndAccess(['notebook/page/viewer', 'notebook/page/editor']);
           });
@@ -1723,33 +1723,33 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a 'friend' root-level role record with Bob as recipient
             const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'friend',
-              data         : new TextEncoder().encode('Bob is my friend'),
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'friend',
+              data       : new TextEncoder().encode('Bob is my friend'),
             });
             const friendRoleReply = await dwn.processMessage(alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream });
             expect(friendRoleReply.status.code).toBe(202);
 
             // Alice writes a 'chat' record
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : alice.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
-              data         : new TextEncoder().encode('Bob can read this cuz he is my friend'),
+              author     : alice,
+              recipient  : alice.did,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
+              data       : new TextEncoder().encode('Bob can read this cuz he is my friend'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
@@ -1761,7 +1761,7 @@ export function testRecordsReadHandler(): void {
                 recordId: chatRecord.message.recordId,
 
               },
-              protocolRole: 'friend'
+              moduleRole: 'friend'
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(200);
@@ -1775,28 +1775,28 @@ export function testRecordsReadHandler(): void {
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
-              published    : true,
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
+              published  : true,
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
 
             const readChatRecord = await RecordsRead.create({
-              filter       : { recordId: chatRecord.message.recordId },
-              protocolRole : 'friend',
-              signer       : Jws.createSigner(bob),
+              filter     : { recordId: chatRecord.message.recordId },
+              moduleRole : 'friend',
+              signer     : Jws.createSigner(bob),
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(200);
@@ -1809,27 +1809,27 @@ export function testRecordsReadHandler(): void {
             //           nobody. Owner authority alone authorizes the read.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
 
             const readChatRecord = await RecordsRead.create({
-              filter       : { recordId: chatRecord.message.recordId },
-              protocolRole : 'friend',
-              signer       : Jws.createSigner(alice),
+              filter     : { recordId: chatRecord.message.recordId },
+              moduleRole : 'friend',
+              signer     : Jws.createSigner(alice),
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(200);
@@ -1843,21 +1843,21 @@ export function testRecordsReadHandler(): void {
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             const friendRoleRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'friend',
-              data         : new TextEncoder().encode('Bob is my friend'),
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'friend',
+              data       : new TextEncoder().encode('Bob is my friend'),
             });
             const friendRoleReply = await dwn.processMessage(
               alice.did, friendRoleRecord.message, { dataStream: friendRoleRecord.dataStream },
@@ -1865,10 +1865,10 @@ export function testRecordsReadHandler(): void {
             expect(friendRoleReply.status.code).toBe(202);
 
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
-              published    : true,
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
+              published  : true,
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
@@ -1876,7 +1876,7 @@ export function testRecordsReadHandler(): void {
             const supportRead = await RecordsRead.create({
               filter                    : { recordId: chatRecord.message.recordId },
               includeReplicationSupport : true,
-              protocolRole              : 'friend',
+              moduleRole                : 'friend',
               signer                    : Jws.createSigner(bob),
             });
             const supportReply = await dwn.processMessage(alice.did, supportRead.message);
@@ -1886,29 +1886,29 @@ export function testRecordsReadHandler(): void {
             expect(supportReply.status.detail).toContain(DwnErrorCode.RecordsReadReplicationSupportUnsupported);
           });
 
-          it('rejects root-level role authorized reads if the protocolRole is not a valid protocol path to an active role record', async () => {
+          it('rejects root-level role authorized reads if the moduleRole is not a valid module path to an active role record', async () => {
             // scenario: Alice writes a chat message writes a chat message. Bob tries to invoke the 'chat' role,
             //           but 'chat' is not a role.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a 'chat' record
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : alice.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
-              data         : new TextEncoder().encode('Blah blah blah'),
+              author     : alice,
+              recipient  : alice.did,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
+              data       : new TextEncoder().encode('Blah blah blah'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
@@ -1919,11 +1919,11 @@ export function testRecordsReadHandler(): void {
               filter : {
                 recordId: chatRecord.message.recordId,
               },
-              protocolRole: 'chat'
+              moduleRole: 'chat'
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(401);
-            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationNotARole);
+            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationNotARole);
           });
 
           it('rejects root-level role authorized reads if there is no active role for the recipient', async () => {
@@ -1933,22 +1933,22 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a 'chat' record
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : alice.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
-              data         : new TextEncoder().encode('Blah blah blah'),
+              author     : alice,
+              recipient  : alice.did,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
+              data       : new TextEncoder().encode('Blah blah blah'),
             });
             const chatReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatReply.status.code).toBe(202);
@@ -1959,11 +1959,11 @@ export function testRecordsReadHandler(): void {
               filter : {
                 recordId: chatRecord.message.recordId,
               },
-              protocolRole: 'friend',
+              moduleRole: 'friend',
             });
             const chatReadReply = await dwn.processMessage(alice.did, readChatRecord.message);
             expect(chatReadReply.status.code).toBe(401);
-            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
           });
 
           it('can authorize a read using a context role', async () => {
@@ -1973,20 +1973,20 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = threadRoleProtocolDefinition;
+            const moduleDefinition = threadRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a thread
             const threadRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'thread'
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'thread'
             });
             const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
             expect(threadRecordReply.status.code).toBe(202);
@@ -1995,8 +1995,8 @@ export function testRecordsReadHandler(): void {
             const participantRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : bob.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/participant',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/participant',
               parentContextId : threadRecord.message.contextId,
             });
             const participantRecordReply =
@@ -2006,8 +2006,8 @@ export function testRecordsReadHandler(): void {
             // Alice writes a chat message in the thread
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/chat',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/chat',
               parentContextId : threadRecord.message.contextId,
             });
             const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
@@ -2018,9 +2018,9 @@ export function testRecordsReadHandler(): void {
             const participantRead = await RecordsRead.create({
               signer : Jws.createSigner(bob),
               filter : {
-                protocolPath : 'thread/participant',
-                recipient    : bob.did,
-                contextId    : threadRecord.message.contextId
+                modulePath : 'thread/participant',
+                recipient  : bob.did,
+                contextId  : threadRecord.message.contextId
               },
             });
             const participantReadReply = await dwn.processMessage(alice.did, participantRead.message);
@@ -2032,7 +2032,7 @@ export function testRecordsReadHandler(): void {
               filter : {
                 recordId: participantReadReply.entry!.recordsWrite!.descriptor.parentId,
               },
-              protocolRole: 'thread/participant'
+              moduleRole: 'thread/participant'
             });
             const threadReadReply = await dwn.processMessage(alice.did, threadRead.message);
             expect(threadReadReply.status.code).toBe(200);
@@ -2043,7 +2043,7 @@ export function testRecordsReadHandler(): void {
               filter : {
                 recordId: chatRecord.message.recordId,
               },
-              protocolRole: 'thread/participant'
+              moduleRole: 'thread/participant'
             });
             const chatReadReply = await dwn.processMessage(alice.did, chatRead.message);
             expect(chatReadReply.status.code).toBe(200);
@@ -2055,9 +2055,9 @@ export function testRecordsReadHandler(): void {
             expect((await dwn.processMessage(alice.did, chatDelete.message)).status.code).toBe(202);
 
             const deletedChatRead = await RecordsRead.create({
-              filter       : { recordId: chatRecord.message.recordId },
-              protocolRole : 'thread/participant',
-              signer       : Jws.createSigner(bob),
+              filter     : { recordId: chatRecord.message.recordId },
+              moduleRole : 'thread/participant',
+              signer     : Jws.createSigner(bob),
             });
             const deletedChatReply = await dwn.processMessage(alice.did, deletedChatRead.message);
             expect(deletedChatReply.status.code).toBe(404);
@@ -2072,21 +2072,21 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = threadRoleProtocolDefinition;
+            const moduleDefinition = threadRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a thread
             const threadRecord1 = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'thread'
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'thread'
             });
             const threadRecordReply1 = await dwn.processMessage(alice.did, threadRecord1.message, { dataStream: threadRecord1.dataStream });
             expect(threadRecordReply1.status.code).toBe(202);
@@ -2095,8 +2095,8 @@ export function testRecordsReadHandler(): void {
             const participantRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : bob.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/participant',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/participant',
               parentContextId : threadRecord1.message.contextId,
             });
             const participantRecordReply =
@@ -2105,10 +2105,10 @@ export function testRecordsReadHandler(): void {
 
             // Alice creates a second thread
             const threadRecord2 = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'thread'
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'thread'
             });
             const threadRecordReply2 = await dwn.processMessage(alice.did, threadRecord2.message, { dataStream: threadRecord2.dataStream });
             expect(threadRecordReply2.status.code).toBe(202);
@@ -2116,8 +2116,8 @@ export function testRecordsReadHandler(): void {
             // Alice writes a chat message in the thread
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/chat',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/chat',
               parentContextId : threadRecord2.message.contextId,
             });
             const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
@@ -2129,11 +2129,11 @@ export function testRecordsReadHandler(): void {
               filter : {
                 recordId: chatRecord.message.recordId,
               },
-              protocolRole: 'thread/participant'
+              moduleRole: 'thread/participant'
             });
             const chatReadReply = await dwn.processMessage(alice.did, chatRead.message);
             expect(chatReadReply.status.code).toBe(401);
-            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+            expect(chatReadReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
           });
         });
       });
@@ -2144,7 +2144,7 @@ export function testRecordsReadHandler(): void {
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // Alice writes a record which Bob will later try to read
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
@@ -2154,14 +2154,14 @@ export function testRecordsReadHandler(): void {
           expect(recordsWriteReply.status.code).toBe(202);
 
           // Alice gives Bob a permission grant with scope RecordsRead
-          const permissionGrant = await PermissionsProtocol.createGrant({
+          const permissionGrant = await PermissionsModule.createGrant({
             signer      : Jws.createSigner(alice),
             grantedTo   : bob.did,
             dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
             scope       : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Write,
-              protocol  : 'http://example.com/protocol/test',
+              module    : 'http://example.com/module/test',
             }
           });
           const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2185,42 +2185,42 @@ export function testRecordsReadHandler(): void {
           expect(recordsReadReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
         });
 
-        describe('protocol records', () => {
-          it('allows reads of protocol records with unrestricted grant scopes', async () => {
-            // scenario: Alice writes a protocol record. Alice gives Bob a grant to read all records in her DWN
-            //           Bob invokes that grant to read the protocol record.
+        describe('module records', () => {
+          it('allows reads of module records with unrestricted grant scopes', async () => {
+            // scenario: Alice writes a module record. Alice gives Bob a grant to read all records in her DWN
+            //           Bob invokes that grant to read the module record.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Read,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2241,7 +2241,7 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithoutGrantReply = await dwn.processMessage(alice.did, recordsReadWithoutGrant.message);
             expect(recordsReadWithoutGrantReply.status.code).toBe(401);
-            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionRulesNotFound);
+            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionRulesNotFound);
 
             // Bob is able to read the record when he uses the permission grant
             const recordsReadWithGrant = await RecordsRead.create({
@@ -2258,41 +2258,41 @@ export function testRecordsReadHandler(): void {
             expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
           });
 
-          it('allows reads of protocol records with matching protocol grant scopes', async () => {
-            // scenario: Alice writes a protocol record. Alice gives Bob a grant to read all records in the protocol
-            //           Bob invokes that grant to read the protocol record.
+          it('allows reads of module records with matching module grant scopes', async () => {
+            // scenario: Alice writes a module record. Alice gives Bob a grant to read all records in the module
+            //           Bob invokes that grant to read the module record.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Read,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2312,7 +2312,7 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithoutGrantReply = await dwn.processMessage(alice.did, recordsReadWithoutGrant.message);
             expect(recordsReadWithoutGrantReply.status.code).toBe(401);
-            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionRulesNotFound);
+            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionRulesNotFound);
 
             // Bob is able to read the record when he uses the permission grant
             const recordsReadWithGrant = await RecordsRead.create({
@@ -2329,41 +2329,41 @@ export function testRecordsReadHandler(): void {
             expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
           });
 
-          it('rejects reads of protocol records with mismatching protocol grant scopes', async () => {
-            // scenario: Alice writes a protocol record. Alice gives Bob a grant to read a different protocol
-            //           Bob invokes that grant to read the protocol record, but fails.
+          it('rejects reads of module records with mismatching module grant scopes', async () => {
+            // scenario: Alice writes a module record. Alice gives Bob a grant to read a different module
+            //           Bob invokes that grant to read the module record, but fails.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Read,
-                protocol  : 'a-different-protocol'
+                module    : 'a-different-module'
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2384,7 +2384,7 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithoutGrantReply = await dwn.processMessage(alice.did, recordsReadWithoutGrant.message);
             expect(recordsReadWithoutGrantReply.status.code).toBe(401);
-            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch);
           });
 
           it('allows reads of records in the contextId specified in the grant', async () => {
@@ -2393,34 +2393,34 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Read,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
                 contextId : recordsWrite.message.contextId,
               }
             });
@@ -2450,34 +2450,34 @@ export function testRecordsReadHandler(): void {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
                 interface : DwnInterfaceName.Records,
                 method    : DwnMethodName.Read,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
                 contextId : await TestDataGenerator.randomCborSha256Cid(), // different contextId than what Bob will try to read
               }
             });
@@ -2502,41 +2502,41 @@ export function testRecordsReadHandler(): void {
             expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch);
           });
 
-          it('allows reads of records in the protocolPath specified in the grant', async () => {
-            // scenario: Alice grants Bob access to RecordsRead records with a specific protocolPath.
-            //           Bob uses it to read a record in that protocolPath.
+          it('allows reads of records in the modulePath specified in the grant', async () => {
+            // scenario: Alice grants Bob access to RecordsRead records with a specific modulePath.
+            //           Bob uses it to read a record in that modulePath.
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
-                interface    : DwnInterfaceName.Records,
-                method       : DwnMethodName.Read,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : recordsWrite.message.descriptor.protocolPath,
+                interface  : DwnInterfaceName.Records,
+                method     : DwnMethodName.Read,
+                module     : moduleDefinition.module,
+                modulePath : recordsWrite.message.descriptor.modulePath,
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2559,41 +2559,41 @@ export function testRecordsReadHandler(): void {
             expect(recordsReadWithoutGrantReply.status.code).toBe(200);
           });
 
-          it('rejects reads of records in a different protocolPath than is specified in the grant', async () => {
-            // scenario: Alice grants Bob access to RecordsRead records with a specific protocolPath.
-            //           Bob tries and fails to invoke the grant in order to read a record outside of the protocolPath.
+          it('rejects reads of records in a different modulePath than is specified in the grant', async () => {
+            // scenario: Alice grants Bob access to RecordsRead records with a specific modulePath.
+            //           Bob tries and fails to invoke the grant in order to read a record outside of the modulePath.
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = minimalProtocolDefinition;
+            const moduleDefinition = minimalModuleDefinition;
 
-            // Alice installs the protocol
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            // Alice installs the module
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a record which Bob will later try to read
             const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'foo',
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'foo',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
 
             // Alice gives Bob a permission grant with scope RecordsRead
-            const permissionGrant = await PermissionsProtocol.createGrant({
+            const permissionGrant = await PermissionsModule.createGrant({
               signer      : Jws.createSigner(alice),
               grantedTo   : bob.did,
               dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }), // 24 hours
               scope       : {
-                interface    : DwnInterfaceName.Records,
-                method       : DwnMethodName.Read,
-                protocol     : protocolDefinition.protocol,
-                protocolPath : 'different-protocol-path', // different protocol path than what Bob will try to read
+                interface  : DwnInterfaceName.Records,
+                method     : DwnMethodName.Read,
+                module     : moduleDefinition.module,
+                modulePath : 'different-module-path', // different module path than what Bob will try to read
               }
             });
             const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -2614,7 +2614,7 @@ export function testRecordsReadHandler(): void {
             });
             const recordsReadWithoutGrantReply = await dwn.processMessage(alice.did, recordsReadWithoutGrant.message);
             expect(recordsReadWithoutGrantReply.status.code).toBe(401);
-            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch);
+            expect(recordsReadWithoutGrantReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModulePathMismatch);
           });
         });
       });
@@ -2635,7 +2635,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 404 RecordRead if data has been deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert public data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true });
@@ -2675,7 +2675,7 @@ export function testRecordsReadHandler(): void {
 
       it('should return 410 with recordsWrite when data store cannot locate the data for large records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         sinon.stub(dataStore, 'get').resolves(undefined);
 
@@ -2706,7 +2706,7 @@ export function testRecordsReadHandler(): void {
       describe('data from encodedData', () => {
         it('should not get data from DataStore if encodedData exists', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           //since the data is at the threshold it will be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -2738,7 +2738,7 @@ export function testRecordsReadHandler(): void {
 
         it('should get data from DataStore if encodedData does not exist', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           //since the data is over the threshold it will not be returned from the messageStore in the `encodedData` field.
           const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -2770,7 +2770,7 @@ export function testRecordsReadHandler(): void {
       });
 
       describe('encryption scenarios', () => {
-        it('should only be able to decrypt record with a correct derived private key  - `protocols` derivation scheme', async () => {
+        it('should only be able to decrypt record with a correct derived private key  - `modules` derivation scheme', async () => {
           // scenario: Bob writes into Alice's DWN an encrypted "email", alice is able to decrypt it
 
           // creating Alice and Bob persona and setting up a stub DID resolver
@@ -2778,31 +2778,31 @@ export function testRecordsReadHandler(): void {
           const bob = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-          // Alice configures email protocol with encryption
-          const protocolDefinition = structuredClone(emailProtocolDefinition) as ProtocolDefinition;
-          protocolDefinition.types.email.encryptionRequired = true;
-          const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-            protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+          // Alice configures email module with encryption
+          const moduleDefinition = structuredClone(emailModuleDefinition) as ModuleDefinition;
+          moduleDefinition.types.email.encryptionRequired = true;
+          const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+            moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
           );
-          const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : encryptedProtocolDefinition
+          const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : encryptedModuleDefinition
           });
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfigure.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfigure.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
-          // Bob queries for Alice's email protocol definition
-          const protocolsQuery = await ProtocolsQuery.create({
-            filter: { protocol: emailProtocolDefinition.protocol }
+          // Bob queries for Alice's email module definition
+          const modulesQuery = await ModulesQuery.create({
+            filter: { module: emailModuleDefinition.module }
           });
-          const protocolsQueryReply = await dwn.processMessage(alice.did, protocolsQuery.message);
-          const protocolsConfigureMessageReceived = protocolsQueryReply.entries![0] as ProtocolsConfigureMessage;
+          const modulesQueryReply = await dwn.processMessage(alice.did, modulesQuery.message);
+          const modulesConfigureMessageReceived = modulesQueryReply.entries![0] as ModulesConfigureMessage;
 
-          // Bob verifies that the email protocol definition is authored by Alice
-          await authenticate(protocolsConfigureMessageReceived.authorization, didResolver);
-          const protocolsConfigureFetched = await ProtocolsConfigure.parse(protocolsConfigureMessageReceived);
-          expect(protocolsConfigureFetched.author).toBe(alice.did);
+          // Bob verifies that the email module definition is authored by Alice
+          await authenticate(modulesConfigureMessageReceived.authorization, didResolver);
+          const modulesConfigureFetched = await ModulesConfigure.parse(modulesConfigureMessageReceived);
+          expect(modulesConfigureFetched.author).toBe(alice.did);
 
           // Bob encrypts his email to Alice with a randomly generated symmetric key
           const bobMessageBytes = TestDataGenerator.randomBytes(100);
@@ -2814,7 +2814,7 @@ export function testRecordsReadHandler(): void {
 
           // Bob generates an encrypted RecordsWrite,
           // the public encryption key designated by Alice is used to encrypt the symmetric key Bob generated above
-          const publicJwk = protocolsConfigureFetched.message.descriptor.definition.structure.email.$keyAgreement?.publicKeyJwk;
+          const publicJwk = modulesConfigureFetched.message.descriptor.definition.structure.email.$keyAgreement?.publicKeyJwk;
           expect(publicJwk).toBeDefined();
           const encryptionInput: EncryptionInput = {
             initializationVector : dataEncryptionInitializationVector,
@@ -2823,18 +2823,18 @@ export function testRecordsReadHandler(): void {
               algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
               keyId            : await Encryption.getKeyId(publicJwk!),
               publicKey        : publicJwk!,
-              derivationScheme : KeyDerivationScheme.ProtocolPath
+              derivationScheme : KeyDerivationScheme.ModulePath
             }]
           };
 
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite(
             {
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'email', // this comes from `types` in protocol definition
-              schema       : protocolDefinition.types.email.schema,
-              dataFormat   : protocolDefinition.types.email.dataFormats![0],
-              data         : bobMessageEncryptedBytes,
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'email', // this comes from `types` in module definition
+              schema     : moduleDefinition.types.email.schema,
+              dataFormat : moduleDefinition.types.email.dataFormats![0],
+              data       : bobMessageEncryptedBytes,
               encryptionInput
             }
           );
@@ -2857,7 +2857,7 @@ export function testRecordsReadHandler(): void {
           // test that Alice is able decrypt the encrypted email from Bob using the root key
           const rootPrivateKey: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
-            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivationScheme  : KeyDerivationScheme.ModulePath,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
 
@@ -2872,7 +2872,7 @@ export function testRecordsReadHandler(): void {
           const readReply2 = await dwn.processMessage(alice.did, recordsRead.message);
           expect(readReply2.status.code).toBe(200);
 
-          const relativeDescendantDerivationPath = Records.constructKeyDerivationPath(KeyDerivationScheme.ProtocolPath, fetchedRecordsWrite);
+          const relativeDescendantDerivationPath = Records.constructKeyDerivationPath(KeyDerivationScheme.ModulePath, fetchedRecordsWrite);
           const derivedPrivateKey: DerivedPrivateJwk
             = await TestDataGenerator.deriveDescendantPrivateKey(rootPrivateKey, relativeDescendantDerivationPath);
 
@@ -2884,7 +2884,7 @@ export function testRecordsReadHandler(): void {
           expect(ArrayUtility.byteArraysEqual(plaintextBytes2, bobMessageBytes)).toBe(true);
 
           // test unable to decrypt the message if derived key has an unexpected path
-          const invalidDerivationPath = [KeyDerivationScheme.ProtocolPath, protocolDefinition.protocol, 'invalidContextId'];
+          const invalidDerivationPath = [KeyDerivationScheme.ModulePath, moduleDefinition.module, 'invalidContextId'];
           const inValidDescendantPrivateKey: DerivedPrivateJwk
             = await TestDataGenerator.deriveDescendantPrivateKey(rootPrivateKey, invalidDerivationPath);
           const invalidDescendantKeyDecrypter = TestDataGenerator.createKeyDecrypter(inValidDescendantPrivateKey);
@@ -2895,7 +2895,7 @@ export function testRecordsReadHandler(): void {
           // test unable to decrypt the message if no derivation scheme used by the message matches the scheme used by the given private key
           const privateKeyWithMismatchingDerivationScheme: DerivedPrivateJwk = {
             rootKeyId         : alice.keyId,
-            derivationScheme  : 'scheme-that-is-not-protocol-path' as any,
+            derivationScheme  : 'scheme-that-is-not-module-path' as any,
             derivedPrivateKey : alice.encryptionKeyPair.privateJwk
           };
           const mismatchingSchemeKeyDecrypter = TestDataGenerator.createKeyDecrypter(privateKeyWithMismatchingDerivationScheme);
@@ -2906,7 +2906,7 @@ export function testRecordsReadHandler(): void {
           // test unable to decrypt the message if the given private key cannot derive a matching public key ID
           const privateKeyWithMismatchingKeyId: DerivedPrivateJwk = {
             rootKeyId         : bob.keyId,
-            derivationScheme  : KeyDerivationScheme.ProtocolPath,
+            derivationScheme  : KeyDerivationScheme.ModulePath,
             derivedPrivateKey : bob.encryptionKeyPair.privateJwk
           };
           const mismatchingKeyIdDecrypter = TestDataGenerator.createKeyDecrypter(privateKeyWithMismatchingKeyId);

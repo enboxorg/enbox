@@ -140,7 +140,7 @@
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-sdk-js": "workspace:*",
-        "@enbox/protocols": "workspace:*",
+        "@enbox/modules": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "22.19.15",
@@ -472,7 +472,7 @@
         "@enbox/common": "workspace:*",
         "@enbox/dids": "workspace:*",
         "@enbox/dwn-server": "workspace:*",
-        "@enbox/protocols": "workspace:*",
+        "@enbox/modules": "workspace:*",
         "@lit-labs/signals": "0.2.0",
         "@lit/context": "1.1.6",
         "@vaadin/router": "2.0.1",
@@ -504,11 +504,11 @@
         "typescript": "5.9.3",
       },
     },
-    "packages/protocol-codegen": {
-      "name": "@enbox/protocol-codegen",
+    "packages/module-codegen": {
+      "name": "@enbox/module-codegen",
       "version": "0.1.11",
       "bin": {
-        "protocol-codegen": "./dist/esm/cli.js",
+        "module-codegen": "./dist/esm/cli.js",
       },
       "dependencies": {
         "@enbox/common": "workspace:*",
@@ -529,8 +529,8 @@
         "typescript": "5.9.3",
       },
     },
-    "packages/protocols": {
-      "name": "@enbox/protocols",
+    "packages/modules": {
+      "name": "@enbox/modules",
       "version": "0.2.120",
       "dependencies": {
         "@enbox/api": "workspace:*",
@@ -744,9 +744,9 @@
 
     "@enbox/local-node": ["@enbox/local-node@workspace:packages/local-node"],
 
-    "@enbox/protocol-codegen": ["@enbox/protocol-codegen@workspace:packages/protocol-codegen"],
+    "@enbox/module-codegen": ["@enbox/module-codegen@workspace:packages/module-codegen"],
 
-    "@enbox/protocols": ["@enbox/protocols@workspace:packages/protocols"],
+    "@enbox/modules": ["@enbox/modules@workspace:packages/modules"],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.28.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ=="],
 

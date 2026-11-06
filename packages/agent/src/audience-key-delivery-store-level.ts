@@ -4,7 +4,7 @@ import type { AudienceKeyDeliveryState } from './audience-key-delivery.js';
 import type {
   AudienceKeyDeliveryChange,
   AudienceKeyDeliveryStore,
-  ReconcileAudienceKeyDeliveryProtocolParams,
+  ReconcileAudienceKeyDeliveryModuleParams,
   RecordAudienceKeyDeliveryParams,
 } from './audience-key-delivery-store.js';
 
@@ -50,13 +50,13 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
     return this.getEntry(audienceKeyDeliveryProjectionKey(sourceDid, roleRecordId));
   }
 
-  public async reconcileProtocol(
-    params: ReconcileAudienceKeyDeliveryProtocolParams,
+  public async reconcileModule(
+    params: ReconcileAudienceKeyDeliveryModuleParams,
   ): Promise<AudienceKeyDeliveryState[]> {
-    return this.runForScope(params.sourceDid, params.protocol, async (): Promise<AudienceKeyDeliveryState[]> => {
+    return this.runForScope(params.sourceDid, params.module, async (): Promise<AudienceKeyDeliveryState[]> => {
       // Keep the scan inside the scope lock so it cannot erase an outcome recorded after an older scan.
       const intents = await params.scan();
-      const existing = await this.getForProtocol(params.sourceDid, params.protocol);
+      const existing = await this.getForModule(params.sourceDid, params.module);
       const activeIds = new Set(intents.map(intent => intent.roleRecordId));
       const states = new Map(existing.map(state => [state.roleRecordId, state]));
       const operations: Array<{ type: 'put'; key: string; value: string } | { type: 'del'; key: string }> = [];
@@ -88,18 +88,18 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
 
   public async record(params: RecordAudienceKeyDeliveryParams): Promise<void> {
     const key = audienceKeyDeliveryProjectionKey(params.intent.sourceDid, params.intent.roleRecordId);
-    await this.runForScope(params.intent.sourceDid, params.intent.protocol, async (): Promise<void> => {
+    await this.runForScope(params.intent.sourceDid, params.intent.module, async (): Promise<void> => {
       const next = recordAudienceKeyDeliveryProjection(await this.getEntry(key), params);
       if (next !== undefined) {
         await this._states.put(key, JSON.stringify(next));
-        this._changes.publish({ tenant: next.sourceDid, seq: next.protocol });
+        this._changes.publish({ tenant: next.sourceDid, seq: next.module });
       }
     });
   }
 
   public subscribe(listener: (change: AudienceKeyDeliveryChange) => void): () => void {
     return this._changes.subscribe(({ tenant, seq }): void => {
-      listener({ sourceDid: tenant, protocol: seq });
+      listener({ sourceDid: tenant, module: seq });
     });
   }
 
@@ -114,12 +114,12 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
     }
   }
 
-  private async getForProtocol(sourceDid: string, protocol: string): Promise<AudienceKeyDeliveryState[]> {
+  private async getForModule(sourceDid: string, module: string): Promise<AudienceKeyDeliveryState[]> {
     const states: AudienceKeyDeliveryState[] = [];
     const prefix = `${JSON.stringify([sourceDid]).slice(0, -1)},`;
     for await (const [, value] of this._states.iterator({ gte: prefix, lt: `${prefix}\uffff` })) {
       const state = AudienceKeyDeliveryStoreLevel.parseEntry(value);
-      if (state?.sourceDid === sourceDid && state.protocol === protocol) {
+      if (state?.sourceDid === sourceDid && state.module === module) {
         states.push(state);
       }
     }
@@ -134,8 +134,8 @@ export class AudienceKeyDeliveryStoreLevel implements AudienceKeyDeliveryStore {
     }
   }
 
-  private runForScope<T>(sourceDid: string, protocol: string, operation: () => Promise<T>): Promise<T> {
-    const key = JSON.stringify([sourceDid, protocol]);
+  private runForScope<T>(sourceDid: string, module: string, operation: () => Promise<T>): Promise<T> {
+    const key = JSON.stringify([sourceDid, module]);
     return runSerializedByKey(
       this._pendingOperations,
       key,

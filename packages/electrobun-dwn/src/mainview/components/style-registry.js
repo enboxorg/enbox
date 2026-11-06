@@ -18,7 +18,7 @@ async function getOrCreateComponentStyleSheet(componentName, cssUrl) {
   const stylesheetPromise = (async () => {
     const response = await fetch(cssUrl);
     const stylesheetText = await response.text();
-    // Custom protocols like `views://` may not map `ok` reliably, even when
+    // Custom modules like `views://` may not map `ok` reliably, even when
     // the body is valid. Treat empty content as the actual failure signal.
     if (!response.ok && stylesheetText.trim().length === 0) {
       throw new Error(`Failed to load stylesheet for ${componentName} (${response.status})`);

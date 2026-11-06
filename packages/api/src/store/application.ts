@@ -1,7 +1,7 @@
 import type { Enbox } from '../enbox.js';
 import type { StoreScope } from './scope.js';
-import type { TypedProtocol } from '../protocol-types.js';
-import type { ApplicationManifest, ApplicationManifestProtocolInput } from '../application-manifest.js';
+import type { TypedModule } from '../module-types.js';
+import type { ApplicationManifest, ApplicationManifestModuleInput } from '../application-manifest.js';
 import type { ConnectionSnapshot, ConnectionStore } from '../connection-store.js';
 import type { StoreDefinition, StoreDefinitions, StoreInstance } from './definition.js';
 
@@ -12,8 +12,8 @@ import { StoreNotConnectedError, StoreRetiredError } from './scope.js';
 /** Register features and construct the native connection from their derived manifest. */
 export type CreateApplicationOptions<Stores extends StoreDefinitions = StoreDefinitions> = {
   stores: Stores;
-  /** Additional protocols and explicit permission overrides for store dependencies. */
-  protocols?: readonly ApplicationManifestProtocolInput[];
+  /** Additional modules and explicit permission overrides for store dependencies. */
+  modules?: readonly ApplicationManifestModuleInput[];
   /** Called once after validating dependencies; the application owns the returned connection. */
   connection(manifest: ApplicationManifest): ConnectionStore;
 };
@@ -21,41 +21,41 @@ export type CreateApplicationOptions<Stores extends StoreDefinitions = StoreDefi
 /** Compose dependencies before any native connection or feature instance is constructed. */
 function createManifest(
   definitions: ReadonlySet<StoreDefinition>,
-  explicitProtocols: readonly ApplicationManifestProtocolInput[] = [],
+  explicitModules: readonly ApplicationManifestModuleInput[] = [],
 ): ApplicationManifest {
-  const protocols = new Map<string, TypedProtocol>();
+  const modules = new Map<string, TypedModule>();
   for (const definition of definitions) {
-    for (const protocol of Object.values(definition.protocols)) {
-      const uri = protocol.definition.protocol;
-      const previous = protocols.get(uri);
-      if (previous !== undefined && previous !== protocol) {
-        throw new TypeError(`createApplication: conflicting typed protocols for '${uri}'. Share one protocol definition between stores.`);
+    for (const module of Object.values(definition.modules)) {
+      const uri = module.definition.module;
+      const previous = modules.get(uri);
+      if (previous !== undefined && previous !== module) {
+        throw new TypeError(`createApplication: conflicting typed modules for '${uri}'. Share one module definition between stores.`);
       }
-      protocols.set(uri, protocol);
+      modules.set(uri, module);
     }
   }
-  const overrides = new Map<string, ApplicationManifestProtocolInput>();
-  for (const input of explicitProtocols) {
-    const protocol = 'definition' in input ? input : input.protocol;
-    const uri = protocol.definition.protocol;
+  const overrides = new Map<string, ApplicationManifestModuleInput>();
+  for (const input of explicitModules) {
+    const module = 'definition' in input ? input : input.module;
+    const uri = module.definition.module;
     if (overrides.has(uri)) {
-      throw new TypeError(`createApplication: duplicate explicit protocol '${uri}'.`);
+      throw new TypeError(`createApplication: duplicate explicit module '${uri}'.`);
     }
-    const dependency = protocols.get(uri);
-    if (dependency !== undefined && dependency !== protocol) {
-      throw new TypeError(`createApplication: explicit protocol '${uri}' conflicts with a store dependency.`);
+    const dependency = modules.get(uri);
+    if (dependency !== undefined && dependency !== module) {
+      throw new TypeError(`createApplication: explicit module '${uri}' conflicts with a store dependency.`);
     }
     overrides.set(uri, input);
-    protocols.set(uri, protocol);
+    modules.set(uri, module);
   }
   return defineApplicationManifest({
-    protocols: [...protocols.entries()].map(([uri, protocol]): ApplicationManifestProtocolInput => overrides.get(uri) ?? protocol),
+    modules: [...modules.entries()].map(([uri, module]): ApplicationManifestModuleInput => overrides.get(uri) ?? module),
   });
 }
 
 /** Own session-scoped features and the native connection's lifetime. */
 export interface ApplicationRuntime {
-  /** The protocol and permission manifest derived from the registered features. */
+  /** The module and permission manifest derived from the registered features. */
   readonly manifest: ApplicationManifest;
   /** The authoritative connection state and actions, including connect and disconnect. */
   readonly connection: ConnectionStore;
@@ -93,7 +93,7 @@ export function createApplication<const Stores extends StoreDefinitions>(
   options: CreateApplicationOptions<Stores>,
 ): ApplicationRuntime {
   const definitions = collectStores(options.stores);
-  const manifest = createManifest(definitions, options.protocols);
+  const manifest = createManifest(definitions, options.modules);
   return new HeadlessApplication(definitions, manifest, options.connection(manifest));
 }
 

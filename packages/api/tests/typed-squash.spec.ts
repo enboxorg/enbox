@@ -1,10 +1,10 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 import type { DwnApi, RecordsWriteRequest } from '../src/dwn-api.js';
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
@@ -14,12 +14,12 @@ import { TypedEnbox } from '../src/typed-enbox.js';
 // network: they capture the request handed to `_dwn.records.write` via a fake
 // DwnApi, so they verify the forwarding contract directly and deterministically.
 // (End-to-end squash *behavior* — compaction, backstop — is covered against a
-// real DWN in typed-protocol.spec.ts and exhaustively in dwn-sdk-js's
+// real DWN in typed-module.spec.ts and exhaustively in dwn-sdk-js's
 // records-squash.spec.ts.)
 // ---------------------------------------------------------------------------
 
 const SquashDefinition = {
-  protocol  : 'https://example.com/protocols/squash-unit',
+  module    : 'https://example.com/modules/squash-unit',
   published : true,
   types     : {
     doc      : { schema: 'https://example.com/schemas/doc', dataFormats: ['application/json'] },
@@ -35,9 +35,9 @@ const SquashDefinition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const SquashProtocol = defineProtocol(SquashDefinition, {
+const SquashModule = defineModule(SquashDefinition, {
   doc      : recordCodecs.json<{ n?: string }>(),
   snapshot : recordCodecs.json<{ v?: string }>(),
 });
@@ -61,11 +61,11 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
   let dwn: DwnApi;
   let record: Record;
   let writes: RecordsWriteRequest[];
-  let typed: TypedEnbox<typeof SquashDefinition, typeof SquashProtocol.codecs>;
+  let typed: TypedEnbox<typeof SquashDefinition, typeof SquashModule.codecs>;
 
   beforeEach(() => {
     ({ dwn, record, writes } = makeCapturingDwn());
-    typed = new TypedEnbox(dwn, SquashProtocol);
+    typed = new TypedEnbox(dwn, SquashModule);
     // Skip auto-configure: _ensureReady() then only validates the path against
     // the in-memory definition (no agent/DWN calls).
     (typed as unknown as { _configured: boolean })._configured = true;
@@ -96,7 +96,7 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
       squash          : true,
       parentContextId : 'parent-ctx',
       recipient       : 'did:example:bob',
-      protocolRole    : 'collaborator',
+      moduleRole      : 'collaborator',
       tags            : { kind: 'snapshot' },
       published       : true,
     });
@@ -105,13 +105,13 @@ describe('TypedEnbox create() — squash forwarding (#972)', () => {
     expect(req.squash).toBe(true);
     expect(req.parentContextId).toBe('parent-ctx');
     expect(req.recipient).toBe('did:example:bob');
-    expect(req.protocolRole).toBe('collaborator');
+    expect(req.moduleRole).toBe('collaborator');
     expect(req.tags).toEqual({ kind: 'snapshot' });
     expect(req.published).toBe(true);
     expect(req.dataFormat).toBe('application/json');
-    // protocol + path are auto-injected from the definition
-    expect(req.protocol).toBe(SquashDefinition.protocol);
-    expect(req.protocolPath).toBe('doc/snapshot');
+    // module + path are auto-injected from the definition
+    expect(req.module).toBe(SquashDefinition.module);
+    expect(req.modulePath).toBe('doc/snapshot');
   });
 
   it('scopes squash per-call — only the create that sets it carries it', async () => {

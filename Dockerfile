@@ -39,8 +39,8 @@ COPY packages/browser/package.json           packages/browser/
 COPY packages/cli/package.json               packages/cli/
 COPY packages/connect/package.json           packages/connect/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
-COPY packages/protocols/package.json         packages/protocols/
-COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/modules/package.json         packages/modules/
+COPY packages/module-codegen/package.json  packages/module-codegen/
 COPY packages/local-node/package.json        packages/local-node/
 COPY apps/docs/package.json                  apps/docs/
 
@@ -88,8 +88,8 @@ COPY packages/browser/package.json           packages/browser/
 COPY packages/cli/package.json               packages/cli/
 COPY packages/connect/package.json           packages/connect/
 COPY packages/electrobun-dwn/package.json    packages/electrobun-dwn/
-COPY packages/protocols/package.json         packages/protocols/
-COPY packages/protocol-codegen/package.json  packages/protocol-codegen/
+COPY packages/modules/package.json         packages/modules/
+COPY packages/module-codegen/package.json  packages/module-codegen/
 COPY packages/local-node/package.json        packages/local-node/
 COPY apps/docs/package.json                  apps/docs/
 

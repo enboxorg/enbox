@@ -1,5 +1,5 @@
 /**
- * Tests for `WalletConnect.initClient()` and `WalletConnect.createPermissionRequestForProtocol()`.
+ * Tests for `WalletConnect.initClient()` and `WalletConnect.createPermissionRequestForModule()`.
  *
  * `initClient` rides the `@enbox/connect` kernel (`ConnectClient` over
  * `RelayClientTransport`), so these tests run the full sealed-envelope
@@ -8,7 +8,7 @@
  * a real response with `ConnectProvider`.
  */
 
-import type { DwnProtocolDefinition } from '@enbox/agent';
+import type { DwnModuleDefinition } from '@enbox/agent';
 import type { WalletConnectClientOptions } from '../src/wallet-connect-client.js';
 import type { ConnectRequest, ConnectResponse } from '@enbox/connect';
 
@@ -27,6 +27,13 @@ const connectServerUrl = 'https://relay.test/connect';
 const walletUri = 'https://wallet.test/connect/app';
 const relayRequestUri = 'https://relay.test/connect/authorize/req-1.jwt';
 const pin = '1234';
+
+const TestModuleDefinition = {
+  module    : 'https://example.com/modules/wallet-connect-test',
+  published : false,
+  types     : {},
+  structure : {},
+} satisfies DwnModuleDefinition;
 
 const delegateGrants = [{ recordId: 'grant-1' }] as any;
 
@@ -168,7 +175,7 @@ describe('WalletConnect', () => {
   });
 
   describe('owner authentication', () => {
-    it('returns verified identity-only completion without delegate credentials or requested protocols', async () => {
+    it('returns verified identity-only completion without delegate credentials or requested modules', async () => {
       const owner = await DidJwk.create();
       const authentication = { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() };
       const relay = stubRelay(async (request) => ConnectProvider.sealAuthenticationResponse({
@@ -224,7 +231,7 @@ describe('WalletConnect', () => {
       });
       const result = await WalletConnect.initClient({
         displayName        : 'OAuth and data', walletUri, connectServerUrl, authentication,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
       });
       expect(result?.authentication?.subject).toBe(owner.uri);
@@ -238,7 +245,7 @@ describe('WalletConnect', () => {
       await expect(WalletConnect.initClient({
         displayName        : 'OAuth and data', walletUri, connectServerUrl,
         authentication     : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
       })).rejects.toThrow();
     });
@@ -268,7 +275,7 @@ describe('WalletConnect', () => {
         displayName                : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests         : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests         : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady           : relay.onWalletUriReady,
         validatePin                : async (): Promise<string> => { pinPrompts.push(1); return pin; },
         applicationId              : 'com.example.test',
@@ -312,7 +319,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -332,7 +339,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : (): void => {},
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -362,7 +369,7 @@ describe('WalletConnect', () => {
         displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests  : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : relay.onWalletUriReady,
         validatePin         : async (): Promise<string> => pin,
         delegatePortableDid,
@@ -382,7 +389,7 @@ describe('WalletConnect', () => {
         displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests  : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : (): void => {},
         validatePin         : async (): Promise<string> => pin,
         delegatePortableDid : {
@@ -401,7 +408,7 @@ describe('WalletConnect', () => {
         displayName          : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests   : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
         validatePin          : async (): Promise<string> => pin,
         preSupplyDelegateDid : true,
@@ -417,7 +424,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -435,7 +442,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -450,7 +457,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin,
         pollIntervalMs     : 1,
@@ -472,7 +479,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : relay.onWalletUriReady,
         validatePin        : async (): Promise<string> => pin,
         pollIntervalMs     : 1,
@@ -498,7 +505,7 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : (): void => {},
         validatePin        : async (): Promise<string> => pin,
         timeoutMs          : 5,
@@ -516,18 +523,18 @@ describe('WalletConnect', () => {
         displayName        : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ protocolDefinition: {} as any, permissionScopes: [] as any }],
+        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady   : (): void => {},
         validatePin        : async (): Promise<string> => pin,
       })).rejects.toThrow('Connect: pushed authorization request failed with HTTP 400.');
     });
   });
 
-  describe('createPermissionRequestForProtocol', () => {
+  describe('createPermissionRequestForModule', () => {
     it('should add sync permissions to all requests', async () => {
-      const protocol: DwnProtocolDefinition = {
+      const module: DwnModuleDefinition = {
         published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
+        module    : 'https://exmaple.org/modules/social',
         types     : {
           note: {
             schema      : 'https://example.org/schemas/note',
@@ -539,27 +546,27 @@ describe('WalletConnect', () => {
         }
       };
 
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition  : protocol,
+      const permissionRequests = WalletConnect.createPermissionRequestForModule({
+        definition  : module,
         permissions : [],
       });
 
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
-      // Messages.Read (unified: covers Read, Query, Subscribe) + Protocols.Query
+      expect(permissionRequests.moduleDefinition).toEqual(module);
+      // Messages.Read (unified: covers Read, Query, Subscribe) + Modules.Query
       expect(permissionRequests.permissionScopes).toHaveLength(2);
       const scopes = permissionRequests.permissionScopes;
       expect(scopes.find(
         (scope) => scope.interface === DwnInterfaceName.Messages && scope.method === DwnMethodName.Read
       )).toBeDefined();
       expect(scopes.find(
-        (scope) => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
+        (scope) => scope.interface === DwnInterfaceName.Modules && scope.method === DwnMethodName.Query
       )).toBeDefined();
     });
 
     it('should add requested permissions to the request', async () => {
-      const protocol: DwnProtocolDefinition = {
+      const module: DwnModuleDefinition = {
         published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
+        module    : 'https://exmaple.org/modules/social',
         types     : {
           note: {
             schema      : 'https://example.org/schemas/note',
@@ -571,14 +578,14 @@ describe('WalletConnect', () => {
         }
       };
 
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition  : protocol,
+      const permissionRequests = WalletConnect.createPermissionRequestForModule({
+        definition  : module,
         permissions : ['write', 'read'],
       });
 
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
+      expect(permissionRequests.moduleDefinition).toEqual(module);
 
-      // Messages.Read (unified) + 2 requested Records permissions + Protocols.Query
+      // Messages.Read (unified) + 2 requested Records permissions + Modules.Query
       expect(permissionRequests.permissionScopes).toHaveLength(4);
       expect(permissionRequests.permissionScopes.find(
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Read
@@ -589,9 +596,9 @@ describe('WalletConnect', () => {
     });
 
     it('supports requesting `read`, `write`, and `delete` permissions', async () => {
-      const protocol: DwnProtocolDefinition = {
+      const module: DwnModuleDefinition = {
         published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
+        module    : 'https://exmaple.org/modules/social',
         types     : {
           note: {
             schema      : 'https://example.org/schemas/note',
@@ -603,14 +610,14 @@ describe('WalletConnect', () => {
         }
       };
 
-      const permissionRequests = WalletConnect.createPermissionRequestForProtocol({
-        definition  : protocol,
+      const permissionRequests = WalletConnect.createPermissionRequestForModule({
+        definition  : module,
         permissions : ['write', 'read', 'delete'],
       });
 
-      expect(permissionRequests.protocolDefinition).toEqual(protocol);
+      expect(permissionRequests.moduleDefinition).toEqual(module);
 
-      // Messages.Read (unified) + 3 requested Records permissions + Protocols.Query
+      // Messages.Read (unified) + 3 requested Records permissions + Modules.Query
       expect(permissionRequests.permissionScopes).toHaveLength(5);
       const ps = permissionRequests.permissionScopes;
       expect(ps.find(
@@ -623,10 +630,10 @@ describe('WalletConnect', () => {
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Delete
       )).toBeDefined();
       expect(ps.find(
-        (scope) => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Query
+        (scope) => scope.interface === DwnInterfaceName.Modules && scope.method === DwnMethodName.Query
       )).toBeDefined();
       expect(ps.find(
-        (scope) => scope.interface === DwnInterfaceName.Protocols && scope.method === DwnMethodName.Configure
+        (scope) => scope.interface === DwnInterfaceName.Modules && scope.method === DwnMethodName.Configure
       )).toBeUndefined();
       expect(ps.find(
         (scope) => scope.interface === DwnInterfaceName.Records && scope.method === DwnMethodName.Query
@@ -637,9 +644,9 @@ describe('WalletConnect', () => {
     });
 
     it('rejects unsupported runtime permission names', () => {
-      const protocol: DwnProtocolDefinition = {
+      const module: DwnModuleDefinition = {
         published : true,
-        protocol  : 'https://exmaple.org/protocols/social',
+        module    : 'https://exmaple.org/modules/social',
         types     : {
           note: {
             schema      : 'https://example.org/schemas/note',
@@ -652,8 +659,8 @@ describe('WalletConnect', () => {
       };
 
       for (const permission of ['query', 'subscribe', 'configure']) {
-        expect(() => WalletConnect.createPermissionRequestForProtocol({
-          definition  : protocol,
+        expect(() => WalletConnect.createPermissionRequestForModule({
+          definition  : module,
           permissions : [permission] as any,
         })).toThrow('Supported permissions: read, write, delete');
       }

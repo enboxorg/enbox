@@ -39,7 +39,7 @@ export type StartsWithFilter = {
 
 /**
  * Selects one hierarchical path and every proper `/`-delimited descendant.
- * Supported only for the `contextId` and `protocolPath` indexes.
+ * Supported only for the `contextId` and `modulePath` indexes.
  */
 export type SubtreeFilter = {
   subtree: string;

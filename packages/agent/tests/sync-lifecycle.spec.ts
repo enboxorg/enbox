@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { computeProjectionId } from '../src/types/sync.js';
+import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { SyncPushFailuresError, SyncRunCancelledError } from '../src/sync-runtime-errors.js';
@@ -59,12 +60,14 @@ describe('SyncEngineLevel lifecycle', () => {
   beforeEach(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-lifecycle-spec');
     await db.open();
+    await ensureSyncStoreFormat(db, 'sync-lifecycle.spec.ts');
   });
 
   afterEach(async () => {
     sinon.restore();
     if (db.status === 'open') {
       await db.clear();
+      await ensureSyncStoreFormat(db, 'sync-lifecycle.spec.ts');
     }
     if (db.status !== 'closed') {
       await db.close();
@@ -103,7 +106,7 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should wait for an active sync before clearing durable state', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
-    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ modules: 'all' }));
 
     const syncStarted = createDeferred();
     const releaseSync = createDeferred();
@@ -132,8 +135,9 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should time out close without closing storage later after the active sync settles', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const syncStarted = createDeferred();
     const releaseSync = createDeferred();
     sinon.stub(engine as never, 'getSyncTargets').callsFake(async (): Promise<[]> => {
@@ -161,8 +165,9 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should retain a timed-out subscription close across lifecycle retries', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
     const { controller } = activateAdministrativeLink(engine, 'did:example:alice', 'initializing');
@@ -197,8 +202,9 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should share one close deadline across subscription and sync-lock waits', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
     const { controller } = activateAdministrativeLink(engine, 'did:example:alice', 'initializing');
@@ -236,8 +242,9 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should never run a close that times out behind an earlier lifecycle transition', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const startEntered = createDeferred();
     const releaseStart = createDeferred();
     sinon.stub(engine as never, 'startLiveSync').callsFake(async (): Promise<void> => {
@@ -264,12 +271,13 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should time out clear without deleting durable state later after background work settles', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
 
     const task = engine['_lifecycle'].runBackgroundTask(async (): Promise<void> => {
       taskStarted.resolve();
@@ -307,13 +315,14 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should cancel a registration that times out behind another sync owner', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
 
     const registration = engine.setIdentityOptions(
-      { did, options: { protocols: 'all' } },
+      { did, options: { modules: 'all' } },
       { timeout: 100 },
     );
     const registrationOutcome = registration.catch((error: unknown): unknown => error);
@@ -324,13 +333,14 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
   it('should cancel a registration that times out behind a cross-context identity mutation', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseLock = createDeferred();
     const lockStarted = createDeferred();
@@ -342,7 +352,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await lockStarted.promise;
 
     const registration = engine.setIdentityOptions(
-      { did, options: { protocols: 'all' } },
+      { did, options: { modules: 'all' } },
       { timeout: 100 },
     );
     const registrationOutcome = registration.catch((error: unknown): unknown => error);
@@ -354,13 +364,14 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
   it('should not persist a registration after its preparation times out', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseValidation = createDeferred();
     const validationStarted = createDeferred();
@@ -370,7 +381,7 @@ describe('SyncEngineLevel lifecycle', () => {
     });
 
     const registration = engine.setIdentityOptions(
-      { did, options: { protocols: 'all' } },
+      { did, options: { modules: 'all' } },
       { timeout: 100 },
     );
     const registrationOutcome = registration.catch((error: unknown): unknown => error);
@@ -384,17 +395,18 @@ describe('SyncEngineLevel lifecycle', () => {
     await clock.tickAsync(0);
     expect(await engine.getIdentityOptions(did)).toBeUndefined();
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } }, { timeout: 100 });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } }, { timeout: 100 });
     expect(await engine.getIdentityOptions(did)).toBeDefined();
   });
 
   it('should preserve an identity when stopped-runtime work does not drain before unregister timeout', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
 
     const taskGroup = engine['_lifecycle'].getIdentityTaskGroup(did);
     const settleStarted = createDeferred();
@@ -427,10 +439,11 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should finish unregister atomically after its preparation consumes almost all of the deadline', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
 
     const identityStore = engine['_identityStore'];
     const getIdentity = identityStore.get.bind(identityStore);
@@ -467,11 +480,12 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should preserve old identity options when live work does not drain before update timeout', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
-    const oldOptions = { protocols: 'all' as const };
-    const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
+    const oldOptions = { modules: 'all' as const };
+    const updatedOptions = { modules: 'all' as const, delegateDid: 'did:example:delegate' };
     const releaseTask = createDeferred();
     const taskStarted = createDeferred();
     await engine.setIdentityOptions({ did, options: oldOptions });
@@ -642,8 +656,9 @@ describe('SyncEngineLevel lifecycle', () => {
   });
 
   it('should recover exhausted durable repairs through sync, settle, and explicit retry', async () => {
-    const clock = sinon.useFakeTimers();
     const engine = new SyncEngineLevel({ db });
+    await engine['ensureStoreFormat']();
+    const clock = sinon.useFakeTimers();
     const internal = engine as any;
     const tenantDid = 'did:example:repair-retry';
     const remoteEndpoint = 'https://repair.example.com';
@@ -753,7 +768,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const linkKey = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
     internal._runtime = new SyncRuntime(true);
     const controller = internal.activateLink(linkKey, link);
-    await internal._identityStore.set(tenantDid, { protocols: 'all' });
+    await internal._identityStore.set(tenantDid, { modules: 'all' });
     sinon.stub(internal.targetResolver, 'buildTargetsForEndpoint').resolves([target]);
     const pullSubscription = sinon.stub(internal, 'openLivePullSubscription').resolves(true);
     const pushSubscription = sinon.stub(internal, 'openLocalPushSubscription').resolves(true);
@@ -1041,16 +1056,16 @@ describe('SyncEngineLevel lifecycle', () => {
       authorization: {
         kind         : 'role',
         actorDid     : 'did:example:member',
-        protocolRole : 'notebook/viewer',
+        moduleRole   : 'notebook/viewer',
         roleRecordId : 'role-record',
       },
       authorizationEpoch : 'role-epoch',
       remoteEndpoint,
       scope              : {
-        kind          : 'context',
-        contextId     : 'notebook-a',
-        protocol      : 'https://example.com/notebooks',
-        protocolPaths : ['notebook', 'notebook/page'],
+        kind        : 'context',
+        contextId   : 'notebook-a',
+        module      : 'https://example.com/notebooks',
+        modulePaths : ['notebook', 'notebook/page'],
       },
       tenantDid: sourceDid,
     });
@@ -1095,7 +1110,7 @@ describe('SyncEngineLevel lifecycle', () => {
       did                : tenantDid,
       dwnUrl             : remoteEndpoint,
       projectionId       : `projection-${suffix}`,
-      scope              : { kind: 'protocolSet', protocols: [`https://example.com/protocol-${suffix}`] },
+      scope              : { kind: 'moduleSet', modules: [`https://example.com/module-${suffix}`] },
     }));
     sinon.stub(internal, 'getSyncTargets').resolves(targets);
     sinon.stub(internal, 'getExistingReplicationLink').callsFake(async (target: SyncTarget) => ({
@@ -1302,13 +1317,13 @@ describe('SyncEngineLevel lifecycle', () => {
 
     const firstSet = engine.setIdentityOptions({
       did     : 'did:example:alice',
-      options : { protocols: ['old'] },
+      options : { modules: ['old'] },
     });
     await validationStarted.promise;
 
     const competingSet = engine.setIdentityOptions({
       did     : 'did:example:alice',
-      options : { protocols: ['new'] },
+      options : { modules: ['new'] },
     });
     await Promise.resolve();
 
@@ -1317,7 +1332,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await firstSet;
     await competingSet;
 
-    expect(await readIdentityOptions('did:example:alice')).toEqual({ protocols: ['new'] });
+    expect(await readIdentityOptions('did:example:alice')).toEqual({ modules: ['new'] });
   });
 
   it('should wait for a lock-owning sync before starting an identity mutation', async () => {
@@ -1336,7 +1351,7 @@ describe('SyncEngineLevel lifecycle', () => {
     await syncStarted.promise;
     const registrationPromise = engine.setIdentityOptions({
       did     : 'did:example:alice',
-      options : { protocols: 'all' },
+      options : { modules: 'all' },
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -1371,7 +1386,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : did,
     };
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     engine['activateLink'](linkKey, link as never);
     sinon.stub(engine['replicationLinkStore'], 'setStatus').callsFake(async (): Promise<void> => {
@@ -1486,7 +1501,7 @@ describe('SyncEngineLevel lifecycle', () => {
       tenantDid          : did,
     };
 
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     const controller = engine['activateLink'](linkKey, link as never);
     controller.markReplicationReady();
@@ -1509,7 +1524,7 @@ describe('SyncEngineLevel lifecycle', () => {
     expect(scheduled).toBe(true);
     await reconcileStarted.promise;
 
-    const updatedOptions = { protocols: 'all' as const, delegateDid: 'did:example:delegate' };
+    const updatedOptions = { modules: 'all' as const, delegateDid: 'did:example:delegate' };
     const updatePromise = engine.setIdentityOptions({ did, options: updatedOptions });
     await removeStarted.promise;
 
@@ -1534,7 +1549,7 @@ describe('SyncEngineLevel lifecycle', () => {
     const releasePush = createDeferred();
     const removeStarted = createDeferred();
     const did = 'did:example:alice';
-    await engine.setIdentityOptions({ did, options: { protocols: 'all' } });
+    await engine.setIdentityOptions({ did, options: { modules: 'all' } });
     engine['_runtime'] = new SyncRuntime(true);
     const linkKey = `${did}^https://dwn.example.com^projection-1^authorization-1`;
     const controller = engine['activateLink'](linkKey, {
@@ -1797,7 +1812,7 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should exclude one-shot sync from the clear() destructive phase and cancel the joined run', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
-    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ modules: 'all' }));
 
     const wipeStarted = createDeferred();
     const releaseWipe = createDeferred();
@@ -1832,7 +1847,7 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should cancel a sync joined during the close() destructive phase instead of failing on closed storage', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
-    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ modules: 'all' }));
 
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
@@ -1861,7 +1876,7 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should cancel a joined sync even when the destructive close() operation fails', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
-    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ modules: 'all' }));
 
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
@@ -1894,7 +1909,7 @@ describe('SyncEngineLevel lifecycle', () => {
   it('should trip stopped-state fences and cancel a stopped-state queued sync on the next transition', async () => {
     const engine = new SyncEngineLevel({ db });
     const registeredIdentities = db.sublevel<string, string>('registeredIdentities');
-    await registeredIdentities.put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await registeredIdentities.put('did:example:alice', JSON.stringify({ modules: 'all' }));
     const getSyncTargets = sinon.stub(engine as never, 'getSyncTargets').resolves([]);
 
     // Stop the engine: the current runtime is disposed but stays installed.

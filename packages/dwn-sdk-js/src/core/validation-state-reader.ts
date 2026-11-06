@@ -1,16 +1,16 @@
-import type { CoreProtocolRegistry } from './core-protocol.js';
+import type { CoreModuleRegistry } from './core-module.js';
 import type { DataStore } from '../types/data-store.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessageStore } from '../types/message-store.js';
-import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { ModuleDefinition } from '../types/modules-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH } from './constants.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
-import { queryProtocolConfigure } from './protocol-configure-lookup.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
+import { PermissionsModule } from '../modules/permissions.js';
+import { queryModuleConfigure } from './module-configure-lookup.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -24,16 +24,16 @@ import { fetchInitialRecordsWrite, fetchInitialRecordsWriteMessage, getInitialWr
 export class StoreValidationStateReader implements ValidationStateReader {
   private readonly messageStore: MessageStore;
   private readonly dataStore: DataStore;
-  private readonly coreProtocols?: CoreProtocolRegistry;
+  private readonly coreModules?: CoreModuleRegistry;
 
   public constructor(input: {
     messageStore: MessageStore;
     dataStore: DataStore;
-    coreProtocols?: CoreProtocolRegistry;
+    coreModules?: CoreModuleRegistry;
   }) {
     this.messageStore = input.messageStore;
     this.dataStore = input.dataStore;
-    this.coreProtocols = input.coreProtocols;
+    this.coreModules = input.coreModules;
   }
 
   /** @inheritdoc */
@@ -73,12 +73,12 @@ export class StoreValidationStateReader implements ValidationStateReader {
       const initialWrite = await this.fetchInitialWrite(tenant, currentRecordId);
 
       // RecordsWrite needed should be available since we perform necessary checks at the time of writes,
-      // eg. check the immediate parent in `verifyProtocolPathAndContextId` at the time of writing,
+      // eg. check the immediate parent in `verifyModulePathAndContextId` at the time of writing,
       // so if this condition is triggered, it means there is an unexpected bug that caused an incomplete chain.
       // We add additional defensive check here because returning an unexpected/incorrect record chain could lead to security vulnerabilities.
       if (initialWrite === undefined) {
         throw new DwnError(
-          DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain,
+          DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain,
           `Unexpected error that should never trigger: no parent found with ID ${currentRecordId} when constructing record chain.`
         );
       }
@@ -93,13 +93,13 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async fetchParentRecord(input: {
     tenant: string;
-    parentProtocolUri: string;
+    parentModuleUri: string;
     parentId: string;
   }): Promise<RecordsWriteMessage | undefined> {
-    const { tenant, parentProtocolUri, parentId } = input;
+    const { tenant, parentModuleUri, parentId } = input;
 
     const initialWrite = await fetchInitialRecordsWriteMessage(this.messageStore, tenant, parentId);
-    if (initialWrite?.descriptor.protocol !== parentProtocolUri) {
+    if (initialWrite?.descriptor.module !== parentModuleUri) {
       return undefined;
     }
 
@@ -118,8 +118,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async hasMatchingRoleRecord(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<boolean> {
@@ -148,8 +148,8 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async queryLatestRoleRecords(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage[]> {
@@ -161,7 +161,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async queryAudienceRecords(input: {
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId?: string;
@@ -170,9 +170,9 @@ export class StoreValidationStateReader implements ValidationStateReader {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : input.protocol,
-      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      'tag.protocol'    : input.protocol,
+      module            : input.module,
+      modulePath        : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      'tag.module'      : input.module,
       'tag.rolePath'    : input.rolePath,
       'tag.contextId'   : input.contextId,
     };
@@ -199,7 +199,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
 
     if (dwnInterface !== DwnInterfaceName.Records ||
       dwnMethod !== DwnMethodName.Write ||
-      (possibleGrantMessage as RecordsWriteMessage).descriptor.protocolPath !== PermissionsProtocol.grantPath) {
+      (possibleGrantMessage as RecordsWriteMessage).descriptor.modulePath !== PermissionsModule.grantPath) {
       throw new DwnError(
         DwnErrorCode.GrantAuthorizationGrantMissing,
         `Could not find permission grant with record ID ${permissionGrantId}.`
@@ -214,7 +214,7 @@ export class StoreValidationStateReader implements ValidationStateReader {
 
   /** @inheritdoc */
   public async fetchOldestGrantRevocation(tenant: string, permissionGrantId: string): Promise<GenericMessage | undefined> {
-    const query = PermissionsProtocol.grantRevocationFilter(permissionGrantId);
+    const query = PermissionsModule.grantRevocationFilter(permissionGrantId);
     const { messages } = await this.messageStore.query(
       tenant,
       [query],
@@ -231,37 +231,37 @@ export class StoreValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition> {
-    // if the protocol is a registered core protocol, return the definition directly without a store query
-    if (this.coreProtocols !== undefined) {
-      const coreDefinition = this.coreProtocols.getDefinition(protocolUri);
+  public async fetchModuleDefinition(tenant: string, moduleUri: string, messageTimestamp?: string): Promise<ModuleDefinition> {
+    // if the module is a registered core module, return the definition directly without a store query
+    if (this.coreModules !== undefined) {
+      const coreDefinition = this.coreModules.getDefinition(moduleUri);
       if (coreDefinition !== undefined) {
         return coreDefinition;
       }
     }
 
-    // fetch the corresponding protocol definition
-    const protocolMessage = await queryProtocolConfigure(this.messageStore, tenant, protocolUri, messageTimestamp);
-    if (protocolMessage === undefined) {
-      throw new DwnError(DwnErrorCode.ProtocolAuthorizationProtocolNotFound, `unable to find protocol definition for ${protocolUri}`);
+    // fetch the corresponding module definition
+    const moduleMessage = await queryModuleConfigure(this.messageStore, tenant, moduleUri, messageTimestamp);
+    if (moduleMessage === undefined) {
+      throw new DwnError(DwnErrorCode.ModuleAuthorizationModuleNotFound, `unable to find module definition for ${moduleUri}`);
     }
 
-    return protocolMessage.descriptor.definition;
+    return moduleMessage.descriptor.definition;
   }
 
   /** @inheritdoc */
   public async fetchLatestSquashRecordAtScope(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage | undefined> {
     const filter: Filter = {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : input.protocol,
-      protocolPath      : input.protocolPath,
+      module            : input.module,
+      modulePath        : input.modulePath,
       squash            : true,
     };
 
@@ -315,18 +315,18 @@ export class StoreValidationStateReader implements ValidationStateReader {
    * duplicate-role-recipient uniqueness check.
    */
   private static constructRoleRecordFilter(input: {
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
     latestStateOnly: boolean;
   }): Filter {
     const filter: Filter = {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol     : input.protocol,
-      protocolPath : input.protocolPath,
-      recipient    : input.recipient,
+      interface  : DwnInterfaceName.Records,
+      method     : DwnMethodName.Write,
+      module     : input.module,
+      modulePath : input.modulePath,
+      recipient  : input.recipient,
     };
 
     if (input.latestStateOnly) {

@@ -13,7 +13,7 @@ describe('storage', () => {
       expect(dialect).toBeDefined();
     });
 
-    it('should throw for an unsupported protocol', () => {
+    it('should throw for an unsupported module', () => {
       expect(() => getDialectFromUrl(new URL('redis://localhost:6379'))).toThrow('Unsupported database protocol');
     });
   });

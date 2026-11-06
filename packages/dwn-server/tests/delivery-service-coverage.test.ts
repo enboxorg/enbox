@@ -1,6 +1,6 @@
 import type { DwnServerConfig } from '../src/config.js';
 import type { DidDocument, DidResolutionResult, DidResolver } from '@enbox/dids';
-import type { Dwn, GenericMessage, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -112,10 +112,10 @@ function didDocWithSingleEndpoint(did: string, endpoint: string): DidDocument {
   } as DidDocument;
 }
 
-/** A RecordsWrite message with protocol fields for delivery tests. */
-function protocolWriteMessage(opts: {
-  protocol?: string;
-  protocolPath?: string;
+/** A RecordsWrite message with module fields for delivery tests. */
+function moduleWriteMessage(opts: {
+  module?: string;
+  modulePath?: string;
   contextId?: string;
   recordId?: string;
   recipient?: string;
@@ -125,8 +125,8 @@ function protocolWriteMessage(opts: {
       interface        : DwnInterfaceName.Records,
       method           : DwnMethodName.Write,
       messageTimestamp : new Date().toISOString(),
-      protocol         : opts.protocol,
-      protocolPath     : opts.protocolPath,
+      module           : opts.module,
+      modulePath       : opts.modulePath,
       contextId        : opts.contextId,
       recipient        : opts.recipient,
     },
@@ -192,11 +192,11 @@ function base64UrlEncode(obj: Record<string, unknown>): string {
 function ancestorEntry(opts: { author: string; recipient?: string }): Record<string, unknown> {
   return {
     descriptor: {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol     : 'http://example.com/social',
-      protocolPath : 'friend',
-      recipient    : opts.recipient,
+      interface  : DwnInterfaceName.Records,
+      method     : DwnMethodName.Write,
+      module     : 'http://example.com/social',
+      modulePath : 'friend',
+      recipient  : opts.recipient,
     },
     authorization: {
       signature: {
@@ -708,8 +708,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const participant = 'did:test:bob';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : {
           thread      : {},
@@ -730,7 +730,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -763,8 +763,8 @@ describe('DeliveryService — coverage', () => {
           interface        : DwnInterfaceName.Records,
           method           : DwnMethodName.Write,
           messageTimestamp : new Date().toISOString(),
-          protocol         : 'http://example.com/chat',
-          protocolPath     : 'thread/message',
+          module           : 'http://example.com/chat',
+          modulePath       : 'thread/message',
           contextId        : 'ctx-data-1',
           dataCid          : 'bafy-delivered-data',
           dataSize,
@@ -795,7 +795,7 @@ describe('DeliveryService — coverage', () => {
   // -----------------------------------------------------------------------
 
   describe('delivery', () => {
-    it('should not deliver for non-protocol messages', async () => {
+    it('should not deliver for non-module messages', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
@@ -806,20 +806,20 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      // Message without protocol/protocolPath.
+      // Message without module/modulePath.
       svc.dispatchIfNeeded(tenant, recordsWriteMessage(), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
       expect(fetchStub.callCount).toBe(0);
     });
 
-    it('should not deliver when protocol definition is not found', async () => {
+    it('should not deliver when module definition is not found', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
       const processStub = sinon.stub().resolves({
         status  : { code: 200 },
-        entries : [], // no protocol definition found
+        entries : [], // no module definition found
       });
 
       const dwn = mockDwn(processStub);
@@ -829,17 +829,17 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/protocol',
-        protocolPath : 'post',
-        recordId     : 'deliver-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/module',
+        modulePath : 'post',
+        recordId   : 'deliver-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
       expect(fetchStub.callCount).toBe(0);
     });
 
-    it('should not deliver when protocol query returns error', async () => {
+    it('should not deliver when module query returns error', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
@@ -855,10 +855,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/protocol',
-        protocolPath : 'post',
-        recordId     : 'deliver-2',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/module',
+        modulePath : 'post',
+        recordId   : 'deliver-2',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
@@ -869,8 +869,8 @@ describe('DeliveryService — coverage', () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/protocol',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/module',
         published : true,
         types     : { post: {} },
         structure : { post: {} }, // no $delivery
@@ -878,7 +878,7 @@ describe('DeliveryService — coverage', () => {
 
       const processStub = sinon.stub().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
 
       const dwn = mockDwn(processStub);
@@ -888,10 +888,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/protocol',
-        protocolPath : 'post',
-        recordId     : 'deliver-3',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/module',
+        modulePath : 'post',
+        recordId   : 'deliver-3',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
@@ -906,8 +906,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const participant = 'did:test:bob';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : {
           thread      : {},
@@ -925,12 +925,12 @@ describe('DeliveryService — coverage', () => {
         },
       };
 
-      // First call: ProtocolsQuery returns definition.
+      // First call: ModulesQuery returns definition.
       // Second call: RecordsQuery returns role records with recipients.
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -949,11 +949,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'thread/message',
-        contextId    : 'ctx-1',
-        recordId     : 'deliver-direct-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'thread/message',
+        contextId  : 'ctx-1',
+        recordId   : 'deliver-direct-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -970,10 +970,10 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const recipient = 'did:test:carol';
 
-      // Protocol with $delivery: "direct" but NO role-based $actions rules.
+      // Module with $delivery: "direct" but NO role-based $actions rules.
       // The only delivery target should come from the record's recipient field.
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/dm',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/dm',
         published : true,
         types     : { message: {} },
         structure : {
@@ -986,13 +986,13 @@ describe('DeliveryService — coverage', () => {
         },
       };
 
-      // Call 1: ProtocolsQuery returns definition.
+      // Call 1: ModulesQuery returns definition.
       // Call 2: Ancestor query for `of: "message"` — the actor-based branch also
       //         fires, returning carol as recipient of the ancestor (same record).
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1009,11 +1009,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/dm',
-        protocolPath : 'message',
-        recordId     : 'deliver-recipient-1',
-        recipient    : recipient,
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/dm',
+        modulePath : 'message',
+        recordId   : 'deliver-recipient-1',
+        recipient  : recipient,
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1031,8 +1031,8 @@ describe('DeliveryService — coverage', () => {
       const recipient = 'did:test:bob'; // explicit recipient
       const roleMember = 'did:test:carol'; // discovered via role
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : {
           thread      : {},
@@ -1050,12 +1050,12 @@ describe('DeliveryService — coverage', () => {
         },
       };
 
-      // First call: ProtocolsQuery returns definition.
+      // First call: ModulesQuery returns definition.
       // Second call: RecordsQuery for role records returns carol (and bob is NOT a role member).
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1075,12 +1075,12 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'thread/message',
-        contextId    : 'ctx-1',
-        recordId     : 'deliver-combined-1',
-        recipient    : recipient,
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'thread/message',
+        contextId  : 'ctx-1',
+        recordId   : 'deliver-combined-1',
+        recipient  : recipient,
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1096,8 +1096,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1111,7 +1111,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1128,10 +1128,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'deliver-self-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'deliver-self-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1143,8 +1143,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1158,7 +1158,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1172,10 +1172,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'deliver-no-recip',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'deliver-no-recip',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1187,8 +1187,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1202,7 +1202,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1219,10 +1219,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'deliver-no-ep',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'deliver-no-ep',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1237,8 +1237,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const participant = 'did:test:bob';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1253,7 +1253,7 @@ describe('DeliveryService — coverage', () => {
       // Same setup for both dispatches.
       processStub.resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1275,20 +1275,20 @@ describe('DeliveryService — coverage', () => {
       }));
 
       // First delivery.
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'dedup-test',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'dedup-test',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
       const firstCount = fetchStub.callCount;
 
       // Second delivery with same recordId — should be deduped.
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'dedup-test',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'dedup-test',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1303,8 +1303,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const participant = 'did:test:carol';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1318,7 +1318,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1335,10 +1335,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'top-level-recip',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'top-level-recip',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1350,8 +1350,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1365,7 +1365,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       // Role query throws.
       processStub.onSecondCall().rejects(new Error('query failed'));
@@ -1377,10 +1377,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'role-query-fail',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'role-query-fail',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1388,7 +1388,7 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.callCount).toBe(0);
     });
 
-    it('should handle protocol query throwing an exception', async () => {
+    it('should handle module query throwing an exception', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
@@ -1401,10 +1401,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/protocol',
-        protocolPath : 'post',
-        recordId     : 'protocol-throw',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/module',
+        modulePath : 'post',
+        recordId   : 'module-throw',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1437,8 +1437,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const participant = 'did:test:dave';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : {
           thread      : {},
@@ -1459,7 +1459,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1476,11 +1476,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'thread/message',
-        contextId    : 'ctx-root/sub-context',
-        recordId     : 'nested-ctx-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'thread/message',
+        contextId  : 'ctx-root/sub-context',
+        recordId   : 'nested-ctx-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1492,8 +1492,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/chat',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/chat',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1507,7 +1507,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 401 },
@@ -1521,10 +1521,10 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/chat',
-        protocolPath : 'message',
-        recordId     : 'role-401',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/chat',
+        modulePath : 'message',
+        recordId   : 'role-401',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1545,10 +1545,10 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const friendAuthor = 'did:test:bob';
 
-      // A social protocol where "friend/post" records are delivered to the
+      // A social module where "friend/post" records are delivered to the
       // author of the parent "friend" record.
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/social',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/social',
         published : true,
         types     : { friend: {}, post: {} },
         structure : {
@@ -1561,12 +1561,12 @@ describe('DeliveryService — coverage', () => {
         },
       };
 
-      // Call 1: ProtocolsQuery returns the protocol definition.
+      // Call 1: ModulesQuery returns the module definition.
       // Call 2: RecordsQuery for the ancestor "friend" record returns Bob as author.
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1583,11 +1583,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/social',
-        protocolPath : 'friend/post',
-        contextId    : 'ctx-friend-1/ctx-post-1',
-        recordId     : 'actor-author-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/social',
+        modulePath : 'friend/post',
+        contextId  : 'ctx-friend-1/ctx-post-1',
+        recordId   : 'actor-author-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1603,8 +1603,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const requestRecipient = 'did:test:carol';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/request',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/request',
         published : true,
         types     : { request: {}, response: {} },
         structure : {
@@ -1620,7 +1620,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1637,11 +1637,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/request',
-        protocolPath : 'request/response',
-        contextId    : 'ctx-req/ctx-resp',
-        recordId     : 'actor-recipient-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/request',
+        modulePath : 'request/response',
+        contextId  : 'ctx-req/ctx-resp',
+        recordId   : 'actor-recipient-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1658,8 +1658,8 @@ describe('DeliveryService — coverage', () => {
       const friendAuthor = 'did:test:bob';
       const roleMember = 'did:test:carol';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/social',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/social',
         published : true,
         types     : { friend: {}, moderator: {}, post: {} },
         structure : {
@@ -1683,13 +1683,13 @@ describe('DeliveryService — coverage', () => {
       // first — it skips role (undefined) and enters actor branch.
       //
       // Actual call order:
-      // Call 1: ProtocolsQuery returns definition.
+      // Call 1: ModulesQuery returns definition.
       // Call 2: RecordsQuery for ancestor "friend" (actor-based, processed first).
       // Call 3: RecordsQuery for role recipients (moderator, processed second).
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1711,11 +1711,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/social',
-        protocolPath : 'friend/post',
-        contextId    : 'ctx-friend-1/ctx-post-1',
-        recordId     : 'actor-combined-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/social',
+        modulePath : 'friend/post',
+        contextId  : 'ctx-friend-1/ctx-post-1',
+        recordId   : 'actor-combined-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1734,8 +1734,8 @@ describe('DeliveryService — coverage', () => {
       const tenant = 'did:test:alice';
       const bob = 'did:test:bob'; // bob is both the author AND a role member
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/social',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/social',
         published : true,
         types     : { friend: {}, moderator: {}, post: {} },
         structure : {
@@ -1753,13 +1753,13 @@ describe('DeliveryService — coverage', () => {
       };
 
       // Actor rule is listed first in $actions, so it resolves first:
-      // Call 1: ProtocolsQuery → definition
+      // Call 1: ModulesQuery → definition
       // Call 2: Ancestor query (actor-based) → bob as author
       // Call 3: Role query (role-based) → bob as role recipient
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       processStub.onSecondCall().resolves({
         status  : { code: 200 },
@@ -1780,11 +1780,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/social',
-        protocolPath : 'friend/post',
-        contextId    : 'ctx-friend-1/ctx-post-1',
-        recordId     : 'actor-dedup-1',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/social',
+        modulePath : 'friend/post',
+        contextId  : 'ctx-friend-1/ctx-post-1',
+        recordId   : 'actor-dedup-1',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1798,8 +1798,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/social',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/social',
         published : true,
         types     : { friend: {}, post: {} },
         structure : {
@@ -1815,7 +1815,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       // Ancestor query returns empty — the friend record was deleted or not found.
       processStub.onSecondCall().resolves({
@@ -1830,11 +1830,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/social',
-        protocolPath : 'friend/post',
-        contextId    : 'ctx-friend-1/ctx-post-1',
-        recordId     : 'actor-no-ancestor',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/social',
+        modulePath : 'friend/post',
+        contextId  : 'ctx-friend-1/ctx-post-1',
+        recordId   : 'actor-no-ancestor',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1846,8 +1846,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/social',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/social',
         published : true,
         types     : { friend: {}, post: {} },
         structure : {
@@ -1863,7 +1863,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
       // Ancestor query throws.
       processStub.onSecondCall().rejects(new Error('query failed'));
@@ -1875,11 +1875,11 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/social',
-        protocolPath : 'friend/post',
-        contextId    : 'ctx-friend-1/ctx-post-1',
-        recordId     : 'actor-query-fail',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/social',
+        modulePath : 'friend/post',
+        contextId  : 'ctx-friend-1/ctx-post-1',
+        recordId   : 'actor-query-fail',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
@@ -1887,13 +1887,13 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.callCount).toBe(0);
     });
 
-    it('should skip cross-protocol of references (deferred)', async () => {
+    it('should skip cross-module of references (deferred)', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/composed',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/composed',
         published : true,
         types     : { message: {} },
         structure : {
@@ -1907,9 +1907,9 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
-      // No second call should happen — cross-protocol refs are skipped.
+      // No second call should happen — cross-module refs are skipped.
 
       const dwn = mockDwn(processStub);
       const resolver = fakeResolver({});
@@ -1918,15 +1918,15 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/composed',
-        protocolPath : 'message',
-        contextId    : 'ctx-1',
-        recordId     : 'cross-proto-skip',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/composed',
+        modulePath : 'message',
+        contextId  : 'ctx-1',
+        recordId   : 'cross-module-skip',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
-      // Only the ProtocolsQuery should have been called, not an ancestor query.
+      // Only the ModulesQuery should have been called, not an ancestor query.
       expect(processStub.callCount).toBe(1);
       expect(fetchStub.callCount).toBe(0);
     });
@@ -1936,8 +1936,8 @@ describe('DeliveryService — coverage', () => {
 
       const tenant = 'did:test:alice';
 
-      const protocolDef: ProtocolDefinition = {
-        protocol  : 'http://example.com/public',
+      const moduleDef: ModuleDefinition = {
+        module    : 'http://example.com/public',
         published : true,
         types     : { post: {} },
         structure : {
@@ -1951,7 +1951,7 @@ describe('DeliveryService — coverage', () => {
       const processStub = sinon.stub();
       processStub.onFirstCall().resolves({
         status  : { code: 200 },
-        entries : [{ descriptor: { definition: protocolDef } }],
+        entries : [{ descriptor: { definition: moduleDef } }],
       });
 
       const dwn = mockDwn(processStub);
@@ -1961,14 +1961,14 @@ describe('DeliveryService — coverage', () => {
         deliveryEnabled   : true,
       }));
 
-      svc.dispatchIfNeeded(tenant, protocolWriteMessage({
-        protocol     : 'http://example.com/public',
-        protocolPath : 'post',
-        recordId     : 'anyone-skip',
+      svc.dispatchIfNeeded(tenant, moduleWriteMessage({
+        module     : 'http://example.com/public',
+        modulePath : 'post',
+        recordId   : 'anyone-skip',
       }), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 200));
 
-      // Only the ProtocolsQuery — no ancestor query, no delivery.
+      // Only the ModulesQuery — no ancestor query, no delivery.
       expect(processStub.callCount).toBe(1);
       expect(fetchStub.callCount).toBe(0);
     });

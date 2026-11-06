@@ -13,7 +13,7 @@ import { DwnInterfaceName, DwnMethodName, Message } from '@enbox/dwn-sdk-js';
 
 import { buildLinkKey } from './sync-link-key.js';
 import { isInitialWriteForRecord, isRecordsWriteForRecord, recordIdForRecordsMessage } from './sync-messages.js';
-import { isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, protocolsForSyncScope } from './types/sync.js';
+import { isQuotaBlockedPushFailure, isTerminalPushFailure, lexicographicalCompare, modulesForSyncScope } from './types/sync.js';
 
 /** One quota row paired with the CID used by feed policy. */
 export type SyncQuotaBlockEntry = {
@@ -31,7 +31,7 @@ export type SyncQuotaPushResultOutcome = {
 
 /** Optional attribution applied while folding a push result. */
 export type SyncQuotaPushResultOptions = {
-  protocol?: string;
+  module?: string;
   source?: SyncQuotaBlockSource;
 };
 
@@ -105,7 +105,7 @@ export class SyncQuotaManager {
   public async recordBlock(
     target: SyncTarget,
     messageCid: string,
-    protocol: string | undefined,
+    module: string | undefined,
     detail: string | undefined,
     source: SyncQuotaBlockSource = 'feed',
     blockedCid = messageCid,
@@ -133,7 +133,7 @@ export class SyncQuotaManager {
       messageCid,
       nextProbeAt        : new Date(now + delay).toISOString(),
       projectionId       : target.projectionId,
-      protocol           : protocol ?? previous?.protocol,
+      module             : module ?? previous?.module,
       remoteEndpoint     : target.dwnUrl,
       source,
       tenantDid          : target.did,
@@ -178,7 +178,7 @@ export class SyncQuotaManager {
       }
       const failure: PushFailure = {
         ...originalFailure,
-        protocol: originalFailure.protocol ?? options?.protocol,
+        module: originalFailure.module ?? options?.module,
       };
       await this.applyPushFailureOutcome(target, failure, options?.source, outcome);
     }
@@ -239,11 +239,11 @@ export class SyncQuotaManager {
   /** Includes resolved omissions retained solely for exact feed-divergence accounting. */
   public async getBlocksForTarget(target: SyncTarget): Promise<SyncQuotaBlockEntry[]> {
     const linkKey = this.getLinkKey(target);
-    const targetProtocols = protocolsForSyncScope(target.scope);
+    const targetModules = modulesForSyncScope(target.scope);
     const states = await this._store.getForTenant(target.did);
     return states
       .filter((state) => state.linkKey === linkKey)
-      .filter((state) => targetProtocols === undefined || state.protocol === undefined || targetProtocols.includes(state.protocol))
+      .filter((state) => targetModules === undefined || state.module === undefined || targetModules.includes(state.module))
       .map((state) => ({ messageCid: state.messageCid, state }));
   }
 
@@ -426,7 +426,7 @@ export class SyncQuotaManager {
       const state = await this.recordBlock(
         target,
         failure.cid,
-        failure.protocol,
+        failure.module,
         failure.detail,
         source,
         failure.dependencyCid,
@@ -457,7 +457,7 @@ export class SyncQuotaManager {
       const state = await this.recordBlock(
         target,
         failure.cid,
-        failure.protocol,
+        failure.module,
         failure.detail ?? previousBlock.detail,
         previousBlock.source,
         previousBlock.blockedCid,
@@ -545,7 +545,7 @@ export class SyncQuotaManager {
     if (SyncQuotaManager.hasBlockChanged(currentState, state)) {
       return;
     }
-    await this.applyPushResult(target, result, { protocol: state.protocol, source: state.source });
+    await this.applyPushResult(target, result, { module: state.module, source: state.source });
   }
 
   private async deferUnmaterializedProbe(

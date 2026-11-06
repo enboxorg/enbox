@@ -1,9 +1,9 @@
 ---
 title: "@enbox/api"
-description: Protocol-backed application stores, typed records, live views, and encrypted shared contexts.
+description: Module-backed application stores, typed records, live views, and encrypted shared contexts.
 ---
 
-`@enbox/api` is the main package for Enbox applications. It turns a protocol
+`@enbox/api` is the main package for Enbox applications. It turns a module
 definition into typed record collections and managed collaboration APIs. App
 code works with records, contexts, members, invitations, and views; tenant
 routing, role records, grants, encryption keys, delivery retries, and sync
@@ -20,10 +20,10 @@ storage defaults. Non-browser applications can install `@enbox/api` directly.
 
 ## Application bootstrap
 
-A typical app defines its protocol, names shared resources and domain actions
+A typical app defines its module, names shared resources and domain actions
 in a feature store, then composes those features into one application runtime.
 The runtime owns feature lifetimes; its native connection owns authentication,
-protocol readiness, and replication.
+module readiness, and replication.
 
 ### 1. Define the model
 
@@ -32,11 +32,11 @@ Members can edit; viewers can read. The page root's `read` action rules declare
 which roles clients try, in preference order, so call sites do not repeat that
 policy.
 
-```ts title="src/features/notebooks/protocol.ts"
-import { defineProtocol, recordCodecs } from '@enbox/browser';
+```ts title="src/features/notebooks/module.ts"
+import { defineModule, recordCodecs } from '@enbox/browser';
 
-export const NotebookProtocol = defineProtocol({
-  protocol  : 'https://example.com/protocols/notebooks',
+export const NotebookModule = defineModule({
+  module  : 'https://example.com/modules/notebooks',
   published : true,
   types     : {
     notebook : { dataFormats: ['application/json'] },
@@ -99,7 +99,7 @@ deliver those keys directly.
 
 `recordCodecs.fileEnvelope()` keeps a safe filename and canonicalized media type
 inside one versioned binary payload. The record descriptor always uses
-`application/octet-stream`; declare the protocol type as encrypted to keep the
+`application/octet-stream`; declare the module type as encrypted to keep the
 embedded metadata private with the file bytes.
 
 ```ts
@@ -109,7 +109,7 @@ const attachmentCodec = recordCodecs.fileEnvelope({
 });
 
 const definition = {
-  protocol  : 'https://example.com/protocols/files',
+  module  : 'https://example.com/modules/files',
   published : true,
   types     : {
     attachment: {
@@ -124,7 +124,7 @@ const definition = {
   },
 } as const;
 
-const FilesProtocol = defineProtocol(definition, {
+const FilesModule = defineModule(definition, {
   attachment: attachmentCodec,
 });
 ```
@@ -132,7 +132,7 @@ const FilesProtocol = defineProtocol(definition, {
 `maxEncodedBytesFor()` reserves enough record bytes for the supplied content
 and the maximum metadata overhead. Because `$size.max` caps the whole envelope,
 it is not an exact content-byte limit when metadata is shorter. Omit `$size.max`
-when the protocol has no attachment-size policy. To enforce an exact local
+when the module has no attachment-size policy. To enforce an exact local
 ceiling while encoding and decoding, pass
 `maxContentBytes: maxAttachmentContentBytes` to `fileEnvelope()`. This is also
 useful when decoding untrusted files because the codec materializes the content
@@ -142,21 +142,21 @@ file content inline.
 
 ### 2. Define a feature store
 
-Keep protocol paths and application defaults in an ordinary module. This store
+Keep module paths and application defaults in an ordinary module. This store
 shares notebook observations and command progress between UI components and
 headless controllers:
 
 ```ts title="src/features/notebooks/store.ts"
 import { defineStore } from '@enbox/browser';
-import { NotebookProtocol } from './protocol.js';
+import { NotebookModule } from './module.js';
 
 export const NotebookStore = defineStore({
-  protocols: { notebooks: NotebookProtocol },
-  create({ protocols, observe }) {
-    const notebooks = protocols.notebooks.collection('notebook', {
+  modules: { notebooks: NotebookModule },
+  create({ modules, observe }) {
+    const notebooks = modules.notebooks.collection('notebook', {
       pagination: { limit: 50 },
     });
-    const pages = protocols.notebooks.collection('notebook/page');
+    const pages = modules.notebooks.collection('notebook/page');
 
     return {
       notebooks,
@@ -174,7 +174,7 @@ Definitions and observation handles perform no I/O. A collection opens when a
 consumer subscribes, retains it, or awaits a control such as `ready()`.
 `pages.within(notebook.contextId)` resolves a keyed child collection; multiple
 notebooks can be observed concurrently. Query filters and pagination influence
-reads, while writes remain bound to the protocol path and direct parent.
+reads, while writes remain bound to the module path and direct parent.
 
 ### 3. Compose the application and connect
 
@@ -196,7 +196,7 @@ call `await runtime.initialize()`. Wallet approval starts from a user action
 through `runtime.connection.connect()` or the React connection hook.
 
 `defineStore` declares a reusable feature; `createApplication` owns its live
-instances and derives `runtime.manifest` from their protocol dependencies.
+instances and derives `runtime.manifest` from their module dependencies.
 Keep one runtime and connection for each application/data-path pairing.
 
 Read auth, sync, connectivity, and wallet-reapproval state through
@@ -237,12 +237,12 @@ through context membership rather than ordinary collection CRUD.
 ### Use the same observation owner for every native view
 
 The feature's `observe()` factory manages record views, accepted shares, member
-views, and observations whose input changes. Protocol collections use that same
+views, and observations whose input changes. Module collections use that same
 owner internally. Native SDK views remain the lower-level primitives.
 
 ```ts
-// Inside a feature factory with { protocols, observe }:
-const native = protocols.notebooks.native;
+// Inside a feature factory with { modules, observe }:
+const native = modules.notebooks.native;
 const acceptedShares = observe(signal => native().contexts.observe({
   access: 'member', signal,
 }));
@@ -280,14 +280,14 @@ explicit feature commands. React reads all these handles with `useStore()`.
 
 ### Permission policy
 
-Override a store dependency's delegated permission request in the application, without declaring the protocol a second time in each feature:
+Override a store dependency's delegated permission request in the application, without declaring the module a second time in each feature:
 
 ```ts
-import { NotebookProtocol } from '../features/notebooks/protocol.js';
+import { NotebookModule } from '../features/notebooks/module.js';
 
 const readOnlyApplication = createApplication({
   stores: { notebooks: NotebookStore },
-  protocols: [{ protocol: NotebookProtocol, permissions: ['read'] }],
+  modules: [{ module: NotebookModule, permissions: ['read'] }],
 });
 ```
 
@@ -297,7 +297,7 @@ identity. Native authorization still decides whether an operation is allowed.
 
 ### Native connection controls
 
-`runtime.connection` restores sessions, installs protocols locally, registers
+`runtime.connection` restores sessions, installs modules locally, registers
 sync, and publishes native connection state. Its sync phase is `syncing`,
 `caught-up`, or `error`; observation `ready` means local data is usable.
 `runtime.connection.getSnapshot().sync?.remotes` reports health only for the
@@ -305,35 +305,35 @@ connected DID's advertised endpoints. Call `runtime.connection.retryRemote(endpo
 to revalidate routing and retry quota-blocked messages for that endpoint.
 
 Owner connections are local-first. Use `runtime.connection.connectVault()` for
-an explicit owner/vault flow. Hosted protocol publication is opt-in through
+an explicit owner/vault flow. Hosted module publication is opt-in through
 `requireHostedReadiness`; an offline or endpoint-less owner can otherwise use
-the app locally. Invitation receiving does require the protocol to have been
+the app locally. Invitation receiving does require the module to have been
 installed on the recipient's hosted DWN, so apps should perform hosted
 readiness when enabling receiving and surface delivery failures for retry.
-Lower-level owner lifecycles call `enbox.protocols.ensureReady()` with
+Lower-level owner lifecycles call `enbox.modules.ensureReady()` with
 `publish: false` when the DID has no hosted `#dwn`; omitting that option attempts
 hosted publication by default.
 
 When the store creates its own `AuthManager`, local identity sync defaults to
-every protocol URI in the application manifest. Restoration reapplies that
+every module URI in the application manifest. Restoration reapplies that
 default, replacing any older broader registration. Configure
-`identitySyncProtocols: 'all'` or an explicit non-empty URI list on the store
+`identitySyncModules: 'all'` or an explicit non-empty URI list on the store
 when a broader scope must survive reloads; a per-call `connectVault` override
-applies only to that call. Include cross-protocol dependencies in the manifest
-or explicit scope. The store does not discover additional protocols, and a
+applies only to that call. Include cross-module dependencies in the manifest
+or explicit scope. The store does not discover additional modules, and a
 caller-provided `auth` manager keeps its own sync configuration. `sync: 'off'`
 still disables live sync.
 
 ## Typed records
 
 Use the native typed API inside domain operations or for capabilities beyond
-the owned collection conveniences. `enbox.using(NotebookProtocol).records`
-injects the protocol URI, path, schema, codec, and active tenant.
+the owned collection conveniences. `enbox.using(NotebookModule).records`
+injects the module URI, path, schema, codec, and active tenant.
 
 ```ts
 const enbox = runtime.connection.getSnapshot().enbox;
 if (enbox === undefined) throw new Error('Connect before reading application records.');
-const notebooks = enbox.using(NotebookProtocol);
+const notebooks = enbox.using(NotebookModule);
 
 // Create
 const notebook = await notebooks.records.create('notebook', {
@@ -397,17 +397,17 @@ The main operations are:
 and may invoke its side-effect-free producer twice when retrying one conflict.
 
 A missing read returns `undefined`; other non-success statuses normally throw
-`DwnResponseError`. Typed records expose required `contextId`, `protocol`, and
-`protocolPath` coordinates. An unbound typed delete also treats an
+`DwnResponseError`. Typed records expose required `contextId`, `module`, and
+`modulePath` coordinates. An unbound typed delete also treats an
 already-absent record or a canonical tombstone conflict as complete.
 Context-bound deletion is stricter: its initial authority miss requires an
 authorized tombstone because the ID may identify a record outside that context.
-An exact same-protocol missing-parent write throws `RecordParentNotFoundError`.
+An exact same-module missing-parent write throws `RecordParentNotFoundError`.
 
 <Callout type="warn" title="Scope every unbound nested read">
 Unbound nested queries and views reject a missing or malformed `within`. An
 unbound `typed.records.read()` rejects a malformed value but currently accepts an
-omitted one, which searches that protocol path across the tenant and can return
+omitted one, which searches that module path across the tenant and can return
 a sibling from another context. Pass the exact `within` value on every nested
 read. A `context.records` handle supplies its shared root automatically, but a
 deeper entity subtree still needs the entity's exact context.
@@ -451,7 +451,7 @@ creates. For materialized rows, project `row.record.id` and
 
 ### Compact a delta history
 
-Declare `$squash: true` on an append-only protocol path. Every delta and snapshot
+Declare `$squash: true` on an append-only module path. Every delta and snapshot
 on that path must use one monotonic application clock with identical explicit
 `dateCreated` and `messageTimestamp` values; the squash backstop applies to both.
 Create an ordinary delta and a full-state snapshot like this:
@@ -594,7 +594,7 @@ stream if setup or the async listener fails.
 
 ## Shared contexts
 
-A protocol recipient rule plus `recipient` on create is enough when one record
+A module recipient rule plus `recipient` on create is enough when one record
 is addressed to one DID. Use a shared context when a role should govern a
 related record hierarchy: a document and its changes, a project and its tasks,
 or a page and its attachments.
@@ -607,7 +607,7 @@ bound.
 The root record's exact `contextId` is the share boundary for its descendants;
 round-trip it rather than reconstructing it.
 
-The `NotebookProtocol` above contains the complete access policy:
+The `NotebookModule` above contains the complete access policy:
 
 1. Paths marked `$role: true` represent membership. The role record's
    `recipient` is the member DID.
@@ -623,7 +623,7 @@ The `NotebookProtocol` above contains the complete access policy:
    and audience key before following anything.
 5. Record and membership views stay live through the normal observe/sync path.
 
-Cross-identity encrypted sharing requires `published: true` on the protocol so
+Cross-identity encrypted sharing requires `published: true` on the module so
 other identities can discover its definition and key-agreement paths. This does
 not publish any application record. A context is identified by both owner DID
 and context ID; use its collision-safe `key` for UI state. Each handle also
@@ -719,12 +719,12 @@ await changes.close();
 ```
 
 Use `shared.role` to choose UI affordances, while relying on the owner's DWN to
-enforce the protocol. A viewer mutation still fails even if a client exposes an
+enforce the module. A viewer mutation still fails even if a client exposes an
 edit control.
 
 Invitation preview fields are untrusted display text. Acceptance does not trust
 the invitation as membership proof: it resolves the owner-hosted role record,
-protocol, context root, and audience key before admitting the context. A failed
+module, context root, and audience key before admitting the context. A failed
 accept remains retryable. `dismiss()` removes only the inbox item.
 
 Invitations carry the exact context root path, such as `notebook/page`, with the
@@ -758,10 +758,10 @@ offline. Member mutations are sent to the context owner's DWN and therefore
 require it to be reachable; Enbox does not queue those mutations offline.
 
 Accepted shares survive fresh browsers and devices through encrypted,
-recipient-owned `enboxContextFollow` records in the application's protocol.
-`defineProtocol()` adds this private managed path alongside the invitation inbox;
+recipient-owned `enboxContextFollow` records in the application's module.
+`defineModule()` adds this private managed path alongside the invitation inbox;
 application code does not declare a bookmark type or run a reconciliation loop.
-Existing own-protocol sync carries these records between devices.
+Existing own-module sync carries these records between devices.
 
 Every saved decision contains the owner DID, context ID, and whether the recipient
 still wants to follow. A follow decision also saves the exact context root path;
@@ -775,7 +775,7 @@ verified separately on each device.
 
 `contexts.observe()` restores known saved follows in the background while keeping
 owned roots and existing accepted contexts available. An unreachable owner or a
-missing role leaves the saved choice intact. Successful recipient-protocol sync
+missing role leaves the saved choice intact. Successful recipient-module sync
 and matching owner-context recovery events retry while a view is active.
 Reopening the observation or calling `contexts.list()` retries known choices.
 An explicit `follow(path, coordinates)` retries only its supplied target;
@@ -790,7 +790,7 @@ is revoked or the owner is unreachable:
 await notebooks.contexts.forget({ ownerDid, id: contextId });
 ```
 
-This requires a session with sync storage and the protocol's managed following
+This requires a session with sync storage and the module's managed following
 path. It rejects with `TypeError` when either is unavailable. The saved context
 path itself need not be supported, so unavailable choices can still be forgotten.
 
@@ -826,8 +826,8 @@ restoration failures are logged while the saved choices and available contexts
 remain intact.
 
 Following, accepting, forgetting, and leaving require writing the recipient's
-own protocol records. Default application permissions include that access;
-explicit read-only grant policies remain read-only. Applications granted protocol
+own module records. Default application permissions include that access;
+explicit read-only grant policies remain read-only. Applications granted module
 write access are trusted to change the identity's shared follow choices.
 Restoration independently verifies current remote membership and keys; the saved
 choice does not confer access.
@@ -942,13 +942,13 @@ const { dwn } = Enbox.anonymous();
 const { records } = await dwn.records.query({
   from   : authorDid,
   filter : {
-    protocol     : 'https://example.com/public-blog',
-    protocolPath : 'post',
+    module     : 'https://example.com/public-blog',
+    modulePath : 'post',
   },
 });
 ```
 
-Raw DWN methods, explicit foreign-tenant routing, protocol-role invocation,
+Raw DWN methods, explicit foreign-tenant routing, module-role invocation,
 and exact response envelopes are advanced escape hatches. Managed shared
 contexts should use `contexts`, `members`, and `context.records` instead of
 hand-writing role records or key delivery.

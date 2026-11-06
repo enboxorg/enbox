@@ -28,9 +28,9 @@ export const migration004ReplicationLog: DwnMigrationFactory = (dialect: Dialect
       .unique()
       .execute();
 
-    await db.schema.createIndex('index_messageStoreMessages_tenant_protocol_seq')
+    await db.schema.createIndex('index_messageStoreMessages_tenant_module_seq')
       .on('messageStoreMessages')
-      .columns(['tenant', 'protocol', 'seq'])
+      .columns(['tenant', 'module', 'seq'])
       .execute();
 
     if (!(await dialect.hasTable(db, 'replicationCounters'))) {

@@ -4,8 +4,8 @@ import { ResumableTaskManager } from '../../src/core/resumable-task-manager.js';
 import type {
   DataStore,
   MessageStore,
-  ProtocolDefinition,
-  ProtocolRuleSet,
+  ModuleDefinition,
+  ModuleRuleSet,
   RecordsDeleteMessage,
   RecordsWriteMessage,
   ResumableTaskStore,
@@ -16,11 +16,11 @@ import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import anyoneCollaborateProtocolDefinition from '../vectors/protocol-definitions/anyone-collaborate.json' with { type: 'json' };
-import authorCanProtocolDefinition from '../vectors/protocol-definitions/author-can.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import recipientCanProtocolDefinition from '../vectors/protocol-definitions/recipient-can.json' with { type: 'json' };
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import anyoneCollaborateModuleDefinition from '../vectors/module-definitions/anyone-collaborate.json' with { type: 'json' };
+import authorCanModuleDefinition from '../vectors/module-definitions/author-can.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import recipientCanModuleDefinition from '../vectors/module-definitions/recipient-can.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 
 import { ArrayUtility } from '../../src/utils/array.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
@@ -35,7 +35,7 @@ import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
-import { DataStream, Dwn, Encoder, Jws, PermissionsProtocol, Protocols, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
+import { DataStream, Dwn, Encoder, Jws, Modules, PermissionsModule, RecordsDelete, RecordsRead, RecordsWrite } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
 import { Encryption, KeyAgreementAlgorithm } from '../../src/utils/encryption.js';
@@ -88,7 +88,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should handle RecordsDelete successfully and accept a newer tombstone over a deleted record', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // insert data
         const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -132,8 +132,8 @@ export function testRecordsDeleteHandler(): void {
       it('should not affect other records or tenants with the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
-        await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, bob);
         const data = Encoder.stringToBytes('test');
 
         // alice writes a records with data
@@ -220,8 +220,8 @@ export function testRecordsDeleteHandler(): void {
 
       it('should reject deleting encryption control records', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : 'http://encryption-control-delete-rejected.xyz',
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-delete-rejected.xyz',
           published : false,
           types     : {
             member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -230,20 +230,20 @@ export function testRecordsDeleteHandler(): void {
             member: { $role: true },
           },
         };
-        const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-          protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+        const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+          moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
         );
-        const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-          author             : alice,
-          protocolDefinition : encryptedProtocolDefinition,
+        const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+          author           : alice,
+          moduleDefinition : encryptedModuleDefinition,
         });
-        expect((await dwn.processMessage(alice.did, protocolConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, moduleConfig.message)).status.code).toBe(202);
 
-        const roleRuleSet = encryptedProtocolDefinition.structure.member as ProtocolRuleSet;
+        const roleRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
         const audienceKeyId = await Encryption.getKeyId(alice.encryptionKeyPair.publicJwk);
         const sealKeyId = await Encryption.getKeyId(roleRuleSet.$keyAgreement!.publicKeyJwk);
         const audienceData = Encoder.objectToBytes({
-          protocol         : protocolDefinition.protocol,
+          module           : moduleDefinition.module,
           rolePath         : 'member',
           contextId        : '',
           keyId            : audienceKeyId,
@@ -257,14 +257,14 @@ export function testRecordsDeleteHandler(): void {
           },
         });
         const audience = await RecordsWrite.create({
-          data         : audienceData,
-          dataFormat   : 'application/json',
-          protocol     : protocolDefinition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          schema       : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
-          signer       : Jws.createSigner(alice),
-          tags         : {
-            protocol  : protocolDefinition.protocol,
+          data       : audienceData,
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          schema     : 'https://identity.foundation/dwn/json-schemas/encryption/audience.json',
+          signer     : Jws.createSigner(alice),
+          tags       : {
+            module    : moduleDefinition.module,
             rolePath  : 'member',
             contextId : '',
             keyId     : audienceKeyId,
@@ -292,7 +292,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should apply a tombstone over a newer RecordsWrite (delete-wins)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -332,7 +332,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should apply a stale prune over the record\'s newest plain tombstone (prune dominates)', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const initialWriteReply = await dwn.processMessage(alice.did, initialWriteData.message, { dataStream: initialWriteData.dataStream });
@@ -359,7 +359,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should return 409 for a plain delete beaten by the record\'s newest tombstone', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice });
         const initialWriteReply = await dwn.processMessage(alice.did, initialWriteData.message, { dataStream: initialWriteData.dataStream });
@@ -385,7 +385,7 @@ export function testRecordsDeleteHandler(): void {
 
       it('should be able to delete then rewrite the same data', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
         const data = Encoder.stringToBytes('test');
         const encodedData = Encoder.bytesToBase64Url(data);
 
@@ -440,30 +440,30 @@ export function testRecordsDeleteHandler(): void {
         expect(aliceQueryWriteAfterAliceRewriteReply.entries![0].encodedData).toBe(encodedData);
       });
 
-      describe('protocol based deletes', () => {
+      describe('module based deletes', () => {
         it('should allow delete with allow-anyone rule', async () => {
           // scenario: Alice creates a record in her DWN. Bob (anyone) is able to delete the record.
 
-          const protocolDefinition = anyoneCollaborateProtocolDefinition as ProtocolDefinition;
+          const moduleDefinition = anyoneCollaborateModuleDefinition as ModuleDefinition;
           const alice = await TestDataGenerator.generatePersona();
           const bob = await TestDataGenerator.generatePersona();
 
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
 
           // setting up a stub DID resolver
           TestStubGenerator.stubDidResolver(didResolver, [alice, bob]);
 
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // Alice writes a record
           const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'doc',
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'doc',
           });
           const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
           expect(recordsWriteReply.status.code).toBe(202);
@@ -482,28 +482,28 @@ export function testRecordsDeleteHandler(): void {
             // scenario: Alice creates a 'post' with Bob as recipient and a 'post/tag'. Bob is able to delete
             //           the 'chat/tag' because he was recipient of the 'chat'. Carol is not able to delete.
 
-            const protocolDefinition = recipientCanProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = recipientCanModuleDefinition as ModuleDefinition;
             const alice = await TestDataGenerator.generatePersona();
             const bob = await TestDataGenerator.generatePersona();
             const carol = await TestDataGenerator.generatePersona();
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice writes a chat
             const chatRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
             });
             const chatRecordsWriteReply = await dwn.processMessage(alice.did, chatRecordsWrite.message, { dataStream: chatRecordsWrite.dataStream });
             expect(chatRecordsWriteReply.status.code).toBe(202);
@@ -511,8 +511,8 @@ export function testRecordsDeleteHandler(): void {
             // Alice writes a 'chat/tag'
             const tagRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/tag',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/tag',
               parentContextId : chatRecordsWrite.message.contextId,
             });
             const tagRecordsWriteReply = await dwn.processMessage(alice.did, tagRecordsWrite.message, { dataStream: tagRecordsWrite.dataStream });
@@ -525,7 +525,7 @@ export function testRecordsDeleteHandler(): void {
             });
             const recordsDeleteCarolReply = await dwn.processMessage(alice.did, recordsDeleteCarol.message);
             expect(recordsDeleteCarolReply.status.code).toBe(401);
-            expect(recordsDeleteCarolReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(recordsDeleteCarolReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob is able to delete the 'chat/tag'
             const recordsDelete = await TestDataGenerator.generateRecordsDelete({
@@ -540,28 +540,28 @@ export function testRecordsDeleteHandler(): void {
             // scenario: Alice creates a 'post' with Bob as recipient. Bob is able to delete
             //           the 'post' because he was recipient of it. Carol is not able to delete.
 
-            const protocolDefinition = recipientCanProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = recipientCanModuleDefinition as ModuleDefinition;
             const alice = await TestDataGenerator.generatePersona();
             const bob = await TestDataGenerator.generatePersona();
             const carol = await TestDataGenerator.generatePersona();
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a 'post' with Bob as recipient
             const recordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
             });
             const recordsWriteReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: recordsWrite.dataStream });
             expect(recordsWriteReply.status.code).toBe(202);
@@ -573,7 +573,7 @@ export function testRecordsDeleteHandler(): void {
             });
             const carolRecordsDeleteReply = await dwn.processMessage(alice.did, carolRecordsDelete.message);
             expect(carolRecordsDeleteReply.status.code).toBe(401);
-            expect(carolRecordsDeleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(carolRecordsDeleteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob is able to delete the post
             const bobRecordsDelete = await TestDataGenerator.generateRecordsDelete({
@@ -590,27 +590,27 @@ export function testRecordsDeleteHandler(): void {
             // scenario: Bob writes a 'post' and Alice writes a 'post/comment' to her DWN. Bob deletes the comment
             //           because author of post can delete. Carol is unable to delete the comment.
 
-            const protocolDefinition = authorCanProtocolDefinition as ProtocolDefinition;
+            const moduleDefinition = authorCanModuleDefinition as ModuleDefinition;
             const alice = await TestDataGenerator.generatePersona();
             const bob = await TestDataGenerator.generatePersona();
             const carol = await TestDataGenerator.generatePersona();
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
 
             // setting up a stub DID resolver
             TestStubGenerator.stubDidResolver(didResolver, [alice, bob, carol]);
 
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Bob writes a post
             const postRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-              author       : bob,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
+              author     : bob,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
             });
             const postRecordsWriteReply = await dwn.processMessage(alice.did, postRecordsWrite.message, { dataStream: postRecordsWrite.dataStream });
             expect(postRecordsWriteReply.status.code).toBe(202);
@@ -618,8 +618,8 @@ export function testRecordsDeleteHandler(): void {
             // Alice writes a 'post/comment'
             const commentRecordsWrite = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'post/comment',
+              module          : moduleDefinition.module,
+              modulePath      : 'post/comment',
               parentContextId : postRecordsWrite.message.contextId,
             });
             const commentRecordsWriteReply =
@@ -633,7 +633,7 @@ export function testRecordsDeleteHandler(): void {
             });
             const recordsDeleteCarolReply = await dwn.processMessage(alice.did, recordsDeleteCarol.message);
             expect(recordsDeleteCarolReply.status.code).toBe(401);
-            expect(recordsDeleteCarolReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(recordsDeleteCarolReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob is able to delete the Alice's 'post/comment'
             const recordsDelete = await TestDataGenerator.generateRecordsDelete({
@@ -655,21 +655,21 @@ export function testRecordsDeleteHandler(): void {
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const carol = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = threadRoleProtocolDefinition;
+            const moduleDefinition = threadRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice creates a thread
             const threadRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'thread'
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'thread'
             });
             const threadRecordReply = await dwn.processMessage(alice.did, threadRecord.message, { dataStream: threadRecord.dataStream });
             expect(threadRecordReply.status.code).toBe(202);
@@ -678,8 +678,8 @@ export function testRecordsDeleteHandler(): void {
             const participantRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : bob.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/admin',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/admin',
               parentContextId : threadRecord.message.contextId,
             });
             const participantRecordReply =
@@ -690,8 +690,8 @@ export function testRecordsDeleteHandler(): void {
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
               author          : alice,
               recipient       : alice.did,
-              protocol        : protocolDefinition.protocol,
-              protocolPath    : 'thread/chat',
+              module          : moduleDefinition.module,
+              modulePath      : 'thread/chat',
               parentContextId : threadRecord.message.contextId,
             });
             const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
@@ -704,13 +704,13 @@ export function testRecordsDeleteHandler(): void {
             });
             const chatDeleteReplyCarol = await dwn.processMessage(alice.did, chatDeleteCarol.message);
             expect(chatDeleteReplyCarol.status.code).toBe(401);
-            expect(chatDeleteReplyCarol.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(chatDeleteReplyCarol.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob invokes the role to delete the chat message
             const chatDelete = await TestDataGenerator.generateRecordsDelete({
-              author       : bob,
-              recordId     : chatRecord.message.recordId,
-              protocolRole : 'thread/admin',
+              author     : bob,
+              recordId   : chatRecord.message.recordId,
+              moduleRole : 'thread/admin',
             });
             const chatDeleteReply = await dwn.processMessage(alice.did, chatDelete.message);
             expect(chatDeleteReply.status.code).toBe(202);
@@ -724,21 +724,21 @@ export function testRecordsDeleteHandler(): void {
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const carol = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition = friendRoleProtocolDefinition;
+            const moduleDefinition = friendRoleModuleDefinition;
 
-            const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+            const modulesConfig = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition
+              moduleDefinition
             });
-            const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-            expect(protocolsConfigureReply.status.code).toBe(202);
+            const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+            expect(modulesConfigureReply.status.code).toBe(202);
 
             // Alice adds Bob as a 'thread/admin' in that thread
             const participantRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : bob.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'admin',
+              author     : alice,
+              recipient  : bob.did,
+              module     : moduleDefinition.module,
+              modulePath : 'admin',
             });
             const participantRecordReply =
               await dwn.processMessage(alice.did, participantRecord.message, { dataStream: participantRecord.dataStream });
@@ -746,10 +746,10 @@ export function testRecordsDeleteHandler(): void {
 
             // Alice writes a chat message in that thread
             const chatRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              recipient    : alice.did,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'chat',
+              author     : alice,
+              recipient  : alice.did,
+              module     : moduleDefinition.module,
+              modulePath : 'chat',
             });
             const chatRecordReply = await dwn.processMessage(alice.did, chatRecord.message, { dataStream: chatRecord.dataStream });
             expect(chatRecordReply.status.code).toBe(202);
@@ -761,13 +761,13 @@ export function testRecordsDeleteHandler(): void {
             });
             const chatDeleteCarolReply = await dwn.processMessage(alice.did, chatDeleteCarol.message);
             expect(chatDeleteCarolReply.status.code).toBe(401);
-            expect(chatDeleteCarolReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+            expect(chatDeleteCarolReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
             // Bob invokes the role to delete the chat message
             const chatDelete = await TestDataGenerator.generateRecordsDelete({
-              author       : bob,
-              recordId     : chatRecord.message.recordId,
-              protocolRole : 'admin',
+              author     : bob,
+              recordId   : chatRecord.message.recordId,
+              moduleRole : 'admin',
             });
             const chatDeleteReply = await dwn.processMessage(alice.did, chatDelete.message);
             expect(chatDeleteReply.status.code).toBe(202);
@@ -780,7 +780,7 @@ export function testRecordsDeleteHandler(): void {
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         const recordsWrite = await TestDataGenerator.generateRecordsWrite({
           author: alice,
@@ -797,45 +797,45 @@ export function testRecordsDeleteHandler(): void {
       });
 
       describe('grant based deletes', () => {
-        it('should allow delete with a matching protocol grant scope', async () => {
-          // scenario: Alice writes a protocol record, grants Bob delete permission, Bob deletes it.
+        it('should allow delete with a matching module grant scope', async () => {
+          // scenario: Alice writes a module record, grants Bob delete permission, Bob deletes it.
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://grant-delete-test.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://grant-delete-test.xyz',
             published : false,
             types     : { foo: {} },
             structure : { foo: {} }
           };
 
-          // Alice installs the protocol
-          const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+          // Alice installs the module
+          const modulesConfig = await TestDataGenerator.generateModulesConfigure({
             author: alice,
-            protocolDefinition
+            moduleDefinition
           });
-          const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-          expect(protocolsConfigureReply.status.code).toBe(202);
+          const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+          expect(modulesConfigureReply.status.code).toBe(202);
 
           // Alice writes a record
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'foo',
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'foo',
           });
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
           expect(writeReply.status.code).toBe(202);
 
-          // Alice grants Bob delete permission scoped to the protocol
-          const permissionGrant = await PermissionsProtocol.createGrant({
+          // Alice grants Bob delete permission scoped to the module
+          const permissionGrant = await PermissionsModule.createGrant({
             signer      : Jws.createSigner(alice),
             grantedTo   : bob.did,
             dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
             scope       : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Delete,
-              protocol  : protocolDefinition.protocol,
+              module    : moduleDefinition.module,
             }
           });
           const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -856,56 +856,56 @@ export function testRecordsDeleteHandler(): void {
           expect(deleteReply.status.code).toBe(202);
         });
 
-        it('should reject delete when grant has mismatching protocol scope', async () => {
-          // scenario: Alice grants Bob delete permission for protocol A,
-          //           Bob tries to delete a record in protocol B.
+        it('should reject delete when grant has mismatching module scope', async () => {
+          // scenario: Alice grants Bob delete permission for module A,
+          //           Bob tries to delete a record in module B.
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolA: ProtocolDefinition = {
-            protocol  : 'http://protocol-a.xyz',
+          const moduleA: ModuleDefinition = {
+            module    : 'http://module-a.xyz',
             published : false,
             types     : { foo: {} },
             structure : { foo: {} }
           };
-          const protocolB: ProtocolDefinition = {
-            protocol  : 'http://protocol-b.xyz',
+          const moduleB: ModuleDefinition = {
+            module    : 'http://module-b.xyz',
             published : false,
             types     : { foo: {} },
             structure : { foo: {} }
           };
 
-          // Alice installs both protocols
-          const configA = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: protocolA });
+          // Alice installs both modules
+          const configA = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: moduleA });
           expect((await dwn.processMessage(alice.did, configA.message)).status.code).toBe(202);
-          const configB = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: protocolB });
+          const configB = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: moduleB });
           expect((await dwn.processMessage(alice.did, configB.message)).status.code).toBe(202);
 
-          // Alice writes a record in protocol B
+          // Alice writes a record in module B
           const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolB.protocol,
-            protocolPath : 'foo',
+            author     : alice,
+            module     : moduleB.module,
+            modulePath : 'foo',
           });
           const writeReply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream });
           expect(writeReply.status.code).toBe(202);
 
-          // Alice grants Bob delete permission scoped to protocol A (not B)
-          const permissionGrant = await PermissionsProtocol.createGrant({
+          // Alice grants Bob delete permission scoped to module A (not B)
+          const permissionGrant = await PermissionsModule.createGrant({
             signer      : Jws.createSigner(alice),
             grantedTo   : bob.did,
             dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
             scope       : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Delete,
-              protocol  : protocolA.protocol,
+              module    : moduleA.module,
             }
           });
           const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
           expect((await dwn.processMessage(alice.did, permissionGrant.recordsWrite.message, { dataStream: grantDataStream })).status.code).toBe(202);
 
-          // Bob tries to delete the protocol B record with the protocol A grant — should fail
+          // Bob tries to delete the module B record with the module A grant — should fail
           const recordsDelete = await RecordsDelete.create({
             recordId          : recordsWrite.message.recordId,
             signer            : Jws.createSigner(bob),
@@ -913,14 +913,14 @@ export function testRecordsDeleteHandler(): void {
           });
           const deleteReply = await dwn.processMessage(alice.did, recordsDelete.message);
           expect(deleteReply.status.code).toBe(401);
-          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
+          expect(deleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteModuleScopeMismatch);
         });
 
       });
 
       it('should index additional properties from the RecordsWrite being deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // initial write
         const initialWriteData = await TestDataGenerator.generateRecordsWrite({ author: alice, schema: 'testSchema' });
@@ -949,18 +949,18 @@ export function testRecordsDeleteHandler(): void {
         it('should construct a tombstone matching the permission shadow filter when a tagged permission record is deleted', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
-          // alice creates a permission grant scoped to a protocol — the grant record carries `tags: { protocol }`
-          const scopedProtocol = 'https://example.com/protocol/shadow-filter-test';
-          const permissionGrant = await PermissionsProtocol.createGrant({
+          // alice creates a permission grant scoped to a module — the grant record carries `tags: { module }`
+          const scopedModule = 'https://example.com/module/shadow-filter-test';
+          const permissionGrant = await PermissionsModule.createGrant({
             signer      : Jws.createSigner(alice),
             grantedTo   : bob.did,
             dateExpires : Time.createOffsetTimestamp({ seconds: 60 * 60 * 24 }),
             scope       : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Write,
-              protocol  : scopedProtocol,
+              module    : scopedModule,
             }
           });
           const grantDataStream = DataStream.fromBytes(permissionGrant.permissionGrantBytes);
@@ -968,7 +968,7 @@ export function testRecordsDeleteHandler(): void {
           expect(grantWriteReply.status.code).toBe(202);
 
           // the permission shadow filter shape matches the live grant record
-          const shadowFilter = { 'protocol': PermissionsProtocol.uri, 'tag.protocol': scopedProtocol };
+          const shadowFilter = { 'module': PermissionsModule.uri, 'tag.module': scopedModule };
           const { messages: liveMatches } = await messageStore.query(alice.did, [shadowFilter]);
           expect(liveMatches).toHaveLength(1);
 
@@ -991,7 +991,7 @@ export function testRecordsDeleteHandler(): void {
         it('should carry `published` and `datePublished` onto the tombstone so it matches published queries and subscriptions', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const datePublished = '2025-01-01T00:00:00.000000Z';
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // subscribe to date-published records of the test schema before any writes
           const receivedEvents: RecordEvent[] = [];
@@ -1067,7 +1067,7 @@ export function testRecordsDeleteHandler(): void {
         it('should take mutable visibility facts from the latest pre-delete write and immutable facts from the initial write', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const datePublished = '2025-01-02T00:00:00.000000Z';
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // initial write: unpublished, tagged red
           const initialWriteData = await TestDataGenerator.generateRecordsWrite({
@@ -1121,7 +1121,7 @@ export function testRecordsDeleteHandler(): void {
         it('should carry the existing tombstone visibility facts forward when pruning an already-deleted record', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const datePublished = '2025-01-03T00:00:00.000000Z';
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // initial write: unpublished, tagged red
           const initialWriteData = await TestDataGenerator.generateRecordsWrite({
@@ -1179,7 +1179,7 @@ export function testRecordsDeleteHandler(): void {
         it('should carry the displaced newer write tags and published state when a tombstone applies over it (delete-wins)', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const datePublished = '2025-01-04T00:00:00.000000Z';
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // initial write: unpublished, tagged red
           const initialWriteData = await TestDataGenerator.generateRecordsWrite({
@@ -1229,7 +1229,7 @@ export function testRecordsDeleteHandler(): void {
       describe('state index', () => {
         it('should include RecordsDelete event and keep initial RecordsWrite event', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           const { message, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const writeReply = await dwn.processMessage(alice.did, message, { dataStream });
@@ -1259,7 +1259,7 @@ export function testRecordsDeleteHandler(): void {
         it('should keep first write, latest pre-delete write, and delete when subsequent writes happen', async () => {
           const author = await TestDataGenerator.generatePersona();
           TestStubGenerator.stubDidResolver(didResolver, [author]);
-          await TestDataGenerator.installDefaultTestProtocol(dwn, author);
+          await TestDataGenerator.installDefaultTestModule(dwn, author);
 
           const { message, dataStream, recordsWrite } = await TestDataGenerator.generateRecordsWrite({ author });
 

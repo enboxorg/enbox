@@ -1,7 +1,7 @@
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
 
-import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
+import { RemoteModuleDefinitionError } from '../src/dwn-module-cache.js';
 import {
   AudienceControlWriteError,
   AudienceKeyDeliveryConfigurationError,
@@ -11,10 +11,10 @@ import {
 
 describe('audience key delivery failure classification', () => {
   const cases = [
-    { name: 'a missing recipient protocol', error: new RemoteProtocolDefinitionError('not installed', 'not-found'), expected: 'awaiting-recipient-install' },
-    { name: 'a missing recipient endpoint', error: new RemoteProtocolDefinitionError('no endpoint', 'no-endpoint'), expected: 'terminal' },
-    { name: 'a rejected protocol query', error: new RemoteProtocolDefinitionError('unauthorized', 'rejected', 401), expected: 'terminal' },
-    { name: 'an unavailable protocol endpoint', error: new RemoteProtocolDefinitionError('unavailable', 'rejected', 503), expected: 'retryable' },
+    { name: 'a missing recipient module', error: new RemoteModuleDefinitionError('not installed', 'not-found'), expected: 'awaiting-recipient-install' },
+    { name: 'a missing recipient endpoint', error: new RemoteModuleDefinitionError('no endpoint', 'no-endpoint'), expected: 'terminal' },
+    { name: 'a rejected module query', error: new RemoteModuleDefinitionError('unauthorized', 'rejected', 401), expected: 'terminal' },
+    { name: 'an unavailable module endpoint', error: new RemoteModuleDefinitionError('unavailable', 'rejected', 503), expected: 'retryable' },
     { name: 'a rejected control write', error: new AudienceControlWriteError('write delivery', { code: 401, detail: 'Unauthorized' }), expected: 'terminal' },
     {
       name  : 'a not-yet-active grant',
@@ -40,7 +40,7 @@ describe('audience key delivery failure classification', () => {
 describe('audience key delivery state projection', () => {
   const intent = {
     contextId    : 'workspace-id',
-    protocol     : 'https://example.com/workspace',
+    module       : 'https://example.com/workspace',
     recipientDid : 'did:example:bob',
     rolePath     : 'workspace/member',
     roleRecordId : 'role-record-id',

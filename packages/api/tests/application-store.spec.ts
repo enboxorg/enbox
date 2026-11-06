@@ -6,13 +6,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { createApplication } from '../src/store/application.js';
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { defineStore } from '../src/store/definition.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreNotConnectedError, StoreRetiredError } from '../src/store/scope.js';
 
-const Protocol = defineProtocol({
-  protocol  : 'https://example.com/protocols/application-stores',
+const Module = defineModule({
+  module    : 'https://example.com/modules/application-stores',
   published : true,
   types     : { note: { dataFormats: ['application/json'] } },
   structure : { note: {} },
@@ -58,7 +58,7 @@ function controlledConnection(initial: ConnectionSnapshot): {
 describe('headless application stores', () => {
   let context: EnboxTestContext;
   beforeAll(async (): Promise<void> => {
-    context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [Protocol] }) });
+    context = await createEnboxTestContext({ application: defineApplicationManifest({ modules: [Module] }) });
   });
   afterAll(async (): Promise<void> => { await context.close(); });
 
@@ -67,31 +67,31 @@ describe('headless application stores', () => {
     let connections = 0;
     const native = controlledConnection({ phase: 'disconnected' });
     const connection = (): ConnectionStore => { connections++; return native.connection; };
-    const base = defineStore({ protocols: { notes: Protocol }, create: (): object => { creates++; return {}; } });
+    const base = defineStore({ modules: { notes: Module }, create: (): object => { creates++; return {}; } });
     const feature = defineStore({
-      protocols: { notes: Protocol }, stores: { base }, create: ({ stores }): object => stores.base,
+      modules: { notes: Module }, stores: { base }, create: ({ stores }): object => stores.base,
     });
     const app = createApplication({
-      stores: { feature }, protocols: [{ protocol: Protocol, permissions: ['read'] }], connection,
+      stores: { feature }, modules: [{ module: Module, permissions: ['read'] }], connection,
     });
     expect(creates).toBe(0);
     expect(connections).toBe(1);
-    expect(app.manifest.protocols).toHaveLength(1);
-    expect(app.manifest.protocols[0].permissions).toEqual(['read']);
-    const conflicting = defineProtocol(Protocol.definition, Protocol.codecs);
+    expect(app.manifest.modules).toHaveLength(1);
+    expect(app.manifest.modules[0].permissions).toEqual(['read']);
+    const conflicting = defineModule(Module.definition, Module.codecs);
     expect(() => createApplication({
-      stores: { base }, protocols: [conflicting], connection,
+      stores: { base }, modules: [conflicting], connection,
     })).toThrow('conflicts with a store dependency');
     expect(() => createApplication({
-      stores: { base }, protocols: [Protocol, Protocol], connection,
-    })).toThrow('duplicate explicit protocol');
+      stores: { base }, modules: [Module, Module], connection,
+    })).toThrow('duplicate explicit module');
     expect(connections).toBe(1);
     await app.dispose();
   });
 
   it('creates inert inactive handles and rejects disconnected commands', async (): Promise<void> => {
-    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
-      notes: protocols.notes.collection('note'),
+    const Notes = defineStore({ modules : { notes: Module }, create  : ({ modules }) => ({
+      notes: modules.notes.collection('note'),
     }) });
     const native = controlledConnection({ phase: 'disconnected' });
     const app = createApplication({ stores: { notes: Notes }, connection: () => native.connection });
@@ -110,8 +110,8 @@ describe('headless application stores', () => {
   });
 
   it('shares real record views, preserves sync-only identity, and retires replacement scopes', async (): Promise<void> => {
-    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
-      notes: protocols.notes.collection('note'),
+    const Notes = defineStore({ modules : { notes: Module }, create  : ({ modules }) => ({
+      notes: modules.notes.collection('note'),
     }) });
     const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
     const app = createApplication({ stores: { notes: Notes }, connection: () => native.connection });
@@ -138,7 +138,7 @@ describe('headless application stores', () => {
   });
 
   it('notifies scope consumers when an earlier native subscriber resolves the replacement first', async (): Promise<void> => {
-    const Notes = defineStore({ protocols: { notes: Protocol }, create: ({ signal }) => ({ signal }) });
+    const Notes = defineStore({ modules: { notes: Module }, create: ({ signal }) => ({ signal }) });
     const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session: context.session });
     const stopEarlier = native.connection.subscribe((): void => { app.store(Notes); });
     const app = createApplication({ stores: { notes: Notes }, connection: () => native.connection });
@@ -160,8 +160,8 @@ describe('headless application stores', () => {
     const lifetime = new AbortController();
     const session = new Proxy(context.session, { get: (target, key): unknown =>
       key === 'signal' ? lifetime.signal : Reflect.get(target, key) });
-    const Notes = defineStore({ protocols : { notes: Protocol }, create    : ({ protocols }) => ({
-      notes: protocols.notes.collection('note'),
+    const Notes = defineStore({ modules : { notes: Module }, create  : ({ modules }) => ({
+      notes: modules.notes.collection('note'),
     }) });
     const native = controlledConnection({ phase: 'connected', enbox: context.enbox, session });
     const app = createApplication({ stores: { notes: Notes }, connection: () => native.connection });
@@ -181,7 +181,7 @@ describe('headless application stores', () => {
     let reenter = (): void => {};
     let successor: { id: number; signal: AbortSignal } | undefined;
     const Notes = defineStore({
-      protocols: { notes: Protocol },
+      modules: { notes: Module },
       create({ signal, onClose }): { id: number; signal: AbortSignal } {
         const id = ++created;
         onClose((): void => { closed.push(id); });
@@ -214,7 +214,7 @@ describe('headless application stores', () => {
     let reenter = (): void => {};
     let successor: { id: number; signal: AbortSignal } | undefined;
     const Notes = defineStore({
-      protocols: { notes: Protocol },
+      modules: { notes: Module },
       create({ signal }): { id: number; signal: AbortSignal } {
         const id = ++created;
         if (id === 1) {
@@ -247,16 +247,16 @@ describe('headless application stores', () => {
   it('closes dependents before dependencies and cleans up failed factories exactly once', async (): Promise<void> => {
     const closed: string[] = [];
     let baseCreates = 0;
-    const base = defineStore({ protocols : { notes: Protocol }, create    : ({ onClose }): object => {
+    const base = defineStore({ modules : { notes: Module }, create  : ({ onClose }): object => {
       baseCreates += 1;
       onClose((): void => { closed.push('base'); }); return {};
     } });
-    const feature = defineStore({ protocols : {}, stores    : { base, alias: base }, create    : ({ stores, onClose }): {
+    const feature = defineStore({ modules : {}, stores  : { base, alias: base }, create  : ({ stores, onClose }): {
       base: object; alias: object;
     } => {
       onClose((): void => { closed.push('feature'); }); return { base: stores.base, alias: stores.alias };
     } });
-    const failed = defineStore({ protocols : {}, create    : ({ onClose }): never => {
+    const failed = defineStore({ modules : {}, create  : ({ onClose }): never => {
       onClose((): void => { closed.push('failed'); }); throw new Error('Factory failed');
     } });
     const native = controlledConnection({ phase: 'disconnected' });

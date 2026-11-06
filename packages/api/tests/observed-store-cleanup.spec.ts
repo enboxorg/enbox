@@ -53,8 +53,8 @@ function applicationFixture(open: () => Promise<ExpandableRecordView<string>>): 
   };
   // This feature owns injected native views; its scope has no SDK operations to authorize.
   const feature = defineStore({
-    protocols : {},
-    create    : ({ signal, onClose }) => {
+    modules : {},
+    create  : ({ signal, onClose }) => {
       const scope: StoreScope = {
         signal,
         assertCurrent: (): void => {

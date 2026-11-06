@@ -1,4 +1,4 @@
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -13,9 +13,9 @@ import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed } from '../../src/sync-messages.js';
 
-const protocol: ProtocolDefinition = {
+const module: ModuleDefinition = {
   published : true,
-  protocol  : 'https://e2e-sync-catchup.example/notes',
+  module    : 'https://e2e-sync-catchup.example/notes',
   types     : { note: { dataFormats: ['text/plain'] } },
   structure : { note: {} },
 };
@@ -57,20 +57,20 @@ describe('E2E: populated catch-up transport request budgets', () => {
     const config = await harness.agent.dwn.processRequest({
       author        : did,
       target        : did,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: module },
     });
     expect(config.reply.status.code).toBe(202);
     const remoteConfig = await harness.agent.dwn.sendRequest({
       author      : did,
       target      : did,
-      messageType : DwnInterface.ProtocolsConfigure,
+      messageType : DwnInterface.ModulesConfigure,
       rawMessage  : config.message,
     });
     expect(remoteConfig.reply.status.code).toBe(202);
 
     // Exercise current writes, retained history, and a streamed payload. The
-    // local protocol selects populated catch-up; paging is covered separately.
+    // local module selects populated catch-up; paging is covered separately.
     const writes: RecordsWriteMessage[] = [];
     const largeText = 'x'.repeat(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
     for (let index = 0; index < 12; index++) {
@@ -78,7 +78,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
         author        : did,
         target        : did,
         messageType   : DwnInterface.RecordsWrite,
-        messageParams : { protocol: protocol.protocol, protocolPath: 'note', dataFormat: 'text/plain' },
+        messageParams : { module: module.module, modulePath: 'note', dataFormat: 'text/plain' },
         dataStream    : new Blob([index === 11 ? largeText : `record-${index}`]),
       });
       expect(write.reply.status.code).toBe(202);
@@ -94,7 +94,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
       expect(deletion.reply.status.code).toBe(202);
     }
 
-    await harness.agent.sync.setIdentityOptions({ did, options: { protocols: [protocol.protocol] } });
+    await harness.agent.sync.setIdentityOptions({ did, options: { modules: [module.module] } });
     if (transport === 'websocket') {
       // Live sync establishes a subscription socket before reconciling its
       // durable baseline. Exercise the same pooled transport with real data.
@@ -102,7 +102,7 @@ describe('E2E: populated catch-up transport request budgets', () => {
         author        : did,
         target        : did,
         messageType   : DwnInterface.MessagesSubscribe,
-        messageParams : { filters: [{ protocol: protocol.protocol }] },
+        messageParams : { filters: [{ module: module.module }] },
         store         : false,
       });
       const reply = await harness.agent.rpc.sendDwnRequest({

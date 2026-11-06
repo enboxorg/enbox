@@ -3,11 +3,11 @@ import type { EncryptionInput } from '../../src/utils/encryption.js';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { RecordingValidationStateReader } from '../../src/core/recording-validation-state-reader.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
-import type { ProtocolDefinition, ProtocolRuleSet } from '../../src/types/protocols-types.js';
+import type { ModuleDefinition, ModuleRuleSet } from '../../src/types/modules-types.js';
 
-import freeForAllProtocolDefinition from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
-import friendRoleProtocolDefinition from '../vectors/protocol-definitions/friend-role.json' with { type: 'json' };
-import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import freeForAllModuleDefinition from '../vectors/module-definitions/free-for-all.json' with { type: 'json' };
+import friendRoleModuleDefinition from '../vectors/module-definitions/friend-role.json' with { type: 'json' };
+import nestedModuleDefinition from '../vectors/module-definitions/nested.json' with { type: 'json' };
 
 import { createAudienceControlWrite } from '../utils/encryption-control-test-utils.js';
 import { DataStream } from '../../src/utils/data-stream.js';
@@ -28,7 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 import { DwnInterfaceName, DwnMethodName } from '../../src/enums/dwn-interface-method.js';
-import { KeyDerivationScheme, Protocols } from '../../src/index.js';
+import { KeyDerivationScheme, Modules } from '../../src/index.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const VALIDATION_READER_METHODS = new Set<string>([
@@ -43,7 +43,7 @@ const VALIDATION_READER_METHODS = new Set<string>([
   'fetchGrant',
   'fetchOldestGrantRevocation',
   'fetchNewestRecordsWrite',
-  'fetchProtocolDefinition',
+  'fetchModuleDefinition',
   'fetchLatestSquashRecordAtScope',
   'hasStoredData',
 ]);
@@ -105,24 +105,24 @@ describe('validation read closure', () => {
       recorder.clearRecordedReads();
     };
 
-    // ---- scenario: live protocol record lifecycle ----
+    // ---- scenario: live module record lifecycle ----
     {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const { message: parentMessage, dataStream: parentDataStream, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
       });
       expect((await dwn.processMessage(alice.did, parentMessage, { dataStream: parentDataStream })).status.code).toBe(202);
 
       const { message: childMessage, dataStream: childDataStream, recordsWrite: childWrite } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -145,7 +145,7 @@ describe('validation read closure', () => {
       const { message: deleteMessage } = await TestDataGenerator.generateRecordsDelete({ author: alice, recordId: childMessage.recordId });
       expect((await dwn.processMessage(alice.did, deleteMessage)).status.code).toBe(202);
 
-      snapshot('live: protocol record lifecycle');
+      snapshot('live: module record lifecycle');
     }
 
     // ---- scenario: live role-authorized write ----
@@ -154,17 +154,17 @@ describe('validation read closure', () => {
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const definition = friendRoleProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = friendRoleModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const { message: roleMessage, dataStream: roleDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, recipient: bob.did, protocol: definition.protocol, protocolPath: 'friend',
+        author: alice, recipient: bob.did, module: definition.module, modulePath: 'friend',
       });
       expect((await dwn.processMessage(alice.did, roleMessage, { dataStream: roleDataStream })).status.code).toBe(202);
 
       const { message: chatMessage, dataStream: chatDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author: bob, protocol: definition.protocol, protocolPath: 'chat', protocolRole: 'friend',
+        author: bob, module: definition.module, modulePath: 'chat', moduleRole: 'friend',
       });
       expect((await dwn.processMessage(alice.did, chatMessage, { dataStream: chatDataStream })).status.code).toBe(202);
 
@@ -176,8 +176,8 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'http://encrypted-role-closure.xyz',
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'http://encrypted-role-closure.xyz',
         published : false,
         types     : {
           thread      : { schema: 'http://thread-schema', dataFormats: ['application/json'] },
@@ -195,31 +195,31 @@ describe('validation read closure', () => {
           },
         },
       };
-      const encryptedProtocolDefinition = await Protocols.deriveAndInjectPublicEncryptionKeys(
-        protocolDefinition, TestDataGenerator.createProtocolPathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
+      const encryptedModuleDefinition = await Modules.deriveAndInjectPublicEncryptionKeys(
+        moduleDefinition, TestDataGenerator.createModulePathKeyDeriver(alice.keyId, alice.encryptionKeyPair.privateJwk)
       );
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : encryptedProtocolDefinition,
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : encryptedModuleDefinition,
       });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const thread = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
-        schema       : 'http://thread-schema',
-        dataFormat   : 'application/json',
-        data         : Encoder.stringToBytes('{"title":"secret"}'),
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
+        schema     : 'http://thread-schema',
+        dataFormat : 'application/json',
+        data       : Encoder.stringToBytes('{"title":"secret"}'),
       });
       expect((await dwn.processMessage(alice.did, thread.message, { dataStream: thread.dataStream })).status.code).toBe(202);
 
       const role = 'thread/participant';
-      const threadRuleSet = encryptedProtocolDefinition.structure.thread;
-      const participantRuleSet = threadRuleSet.participant as ProtocolRuleSet;
+      const threadRuleSet = encryptedModuleDefinition.structure.thread;
+      const participantRuleSet = threadRuleSet.participant as ModuleRuleSet;
       const audience = await createAudienceControlWrite({
         author      : alice,
-        protocol    : protocolDefinition.protocol,
+        module      : moduleDefinition.module,
         rolePath    : role,
         contextId   : thread.message.contextId!,
         roleRuleSet : participantRuleSet,
@@ -240,24 +240,24 @@ describe('validation read closure', () => {
         dataEncryptionInitializationVector,
         Encoder.stringToBytes('encrypted chat')
       );
-      const chatRuleSet = threadRuleSet.chat as ProtocolRuleSet;
-      const protocolPathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
+      const chatRuleSet = threadRuleSet.chat as ModuleRuleSet;
+      const modulePathPublicKey = chatRuleSet.$keyAgreement!.publicKeyJwk;
       const encryptionInput: EncryptionInput = {
         initializationVector : dataEncryptionInitializationVector,
         key                  : dataEncryptionKey,
         keyEncryptionInputs  : [
           {
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-            keyId            : await Encryption.getKeyId(protocolPathPublicKey),
-            publicKey        : protocolPathPublicKey,
-            derivationScheme : KeyDerivationScheme.ProtocolPath,
+            keyId            : await Encryption.getKeyId(modulePathPublicKey),
+            publicKey        : modulePathPublicKey,
+            derivationScheme : KeyDerivationScheme.ModulePath,
           },
           {
             algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
             keyId            : roleKeyId,
             publicKey        : rolePublicKey,
             derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-            protocol         : protocolDefinition.protocol,
+            module           : moduleDefinition.module,
             rolePath         : role,
           },
         ],
@@ -266,8 +266,8 @@ describe('validation read closure', () => {
       recorder.clearRecordedReads(); // trace the encrypted role-audience write admission only
       const recordsWrite = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : thread.message.contextId,
         schema          : 'http://chat-schema',
         dataFormat      : 'text/plain',
@@ -280,13 +280,13 @@ describe('validation read closure', () => {
       snapshot('live: encrypted role-audience write');
     }
 
-    // ---- scenario: live composed protocol configure ----
+    // ---- scenario: live composed module configure ----
     {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const baseDefinition: ProtocolDefinition = {
-        protocol  : 'http://closure-composition-base.xyz',
+      const baseDefinition: ModuleDefinition = {
+        module    : 'http://closure-composition-base.xyz',
         published : false,
         types     : {
           profile: { schema: 'profile', dataFormats: ['text/plain'] },
@@ -295,11 +295,11 @@ describe('validation read closure', () => {
           profile: {},
         },
       };
-      const composedDefinition: ProtocolDefinition = {
-        protocol  : 'http://closure-composition-composed.xyz',
+      const composedDefinition: ModuleDefinition = {
+        module    : 'http://closure-composition-composed.xyz',
         published : false,
         uses      : {
-          base: baseDefinition.protocol,
+          base: baseDefinition.module,
         },
         types: {
           mirror: { schema: 'mirror', dataFormats: ['text/plain'] },
@@ -310,19 +310,19 @@ describe('validation read closure', () => {
           },
         },
       };
-      const { message: baseConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : baseDefinition,
+      const { message: baseConfigureMessage } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : baseDefinition,
       });
       expect((await dwn.processMessage(alice.did, baseConfigureMessage)).status.code).toBe(202);
 
-      const { message: composedConfigureMessage } = await TestDataGenerator.generateProtocolsConfigure({
-        author             : alice,
-        protocolDefinition : composedDefinition,
+      const { message: composedConfigureMessage } = await TestDataGenerator.generateModulesConfigure({
+        author           : alice,
+        moduleDefinition : composedDefinition,
       });
       expect((await dwn.processMessage(alice.did, composedConfigureMessage)).status.code).toBe(202);
 
-      snapshot('live: composed protocol configure');
+      snapshot('live: composed module configure');
     }
 
     // ---- scenario: live grant-authorized write ----
@@ -331,8 +331,8 @@ describe('validation read closure', () => {
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const definition = freeForAllProtocolDefinition as ProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = freeForAllModuleDefinition as ModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const { message: grantMessage, dataStream: grantDataStream, recordsWrite: grantWrite } = await TestDataGenerator.generateGrantCreate({
@@ -341,15 +341,15 @@ describe('validation read closure', () => {
         scope     : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : definition.protocol,
+          module    : definition.module,
         },
       });
       expect((await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream })).status.code).toBe(202);
 
       const { message: grantedWriteMessage, dataStream: grantedWriteDataStream } = await TestDataGenerator.generateRecordsWrite({
         author            : bob,
-        protocol          : definition.protocol,
-        protocolPath      : 'post',
+        module            : definition.module,
+        modulePath        : 'post',
         schema            : definition.types.post.schema,
         dataFormat        : definition.types.post.dataFormats![0],
         permissionGrantId : grantWrite.message.recordId,
@@ -359,22 +359,22 @@ describe('validation read closure', () => {
       snapshot('live: grant-authorized write');
     }
 
-    // ---- scenario: live Messages.Read of a RecordsDelete with a protocol grant ----
+    // ---- scenario: live Messages.Read of a RecordsDelete with a module grant ----
     {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const definition = freeForAllProtocolDefinition as ProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = freeForAllModuleDefinition as ModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : definition.protocol,
-        protocolPath : 'post',
-        schema       : definition.types.post.schema,
-        dataFormat   : definition.types.post.dataFormats![0],
+        author     : alice,
+        module     : definition.module,
+        modulePath : 'post',
+        schema     : definition.types.post.schema,
+        dataFormat : definition.types.post.dataFormats![0],
       });
       expect((await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream })).status.code).toBe(202);
 
@@ -387,7 +387,7 @@ describe('validation read closure', () => {
         scope     : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol  : definition.protocol,
+          module    : definition.module,
         },
       });
       expect((await dwn.processMessage(alice.did, grantWrite.message, { dataStream: grantDataStream })).status.code).toBe(202);
@@ -408,22 +408,22 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition: ProtocolDefinition = {
-        protocol  : 'http://record-limit-closure.xyz',
+      const definition: ModuleDefinition = {
+        module    : 'http://record-limit-closure.xyz',
         published : false,
         types     : { item: { schema: 'item', dataFormats: ['text/plain'] } },
         structure : { item: { $recordLimit: { max: 1 } } },
       };
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const { message: firstMessage, dataStream: firstDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'item', schema: 'item', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'item', schema: 'item', dataFormat: 'text/plain',
       });
       expect((await dwn.processMessage(alice.did, firstMessage, { dataStream: firstDataStream })).status.code).toBe(202);
 
       const { message: secondMessage, dataStream: secondDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'item', schema: 'item', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'item', schema: 'item', dataFormat: 'text/plain',
       });
       expect((await dwn.processMessage(alice.did, secondMessage, { dataStream: secondDataStream })).status.code).toBe(202);
 
@@ -435,23 +435,23 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition: ProtocolDefinition = {
-        protocol  : 'http://squash-closure.xyz',
+      const definition: ModuleDefinition = {
+        module    : 'http://squash-closure.xyz',
         published : false,
         types     : { patch: { schema: 'patch', dataFormats: ['text/plain'] } },
         structure : { patch: { $squash: true } },
       };
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
       recorder.clearRecordedReads(); // trace the squash write admission only
 
       const { message: squashMessage, dataStream: squashDataStream } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : definition.protocol,
-        protocolPath : 'patch',
-        schema       : 'patch',
-        dataFormat   : 'text/plain',
-        squash       : true,
+        author     : alice,
+        module     : definition.module,
+        modulePath : 'patch',
+        schema     : 'patch',
+        dataFormat : 'text/plain',
+        squash     : true,
       });
       expect((await dwn.processMessage(alice.did, squashMessage, { dataStream: squashDataStream })).status.code).toBe(202);
 
@@ -463,13 +463,13 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const largeData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
       const { message: largeMessage, dataStream: largeDataStream, recordsWrite: largeWrite } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain', data: largeData,
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain', data: largeData,
       });
       expect((await dwn.processMessage(alice.did, largeMessage, { dataStream: largeDataStream })).status.code).toBe(202);
 
@@ -489,20 +489,20 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
       recorder.clearRecordedReads(); // trace the replicated applies only
 
       const { message: parentMessage, recordsWrite: parentWrite } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
       });
       expect((await dwn.applyReplicatedMessage(alice.did, parentMessage)).kind).toBe('Applied');
 
       const { message: childMessage, dataBytes: childDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parentWrite.message.contextId,
@@ -519,18 +519,18 @@ describe('validation read closure', () => {
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
-      const definition = friendRoleProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = friendRoleModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
       recorder.clearRecordedReads(); // trace the replicated applies only
 
       const { message: roleMessage } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, recipient: bob.did, protocol: definition.protocol, protocolPath: 'friend',
+        author: alice, recipient: bob.did, module: definition.module, modulePath: 'friend',
       });
       expect((await dwn.applyReplicatedMessage(alice.did, roleMessage)).kind).toBe('Applied');
 
       const { message: chatMessage, dataBytes: chatDataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author: bob, protocol: definition.protocol, protocolPath: 'chat', protocolRole: 'friend',
+        author: bob, module: definition.module, modulePath: 'chat', moduleRole: 'friend',
       });
       const chatResult = await dwn.applyReplicatedMessage(alice.did, chatMessage, { dataStream: DataStream.fromBytes(chatDataBytes!) });
       expect(chatResult.kind).toBe('Applied');
@@ -538,20 +538,20 @@ describe('validation read closure', () => {
       snapshot('replicated: role-invoking write admitted under dataless role record');
     }
 
-    // ---- scenario: initial write accepted by timestamped protocol history through replication apply ----
+    // ---- scenario: initial write accepted by timestamped module history through replication apply ----
     {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolUri = 'http://config-history-closure.xyz';
-      const v1Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const moduleUri = 'http://config-history-closure.xyz';
+      const v1Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : { alpha: { schema: 'alpha', dataFormats: ['text/plain'] }, keeper: { schema: 'keeper', dataFormats: ['text/plain'] } },
         structure : { alpha: {}, keeper: {} },
       };
-      const v2Definition: ProtocolDefinition = {
-        protocol  : protocolUri,
+      const v2Definition: ModuleDefinition = {
+        module    : moduleUri,
         published : false,
         types     : { keeper: { schema: 'keeper', dataFormats: ['text/plain'] } },
         structure : { keeper: {} },
@@ -561,20 +561,20 @@ describe('validation read closure', () => {
       const writeTimestamp = Time.createTimestamp({ year: 2024, month: 6, day: 1 });
       const v2Timestamp = Time.createTimestamp({ year: 2025, month: 1, day: 1 });
 
-      const { message: v1Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author: alice, protocolDefinition: v1Definition, messageTimestamp: v1Timestamp,
+      const { message: v1Message } = await TestDataGenerator.generateModulesConfigure({
+        author: alice, moduleDefinition: v1Definition, messageTimestamp: v1Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v1Message)).status.code).toBe(202);
-      const { message: v2Message } = await TestDataGenerator.generateProtocolsConfigure({
-        author: alice, protocolDefinition: v2Definition, messageTimestamp: v2Timestamp,
+      const { message: v2Message } = await TestDataGenerator.generateModulesConfigure({
+        author: alice, moduleDefinition: v2Definition, messageTimestamp: v2Timestamp,
       });
       expect((await dwn.processMessage(alice.did, v2Message)).status.code).toBe(202);
       recorder.clearRecordedReads(); // trace the replicated apply only
 
       const { message: alphaMessage, dataBytes: alphaDataBytes } = await TestDataGenerator.generateRecordsWrite({
         author           : alice,
-        protocol         : protocolUri,
-        protocolPath     : 'alpha',
+        module           : moduleUri,
+        modulePath       : 'alpha',
         schema           : 'alpha',
         dataFormat       : 'text/plain',
         dateCreated      : writeTimestamp,
@@ -591,13 +591,13 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
       recorder.clearRecordedReads(); // trace the replicated applies only
 
       const { message: stubMessage, dataBytes: stubDataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
       });
       expect((await dwn.applyReplicatedMessage(alice.did, stubMessage)).kind).toBe('Applied');
 
@@ -613,13 +613,13 @@ describe('validation read closure', () => {
       await clearStores();
       recorder.clearRecordedReads();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const { message: configureMessage } = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const { message: configureMessage } = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configureMessage)).status.code).toBe(202);
 
       const largeData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
       const { message: initialMessage, recordsWrite: initialWrite } = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain', data: largeData,
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain', data: largeData,
       });
       expect(await dwn.applyReplicatedMessage(
         alice.did, initialMessage, { dataStream: DataStream.fromBytes(largeData) },
@@ -649,19 +649,19 @@ describe('validation read closure', () => {
     for (const prune of [false, true]) {
       await clearStores();
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const definition = nestedProtocolDefinition;
-      const configure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition: definition });
+      const definition = nestedModuleDefinition;
+      const configure = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition: definition });
       expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
       const parent = await TestDataGenerator.generateRecordsWrite({
-        author: alice, protocol: definition.protocol, protocolPath: 'foo', schema: 'foo', dataFormat: 'text/plain',
+        author: alice, module: definition.module, modulePath: 'foo', schema: 'foo', dataFormat: 'text/plain',
       });
       expect((await dwn.processMessage(alice.did, parent.message, { dataStream: parent.dataStream })).status.code).toBe(202);
       const deletion = await RecordsDelete.create({ recordId: parent.message.recordId, prune, signer: Jws.createSigner(alice) });
       expect((await dwn.processMessage(alice.did, deletion.message)).status.code).toBe(202);
       const child = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : definition.protocol,
-        protocolPath    : 'foo/bar',
+        module          : definition.module,
+        modulePath      : 'foo/bar',
         schema          : 'bar',
         dataFormat      : 'text/plain',
         parentContextId : parent.message.contextId,

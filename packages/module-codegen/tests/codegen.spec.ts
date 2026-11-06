@@ -1,0 +1,1746 @@
+import type { CliIo } from '../src/cli.js';
+
+import { generateModuleCode } from '../src/codegen.js';
+import { generateStandaloneValidators } from '../src/standalone-validator.js';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { CliCheckError, CliUsageError, main, parseCheckArgs, parseGenerateArgs, runCheck, runGenerate } from '../src/cli.js';
+import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { resolveAllSchemas, resolveSchema } from '../src/schema-resolver.js';
+
+// ---------------------------------------------------------------------------
+// Fixture paths
+// ---------------------------------------------------------------------------
+
+const FIXTURES_DIR = join(import.meta.dir, 'fixtures');
+const SCHEMAS_DIR = join(FIXTURES_DIR, 'schemas');
+const SCHEMAS_URI_PATH_DIR = join(FIXTURES_DIR, 'schemas-uri-path');
+const PACKAGE_DIR = join(import.meta.dir, '..');
+const TMP_DIR = join(PACKAGE_DIR, '.tmp-codegen-tests');
+
+type CliResult = {
+  exitCode : number;
+  stderr : string;
+  stdout : string;
+};
+
+type MemoryCliIo = {
+  io : CliIo;
+  stderr : () => string;
+  stdout : () => string;
+};
+
+function createMemoryIo(cwd = PACKAGE_DIR): MemoryCliIo {
+  let stderr = '';
+  let stdout = '';
+
+  return {
+    io: {
+      cwd,
+      stderr: {
+        write: (chunk: string): boolean => {
+          stderr += chunk;
+          return true;
+        },
+      },
+      stdout: {
+        write: (chunk: string): boolean => {
+          stdout += chunk;
+          return true;
+        },
+      },
+    },
+    stderr : (): string => stderr,
+    stdout : (): string => stdout,
+  };
+}
+
+async function loadDefinition(): Promise<Record<string, unknown>> {
+  const raw = await readFile(join(FIXTURES_DIR, 'todo-definition.json'), 'utf-8');
+  return JSON.parse(raw);
+}
+
+async function runCli(args: string[]): Promise<CliResult> {
+  const proc = Bun.spawn(['bun', 'src/cli.ts', ...args], {
+    cwd    : PACKAGE_DIR,
+    env    : process.env,
+    stderr : 'pipe',
+    stdout : 'pipe',
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return { exitCode, stderr, stdout };
+}
+
+type RuntimeValidator = ((value: unknown) => boolean) & {
+  errors?: readonly { keyword: string }[] | null;
+};
+
+async function loadStandaloneValidators(source: string): Promise<Record<string, RuntimeValidator>> {
+  await mkdir(TMP_DIR, { recursive: true });
+  const modulePath = join(TMP_DIR, 'standalone-validators.ts');
+  await writeFile(modulePath, `${source}\nexport { moduleValidators };\n`, 'utf-8');
+  const module = await import(pathToFileURL(modulePath).href) as {
+    moduleValidators: Record<string, RuntimeValidator>;
+  };
+  return module.moduleValidators;
+}
+
+async function expectGeneratedModuleToTypecheck(path: string): Promise<void> {
+  const typecheck = Bun.spawn([
+    'bun', 'tsc', '--noEmit', '--strict', '--skipLibCheck',
+    '--module', 'ESNext', '--moduleResolution', 'Bundler', '--target', 'ES2022',
+    '--lib', 'ES2022,DOM,DOM.Iterable', path,
+  ], { cwd: PACKAGE_DIR, stderr: 'pipe', stdout: 'pipe' });
+  const [stderr, stdout, exitCode] = await Promise.all([
+    new Response(typecheck.stderr).text(),
+    new Response(typecheck.stdout).text(),
+    typecheck.exited,
+  ]);
+  expect(exitCode, stdout + stderr).toBe(0);
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+describe('module-codegen CLI', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
+  it('should parse generate help without running generation', () => {
+    const memory = createMemoryIo();
+
+    const result = parseGenerateArgs(['--help'], memory.io);
+
+    expect(result).toBeUndefined();
+    expect(memory.stdout()).toContain('module-codegen generate [options]');
+  });
+
+  it('should parse generate arguments', () => {
+    const result = parseGenerateArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', join(TMP_DIR, 'todo.generated.ts'),
+      '--target', 'browser',
+    ], createMemoryIo().io);
+
+    expect(result).toEqual({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output     : join(TMP_DIR, 'todo.generated.ts'),
+      schemas    : SCHEMAS_DIR,
+      target     : 'browser',
+    });
+  });
+
+  it('should parse check arguments and require an output path', () => {
+    const memory = createMemoryIo();
+    const result = parseCheckArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', join(TMP_DIR, 'todo.generated.ts'),
+      '--allow-unresolved',
+    ], memory.io);
+
+    expect(result).toEqual({
+      allowUnresolvedJsonSchemas : true,
+      definition                 : join(FIXTURES_DIR, 'todo-definition.json'),
+      name                       : 'Todo',
+      output                     : join(TMP_DIR, 'todo.generated.ts'),
+      schemas                    : SCHEMAS_DIR,
+    });
+    expect(() => parseCheckArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+    ], memory.io)).toThrow('Missing required argument: output');
+  });
+
+  it('should parse check help without requiring an output path', () => {
+    const memory = createMemoryIo();
+
+    const result = parseCheckArgs(['--help'], memory.io);
+
+    expect(result).toBeUndefined();
+    expect(memory.stdout()).toContain('module-codegen check [options]');
+  });
+
+  it('should throw on invalid generate options', () => {
+    const memory = createMemoryIo();
+
+    expect(() => parseGenerateArgs(['--invalid'], memory.io)).toThrow(CliUsageError);
+    expect(() => parseGenerateArgs(['--target', 'worker'], memory.io)).toThrow(
+      'Invalid target \'worker\': expected \'api\' or \'browser\'.',
+    );
+  });
+
+  it('should throw on missing generate options', () => {
+    const memory = createMemoryIo();
+
+    expect(() => parseGenerateArgs([
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--name', 'Todo',
+    ], memory.io)).toThrow('Missing required argument: schemas');
+  });
+
+  it('should handle top-level help and version in process', async () => {
+    const helpMemory = createMemoryIo();
+    await main(['--help'], helpMemory.io);
+    expect(helpMemory.stdout()).toContain('module-codegen <command> [options]');
+
+    const versionMemory = createMemoryIo();
+    await main(['--version'], versionMemory.io);
+    expect(versionMemory.stdout()).toBe(`${JSON.parse(await readFile(join(PACKAGE_DIR, 'package.json'), 'utf8')).version}\n`);
+  });
+
+  it('should throw when no command is provided', async () => {
+    const memory = createMemoryIo();
+
+    await expect(main([], memory.io)).rejects.toThrow('You must specify a command.');
+  });
+
+  it('should throw when an unknown command is provided', async () => {
+    const memory = createMemoryIo();
+
+    await expect(main(['unknown'], memory.io)).rejects.toThrow('Unknown command: unknown');
+  });
+
+  it('should throw when generate paths escape the working directory', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : '../package.json',
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('definition path must be within the current working directory');
+  });
+
+  it('should throw when the working directory is not a directory', async () => {
+    const memory = createMemoryIo(join(FIXTURES_DIR, 'todo-definition.json'));
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('current working directory not found');
+  });
+
+  it('should throw when the definition path is not a file', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : FIXTURES_DIR,
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('definition file not found');
+  });
+
+  it('should throw when the schemas path is not a directory', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : join(FIXTURES_DIR, 'todo-definition.json'),
+    }, memory.io)).rejects.toThrow('schemas directory not found');
+  });
+
+  it('should throw when the output directory does not exist', async () => {
+    const memory = createMemoryIo();
+
+    await expect(runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output     : join(TMP_DIR, 'missing', 'todo.generated.ts'),
+      schemas    : SCHEMAS_DIR,
+    }, memory.io)).rejects.toThrow('output directory not found');
+  });
+
+  it('should allow paths whose safe in-root segments begin with two dots', async () => {
+    const nestedDir = join(TMP_DIR, '..metadata');
+    const schemasDir = join(nestedDir, 'schemas');
+    const definition = join(nestedDir, 'definition.json');
+    const output = join(nestedDir, 'generated.ts');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(definition, JSON.stringify({
+      module    : 'https://example.com/modules/empty',
+      published : true,
+      types     : {},
+      structure : {},
+    }), 'utf-8');
+
+    await runGenerate({
+      definition : '..metadata/definition.json',
+      name       : 'Empty',
+      output     : '..metadata/generated.ts',
+      schemas    : '..metadata/schemas',
+    }, createMemoryIo(TMP_DIR).io);
+
+    expect(await readFile(output, 'utf-8')).toContain('export const EmptyDefinition');
+  });
+
+  it('should reject final-component output symlinks for generate and check', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    const outsideOutput = join(PACKAGE_DIR, '..', '.tmp-codegen-outside.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await writeFile(outsideOutput, 'preserve me\n', 'utf-8');
+    await symlink(outsideOutput, output);
+
+    try {
+      await expect(runGenerate({
+        definition : join(FIXTURES_DIR, 'todo-definition.json'),
+        name       : 'Todo',
+        output,
+        schemas    : SCHEMAS_DIR,
+      }, createMemoryIo().io)).rejects.toThrow('output path must not be a symbolic link');
+      await expect(runCheck({
+        definition : join(FIXTURES_DIR, 'todo-definition.json'),
+        name       : 'Todo',
+        output,
+        schemas    : SCHEMAS_DIR,
+      }, createMemoryIo().io)).rejects.toThrow('output path must not be a symbolic link');
+      expect(await readFile(outsideOutput, 'utf-8')).toBe('preserve me\n');
+    } finally {
+      await rm(outsideOutput, { force: true });
+    }
+  });
+
+  it('should generate TypeScript in process to stdout', async () => {
+    const memory = createMemoryIo();
+
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    expect(memory.stdout()).toContain('export interface ListData');
+    expect(memory.stderr()).toContain('+ list: local-type-name');
+  });
+
+  it('should generate TypeScript in process to a file', async () => {
+    const memory = createMemoryIo();
+    await mkdir(TMP_DIR, { recursive: true });
+
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    const generated = await readFile(output, 'utf-8');
+    expect(generated).toContain('export interface ListData');
+    expect(memory.stderr()).toContain(`Wrote ${output}`);
+  });
+
+  it('should check fresh output without writing or printing generated source', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await runGenerate({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io);
+    const beforeContent = await readFile(output, 'utf-8');
+    const beforeStats = await stat(output);
+    const memory = createMemoryIo();
+
+    await runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, memory.io);
+
+    const afterStats = await stat(output);
+    expect(memory.stdout()).toBe('');
+    expect(memory.stderr()).toContain(`Up to date: ${output}`);
+    expect(await readFile(output, 'utf-8')).toBe(beforeContent);
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
+  });
+
+  it('should reject stale output without modifying it', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await writeFile(output, 'stale output\n', 'utf-8');
+    const beforeStats = await stat(output);
+
+    await expect(runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io)).rejects.toThrow(CliCheckError);
+
+    const afterStats = await stat(output);
+    expect(await readFile(output, 'utf-8')).toBe('stale output\n');
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
+  });
+
+  it('should reject missing output without creating it', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+
+    await expect(runCheck({
+      definition : join(FIXTURES_DIR, 'todo-definition.json'),
+      name       : 'Todo',
+      output,
+      schemas    : SCHEMAS_DIR,
+    }, createMemoryIo().io)).rejects.toThrow(`Generated output is missing: ${output}`);
+    await expect(stat(output)).rejects.toThrow();
+  });
+
+  it('should leave existing output untouched when strict generation fails', async () => {
+    const definition = join(TMP_DIR, 'definition.json');
+    const schemas = join(TMP_DIR, 'schemas');
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(schemas, { recursive: true });
+    await writeFile(definition, JSON.stringify({
+      module    : 'https://example.com/modules/strict',
+      published : true,
+      types     : { note: { dataFormats: ['application/json'] } },
+      structure : { note: {} },
+    }), 'utf-8');
+    await writeFile(output, 'preserve me\n', 'utf-8');
+    const beforeStats = await stat(output);
+
+    await expect(runCheck({
+      definition,
+      name: 'Strict',
+      output,
+      schemas,
+    }, createMemoryIo().io)).rejects.toThrow('type \'note\' must declare a schema URI');
+
+    const afterStats = await stat(output);
+    expect(await readFile(output, 'utf-8')).toBe('preserve me\n');
+    expect(afterStats.mtimeMs).toBe(beforeStats.mtimeMs);
+  });
+
+  it('should route generate help through main', async () => {
+    const memory = createMemoryIo();
+
+    await main(['generate', '--help'], memory.io);
+
+    expect(memory.stdout()).toContain('module-codegen generate [options]');
+  });
+
+  it('should print help', async () => {
+    const result = await runCli(['--help']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('module-codegen <command> [options]');
+    expect(result.stdout).toContain('generate');
+  });
+
+  it('should print version', async () => {
+    const result = await runCli(['--version']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`${JSON.parse(await readFile(join(PACKAGE_DIR, 'package.json'), 'utf8')).version}\n`);
+  });
+
+  it('should fail when required generate flags are missing', async () => {
+    const result = await runCli(['generate', '--definition', join(FIXTURES_DIR, 'todo-definition.json'), '--name', 'Todo']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('Missing required argument: schemas');
+  });
+
+  it('should generate TypeScript to stdout', async () => {
+    const result = await runCli([
+      'generate',
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--target', 'browser',
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('export interface ListData');
+    expect(result.stdout).toContain(`from '@enbox/browser';`);
+    expect(result.stdout).not.toContain(`from '@enbox/api';`);
+    expect(result.stdout).not.toContain(`from '@enbox/dwn-sdk-js';`);
+    expect(result.stderr).toContain('+ list: local-type-name');
+  });
+
+  it('should report check success and failure through process exit codes', async () => {
+    const output = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    const commonArgs = [
+      '--definition', join(FIXTURES_DIR, 'todo-definition.json'),
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', output,
+    ];
+    const generated = await runCli(['generate', ...commonArgs]);
+    expect(generated.exitCode).toBe(0);
+
+    const fresh = await runCli(['check', ...commonArgs]);
+    expect(fresh.exitCode).toBe(0);
+    expect(fresh.stdout).toBe('');
+    expect(fresh.stderr).toContain('Up to date:');
+
+    await writeFile(output, 'stale\n', 'utf-8');
+    const stale = await runCli(['check', ...commonArgs]);
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr).toContain('Generated output is stale:');
+    expect(await readFile(output, 'utf-8')).toBe('stale\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Schema resolution
+// ---------------------------------------------------------------------------
+
+describe('resolveSchema()', () => {
+  it('should resolve by type name (strategy 1)', async () => {
+    const result = await resolveSchema('list', 'https://example.com/schemas/todo/list', SCHEMAS_DIR);
+
+    expect(result.source).toBe('local-type-name');
+    expect(result.schema).toBeDefined();
+    expect(result.schema!.title).toBe('ListData');
+  });
+
+  it('should resolve by URI path (strategy 2) when type name file is missing', async () => {
+    // The schemas-uri-path dir has todo/list.json but NOT list.json at root
+    const result = await resolveSchema('list', 'https://example.com/schemas/todo/list', SCHEMAS_URI_PATH_DIR);
+
+    expect(result.source).toBe('local-uri-path');
+    expect(result.schema).toBeDefined();
+    expect(result.schema!.title).toBe('ListData');
+  });
+
+  it('should not fetch schema URIs when local files are missing', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'object' });
+      },
+    });
+
+    try {
+      const emptyDir = join(TMP_DIR, 'schemas');
+      await mkdir(emptyDir, { recursive: true });
+
+      const result = await resolveSchema(
+        'notfound',
+        `http://localhost:${server.port}/schemas/widget`,
+        emptyDir,
+      );
+
+      expect(result.source).toBe('unresolved');
+      expect(result.schema).toBeUndefined();
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
+  });
+
+  it('should reject local schema paths outside the canonical schemas directory', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const nestedDir = join(schemasDir, 'todo');
+    const outsideSchema = join(TMP_DIR, 'outside.json');
+    await mkdir(nestedDir, { recursive: true });
+    await writeFile(outsideSchema, '{}', 'utf-8');
+    await symlink(outsideSchema, join(nestedDir, 'list.json'));
+
+    try {
+      await expect(resolveSchema(
+        'missing',
+        'https://example.com/schemas/todo/list',
+        schemasDir,
+      )).rejects.toThrow('Schema path must be within the schemas directory');
+    } finally {
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
+  });
+
+  it('should allow safe schema filenames beginning with two dots', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, '..metadata.json'), JSON.stringify({ type: 'object' }), 'utf-8');
+
+    const result = await resolveSchema(
+      '..metadata',
+      'https://example.com/schemas/metadata',
+      schemasDir,
+    );
+
+    expect(result.source).toBe('local-type-name');
+    expect(result.schema).toEqual({ type: 'object' });
+  });
+
+  it('should return unresolved when no schema file exists and URI is not fetchable', async () => {
+    const result = await resolveSchema(
+      'missing',
+      'https://example.com/schemas/nonexistent',
+      SCHEMAS_DIR,
+    );
+
+    expect(result.source).toBe('unresolved');
+    expect(result.schema).toBeUndefined();
+  });
+
+  it('should reject schema files whose JSON root is not an object', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    const cases = [
+      { expected: 'found null', value: null },
+      { expected: 'found array', value: [] },
+      { expected: 'found number', value: 42 },
+    ];
+
+    try {
+      for (const { expected, value } of cases) {
+        await writeFile(join(schemasDir, 'invalid.json'), JSON.stringify(value), 'utf-8');
+        await expect(resolveSchema(
+          'invalid',
+          'https://example.com/schemas/invalid',
+          schemasDir,
+        )).rejects.toThrow(`must contain a non-null object (${expected})`);
+      }
+    } finally {
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
+  });
+});
+
+describe('resolveAllSchemas()', () => {
+  it('should resolve schemas for all types with schema URIs', async () => {
+    const definition = await loadDefinition();
+    const types = definition.types as Record<string, { schema?: string }>;
+
+    const results = await resolveAllSchemas(types, SCHEMAS_DIR);
+
+    // list and task should be resolved (have schema files)
+    expect(results.has('list')).toBe(true);
+    expect(results.get('list')!.source).toBe('local-type-name');
+
+    expect(results.has('task')).toBe(true);
+    expect(results.get('task')!.source).toBe('local-type-name');
+
+    // attachment has no schema URI — should not be in the results
+    expect(results.has('attachment')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Code generation
+// ---------------------------------------------------------------------------
+
+describe('generateStandaloneValidators()', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
+  const schema = {
+    $id     : 'https://example.com/schemas/event',
+    $schema : 'http://json-schema.org/draft-07/schema#',
+    $defs   : {
+      detail: {
+        type                 : 'object',
+        properties           : { label: { type: 'string' } },
+        required             : ['label'],
+        additionalProperties : false,
+      },
+    },
+    type       : 'object',
+    properties : {
+      detail     : { $ref: '#/$defs/detail' },
+      occurredAt : { type: 'string', format: 'date-time' },
+      title      : { type: 'string', maxLength: 5 },
+    },
+    required             : ['detail', 'occurredAt', 'title'],
+    additionalProperties : false,
+  };
+
+  it('should emit self-contained synchronous validators', async () => {
+    const source = await generateStandaloneValidators([
+      { name: 'validateEventData', schema },
+      { name: 'validateSharedEventData', schema: { ...schema } },
+    ]);
+
+    expect(source).not.toContain(`from 'ajv`);
+    expect(source).not.toContain('esbuild');
+    expect(source).not.toContain('new Function');
+    expect(source).not.toContain('eval(');
+
+    const validators = await loadStandaloneValidators(source);
+    for (const validator of [validators.validateEventData, validators.validateSharedEventData]) {
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'valid',
+      })).toBe(true);
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'too long',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('maxLength');
+      expect(validator({
+        detail     : { label: 'ok' },
+        occurredAt : 'not-a-date',
+        title      : 'valid',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('format');
+      expect(validator({
+        detail     : { label: 42 },
+        occurredAt : '2026-07-30T12:00:00Z',
+        title      : 'valid',
+      })).toBe(false);
+      expect(validator.errors?.[0]?.keyword).toBe('type');
+    }
+  });
+
+  it('should reject asynchronous and unsupported-dialect schemas', async () => {
+    await expect(generateStandaloneValidators([{
+      name   : 'validateAsync',
+      schema : { ...schema, $async: true },
+    }])).rejects.toThrow('cannot use $async');
+
+    await expect(generateStandaloneValidators([{
+      name   : 'validateModern',
+      schema : { ...schema, $schema: 'https://json-schema.org/draft/2020-12/schema' },
+    }])).rejects.toThrow('must use JSON Schema Draft-07');
+
+    const { type: _, ...untypedObjectSchema } = schema;
+    await expect(generateStandaloneValidators([{
+      name   : 'validateUntypedObject',
+      schema : untypedObjectSchema,
+    }])).rejects.toThrow('strict mode: missing type "object"');
+  });
+});
+
+describe('generateModuleCode()', () => {
+  afterEach(async (): Promise<void> => {
+    await rm(TMP_DIR, { force: true, recursive: true });
+  });
+
+  it('should generate TypeScript types from resolved schemas', async () => {
+    const definition = await loadDefinition();
+
+    const { code, resolutions } = await generateModuleCode(definition as any, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Todo',
+    });
+
+    // Should contain auto-generated banner
+    expect(code).toContain('Auto-generated by @enbox/module-codegen');
+
+    // Should contain type definitions
+    expect(code).toContain('export interface ListData');
+    expect(code).toContain('export interface TaskData');
+
+    // Variable MIME attachments retain their MIME type in a Blob.
+    expect(code).toContain('export type AttachmentData = Blob;');
+
+    // The complete module wires runtime codecs to the emitted definition.
+    expect(code).toContain(`import { defineModule, recordCodecs, type RecordValidator } from '@enbox/api';`);
+    expect(code).toContain('export const TodoDefinition = {');
+    expect(code).toContain('export const TodoCodecs = {');
+    expect(code).toContain('list       : recordCodecs.json<ListData>({ validator: moduleValidators.validateListData }),');
+    expect(code).toContain('task       : recordCodecs.json<TaskData>({ validator: moduleValidators.validateTaskData }),');
+    expect(code).toContain('attachment : recordCodecs.blob(),');
+    expect(code).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+    expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
+
+    const generatedPath = join(TMP_DIR, 'todo.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await Bun.write(generatedPath, code);
+    await expectGeneratedModuleToTypecheck(generatedPath);
+    // Resolution metadata should be populated
+    expect(resolutions.get('list')!.source).toBe('local-type-name');
+    expect(resolutions.get('task')!.source).toBe('local-type-name');
+  });
+
+  it('should generate modules against the browser runtime surface', async () => {
+    const definition = await loadDefinition();
+
+    const { code } = await generateModuleCode(definition as any, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Todo',
+      target     : 'browser',
+    });
+
+    expect(code).toContain(`import type { ModuleDefinition } from '@enbox/browser';`);
+    expect(code).toContain(`import { defineModule, recordCodecs, type RecordValidator } from '@enbox/browser';`);
+    expect(code).not.toContain(`from '@enbox/api';`);
+    expect(code).not.toContain(`from '@enbox/dwn-sdk-js';`);
+
+    const generatedPath = join(TMP_DIR, 'todo.browser.generated.ts');
+    await mkdir(TMP_DIR, { recursive: true });
+    await Bun.write(generatedPath, code);
+    await expectGeneratedModuleToTypecheck(generatedPath);
+  });
+
+  it('should generate correct interface properties from schema', async () => {
+    const definition = await loadDefinition();
+
+    const { code } = await generateModuleCode(definition as any, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Todo',
+    });
+
+    // ListData should have name (required) and description (optional)
+    expect(code).toContain('name: string');
+    expect(code).toContain('description?: string');
+
+    // TaskData should have title, completed (required) and dueDate (optional)
+    expect(code).toContain('title: string');
+    expect(code).toContain('completed: boolean');
+    expect(code).toContain('dueDate?: string');
+  });
+
+  it('should retain a custom JSON MIME type on validated codecs', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'event.json'), JSON.stringify({
+      $id                  : 'https://example.com/schemas/event',
+      type                 : 'object',
+      properties           : { title: { type: 'string' } },
+      required             : ['title'],
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const { code } = await generateModuleCode({
+      module    : 'https://example.com/modules/events',
+      published : true,
+      types     : {
+        event: {
+          schema      : 'https://example.com/schemas/event',
+          dataFormats : ['application/activity+json'],
+        },
+      },
+      structure: { event: {} },
+    }, {
+      schemasDir,
+      moduleName: 'Events',
+    });
+
+    expect(code).toContain(
+      'event: recordCodecs.json<EventData>({ dataFormat: "application/activity+json", ' +
+      'validator: moduleValidators.validateEventData })',
+    );
+  });
+
+  it('should require the local schema $id to match even when unresolved schemas are allowed', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id                  : 'https://example.com/schemas/wrong',
+      type                 : 'object',
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const definition = {
+      module    : 'https://example.com/modules/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateModuleCode(definition, {
+      allowUnresolvedJsonSchemas : true,
+      schemasDir,
+      moduleName                 : 'SchemaId',
+    })).rejects.toThrow(
+      'type \'note\' schema $id must equal \'https://example.com/schemas/note\' ' +
+      '(found "https://example.com/schemas/wrong")',
+    );
+  });
+
+  it('should reject a reachable local schema without an $id', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({ type: 'object' }), 'utf-8');
+
+    const definition = {
+      module    : 'https://example.com/modules/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir,
+      moduleName: 'SchemaId',
+    })).rejects.toThrow('(found undefined)');
+  });
+
+  it('should reject a reachable local schema with a non-string $id', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id  : 42,
+      type : 'object',
+    }), 'utf-8');
+
+    const definition = {
+      module    : 'https://example.com/modules/schema-id',
+      published : true,
+      types     : {
+        note: {
+          schema      : 'https://example.com/schemas/note',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir,
+      moduleName: 'SchemaId',
+    })).rejects.toThrow(
+      'type \'note\' schema must declare a string $id equal to \'https://example.com/schemas/note\' (found 42)',
+    );
+  });
+
+  it('should normalize a schema title without mutating the resolved schema', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/note';
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id                  : schemaUri,
+      title                : 'WrongName',
+      type                 : 'object',
+      properties           : { body: { type: 'string' } },
+      additionalProperties : false,
+    }), 'utf-8');
+
+    const { code, resolutions } = await generateModuleCode({
+      module    : 'https://example.com/modules/title',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    }, {
+      schemasDir,
+      moduleName: 'Title',
+    });
+
+    expect(code).toContain('export interface NoteData');
+    expect(code).not.toContain('export interface WrongName');
+    expect(resolutions.get('note')!.schema!.title).toBe('WrongName');
+  });
+
+  it('should reject nested remote schema refs without fetching them', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'string' });
+      },
+    });
+
+    try {
+      const schemasDir = join(TMP_DIR, 'schemas');
+      const schemaUri = 'https://example.com/schemas/note';
+      const remoteRef = `http://localhost:${server.port}/external.json#/definitions/value`;
+      await mkdir(schemasDir, { recursive: true });
+      await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+        $id        : schemaUri,
+        type       : 'object',
+        properties : {
+          nested: {
+            type       : 'object',
+            properties : { value: { $ref: remoteRef } },
+          },
+        },
+      }), 'utf-8');
+
+      await expect(generateModuleCode({
+        module    : 'https://example.com/modules/refs',
+        published : true,
+        types     : {
+          note: { schema: schemaUri, dataFormats: ['application/json'] },
+        },
+        structure: { note: {} },
+      }, {
+        schemasDir,
+        moduleName: 'Refs',
+      })).rejects.toThrow(
+        `schema $ref at '#/properties/nested/properties/value/$ref' must be a local fragment beginning with '#' ` +
+        `(found ${JSON.stringify(remoteRef)})`,
+      );
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('should reject file-system schema refs but allow local fragments', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/note';
+    await mkdir(schemasDir, { recursive: true });
+    const definition = {
+      module    : 'https://example.com/modules/refs',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    };
+
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id  : schemaUri,
+      $ref : './external.json#/$defs/value',
+    }), 'utf-8');
+    await expect(generateModuleCode(definition, {
+      schemasDir,
+      moduleName: 'Refs',
+    })).rejects.toThrow('must be a local fragment beginning with \'#\' (found "./external.json#/$defs/value")');
+
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id   : schemaUri,
+      $defs : {
+        value: {
+          type       : 'object',
+          properties : { body: { type: 'string' } },
+        },
+      },
+      $ref: '#/$defs/value',
+    }), 'utf-8');
+    const { code } = await generateModuleCode(definition, {
+      schemasDir,
+      moduleName: 'Refs',
+    });
+    expect(code).toContain('export interface NoteData');
+    expect(code).toContain('body?: string');
+  });
+
+  it('should allow literal $ref property and definition names without external resolution', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'string' });
+      },
+    });
+
+    try {
+      const schemasDir = join(TMP_DIR, 'schemas');
+      const schemaUri = 'https://example.com/schemas/literal-ref';
+      await mkdir(schemasDir, { recursive: true });
+      await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+        $id     : schemaUri,
+        $defs   : { $ref: { type: 'number' } },
+        type    : 'object',
+        default : {
+          $ref: `http://localhost:${server.port}/literal-value`,
+        },
+        properties: {
+          $ref: { type: 'string' },
+        },
+      }), 'utf-8');
+
+      const { code } = await generateModuleCode({
+        module    : 'https://example.com/modules/literal-ref',
+        published : true,
+        types     : {
+          note: { schema: schemaUri, dataFormats: ['application/json'] },
+        },
+        structure: { note: {} },
+      }, {
+        schemasDir,
+        moduleName: 'LiteralRef',
+      });
+
+      expect(code).toContain('$ref?: string');
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('should preserve local fragment-shaped literal data while dereferencing schema refs', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    const schemaUri = 'https://example.com/schemas/literal-local-ref';
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'note.json'), JSON.stringify({
+      $id        : schemaUri,
+      $defs      : { value: { type: 'string' } },
+      type       : 'object',
+      properties : {
+        actual  : { $ref: '#/$defs/value' },
+        literal : {
+          const    : { $ref: '#/$defs/value' },
+          default  : { $ref: '#/missing-default' },
+          examples : [{ $ref: '#/missing-example' }],
+        },
+      },
+    }), 'utf-8');
+
+    const { code } = await generateModuleCode({
+      module    : 'https://example.com/modules/literal-local-ref',
+      published : true,
+      types     : {
+        note: { schema: schemaUri, dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    }, {
+      schemasDir,
+      moduleName: 'LiteralLocalRef',
+    });
+
+    expect(code).toContain('export type Value = string');
+    expect(code).toContain('actual?: Value');
+    expect(code).toContain('literal?: {"$ref":"#/$defs/value"}');
+    expect(code).not.toContain('literal?: {"type":"string"}');
+  });
+
+  it('should reject invalid and colliding generated identifiers', async () => {
+    const emptyDefinition = {
+      module    : 'https://example.com/modules/names',
+      published : true,
+      types     : {},
+      structure : {},
+    };
+    await expect(generateModuleCode(emptyDefinition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'invalid-name',
+    })).rejects.toThrow('Module name \'invalid-name\' must be a PascalCase TypeScript identifier');
+
+    await expect(generateModuleCode({
+      ...emptyDefinition,
+      types: {
+        'foo-bar' : { dataFormats: ['text/plain'] },
+        foo_bar   : { dataFormats: ['text/plain'] },
+      },
+      structure: { 'foo-bar': {}, foo_bar: {} },
+    }, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Names',
+    })).rejects.toThrow('\'foo-bar\', \'foo_bar\' all generate the identifier \'FooBarData\'');
+
+    await expect(generateModuleCode({
+      ...emptyDefinition,
+      types     : { '123-note': { dataFormats: ['text/plain'] } },
+      structure : { '123-note': {} },
+    }, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Names',
+    })).rejects.toThrow('Module type \'123-note\' cannot be converted to a valid TypeScript identifier');
+  });
+
+  it('should generate byte-identical output for identical inputs', async () => {
+    const definition = await loadDefinition();
+    const options = { schemasDir: SCHEMAS_DIR, moduleName: 'Todo' };
+
+    const first = await generateModuleCode(definition as any, options);
+    const second = await generateModuleCode(definition as any, options);
+
+    expect(second.code).toBe(first.code);
+  });
+
+  it('should reject a reachable JSON type with an unresolved local schema', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/test',
+      published : true,
+      types     : {
+        unknown_type: {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: {
+        unknown_type: {},
+      },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Test',
+    })).rejects.toThrow(
+      'type \'unknown_type\' has no local schema for \'https://example.com/schemas/nonexistent\'',
+    );
+  });
+
+  it('should emit unknown for an unresolved schema only when explicitly allowed', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/test',
+      published : true,
+      types     : {
+        unknown_type: {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: {
+        unknown_type: {},
+      },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      moduleName                 : 'Test',
+    });
+
+    expect(code).toContain('export type UnknownTypeData = unknown;');
+    expect(code).toContain('unknown_type: recordCodecs.json<UnknownTypeData>(),');
+  });
+
+  it('should reject a reachable JSON type without a schema URI', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/missing-schema-uri',
+      published : true,
+      types     : {
+        note: { dataFormats: ['application/json'] },
+      },
+      structure: { note: {} },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'MissingSchemaUri',
+    })).rejects.toThrow('type \'note\' must declare a schema URI');
+  });
+
+  it('should recognize only application/json and valid application structured JSON suffixes', async () => {
+    const validJsonFormats = [
+      'application/json',
+      'Application/JSON; charset=UTF-8',
+      'application/problem+json',
+      'APPLICATION/VND.EXAMPLE+JSON ; charset=utf-8',
+    ];
+    for (const dataFormat of validJsonFormats) {
+      await expect(generateModuleCode({
+        module    : 'https://example.com/modules/json-media-type',
+        published : true,
+        types     : { note: { dataFormats: [dataFormat] } },
+        structure : { note: {} },
+      }, {
+        schemasDir : SCHEMAS_DIR,
+        moduleName : 'JsonMediaType',
+      })).rejects.toThrow('type \'note\' must declare a schema URI');
+    }
+
+    const nonJsonFormats = [
+      'text/json',
+      'text/problem+json',
+      'foo/application/json',
+      'application/+json',
+      'application/json-seq',
+    ];
+    for (const dataFormat of nonJsonFormats) {
+      const { code, resolutions } = await generateModuleCode({
+        module    : 'https://example.com/modules/non-json-media-type',
+        published : true,
+        types     : { note: { dataFormats: [dataFormat] } },
+        structure : { note: {} },
+      }, {
+        schemasDir : SCHEMAS_DIR,
+        moduleName : 'NonJsonMediaType',
+      });
+      expect(code).not.toContain('recordCodecs.json');
+      expect(resolutions.size).toBe(0);
+    }
+  });
+
+  it('should emit Blob for variable binary formats', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/media',
+      published : true,
+      types     : {
+        avatar: {
+          dataFormats: ['image/png', 'image/jpeg'],
+        },
+      },
+      structure: {
+        avatar: {},
+      },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Media',
+    });
+
+    expect(code).toContain('export type AvatarData = Blob;');
+    expect(code).toContain('avatar: recordCodecs.blob(),');
+    expect(code).not.toContain('RecordValidator');
+  });
+
+  it('should select built-in codecs from declared data formats', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/formats',
+      published : true,
+      types     : {
+        jsonValue: {
+          dataFormats: ['application/merge-patch+json'],
+        },
+        plainText: {
+          dataFormats: ['text/plain'],
+        },
+        markdown: {
+          dataFormats: ['text/markdown'],
+        },
+        bytes: {
+          dataFormats: ['application/octet-stream'],
+        },
+        image: {
+          dataFormats: ['image/png'],
+        },
+        media: {
+          dataFormats: ['image/png', 'image/jpeg'],
+        },
+        styledText: {
+          dataFormats: ['text/plain', 'text/markdown'],
+        },
+      },
+      structure: {
+        jsonValue  : {},
+        plainText  : {},
+        markdown   : {},
+        bytes      : {},
+        image      : {},
+        media      : {},
+        styledText : {},
+      },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      moduleName                 : 'Formats',
+    });
+
+    expect(code).toContain('export type JsonValueData = unknown;');
+    expect(code).toContain('export type PlainTextData = string;');
+    expect(code).toContain('export type MarkdownData = string;');
+    expect(code).toContain('export type BytesData = Uint8Array;');
+    expect(code).toContain('export type ImageData = Uint8Array;');
+    expect(code).toContain('export type MediaData = Blob;');
+    expect(code).toContain('export type StyledTextData = Blob;');
+    expect(code).toContain('jsonValue  : recordCodecs.json<JsonValueData>("application/merge-patch+json"),');
+    expect(code).toContain('plainText  : recordCodecs.text(),');
+    expect(code).toContain('markdown   : recordCodecs.text("text/markdown"),');
+    expect(code).toContain('bytes      : recordCodecs.bytes(),');
+    expect(code).toContain('image      : recordCodecs.bytes("image/png"),');
+    expect(code).toContain('media      : recordCodecs.blob(),');
+    expect(code).toContain('styledText : recordCodecs.blob(),');
+  });
+
+  it('should derive representation from MIME formats rather than schema presence', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/schema-formats',
+      published : true,
+      types     : {
+        label: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['text/plain'],
+        },
+        binary: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['application/cbor'],
+        },
+        mixed: {
+          schema      : 'https://example.com/schemas/task',
+          dataFormats : ['application/json', 'text/plain'],
+        },
+      },
+      structure: {
+        label  : {},
+        binary : {},
+        mixed  : {},
+      },
+    };
+
+    const { code, resolutions } = await generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'SchemaFormats',
+    });
+
+    expect(code).toContain('export type LabelData = string;');
+    expect(code).toContain('export type BinaryData = Uint8Array;');
+    expect(code).toContain('export type MixedData = Blob;');
+    expect(code).toContain('label  : recordCodecs.text(),');
+    expect(code).toContain('binary : recordCodecs.bytes("application/cbor"),');
+    expect(code).toContain('mixed  : recordCodecs.blob(),');
+    expect(resolutions.size).toBe(0);
+  });
+
+  it('should reject $ref paths until referenced module metadata can be supplied', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/composed',
+      published : true,
+      uses      : { threads: 'https://example.com/modules/threads' },
+      types     : {
+        comment: { dataFormats: ['application/json'] },
+      },
+      structure: {
+        thread: {
+          $ref    : 'threads:thread',
+          comment : {},
+        },
+      },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Composed',
+    })).rejects.toThrow('Cannot generate a typed codec for $ref path \'thread\'');
+  });
+
+  it('should preserve the complete module definition and its directives', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/complete',
+      published : true,
+      uses      : { social: 'https://example.com/modules/social' },
+      types     : {
+        note: {
+          dataFormats        : ['text/plain'],
+          encryptionRequired : true,
+        },
+      },
+      structure: {
+        note: {
+          $recordLimit : { max: 1 },
+          $size        : { max: 4096 },
+          $tags        : {
+            $requiredTags       : ['topic'],
+            $allowUndefinedTags : false,
+            topic               : { type: 'string' },
+          },
+          $actions: [
+            { who: 'anyone', can: ['create'] },
+          ],
+        },
+      },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Complete',
+    });
+
+    expect(code).toContain('uses      : {');
+    expect(code).toContain('social: "https://example.com/modules/social",');
+    expect(code).toContain('encryptionRequired : true,');
+    expect(code).toContain('$recordLimit: {');
+    expect(code).toContain('$size: {');
+    expect(code).toContain('$tags: {');
+    expect(code).toContain('$actions: [');
+    expect(code).toContain('as const satisfies ModuleDefinition;');
+  });
+
+  it('should encode arbitrary definition strings as safe TypeScript literals', async () => {
+    const hostileFormat = 'application/x-test\'; globalThis.compromised = true; //"\\\n\0';
+    const definition = {
+      module    : 'https://example.com/modules/string-escaping',
+      published : true,
+      types     : {
+        note: { dataFormats: [hostileFormat] },
+      },
+      structure: { note: {} },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'StringEscaping',
+    });
+
+    expect(code).toContain(JSON.stringify(hostileFormat));
+    expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(code)).not.toThrow();
+  });
+
+  it('should fail when a reachable type has no usable codec metadata', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/missing-codec',
+      published : true,
+      types     : { note: {} },
+      structure : { note: {} },
+    };
+
+    await expect(generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'MissingCodec',
+    })).rejects.toThrow('Cannot infer a record codec for module type \'note\'');
+  });
+
+  it('should emit codecs only for types reachable through the structure', async () => {
+    const schemasDir = join(TMP_DIR, 'schemas');
+    await mkdir(schemasDir, { recursive: true });
+    await writeFile(join(schemasDir, 'unused.json'), 'not valid JSON', 'utf-8');
+
+    const definition = {
+      module    : 'https://example.com/modules/reachable',
+      published : true,
+      types     : {
+        note   : { dataFormats: ['text/plain'] },
+        unused : {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
+      },
+      structure: { note: {} },
+    };
+
+    const { code, resolutions } = await generateModuleCode(definition, {
+      schemasDir,
+      moduleName: 'Reachable',
+    });
+
+    expect(code).toContain('export type UnusedData = unknown;');
+    expect(code).toContain('export const ReachableCodecs = {\n  note: recordCodecs.text(),\n} as const;');
+    expect(code).not.toContain('unused: recordCodecs.');
+    expect(resolutions.has('unused')).toBe(false);
+  });
+
+  it('should support custom banner comment', async () => {
+    const definition = await loadDefinition();
+
+    const { code } = await generateModuleCode(definition as any, {
+      schemasDir    : SCHEMAS_DIR,
+      moduleName    : 'Todo',
+      bannerComment : '// Custom banner',
+    });
+
+    expect(code).toContain('// Custom banner');
+    expect(code).not.toContain('Auto-generated');
+  });
+
+  it('should support empty banner comment', async () => {
+    const definition = await loadDefinition();
+
+    const { code } = await generateModuleCode(definition as any, {
+      schemasDir    : SCHEMAS_DIR,
+      moduleName    : 'Todo',
+      bannerComment : '',
+    });
+
+    expect(code).not.toContain('Auto-generated');
+    expect(code.startsWith('import type { ModuleDefinition }')).toBe(true);
+  });
+
+  it('should handle mixed resolved and unresolved types', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/mixed',
+      published : true,
+      types     : {
+        list: {
+          schema      : 'https://example.com/schemas/todo/list',
+          dataFormats : ['application/json'],
+        },
+        missing: {
+          schema      : 'https://example.com/schemas/nonexistent',
+          dataFormats : ['application/json'],
+        },
+        photo: {
+          dataFormats: ['image/png'],
+        },
+      },
+      structure: {
+        list    : {},
+        missing : {},
+        photo   : {},
+      },
+    };
+
+    const { code, resolutions } = await generateModuleCode(definition, {
+      allowUnresolvedJsonSchemas : true,
+      schemasDir                 : SCHEMAS_DIR,
+      moduleName                 : 'Mixed',
+    });
+
+    // list — resolved from schema
+    expect(code).toContain('export interface ListData');
+    expect(resolutions.get('list')!.source).toBe('local-type-name');
+
+    // missing — unresolved
+    expect(code).toContain('export type MissingData = unknown;');
+    expect(resolutions.get('missing')!.source).toBe('unresolved');
+
+    // photo — one fixed binary MIME type
+    expect(code).toContain('export type PhotoData = Uint8Array;');
+    expect(code).toContain('photo   : recordCodecs.bytes("image/png"),');
+  });
+
+  it('should not fetch remote schemas during generation', async () => {
+    let requestCount = 0;
+    const server = Bun.serve({
+      port  : 0,
+      fetch : (): Response => {
+        requestCount++;
+        return Response.json({ type: 'object' });
+      },
+    });
+
+    try {
+      const emptyDir = join(TMP_DIR, 'schemas');
+      await mkdir(emptyDir, { recursive: true });
+
+      const definition = {
+        module    : 'https://example.com/modules/http-test',
+        published : true,
+        types     : {
+          widget: {
+            schema      : `http://localhost:${server.port}/schemas/widget`,
+            dataFormats : ['application/json'],
+          },
+        },
+        structure: {
+          widget: {},
+        },
+      };
+
+      const { code, resolutions } = await generateModuleCode(definition, {
+        allowUnresolvedJsonSchemas : true,
+        schemasDir                 : emptyDir,
+        moduleName                 : 'HttpTest',
+      });
+
+      expect(resolutions.get('widget')!.source).toBe('unresolved');
+      expect(code).toContain('export type WidgetData = unknown;');
+      expect(code).toContain('widget: recordCodecs.json<WidgetData>(),');
+      expect(requestCount).toBe(0);
+    } finally {
+      server.stop();
+      await rm(TMP_DIR, { force: true, recursive: true });
+    }
+  });
+
+  it('should PascalCase type names correctly', async () => {
+    const definition = {
+      module    : 'https://example.com/modules/naming',
+      published : true,
+      types     : {
+        'private-note': {
+          dataFormats: ['text/plain'],
+        },
+        hero_image: {
+          dataFormats: ['image/png'],
+        },
+      },
+      structure: {
+        'private-note' : {},
+        hero_image     : {},
+      },
+    };
+
+    const { code } = await generateModuleCode(definition, {
+      schemasDir : SCHEMAS_DIR,
+      moduleName : 'Naming',
+    });
+
+    expect(code).toContain('PrivateNoteData');
+    expect(code).toContain('HeroImageData');
+    expect(code).toContain('"private-note" : recordCodecs.text(),');
+    expect(code).toContain('hero_image     : recordCodecs.bytes("image/png"),');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI (integration test via subprocess)
+// ---------------------------------------------------------------------------
+
+describe('CLI', () => {
+  it('should generate types and write to stdout', async () => {
+    const cliPath = join(import.meta.dir, '..', 'src', 'cli.ts');
+    const definitionPath = join(FIXTURES_DIR, 'todo-definition.json');
+
+    const proc = Bun.spawn([
+      'bun', 'run', cliPath,
+      'generate',
+      '--definition', definitionPath,
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+    ], {
+      stdout : 'pipe',
+      stderr : 'pipe',
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    await proc.exited;
+
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain('export interface ListData');
+    expect(stdout).toContain('export const TodoCodecs');
+    expect(stdout).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+    expect(stderr).toContain('list: local-type-name');
+    expect(stderr).toContain('task: local-type-name');
+  });
+
+  it('should generate types and write to a file', async () => {
+    const cliPath = join(import.meta.dir, '..', 'src', 'cli.ts');
+    const definitionPath = join(FIXTURES_DIR, 'todo-definition.json');
+    const outputPath = join(FIXTURES_DIR, '__output__.generated.ts');
+
+    const proc = Bun.spawn([
+      'bun', 'run', cliPath,
+      'generate',
+      '--definition', definitionPath,
+      '--schemas', SCHEMAS_DIR,
+      '--name', 'Todo',
+      '--output', outputPath,
+    ], {
+      stdout : 'pipe',
+      stderr : 'pipe',
+    });
+
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+
+    // Verify the file was written
+    const content = await readFile(outputPath, 'utf-8');
+    expect(content).toContain('export interface ListData');
+    expect(content).toContain('export const TodoCodecs');
+    expect(content).toContain('export const TodoModule = defineModule(TodoDefinition, TodoCodecs);');
+
+    // Clean up
+    const { unlinkSync } = await import('node:fs');
+    unlinkSync(outputPath);
+  });
+
+  it('should exit with error for missing definition file', async () => {
+    const cliPath = join(import.meta.dir, '..', 'src', 'cli.ts');
+
+    const proc = Bun.spawn([
+	      'bun', 'run', cliPath,
+	      'generate',
+	      '--definition', join(FIXTURES_DIR, 'missing-definition.json'),
+	      '--schemas', SCHEMAS_DIR,
+	      '--name', 'Test',
+    ], {
+      stdout : 'pipe',
+      stderr : 'pipe',
+    });
+
+    await proc.exited;
+    expect(proc.exitCode).toBe(1);
+
+    const stderr = await new Response(proc.stderr).text();
+    expect(stderr).toContain('not found');
+  });
+});

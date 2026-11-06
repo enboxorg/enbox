@@ -1,4 +1,4 @@
-import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
+import type { ResolvedModuleRole } from '../core/module-authorization-action.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
 import type { RecordsDeleteMessage, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply } from '../types/records-types.js';
@@ -11,7 +11,7 @@ import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
 import { messageReplyFromError } from '../core/message-reply.js';
 import { Messages } from '../utils/messages.js';
-import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { ModuleAuthorization } from '../core/module-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { RecordsRead } from '../interfaces/records-read.js';
@@ -30,7 +30,7 @@ const recordsReadPageSize = 25;
 /**
  * Authorization-denial codes that make a candidate invisible to the requester.
  * A broad Read skips candidates denied with one of these codes. Any other failure
- * (malformed retained state, unresolvable protocol, store or validation-state
+ * (malformed retained state, unresolvable module, store or validation-state
  * failure) propagates fail-closed instead of becoming invisibility. Codes added
  * later fail closed by construction until classified here. (DWN-PROTO-001)
  */
@@ -44,17 +44,17 @@ const authorizationDenialCodes: ReadonlySet<string> = new Set([
   DwnErrorCode.GrantAuthorizationMethodMismatch,
   DwnErrorCode.GrantAuthorizationNotGrantedForTenant,
   DwnErrorCode.GrantAuthorizationNotGrantedToAuthor,
-  DwnErrorCode.ProtocolAuthorizationActionNotAllowed,
-  DwnErrorCode.ProtocolAuthorizationActionRulesNotFound,
-  DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound,
-  DwnErrorCode.ProtocolAuthorizationMissingContextId,
-  DwnErrorCode.ProtocolAuthorizationNotARole,
+  DwnErrorCode.ModuleAuthorizationActionNotAllowed,
+  DwnErrorCode.ModuleAuthorizationActionRulesNotFound,
+  DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound,
+  DwnErrorCode.ModuleAuthorizationMissingContextId,
+  DwnErrorCode.ModuleAuthorizationNotARole,
   DwnErrorCode.RecordsGrantAuthorizationConditionPublicationProhibited,
   DwnErrorCode.RecordsGrantAuthorizationConditionPublicationRequired,
   DwnErrorCode.RecordsGrantAuthorizationScopeContextIdMismatch,
   DwnErrorCode.RecordsGrantAuthorizationScopeMismatch,
-  DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch,
-  DwnErrorCode.RecordsGrantAuthorizationScopeProtocolPathMismatch,
+  DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch,
+  DwnErrorCode.RecordsGrantAuthorizationScopeModulePathMismatch,
 ]);
 
 export class RecordsReadHandler implements MethodHandler {
@@ -174,7 +174,7 @@ export class RecordsReadHandler implements MethodHandler {
       throw error;
     }
 
-    let resolvedRole: ResolvedProtocolRole | undefined;
+    let resolvedRole: ResolvedModuleRole | undefined;
     try {
       resolvedRole = await RecordsReadHandler.authorizeRecordsRead(
         tenant, recordsRead, parsedWrite, this.deps,
@@ -201,7 +201,7 @@ export class RecordsReadHandler implements MethodHandler {
     tenant: string,
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsQueryReplyEntry,
-    resolvedRole: ResolvedProtocolRole | undefined,
+    resolvedRole: ResolvedModuleRole | undefined,
   ): Promise<RecordsReadReply> {
     const recordsReadReply: RecordsReadReply = {
       status : { code: 200, detail: 'OK' },
@@ -272,14 +272,14 @@ export class RecordsReadHandler implements MethodHandler {
     tenant: string,
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsQueryReplyEntry,
-    resolvedRole: ResolvedProtocolRole | undefined,
+    resolvedRole: ResolvedModuleRole | undefined,
     reply: RecordsReadReply,
     recordsDelete?: RecordsDeleteMessage,
   ): Promise<void> {
     if (recordsRead.author === undefined || resolvedRole === undefined) {
       throw new DwnError(
         DwnErrorCode.RecordsReadReplicationSupportUnsupported,
-        'replication support requires an authenticated protocol-role invocation.'
+        'replication support requires an authenticated module-role invocation.'
       );
     }
     reply.support = await RecordsReadReplicationSupport.build({
@@ -314,7 +314,7 @@ export class RecordsReadHandler implements MethodHandler {
       throw error;
     }
 
-    let resolvedRole: ResolvedProtocolRole | undefined;
+    let resolvedRole: ResolvedModuleRole | undefined;
     try {
       resolvedRole = await RecordsReadHandler.authorizeRecordsRead(tenant, recordsRead, parsedNewestWrite, this.deps);
     } catch (error) {
@@ -373,7 +373,7 @@ export class RecordsReadHandler implements MethodHandler {
     recordsRead: RecordsRead,
     recordsDeleteMessage: RecordsDeleteMessage,
     initialWrite: RecordsQueryReplyEntry,
-    resolvedRole: ResolvedProtocolRole | undefined,
+    resolvedRole: ResolvedModuleRole | undefined,
   ): Promise<RecordsReadReply> {
     const reply: RecordsReadReply = {
       status : { code: 404, detail: 'Not Found' },
@@ -418,7 +418,7 @@ export class RecordsReadHandler implements MethodHandler {
     recordsRead: RecordsRead,
     matchedRecordsWrite: RecordsWrite,
     deps: HandlerDependencies,
-  ): Promise<ResolvedProtocolRole | undefined> {
+  ): Promise<ResolvedModuleRole | undefined> {
     const { descriptor } = matchedRecordsWrite.message;
 
     if (EncryptionControl.isControlMessage(matchedRecordsWrite.message)) {
@@ -452,8 +452,8 @@ export class RecordsReadHandler implements MethodHandler {
       return undefined;
     }
 
-    if (recordsRead.signaturePayload?.protocolRole !== undefined) {
-      return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
+    if (recordsRead.signaturePayload?.moduleRole !== undefined) {
+      return ModuleAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
 
     if (recordsRead.author === tenant) {
@@ -480,7 +480,7 @@ export class RecordsReadHandler implements MethodHandler {
       });
       return undefined;
     } else {
-      return ProtocolAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
+      return ModuleAuthorization.authorizeRead(tenant, recordsRead, matchedRecordsWrite, deps.validationStateReader);
     }
   }
 }

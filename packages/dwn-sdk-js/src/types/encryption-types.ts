@@ -3,7 +3,7 @@ import type { KeyUnwrapPayload, SealKeyWrap } from '../utils/encryption.js';
 import type { PrivateKeyJwk, PublicKeyJwk } from './jose-types.js';
 
 export type RoleAudienceTuple = {
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
 };

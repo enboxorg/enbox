@@ -1,6 +1,6 @@
 import type { GenericMessage } from '../types/message-types.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { ProtocolDefinition } from '../types/protocols-types.js';
+import type { ModuleDefinition } from '../types/modules-types.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
@@ -56,7 +56,7 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async fetchParentRecord(input: {
     tenant: string;
-    parentProtocolUri: string;
+    parentModuleUri: string;
     parentId: string;
   }): Promise<RecordsWriteMessage | undefined> {
     this.recordedReads.push({ method: 'fetchParentRecord' });
@@ -72,8 +72,8 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async hasMatchingRoleRecord(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<boolean> {
@@ -84,8 +84,8 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async queryLatestRoleRecords(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage[]> {
@@ -96,7 +96,7 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   /** @inheritdoc */
   public async queryAudienceRecords(input: {
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId?: string;
@@ -124,16 +124,16 @@ export class RecordingValidationStateReader implements ValidationStateReader {
   }
 
   /** @inheritdoc */
-  public async fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition> {
-    this.recordedReads.push({ method: 'fetchProtocolDefinition' });
-    return this.inner.fetchProtocolDefinition(tenant, protocolUri, messageTimestamp);
+  public async fetchModuleDefinition(tenant: string, moduleUri: string, messageTimestamp?: string): Promise<ModuleDefinition> {
+    this.recordedReads.push({ method: 'fetchModuleDefinition' });
+    return this.inner.fetchModuleDefinition(tenant, moduleUri, messageTimestamp);
   }
 
   /** @inheritdoc */
   public async fetchLatestSquashRecordAtScope(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage | undefined> {
     this.recordedReads.push({ method: 'fetchLatestSquashRecordAtScope' });

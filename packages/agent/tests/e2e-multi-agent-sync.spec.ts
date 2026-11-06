@@ -1,7 +1,7 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnDataEncodedRecordsWriteMessage } from '../src/types/dwn.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
-import type { GenericMessage, MessagesQueryReplyEntry, PermissionScope, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReplyEntry, ModuleDefinition, PermissionScope, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { PushResult, SyncEvent } from '../src/types/sync.js';
 
 import sinon from 'sinon';
@@ -27,7 +27,7 @@ import {
   postRelayResponse,
   RelayClientTransport,
 } from '@enbox/connect';
-import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionModule, Time } from '@enbox/dwn-sdk-js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
 
@@ -43,9 +43,9 @@ const testDwnUrls: string[] = [testDwnUrl];
  */
 async function waitForRecord(
   agent: PlatformAgentTestHarness['agent'],
-  { did, protocol, recordId, timeoutMs = 5_000, intervalMs = 100, delegateDid, delegatedGrant }: {
+  { did, module, recordId, timeoutMs = 5_000, intervalMs = 100, delegateDid, delegatedGrant }: {
     did: string;
-    protocol: string;
+    module: string;
     recordId: string;
     timeoutMs?: number;
     intervalMs?: number;
@@ -61,7 +61,7 @@ async function waitForRecord(
       granteeDid    : delegateDid,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
-        filter: { protocol, recordId },
+        filter: { module, recordId },
         ...(delegatedGrant ? { delegatedGrant } : {}),
       },
     });
@@ -92,12 +92,12 @@ async function decryptReadEntry(
 }
 
 // ---------------------------------------------------------------------------
-// Protocol definitions
+// Module definitions
 // ---------------------------------------------------------------------------
 
-const protocolNotes: ProtocolDefinition = {
+const moduleNotes: ModuleDefinition = {
   published : true,
-  protocol  : 'https://protocol.xyz/notes',
+  module    : 'https://module.xyz/notes',
   types     : {
     note: {
       schema      : 'https://schemas.xyz/note',
@@ -107,9 +107,9 @@ const protocolNotes: ProtocolDefinition = {
   structure: { note: {} },
 };
 
-const protocolProfile: ProtocolDefinition = {
+const moduleProfile: ModuleDefinition = {
   published : true,
-  protocol  : 'https://protocol.xyz/profile',
+  module    : 'https://module.xyz/profile',
   types     : {
     entry: {
       schema      : 'https://schemas.xyz/profile-entry',
@@ -252,8 +252,8 @@ describe('E2E Multi-Agent Sync', () => {
   let recordsQueryGrant: { grant: any; message: any };
   let recordsWriteGrant: { grant: any; message: any };
 
-  /** Alice-authored notes-protocol configuration, mirrored onto the device. */
-  let notesProtocolConfigure: GenericMessage;
+  /** Alice-authored notes-module configuration, mirrored onto the device. */
+  let notesModuleConfigure: GenericMessage;
 
   beforeAll(async () => {
     // -----------------------------------------------------------------------
@@ -297,24 +297,24 @@ describe('E2E Multi-Agent Sync', () => {
     await deviceHarness.agent.keyManager.importKey({ key: aliceDeviceX25519PrivateKey });
 
     // -----------------------------------------------------------------------
-    // Install protocols on Alice's remote DWN.
+    // Install modules on Alice's remote DWN.
     // -----------------------------------------------------------------------
-    for (const def of [protocolNotes, protocolProfile]) {
+    for (const def of [moduleNotes, moduleProfile]) {
       // Install locally on primary agent.
       const { message } = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : { definition: def },
       });
-      if (def.protocol === protocolNotes.protocol) {
-        notesProtocolConfigure = message as GenericMessage;
+      if (def.module === moduleNotes.module) {
+        notesModuleConfigure = message as GenericMessage;
       }
       // Install on remote DWN.
       await primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : { definition: def },
       });
     }
@@ -327,28 +327,28 @@ describe('E2E Multi-Agent Sync', () => {
     messagesReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor : alice,
       grantee : aliceDevice,
-      scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      scope   : { module: moduleNotes.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
     });
 
     // MessagesQuery grant.
     messagesQueryGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor : alice,
       grantee : aliceDevice,
-      scope   : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+      scope   : { module: moduleNotes.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
     });
 
     // Records.Read grant authorizes RecordsQuery verification requests.
     recordsQueryGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor   : alice,
       grantee   : aliceDevice,
-      scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+      scope     : { module: moduleNotes.module, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
       delegated : true,
     });
 
     recordsWriteGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
       grantor   : alice,
       grantee   : aliceDevice,
-      scope     : { protocol: protocolNotes.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Write },
+      scope     : { module: moduleNotes.module, interface: DwnInterfaceName.Records, method: DwnMethodName.Write },
       delegated : true,
     });
   });
@@ -373,7 +373,7 @@ describe('E2E Multi-Agent Sync', () => {
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
 
-      // Clear only sync state on primary (preserve key material and protocols).
+      // Clear only sync state on primary (preserve key material and modules).
       await primaryHarness.syncStore.clear();
       await primaryHarness.agent.permissions.clear();
 
@@ -408,14 +408,14 @@ describe('E2E Multi-Agent Sync', () => {
         });
       }
 
-      // Mirror Alice's notes protocol into the device's copy of Alice's tenant
+      // Mirror Alice's notes module into the device's copy of Alice's tenant
       // (signed as owner) so the delegate can author notes records locally —
-      // exactly as the connect flow seeds protocols on a wallet-connected dapp.
+      // exactly as the connect flow seeds modules on a wallet-connected dapp.
       await deviceHarness.agent.dwn.processRequest({
         author      : alice.did.uri,
         target      : alice.did.uri,
-        messageType : DwnInterface.ProtocolsConfigure,
-        rawMessage  : notesProtocolConfigure,
+        messageType : DwnInterface.ModulesConfigure,
+        rawMessage  : notesModuleConfigure,
         signAsOwner : true,
       });
     });
@@ -427,10 +427,10 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : protocolNotes.protocol,
-          protocolPath : 'note',
-          schema       : protocolNotes.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : moduleNotes.module,
+          modulePath : 'note',
+          schema     : moduleNotes.types.note.schema,
         },
         dataStream: new Blob(['Hello from primary agent']),
       });
@@ -438,7 +438,7 @@ describe('E2E Multi-Agent Sync', () => {
       const recordId = writeResult.message!.recordId;
 
       // Primary agent registers Alice and syncs (push to remote).
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       // Verify record is on the remote DWN.
@@ -446,17 +446,17 @@ describe('E2E Multi-Agent Sync', () => {
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: protocolNotes.protocol } },
+        messageParams : { filter: { module: moduleNotes.module } },
       });
       expect(remoteQuery.reply.status.code).toBe(200);
       const remoteRecordIds = remoteQuery.reply.entries?.map(e => e.recordId);
       expect(remoteRecordIds).toContain(recordId);
 
-      // Device agent registers Alice with protocol-scoped delegate sync.
+      // Device agent registers Alice with module-scoped delegate sync.
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -470,7 +470,7 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           delegatedGrant : recordsQueryGrant.grant.message,
-          filter         : { protocol: protocolNotes.protocol },
+          filter         : { module: moduleNotes.module },
         },
       });
       expect(localQuery.reply.status.code).toBe(200);
@@ -478,17 +478,17 @@ describe('E2E Multi-Agent Sync', () => {
       expect(localQuery.reply.entries![0].recordId).toBe(recordId);
     });
 
-    it('should only pull records matching the scoped protocol', async () => {
-      // Primary writes to both notes and profile protocols.
+    it('should only pull records matching the scoped module', async () => {
+      // Primary writes to both notes and profile modules.
       const noteWrite = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : protocolNotes.protocol,
-          protocolPath : 'note',
-          schema       : protocolNotes.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : moduleNotes.module,
+          modulePath : 'note',
+          schema     : moduleNotes.types.note.schema,
         },
         dataStream: new Blob(['A note']),
       });
@@ -499,24 +499,24 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/json',
-          protocol     : protocolProfile.protocol,
-          protocolPath : 'entry',
-          schema       : protocolProfile.types.entry.schema,
+          dataFormat : 'application/json',
+          module     : moduleProfile.module,
+          modulePath : 'entry',
+          schema     : moduleProfile.types.entry.schema,
         },
         dataStream: new Blob([JSON.stringify({ name: 'Alice' })]),
       });
       expect(profileWrite.reply.status.code).toBe(202);
 
       // Push both to remote.
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
-      // Device agent has grants ONLY for notes protocol.
+      // Device agent has grants ONLY for notes module.
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -530,7 +530,7 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           delegatedGrant : recordsQueryGrant.grant.message,
-          filter         : { protocol: protocolNotes.protocol },
+          filter         : { module: moduleNotes.module },
         },
       });
       expect(notesQuery.reply.status.code).toBe(200);
@@ -545,7 +545,7 @@ describe('E2E Multi-Agent Sync', () => {
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: protocolProfile.protocol } },
+        messageParams : { filter: { module: moduleProfile.module } },
       });
       const profileQuery = await deviceHarness.agent.dwn.processRequest({
         author      : alice.did.uri,
@@ -562,7 +562,7 @@ describe('E2E Multi-Agent Sync', () => {
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -575,9 +575,9 @@ describe('E2E Multi-Agent Sync', () => {
         messageParams : {
           dataFormat     : 'text/plain',
           delegatedGrant : recordsWriteGrant.grant.message,
-          protocol       : protocolNotes.protocol,
-          protocolPath   : 'note',
-          schema         : protocolNotes.types.note.schema,
+          module         : moduleNotes.module,
+          modulePath     : 'note',
+          schema         : moduleNotes.types.note.schema,
         },
         dataStream: new Blob(['Delegate-authored note']),
       });
@@ -596,9 +596,9 @@ describe('E2E Multi-Agent Sync', () => {
     });
 
     it('pulls durable grantKey records and decrypts encrypted records without owner keys', async () => {
-      const encryptedProtocol: ProtocolDefinition = {
+      const encryptedModule: ModuleDefinition = {
         published : true,
-        protocol  : `https://protocol.xyz/encrypted-sync-notes/${crypto.randomUUID()}`,
+        module    : `https://module.xyz/encrypted-sync-notes/${crypto.randomUUID()}`,
         types     : {
           note: {
             schema             : 'https://schemas.xyz/encrypted-sync-note',
@@ -609,37 +609,37 @@ describe('E2E Multi-Agent Sync', () => {
         structure: { note: {} },
       };
 
-      const localProtocolConfigure = await primaryHarness.agent.dwn.processRequest({
+      const localModuleConfigure = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: encryptedProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: encryptedModule },
       });
-      expect(localProtocolConfigure.reply.status.code).toBe(202);
+      expect(localModuleConfigure.reply.status.code).toBe(202);
 
-      const remoteProtocolConfigure = await primaryHarness.agent.dwn.sendRequest({
+      const remoteModuleConfigure = await primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: encryptedProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: encryptedModule },
       });
-      expect([202, 409]).toContain(remoteProtocolConfigure.reply.status.code);
+      expect([202, 409]).toContain(remoteModuleConfigure.reply.status.code);
 
-      const deviceProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+      const deviceModuleConfigure = await deviceHarness.agent.dwn.processRawMessage(
         alice.did.uri,
-        localProtocolConfigure.message as GenericMessage,
+        localModuleConfigure.message as GenericMessage,
       );
-      expect([202, 409]).toContain(deviceProtocolConfigure.status.code);
+      expect([202, 409]).toContain(deviceModuleConfigure.status.code);
 
       await createAndDistributeGrant(primaryHarness, deviceHarness, {
         grantor : alice,
         grantee : aliceDevice,
-        scope   : { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+        scope   : { module: encryptedModule.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
       });
       const recordsReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
         grantor   : alice,
         grantee   : aliceDevice,
-        scope     : { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+        scope     : { module: encryptedModule.module, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
         delegated : true,
       });
       const recordsReadGrantId = recordsReadGrant.grant.grant.id;
@@ -660,23 +660,23 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocol.protocol,
-          protocolPath : 'note',
-          schema       : encryptedProtocol.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : encryptedModule.module,
+          modulePath : 'note',
+          schema     : encryptedModule.types.note.schema,
         },
         dataStream: new Blob([noteText]),
       });
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
 
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [encryptedProtocol.protocol],
+          modules     : [encryptedModule.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -688,10 +688,10 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : aliceDevice.did.uri,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.grantKeyPath,
-            tags         : { protocol: encryptedProtocol.protocol },
+            recipient  : aliceDevice.did.uri,
+            module     : EncryptionModule.uri,
+            modulePath : EncryptionModule.grantKeyPath,
+            tags       : { module: encryptedModule.module },
           },
         },
       });
@@ -725,9 +725,9 @@ describe('E2E Multi-Agent Sync', () => {
     }, 60_000);
 
     it('uses connect-created grantKey records after sync without importing in-band decryption keys', async () => {
-      const encryptedProtocol: ProtocolDefinition = {
+      const encryptedModule: ModuleDefinition = {
         published : true,
-        protocol  : `https://protocol.xyz/connect-encrypted-sync-notes/${crypto.randomUUID()}`,
+        module    : `https://module.xyz/connect-encrypted-sync-notes/${crypto.randomUUID()}`,
         types     : {
           note: {
             schema             : 'https://schemas.xyz/connect-encrypted-sync-note',
@@ -738,14 +738,14 @@ describe('E2E Multi-Agent Sync', () => {
         structure: { note: {} },
       };
       const readScopes: PermissionScope[] = [
-        { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
-        { protocol: encryptedProtocol.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
+        { module: encryptedModule.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+        { module: encryptedModule.module, interface: DwnInterfaceName.Records, method: DwnMethodName.Read },
       ];
       const remoteReadiness = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: encryptedProtocol.protocol } },
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module: encryptedModule.module } },
       }));
       expect(remoteReadiness.reply.status.code).toBe(200);
       const ownerDwnEndpoints = await primaryHarness.agent.dwn.getRemoteDwnEndpointUrls(alice.did.uri);
@@ -798,7 +798,7 @@ describe('E2E Multi-Agent Sync', () => {
 
       const connectResult = await client.connect({
         appName            : 'Encrypted Sync E2E',
-        permissionRequests : [{ protocolDefinition: encryptedProtocol, permissionScopes: readScopes }],
+        permissionRequests : [{ moduleDefinition: encryptedModule, permissionScopes: readScopes }],
       });
       expect(connectResult).toBeDefined();
       const { connectedDid, delegateGrants, delegatePortableDid } = connectResult!;
@@ -810,7 +810,7 @@ describe('E2E Multi-Agent Sync', () => {
         const parsedGrant = DwnPermissionGrant.parse(grant);
         return parsedGrant.scope.interface === DwnInterfaceName.Records &&
           parsedGrant.scope.method === DwnMethodName.Read &&
-          parsedGrant.scope.protocol === encryptedProtocol.protocol;
+          parsedGrant.scope.module === encryptedModule.module;
       });
       expect(recordsReadGrant).toBeDefined();
 
@@ -825,19 +825,19 @@ describe('E2E Multi-Agent Sync', () => {
         delegateGrants,
       );
 
-      const installedProtocol = await primaryHarness.agent.dwn.processRequest({
+      const installedModule = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: encryptedProtocol.protocol } },
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module: encryptedModule.module } },
       });
-      expect(installedProtocol.reply.status.code).toBe(200);
-      expect(installedProtocol.reply.entries).toHaveLength(1);
-      const localProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+      expect(installedModule.reply.status.code).toBe(200);
+      expect(installedModule.reply.entries).toHaveLength(1);
+      const localModuleConfigure = await deviceHarness.agent.dwn.processRawMessage(
         alice.did.uri,
-        installedProtocol.reply.entries![0] as GenericMessage,
+        installedModule.reply.entries![0] as GenericMessage,
       );
-      expect([202, 409]).toContain(localProtocolConfigure.status.code);
+      expect([202, 409]).toContain(localModuleConfigure.status.code);
 
       const remoteGrantKeyQuery = await deviceHarness.agent.dwn.sendRequest({
         author        : delegateDid,
@@ -845,10 +845,10 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : delegateDid,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.grantKeyPath,
-            tags         : { protocol: encryptedProtocol.protocol },
+            recipient  : delegateDid,
+            module     : EncryptionModule.uri,
+            modulePath : EncryptionModule.grantKeyPath,
+            tags       : { module: encryptedModule.module },
           },
         },
       });
@@ -861,23 +861,23 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : encryptedProtocol.protocol,
-          protocolPath : 'note',
-          schema       : encryptedProtocol.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : encryptedModule.module,
+          modulePath : 'note',
+          schema     : encryptedModule.types.note.schema,
         },
         dataStream: new Blob([noteText]),
       });
       expect(writeResult.reply.status.code).toBe(202);
       const recordId = writeResult.message!.recordId;
 
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [encryptedProtocol.protocol],
+          modules     : [encryptedModule.module],
           delegateDid : delegateDid,
         },
       });
@@ -890,10 +890,10 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : delegateDid,
-            protocol     : EncryptionProtocol.uri,
-            protocolPath : EncryptionProtocol.grantKeyPath,
-            tags         : { protocol: encryptedProtocol.protocol },
+            recipient  : delegateDid,
+            module     : EncryptionModule.uri,
+            modulePath : EncryptionModule.grantKeyPath,
+            tags       : { module: encryptedModule.module },
           },
         },
       });
@@ -929,9 +929,9 @@ describe('E2E Multi-Agent Sync', () => {
     it('pulls role-audience key material and decrypts as a role member', async () => {
       const bobParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Bob', testDwnUrls });
       const nonParticipant = await deviceHarness.createIdentity({ name: 'Role Sync Non Participant', testDwnUrls });
-      const chatProtocol: ProtocolDefinition = {
+      const chatModule: ModuleDefinition = {
         published : true,
-        protocol  : `https://protocol.xyz/encrypted-sync-chat/${crypto.randomUUID()}`,
+        module    : `https://module.xyz/encrypted-sync-chat/${crypto.randomUUID()}`,
         types     : {
           thread      : { schema: 'https://schemas.xyz/sync-thread', dataFormats: ['application/json'] },
           participant : { schema: 'https://schemas.xyz/sync-participant', dataFormats: ['application/json'] },
@@ -949,62 +949,62 @@ describe('E2E Multi-Agent Sync', () => {
         },
       };
 
-      const aliceProtocolConfigure = await primaryHarness.agent.dwn.processRequest({
+      const aliceModuleConfigure = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: chatProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: chatModule },
       });
-      expect(aliceProtocolConfigure.reply.status.code).toBe(202);
+      expect(aliceModuleConfigure.reply.status.code).toBe(202);
 
-      const aliceRemoteProtocolConfigure = await primaryHarness.agent.dwn.sendRequest({
+      const aliceRemoteModuleConfigure = await primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: chatProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: chatModule },
       });
-      expect([202, 409]).toContain(aliceRemoteProtocolConfigure.reply.status.code);
+      expect([202, 409]).toContain(aliceRemoteModuleConfigure.reply.status.code);
 
-      const bobProtocolConfigure = await deviceHarness.agent.dwn.processRequest({
+      const bobModuleConfigure = await deviceHarness.agent.dwn.processRequest({
         author        : bobParticipant.did.uri,
         target        : bobParticipant.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: chatProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: chatModule },
       });
-      expect(bobProtocolConfigure.reply.status.code).toBe(202);
+      expect(bobModuleConfigure.reply.status.code).toBe(202);
 
-      const bobRemoteProtocolConfigure = await deviceHarness.agent.dwn.sendRequest({
+      const bobRemoteModuleConfigure = await deviceHarness.agent.dwn.sendRequest({
         author        : bobParticipant.did.uri,
         target        : bobParticipant.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: chatProtocol },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: chatModule },
       });
-      expect([202, 409]).toContain(bobRemoteProtocolConfigure.reply.status.code);
+      expect([202, 409]).toContain(bobRemoteModuleConfigure.reply.status.code);
 
-      const localAliceProtocolConfigure = await deviceHarness.agent.dwn.processRawMessage(
+      const localAliceModuleConfigure = await deviceHarness.agent.dwn.processRawMessage(
         alice.did.uri,
-        aliceProtocolConfigure.message as GenericMessage,
+        aliceModuleConfigure.message as GenericMessage,
       );
-      expect([202, 409]).toContain(localAliceProtocolConfigure.status.code);
+      expect([202, 409]).toContain(localAliceModuleConfigure.status.code);
 
-      const localBobProtocolForAlice = await primaryHarness.agent.dwn.processRawMessage(
+      const localBobModuleForAlice = await primaryHarness.agent.dwn.processRawMessage(
         bobParticipant.did.uri,
-        bobProtocolConfigure.message as GenericMessage,
+        bobModuleConfigure.message as GenericMessage,
       );
-      expect([202, 409]).toContain(localBobProtocolForAlice.status.code);
-      const bobProtocolQueryFromAlice = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
+      expect([202, 409]).toContain(localBobModuleForAlice.status.code);
+      const bobModuleQueryFromAlice = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : bobParticipant.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: chatProtocol.protocol } },
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module: chatModule.module } },
       }));
-      expect(bobProtocolQueryFromAlice.reply.status.code).toBe(200);
-      expect(bobProtocolQueryFromAlice.reply.entries).toHaveLength(1);
+      expect(bobModuleQueryFromAlice.reply.status.code).toBe(200);
+      expect(bobModuleQueryFromAlice.reply.entries).toHaveLength(1);
 
       const bobMessagesReadGrant = await createAndDistributeGrant(primaryHarness, deviceHarness, {
         grantor : alice,
         grantee : bobParticipant,
-        scope   : { protocol: chatProtocol.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
+        scope   : { module: chatModule.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read },
       });
       const bobMessagesReadGrantId = bobMessagesReadGrant.grant.grant.id;
 
@@ -1013,10 +1013,10 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/json',
-          protocol     : chatProtocol.protocol,
-          protocolPath : 'thread',
-          schema       : chatProtocol.types.thread.schema,
+          dataFormat : 'application/json',
+          module     : chatModule.module,
+          modulePath : 'thread',
+          schema     : chatModule.types.thread.schema,
         },
         dataStream: new Blob([JSON.stringify({ title: 'Synced encrypted chat' })]),
       });
@@ -1025,11 +1025,11 @@ describe('E2E Multi-Agent Sync', () => {
       const isThreadDeliveryFeedEntry = (entry: MessagesQueryReplyEntry): boolean => {
         const descriptor = entry.message?.descriptor as RecordsWriteMessage['descriptor'] | undefined;
         const tags = descriptor?.tags;
-        return descriptor?.protocol === chatProtocol.protocol &&
-          descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH &&
+        return descriptor?.module === chatModule.module &&
+          descriptor.modulePath === ENCRYPTION_CONTROL_DELIVERY_PATH &&
           descriptor.recipient === bobParticipant.did.uri &&
           tags?.contextId === threadContextId &&
-          tags.protocol === chatProtocol.protocol &&
+          tags.module === chatModule.module &&
           tags.rolePath === 'thread/participant';
       };
 
@@ -1040,10 +1040,10 @@ describe('E2E Multi-Agent Sync', () => {
         messageParams : {
           dataFormat      : 'application/json',
           parentContextId : threadContextId,
-          protocol        : chatProtocol.protocol,
-          protocolPath    : 'thread/participant',
+          module          : chatModule.module,
+          modulePath      : 'thread/participant',
           recipient       : bobParticipant.did.uri,
-          schema          : chatProtocol.types.participant.schema,
+          schema          : chatModule.types.participant.schema,
         },
         dataStream: new Blob([JSON.stringify({ role: 'participant' })]),
       });
@@ -1055,11 +1055,11 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : chatProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
+            module     : chatModule.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
               contextId : threadContextId,
-              protocol  : chatProtocol.protocol,
+              module    : chatModule.module,
               rolePath  : 'thread/participant',
             },
           },
@@ -1077,15 +1077,15 @@ describe('E2E Multi-Agent Sync', () => {
         messageParams : {
           dataFormat      : 'text/plain',
           parentContextId : threadContextId,
-          protocol        : chatProtocol.protocol,
-          protocolPath    : 'thread/chat',
-          schema          : chatProtocol.types.chat.schema,
+          module          : chatModule.module,
+          modulePath      : 'thread/chat',
+          schema          : chatModule.types.chat.schema,
         },
         dataStream: new Blob([chatText]),
       });
       expect(chatWrite.reply.status.code).toBe(202);
 
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.sync('push');
 
       const remoteDeliveryQuery = await deviceHarness.agent.dwn.sendRequest({
@@ -1094,12 +1094,12 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : bobParticipant.did.uri,
-            protocol     : chatProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-            tags         : {
+            recipient  : bobParticipant.did.uri,
+            module     : chatModule.module,
+            modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            tags       : {
               contextId : threadContextId,
-              protocol  : chatProtocol.protocol,
+              module    : chatModule.module,
               rolePath  : 'thread/participant',
             },
           },
@@ -1114,7 +1114,7 @@ describe('E2E Multi-Agent Sync', () => {
         granteeDid    : bobParticipant.did.uri,
         messageType   : DwnInterface.MessagesQuery,
         messageParams : {
-          filters            : [{ protocol: chatProtocol.protocol }],
+          filters            : [{ module: chatModule.module }],
           permissionGrantIds : [bobMessagesReadGrantId],
         },
       });
@@ -1124,7 +1124,7 @@ describe('E2E Multi-Agent Sync', () => {
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [chatProtocol.protocol],
+          modules     : [chatModule.module],
           delegateDid : bobParticipant.did.uri,
         },
       });
@@ -1137,7 +1137,7 @@ describe('E2E Multi-Agent Sync', () => {
         granteeDid    : bobParticipant.did.uri,
         messageType   : DwnInterface.MessagesQuery,
         messageParams : {
-          filters            : [{ protocol: chatProtocol.protocol }],
+          filters            : [{ module: chatModule.module }],
           permissionGrantIds : [bobMessagesReadGrantId],
         },
       });
@@ -1150,12 +1150,12 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : chatProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
+            module     : chatModule.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
               contextId : threadContextId,
               keyId     : audienceKeyId,
-              protocol  : chatProtocol.protocol,
+              module    : chatModule.module,
               rolePath  : 'thread/participant',
             },
           },
@@ -1172,13 +1172,13 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : bobParticipant.did.uri,
-            protocol     : chatProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-            tags         : {
+            recipient  : bobParticipant.did.uri,
+            module     : chatModule.module,
+            modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            tags       : {
               contextId : threadContextId,
               keyId     : audienceKeyId,
-              protocol  : chatProtocol.protocol,
+              module    : chatModule.module,
               rolePath  : 'thread/participant',
             },
           },
@@ -1193,8 +1193,8 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsRead,
         messageParams : {
-          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
-          protocolRole : 'thread/participant',
+          filter     : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          moduleRole : 'thread/participant',
         },
       });
       expect(readResult.reply.status.code).toBe(200);
@@ -1214,12 +1214,12 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            recipient    : nonParticipant.did.uri,
-            protocol     : chatProtocol.protocol,
-            protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-            tags         : {
+            recipient  : nonParticipant.did.uri,
+            module     : chatModule.module,
+            modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+            tags       : {
               contextId : threadContextId,
-              protocol  : chatProtocol.protocol,
+              module    : chatModule.module,
               rolePath  : 'thread/participant',
             },
           },
@@ -1233,8 +1233,8 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsRead,
         messageParams : {
-          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
-          protocolRole : 'thread/participant',
+          filter     : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          moduleRole : 'thread/participant',
         },
       });
       expect(nonParticipantRead.reply.status.code).toBe(401);
@@ -1250,7 +1250,7 @@ describe('E2E Multi-Agent Sync', () => {
       await primaryHarness.agent.sync.stopSync();
       await deviceHarness.agent.sync.stopSync();
 
-      // Clear only sync state on primary (preserve key material and protocols).
+      // Clear only sync state on primary (preserve key material and modules).
       await primaryHarness.syncStore.clear();
       await primaryHarness.agent.permissions.clear();
 
@@ -1288,11 +1288,11 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should deliver a record in real-time from primary to device via remote DWN', async () => {
       // Register identities on both agents.
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -1310,10 +1310,10 @@ describe('E2E Multi-Agent Sync', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : protocolNotes.protocol,
-          protocolPath : 'note',
-          schema       : protocolNotes.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : moduleNotes.module,
+          modulePath : 'note',
+          schema     : moduleNotes.types.note.schema,
         },
         dataStream: new Blob(['Live sync note']),
       });
@@ -1325,7 +1325,7 @@ describe('E2E Multi-Agent Sync', () => {
       // → remote EventLog emits → WebSocket delivers to device → processRawMessage.
       const received = await waitForRecord(deviceHarness.agent, {
         did            : alice.did.uri,
-        protocol       : protocolNotes.protocol,
+        module         : moduleNotes.module,
         recordId,
         delegateDid    : aliceDevice.did.uri,
         delegatedGrant : recordsQueryGrant.grant.message,
@@ -1340,11 +1340,11 @@ describe('E2E Multi-Agent Sync', () => {
 
     it('should handle multiple sequential writes in live mode', async () => {
       // Register and start live sync.
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -1360,10 +1360,10 @@ describe('E2E Multi-Agent Sync', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolNotes.protocol,
-            protocolPath : 'note',
-            schema       : protocolNotes.types.note.schema,
+            dataFormat : 'text/plain',
+            module     : moduleNotes.module,
+            modulePath : 'note',
+            schema     : moduleNotes.types.note.schema,
           },
           dataStream: new Blob([`Note ${i}`]),
         });
@@ -1375,7 +1375,7 @@ describe('E2E Multi-Agent Sync', () => {
       for (const recordId of recordIds) {
         await waitForRecord(deviceHarness.agent, {
           did            : alice.did.uri,
-          protocol       : protocolNotes.protocol,
+          module         : moduleNotes.module,
           recordId,
           delegateDid    : aliceDevice.did.uri,
           delegatedGrant : recordsQueryGrant.grant.message,
@@ -1391,7 +1391,7 @@ describe('E2E Multi-Agent Sync', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           delegatedGrant : recordsQueryGrant.grant.message,
-          filter         : { protocol: protocolNotes.protocol },
+          filter         : { module: moduleNotes.module },
         },
       });
       expect(queryResult.reply.status.code).toBe(200);
@@ -1407,7 +1407,7 @@ describe('E2E Multi-Agent Sync', () => {
     });
 
     it('should drain an in-flight durable push pass before unregistering its identity', async () => {
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise<void>((resolve) => { setTimeout(resolve, 500); });
 
@@ -1441,10 +1441,10 @@ describe('E2E Multi-Agent Sync', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolNotes.protocol,
-            protocolPath : 'note',
-            schema       : protocolNotes.types.note.schema,
+            dataFormat : 'text/plain',
+            module     : moduleNotes.module,
+            modulePath : 'note',
+            schema     : moduleNotes.types.note.schema,
           },
           dataStream: new Blob(['Unregister race note']),
         });
@@ -1480,13 +1480,13 @@ describe('E2E Multi-Agent Sync', () => {
       }
     }, 20_000);
 
-    it('should only deliver protocol-scoped records in live mode', async () => {
-      // Register primary with full sync, device with only notes protocol.
-      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+    it('should only deliver module-scoped records in live mode', async () => {
+      // Register primary with full sync, device with only notes module.
+      await primaryHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
       await deviceHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
         options : {
-          protocols   : [protocolNotes.protocol],
+          modules     : [moduleNotes.module],
           delegateDid : aliceDevice.did.uri,
         },
       });
@@ -1494,31 +1494,31 @@ describe('E2E Multi-Agent Sync', () => {
       await deviceHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
 
-      // Write to notes protocol.
+      // Write to notes module.
       const noteResult = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'text/plain',
-          protocol     : protocolNotes.protocol,
-          protocolPath : 'note',
-          schema       : protocolNotes.types.note.schema,
+          dataFormat : 'text/plain',
+          module     : moduleNotes.module,
+          modulePath : 'note',
+          schema     : moduleNotes.types.note.schema,
         },
         dataStream: new Blob(['Scoped note']),
       });
       expect(noteResult.reply.status.code).toBe(202);
 
-      // Write to profile protocol.
+      // Write to profile module.
       const profileResult = await primaryHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/json',
-          protocol     : protocolProfile.protocol,
-          protocolPath : 'entry',
-          schema       : protocolProfile.types.entry.schema,
+          dataFormat : 'application/json',
+          module     : moduleProfile.module,
+          modulePath : 'entry',
+          schema     : moduleProfile.types.entry.schema,
         },
         dataStream: new Blob([JSON.stringify({ name: 'Alice' })]),
       });
@@ -1527,7 +1527,7 @@ describe('E2E Multi-Agent Sync', () => {
       // Wait for the note to arrive on device.
       await waitForRecord(deviceHarness.agent, {
         did            : alice.did.uri,
-        protocol       : protocolNotes.protocol,
+        module         : moduleNotes.module,
         recordId       : noteResult.message!.recordId,
         delegateDid    : aliceDevice.did.uri,
         delegatedGrant : recordsQueryGrant.grant.message,
@@ -1544,7 +1544,7 @@ describe('E2E Multi-Agent Sync', () => {
         author        : alice.did.uri,
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { protocol: protocolProfile.protocol } },
+        messageParams : { filter: { module: moduleProfile.module } },
       });
       const profileQuery = await deviceHarness.agent.dwn.processRequest({
         author      : alice.did.uri,
@@ -1565,13 +1565,13 @@ describe('E2E Multi-Agent Sync', () => {
 
   describe('live-mode peer-authored delivery', () => {
     /**
-     * Mirrors a payments-style inbox: a published protocol whose `message`
+     * Mirrors a payments-style inbox: a published module whose `message`
      * path is `anyone`-creatable, so a foreign author can deliver a record
      * straight into the tenant's remote DWN (the payer → payee pattern).
      */
-    const protocolInbox: ProtocolDefinition = {
+    const moduleInbox: ModuleDefinition = {
       published : true,
-      protocol  : 'https://protocol.xyz/inbox',
+      module    : 'https://module.xyz/inbox',
       types     : {
         message: {
           schema      : 'https://schemas.xyz/inbox-message',
@@ -1599,20 +1599,20 @@ describe('E2E Multi-Agent Sync', () => {
         metadata  : { name: 'Bob' },
       });
 
-      // Install the inbox protocol on carol's local and remote DWN.
+      // Install the inbox module on carol's local and remote DWN.
       const localConfigure = await primaryHarness.agent.dwn.processRequest({
         author        : carol.did.uri,
         target        : carol.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: protocolInbox },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: moduleInbox },
       });
       expect(localConfigure.reply.status.code).toBe(202);
 
       const remoteConfigure = await retryFreshDidResolution(() => primaryHarness.agent.dwn.sendRequest({
         author        : carol.did.uri,
         target        : carol.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: protocolInbox },
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: moduleInbox },
       }));
       expect(remoteConfigure.reply.status.code).toBe(202);
     });
@@ -1625,7 +1625,7 @@ describe('E2E Multi-Agent Sync', () => {
     it('should deliver an anyone-create write by a foreign author in real time', async () => {
       await primaryHarness.agent.sync.setIdentityOptions({
         did     : carol.did.uri,
-        options : { protocols: [protocolInbox.protocol] },
+        options : { modules: [moduleInbox.module] },
       });
       await primaryHarness.agent.sync.startSync({ interval: '60s' });
       await new Promise(r => setTimeout(r, 500));
@@ -1634,7 +1634,7 @@ describe('E2E Multi-Agent Sync', () => {
       // pull entry must announce itself with a routing descriptor.
       const deliveries: Extract<SyncEvent, { type: 'delivery:applied' }>[] = [];
       const offSyncEvents = primaryHarness.agent.sync.on((event) => {
-        if (event.type === 'delivery:applied' && event.descriptor.protocol === protocolInbox.protocol) {
+        if (event.type === 'delivery:applied' && event.descriptor.module === moduleInbox.module) {
           deliveries.push(event);
         }
       });
@@ -1646,7 +1646,7 @@ describe('E2E Multi-Agent Sync', () => {
         author              : carol.did.uri,
         target              : carol.did.uri,
         messageType         : DwnInterface.MessagesSubscribe,
-        messageParams       : { filters: [{ protocol: protocolInbox.protocol }] },
+        messageParams       : { filters: [{ module: moduleInbox.module }] },
         subscriptionHandler : (msg): void => {
           if (msg.type === 'event') { sawInboxRecord.resolve(); }
         },
@@ -1660,11 +1660,11 @@ describe('E2E Multi-Agent Sync', () => {
         target        : carol.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/json',
-          protocol     : protocolInbox.protocol,
-          protocolPath : 'message',
-          schema       : protocolInbox.types.message.schema,
-          recipient    : carol.did.uri,
+          dataFormat : 'application/json',
+          module     : moduleInbox.module,
+          modulePath : 'message',
+          schema     : moduleInbox.types.message.schema,
+          recipient  : carol.did.uri,
         },
         dataStream: new Blob([JSON.stringify({ kind: 'payment', amountSat: 42 })]),
       }));
@@ -1675,7 +1675,7 @@ describe('E2E Multi-Agent Sync', () => {
       // record can only arrive via the live MessagesSubscribe pull path.
       const received = await waitForRecord(primaryHarness.agent, {
         did       : carol.did.uri,
-        protocol  : protocolInbox.protocol,
+        module    : moduleInbox.module,
         recordId,
         timeoutMs : 8_000,
       });
@@ -1691,12 +1691,12 @@ describe('E2E Multi-Agent Sync', () => {
       expect(delivery).toBeDefined();
       expect(delivery!.tenantDid).toBe(carol.did.uri);
       expect(delivery!.descriptor).toMatchObject({
-        interface    : 'Records',
-        method       : 'Write',
-        protocol     : protocolInbox.protocol,
-        protocolPath : 'message',
+        interface  : 'Records',
+        method     : 'Write',
+        module     : moduleInbox.module,
+        modulePath : 'message',
         recordId,
-        author       : bob.did.uri,
+        author     : bob.did.uri,
       });
 
       offSyncEvents();
@@ -1711,7 +1711,7 @@ describe('E2E Multi-Agent Sync', () => {
       await new Promise(r => setTimeout(r, 300));
       await primaryHarness.agent.sync.setIdentityOptions({
         did     : carol.did.uri,
-        options : { protocols: [protocolInbox.protocol] },
+        options : { modules: [moduleInbox.module] },
       });
       await new Promise(r => setTimeout(r, 500));
 
@@ -1720,11 +1720,11 @@ describe('E2E Multi-Agent Sync', () => {
         target        : carol.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/json',
-          protocol     : protocolInbox.protocol,
-          protocolPath : 'message',
-          schema       : protocolInbox.types.message.schema,
-          recipient    : carol.did.uri,
+          dataFormat : 'application/json',
+          module     : moduleInbox.module,
+          modulePath : 'message',
+          schema     : moduleInbox.types.message.schema,
+          recipient  : carol.did.uri,
         },
         dataStream: new Blob([JSON.stringify({ kind: 'payment', amountSat: 7 })]),
       }));
@@ -1732,7 +1732,7 @@ describe('E2E Multi-Agent Sync', () => {
 
       const received = await waitForRecord(primaryHarness.agent, {
         did       : carol.did.uri,
-        protocol  : protocolInbox.protocol,
+        module    : moduleInbox.module,
         recordId  : writeResult.message!.recordId,
         timeoutMs : 8_000,
       });

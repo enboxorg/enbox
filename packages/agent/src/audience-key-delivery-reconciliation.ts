@@ -1,8 +1,8 @@
 import type {
   GenericMessage,
   MessagesQueryReplyEntry,
+  ModuleDefinition,
   ProgressToken,
-  ProtocolDefinition,
   RecordsDeleteMessage,
 } from '@enbox/dwn-sdk-js';
 
@@ -24,24 +24,24 @@ import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
 
 const PAGE_LIMIT = 100;
 
-/** Scans the complete local feed for the active encrypted roles in one protocol. */
+/** Scans the complete local feed for the active encrypted roles in one module. */
 export async function scanActiveAudienceKeyDeliveryIntents({
   agent,
   delegateDid,
-  protocolDefinition,
+  moduleDefinition,
   sourceDid,
 }: {
   agent: EnboxPlatformAgent;
   delegateDid?: string;
-  protocolDefinition: ProtocolDefinition;
+  moduleDefinition: ModuleDefinition;
   sourceDid: string;
 }): Promise<AudienceKeyDeliveryIntent[]> {
-  const protocol = protocolDefinition.protocol;
+  const module = moduleDefinition.module;
   const rolePaths = new Set(getGrantKeyDeliveryScopes({
     interface : DwnInterfaceName.Records,
     method    : DwnMethodName.Write,
-    protocol,
-  }, protocolDefinition).flatMap(scope => scope.protocolPath === undefined ? [] : [scope.protocolPath]));
+    module,
+  }, moduleDefinition).flatMap(scope => scope.modulePath === undefined ? [] : [scope.modulePath]));
   if (rolePaths.size === 0) {
     return [];
   }
@@ -49,7 +49,7 @@ export async function scanActiveAudienceKeyDeliveryIntents({
   const permissionGrants = await getMessagesPermissionGrantsForScope({
     did            : sourceDid,
     delegateDid,
-    protocols      : [protocol],
+    modules        : [module],
     messageType    : DwnInterface.MessagesQuery,
     permissionsApi : agent.permissions,
   });
@@ -63,22 +63,22 @@ export async function scanActiveAudienceKeyDeliveryIntents({
       cursor,
       delegateDid,
       did     : sourceDid,
-      filters : [...rolePaths].map(protocolPathPrefix => ({
+      filters : [...rolePaths].map(modulePathPrefix => ({
         interface: DwnInterfaceName.Records,
-        protocol,
-        protocolPathPrefix,
+        module,
+        modulePathPrefix,
       })),
       limit: PAGE_LIMIT,
       permissionGrantIds,
     });
     if (reply.status.code !== 200 || reply.entries === undefined) {
       throw new Error(
-        `AgentDwnApi: role delivery reconciliation failed for ${sourceDid} / ${protocol}: ` +
+        `AgentDwnApi: role delivery reconciliation failed for ${sourceDid} / ${module}: ` +
         `${reply.status.code} ${reply.status.detail}`,
       );
     }
 
-    applyFeedEntries(reply.entries, intents, sourceDid, protocol, rolePaths);
+    applyFeedEntries(reply.entries, intents, sourceDid, module, rolePaths);
 
     if (reply.drained === true) {
       return [...intents.values()];
@@ -91,7 +91,7 @@ function applyFeedEntries(
   entries: readonly MessagesQueryReplyEntry[],
   intents: Map<string, AudienceKeyDeliveryIntent>,
   sourceDid: string,
-  protocol: string,
+  module: string,
   rolePaths: ReadonlySet<string>,
 ): void {
   for (const entry of entries) {
@@ -106,7 +106,7 @@ function applyFeedEntries(
       continue;
     }
 
-    const intent = roleDeliveryIntent(entry.message, sourceDid, protocol, rolePaths);
+    const intent = roleDeliveryIntent(entry.message, sourceDid, module, rolePaths);
     if (intent !== undefined) {
       intents.set(intent.roleRecordId, intent);
     }
@@ -130,28 +130,28 @@ function advancingCursor(previous: ProgressToken | undefined, next: ProgressToke
 function roleDeliveryIntent(
   message: GenericMessage,
   sourceDid: string,
-  protocol: string,
+  module: string,
   rolePaths: ReadonlySet<string>,
 ): AudienceKeyDeliveryIntent | undefined {
   if (!Records.isRecordsWrite(message)) {
     return undefined;
   }
 
-  const { protocol: messageProtocol, protocolPath, recipient } = message.descriptor;
-  if (messageProtocol !== protocol || protocolPath === undefined || !rolePaths.has(protocolPath)) {
+  const { module: messageModule, modulePath, recipient } = message.descriptor;
+  if (messageModule !== module || modulePath === undefined || !rolePaths.has(modulePath)) {
     return undefined;
   }
 
-  const contextId = getRoleAudienceContextId(protocolPath, message.contextId);
+  const contextId = getRoleAudienceContextId(modulePath, message.contextId);
   if (recipient === undefined || contextId === undefined) {
     throw new Error(`AgentDwnApi: active role record '${message.recordId}' has no delivery recipient or audience context.`);
   }
 
   return {
     contextId,
-    protocol,
+    module,
     recipientDid : recipient,
-    rolePath     : protocolPath,
+    rolePath     : modulePath,
     roleRecordId : message.recordId,
     sourceDid,
   };

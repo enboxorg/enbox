@@ -31,11 +31,11 @@ export function getRecordAuthor(record: RecordsWriteMessage | RecordsDeleteMessa
 }
 
 /**
- * Get the `protocolRole` string from the signature payload of the given RecordsWriteMessage or RecordsDeleteMessage.
+ * Get the `moduleRole` string from the signature payload of the given RecordsWriteMessage or RecordsDeleteMessage.
  */
-export function getRecordProtocolRole(message: RecordsWriteMessage | RecordsDeleteMessage): string | undefined {
+export function getRecordModuleRole(message: RecordsWriteMessage | RecordsDeleteMessage): string | undefined {
   const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
-  return signaturePayload?.protocolRole;
+  return signaturePayload?.moduleRole;
 }
 
 export function isRecordsWrite(obj: unknown): obj is RecordsWrite {

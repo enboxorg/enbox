@@ -5,13 +5,13 @@ import type { Filter, KeyValues } from '../../src/types/query-types.js';
 
 import { createLevelDatabase } from '../../src/store/level-wrapper.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
-import { EncryptionProtocol } from '../../src/protocols/encryption.js';
+import { EncryptionModule } from '../../src/modules/encryption.js';
 import { EventEmitterWakePublisher } from '../../src/event-stream/event-emitter-wake-publisher.js';
 import { IndexLevel } from '../../src/store/index-level.js';
 import { Message } from '../../src/core/message.js';
 import { MessageStoreLevel } from '../../src/store/message-store-level.js';
-import { PermissionsProtocol } from '../../src/protocols/permissions.js';
-import { ProtocolsConfigureHandler } from '../../src/handlers/protocols-configure.js';
+import { ModulesConfigureHandler } from '../../src/handlers/modules-configure.js';
+import { PermissionsModule } from '../../src/modules/permissions.js';
 import { Replication } from '../../src/utils/replication.js';
 import { SortDirection } from '../../src/types/query-types.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -57,6 +57,64 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('createLevelDatabase', function () {
+    it('initializes concurrent clients of one empty database with the same format and epoch', async () => {
+      const location = `TEST-MESSAGESTORE-CONCURRENT-OPEN-${crypto.randomUUID()}`;
+      const database = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+      await database.open();
+      const stores = Array.from({ length: 8 }, () => new MessageStoreLevel({
+        location,
+        // Real Level storage shared by independent store clients, as with browser IndexedDB clients.
+        createLevelDatabase: async <V>(): Promise<LevelDatabase<V>> => database as unknown as LevelDatabase<V>,
+      }));
+      try {
+        const results = await Promise.allSettled(stores.map(store => store.open()));
+        expect(results.map(result => result.status)).toEqual(stores.map(() => 'fulfilled'));
+        const epochs = await Promise.all(stores.map(store => store.epoch()));
+        expect(new Set(epochs).size).toBe(1);
+        expect(await database.get('!meta!epoch')).toBe(epochs[0]);
+        expect(await database.get('!meta!format')).toBe('enbox-modules-v1');
+      } finally {
+        await Promise.allSettled(stores.map(store => store.close()));
+        await database.open();
+        await database.clear();
+        await database.close();
+      }
+    });
+
+    it('rejects the previous wire format even when replication metadata already exists', async () => {
+      const location = 'TEST-MESSAGESTORE-OLD-FORMAT';
+      const oldDb = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+      await oldDb.put('!meta!epoch', 'existing-replication-epoch');
+      await oldDb.close();
+      const store = new MessageStoreLevel({ location });
+      try {
+        await expect(store.open()).rejects.toThrow(DwnErrorCode.MessageStoreIncompatibleFormat);
+      } finally {
+        await store.close();
+        const db = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+        expect(await db.get('!meta!epoch')).toBe('existing-replication-epoch');
+        await db.clear();
+        await db.close();
+      }
+    });
+
+    it('rejects an unknown store format without replacing its marker', async () => {
+      const location = 'TEST-MESSAGESTORE-UNKNOWN-FORMAT';
+      const db = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+      await db.put('!meta!format', 'enbox-future-format');
+      await db.close();
+      const store = new MessageStoreLevel({ location });
+      try {
+        await expect(store.open()).rejects.toThrow(DwnErrorCode.MessageStoreIncompatibleFormat);
+      } finally {
+        await store.close();
+        const cleanup = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
+        expect(await cleanup.get('!meta!format')).toBe('enbox-future-format');
+        await cleanup.clear();
+        await cleanup.close();
+      }
+    });
+
     it('should be called if provided', async () => {
       // need to close the message store instance first before creating a new one with the same name below
       await messageStore.close();
@@ -94,11 +152,11 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   async function generateStoredMessage(overrides: {
-    protocol?: string;
+    module?: string;
     tags?: Record<string, string>;
   } = {}): Promise<{ message: any, messageCid: string, indexes: KeyValues }> {
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      ...(overrides.protocol !== undefined && { protocol: overrides.protocol, protocolPath: 'post' }),
+      ...(overrides.module !== undefined && { module: overrides.module, modulePath: 'post' }),
       ...(overrides.tags !== undefined && { tags: overrides.tags }),
     });
     const messageCid = await Message.getCid(message);
@@ -107,8 +165,8 @@ describe('MessageStoreLevel Test Suite', () => {
       method            : 'Write',
       messageTimestamp  : message.descriptor.messageTimestamp,
       isLatestBaseState : true,
-      protocol          : message.descriptor.protocol,
-      protocolPath      : message.descriptor.protocolPath,
+      module            : message.descriptor.module,
+      modulePath        : message.descriptor.modulePath,
     };
 
     if (message.descriptor.tags !== undefined) {
@@ -210,16 +268,16 @@ describe('MessageStoreLevel Test Suite', () => {
 
     it('should page with high-water cursors and omit messageCid for non-delivered tail positions', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/photos';
+      const module = 'https://example.com/photos';
 
-      const matching = await generateStoredMessage({ protocol });
+      const matching = await generateStoredMessage({ module });
       await messageStore.put(alice.did, matching.message, matching.indexes);
       for (let i = 0; i < 2; i++) {
         const other = await generateStoredMessage();
         await messageStore.put(alice.did, other.message, other.indexes);
       }
 
-      const filtered = await messageStore.logRead(alice.did, { filters: [{ protocol }] });
+      const filtered = await messageStore.logRead(alice.did, { filters: [{ module }] });
       expect(filtered.events.map((entry) => entry.messageCid)).toEqual([matching.messageCid]);
       expect(filtered.drained).toBe(true);
       expect(filtered.cursor!.position).toBe('3');
@@ -342,24 +400,24 @@ describe('MessageStoreLevel Test Suite', () => {
 
     it('should reject missing messages and fingerprint-scope mutations', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/photos';
-      const { message, messageCid, indexes } = await generateStoredMessage({ protocol });
+      const module = 'https://example.com/photos';
+      const { message, messageCid, indexes } = await generateStoredMessage({ module });
 
       await expect(messageStore.updateIndexes(alice.did, messageCid, indexes))
         .rejects.toThrow(DwnErrorCode.MessageStoreUpdateIndexesMessageNotFound);
 
       await messageStore.put(alice.did, message, indexes);
-      await expect(messageStore.updateIndexes(alice.did, messageCid, { ...indexes, protocol: 'https://example.com/other' }))
+      await expect(messageStore.updateIndexes(alice.did, messageCid, { ...indexes, module: 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
 
-      const { protocol: _protocol, ...indexesWithoutProtocol } = indexes;
-      await expect(messageStore.updateIndexes(alice.did, messageCid, indexesWithoutProtocol))
+      const { module: _module, ...indexesWithoutModule } = indexes;
+      await expect(messageStore.updateIndexes(alice.did, messageCid, indexesWithoutModule))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
 
-      const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol } });
+      const grant = await generateStoredMessage({ module: PermissionsModule.uri, tags: { module } });
       const grantIndexes = grant.indexes;
       await messageStore.put(alice.did, grant.message, grantIndexes);
-      await expect(messageStore.updateIndexes(alice.did, grant.messageCid, { ...grantIndexes, 'tag.protocol': 'https://example.com/other' }))
+      await expect(messageStore.updateIndexes(alice.did, grant.messageCid, { ...grantIndexes, 'tag.module': 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
     });
   });
@@ -386,9 +444,9 @@ describe('MessageStoreLevel Test Suite', () => {
 
     it('should reject missing messages, CID mismatches, and fingerprint-scope mutations', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/photos';
-      const { message, messageCid, indexes } = await generateStoredMessage({ protocol });
-      const other = await generateStoredMessage({ protocol });
+      const module = 'https://example.com/photos';
+      const { message, messageCid, indexes } = await generateStoredMessage({ module });
+      const other = await generateStoredMessage({ module });
 
       await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, message, indexes))
         .rejects.toThrow(DwnErrorCode.MessageStoreUpdateMessageAndIndexesMessageNotFound);
@@ -397,7 +455,7 @@ describe('MessageStoreLevel Test Suite', () => {
       await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, other.message, indexes))
         .rejects.toThrow(DwnErrorCode.MessageStoreUpdateMessageAndIndexesCidMismatch);
 
-      await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, message, { ...indexes, protocol: 'https://example.com/other' }))
+      await expect(messageStore.updateMessageAndIndexes(alice.did, messageCid, message, { ...indexes, module: 'https://example.com/other' }))
         .rejects.toThrow(DwnErrorCode.MessageStoreFingerprintScopeMutation);
     });
   });
@@ -472,65 +530,65 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('fingerprints', () => {
-    it('should fold global, protocol, permission, and encryption domains and unfold deletes', async () => {
+    it('should fold global, module, permission, and encryption domains and unfold deletes', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const photosProtocol = 'https://example.com/photos';
+      const photosModule = 'https://example.com/photos';
 
-      const photo = await generateStoredMessage({ protocol: photosProtocol });
+      const photo = await generateStoredMessage({ module: photosModule });
       await messageStore.put(alice.did, photo.message, photo.indexes);
       const photoFingerprint = await cidFingerprint(photo.messageCid);
 
-      const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol: photosProtocol } });
+      const grant = await generateStoredMessage({ module: PermissionsModule.uri, tags: { module: photosModule } });
       const grantIndexes = grant.indexes;
       await messageStore.put(alice.did, grant.message, grantIndexes);
       const grantFingerprint = await cidFingerprint(grant.messageCid);
 
-      const audienceKey = await generateStoredMessage({ protocol: EncryptionProtocol.uri, tags: { protocol: photosProtocol } });
+      const audienceKey = await generateStoredMessage({ module: EncryptionModule.uri, tags: { module: photosModule } });
       const audienceKeyIndexes = audienceKey.indexes;
       await messageStore.put(alice.did, audienceKey.message, audienceKeyIndexes);
       const audienceKeyFingerprint = await cidFingerprint(audienceKey.messageCid);
 
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain]))
         .toBe(xorHex(xorHex(photoFingerprint, grantFingerprint), audienceKeyFingerprint));
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)])).toBe(photoFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(PermissionsProtocol.uri)])).toBe(grantFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(EncryptionProtocol.uri)])).toBe(audienceKeyFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(grantFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(audienceKeyFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)])).toBe(photoFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(PermissionsModule.uri)])).toBe(grantFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(EncryptionModule.uri)])).toBe(audienceKeyFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosModule)])).toBe(grantFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosModule)])).toBe(audienceKeyFingerprint);
 
-      const { 'tag.protocol': _tag, ...demotedGrantIndexes } = grantIndexes;
+      const { 'tag.module': _tag, ...demotedGrantIndexes } = grantIndexes;
       await messageStore.updateIndexes(alice.did, grant.messageCid, { ...demotedGrantIndexes, isLatestBaseState: false });
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(grantFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosModule)])).toBe(grantFingerprint);
 
-      const { 'tag.protocol': _encryptionTag, ...demotedAudienceKeyIndexes } = audienceKeyIndexes;
+      const { 'tag.module': _encryptionTag, ...demotedAudienceKeyIndexes } = audienceKeyIndexes;
       await messageStore.updateIndexes(alice.did, audienceKey.messageCid, { ...demotedAudienceKeyIndexes, isLatestBaseState: false });
-      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(audienceKeyFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosModule)])).toBe(audienceKeyFingerprint);
 
       await messageStore.delete(alice.did, grant.messageCid);
       await messageStore.delete(alice.did, audienceKey.messageCid);
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(photoFingerprint);
-      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosProtocol)])).toBe(ZERO_FINGERPRINT);
-      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosProtocol)])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.permissionDomain(photosModule)])).toBe(ZERO_FINGERPRINT);
+      expect(await messageStore.fingerprint(alice.did, [Replication.encryptionDomain(photosModule)])).toBe(ZERO_FINGERPRINT);
     });
 
-    it('should fold protocol configs and tombstones into their protocol domain', async () => {
+    it('should fold module configs and tombstones into their module domain', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const photosProtocol = 'https://example.com/photos';
-      const protocolDefinition = {
-        protocol  : photosProtocol,
+      const photosModule = 'https://example.com/photos';
+      const moduleDefinition = {
+        module    : photosModule,
         published : false,
         types     : { post: { schema: 'post', dataFormats: ['text/plain'] } },
         structure : { post: {} },
       };
 
-      const config = await TestDataGenerator.generateProtocolsConfigure({ protocolDefinition });
-      const configIndexes = ProtocolsConfigureHandler.constructIndexes(config.protocolsConfigure, true);
+      const config = await TestDataGenerator.generateModulesConfigure({ moduleDefinition });
+      const configIndexes = ModulesConfigureHandler.constructIndexes(config.modulesConfigure, true);
       await messageStore.put(alice.did, config.message, configIndexes);
       const configFingerprint = await cidFingerprint(await Message.getCid(config.message));
 
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)])).toBe(configFingerprint);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)])).toBe(configFingerprint);
 
-      const photo = await generateStoredMessage({ protocol: photosProtocol });
+      const photo = await generateStoredMessage({ module: photosModule });
       await messageStore.put(alice.did, photo.message, photo.indexes);
       const photoFingerprint = await cidFingerprint(photo.messageCid);
 
@@ -542,26 +600,26 @@ describe('MessageStoreLevel Test Suite', () => {
       await messageStore.put(alice.did, recordsDelete.message, deleteIndexes);
       const deleteFingerprint = await cidFingerprint(await Message.getCid(recordsDelete.message));
 
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(photosProtocol)]))
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(photosModule)]))
         .toBe(xorHex(xorHex(configFingerprint, photoFingerprint), deleteFingerprint));
     });
 
     it('should converge fingerprints across stores that learn the same messages in different orders', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const photosProtocol = 'https://example.com/photos-convergence';
-      const protocolDefinition = {
-        protocol  : photosProtocol,
+      const photosModule = 'https://example.com/photos-convergence';
+      const moduleDefinition = {
+        module    : photosModule,
         published : false,
         types     : { post: { schema: 'post', dataFormats: ['text/plain'] } },
         structure : { post: {} },
       };
 
       await withIsolatedMessageStore('TEST-MESSAGESTORE-FINGERPRINT-PEER', async (peerStore) => {
-        const config = await TestDataGenerator.generateProtocolsConfigure({ protocolDefinition });
-        const configIndexes = ProtocolsConfigureHandler.constructIndexes(config.protocolsConfigure, true);
-        const photo = await generateStoredMessage({ protocol: photosProtocol });
-        const grant = await generateStoredMessage({ protocol: PermissionsProtocol.uri, tags: { protocol: photosProtocol } });
-        const audienceKey = await generateStoredMessage({ protocol: EncryptionProtocol.uri, tags: { protocol: photosProtocol } });
+        const config = await TestDataGenerator.generateModulesConfigure({ moduleDefinition });
+        const configIndexes = ModulesConfigureHandler.constructIndexes(config.modulesConfigure, true);
+        const photo = await generateStoredMessage({ module: photosModule });
+        const grant = await generateStoredMessage({ module: PermissionsModule.uri, tags: { module: photosModule } });
+        const audienceKey = await generateStoredMessage({ module: EncryptionModule.uri, tags: { module: photosModule } });
 
         await messageStore.put(alice.did, config.message, configIndexes);
         await messageStore.put(alice.did, photo.message, photo.indexes);
@@ -575,11 +633,11 @@ describe('MessageStoreLevel Test Suite', () => {
 
         const scopes = [
           Replication.globalDomain,
-          Replication.protocolDomain(photosProtocol),
-          Replication.protocolDomain(PermissionsProtocol.uri),
-          Replication.protocolDomain(EncryptionProtocol.uri),
-          Replication.permissionDomain(photosProtocol),
-          Replication.encryptionDomain(photosProtocol),
+          Replication.moduleDomain(photosModule),
+          Replication.moduleDomain(PermissionsModule.uri),
+          Replication.moduleDomain(EncryptionModule.uri),
+          Replication.permissionDomain(photosModule),
+          Replication.encryptionDomain(photosModule),
         ];
 
         for (const scope of scopes) {
@@ -593,8 +651,8 @@ describe('MessageStoreLevel Test Suite', () => {
   describe('selected record-limit parent groups', () => {
     it('dispatches scalar and array selections through exact-parent query and count paths', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/selected-record-limit';
-      const protocolPath = 'folder/item';
+      const module = 'https://example.com/selected-record-limit';
+      const modulePath = 'folder/item';
       const storedByName = new Map<string, Awaited<ReturnType<typeof generateStoredMessage>>>();
       const candidates = [
         ['a-occupant', 'parent-a', '2025-01-01T00:00:00.000000Z', '2025-03-03T00:00:00.000000Z'],
@@ -604,14 +662,14 @@ describe('MessageStoreLevel Test Suite', () => {
       ] as const;
 
       for (const [name, parentId, dateCreated, messageTimestamp] of candidates) {
-        const stored = await generateStoredMessage({ protocol });
+        const stored = await generateStoredMessage({ module });
         storedByName.set(name, stored);
         await messageStore.put(alice.did, stored.message, {
           ...stored.indexes,
           dateCreated,
           messageTimestamp,
           parentId,
-          protocolPath,
+          modulePath,
           recordId: stored.message.recordId,
         });
       }
@@ -621,13 +679,13 @@ describe('MessageStoreLevel Test Suite', () => {
         interface         : 'Records',
         method            : 'Write',
         isLatestBaseState : true,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         parentId          : selectedParentIds,
       };
       const recordLimit = {
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         parentId : selectedParentIds,
         max      : 1,
       };
@@ -683,9 +741,9 @@ describe('MessageStoreLevel Test Suite', () => {
   describe('durability', () => {
     it('should persist epoch, log positions, and fingerprints across reopen and reset on clear', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/reopen';
+      const module = 'https://example.com/reopen';
       const initialEpoch = await messageStore.epoch();
-      const first = await generateStoredMessage({ protocol });
+      const first = await generateStoredMessage({ module });
       const second = await generateStoredMessage();
 
       await messageStore.put(alice.did, first.message, first.indexes);
@@ -694,7 +752,7 @@ describe('MessageStoreLevel Test Suite', () => {
       const boundsBefore = await messageStore.logBounds(alice.did);
       const logBefore = await messageStore.logRead(alice.did);
       const globalFingerprintBefore = await messageStore.fingerprint(alice.did, [Replication.globalDomain]);
-      const protocolFingerprintBefore = await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)]);
+      const moduleFingerprintBefore = await messageStore.fingerprint(alice.did, [Replication.moduleDomain(module)]);
 
       await messageStore.close();
       await messageStore.open();
@@ -706,7 +764,7 @@ describe('MessageStoreLevel Test Suite', () => {
         .toEqual(logBefore.events.map((entry) => entry.messageCid));
       expect(logAfter.cursor).toEqual(logBefore.cursor);
       expect(await messageStore.fingerprint(alice.did, [Replication.globalDomain])).toBe(globalFingerprintBefore);
-      expect(await messageStore.fingerprint(alice.did, [Replication.protocolDomain(protocol)])).toBe(protocolFingerprintBefore);
+      expect(await messageStore.fingerprint(alice.did, [Replication.moduleDomain(module)])).toBe(moduleFingerprintBefore);
 
       await messageStore.clear();
       expect(await messageStore.epoch()).not.toBe(initialEpoch);

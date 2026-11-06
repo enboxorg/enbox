@@ -1,17 +1,17 @@
 ---
 title: "@enbox/dwn-sdk-js"
-description: The Decentralized Web Node protocol engine — message processing, storage interfaces, and protocol rule enforcement.
+description: The Decentralized Web Node module engine — message processing, storage interfaces, and module rule enforcement.
 ---
 
-`@enbox/dwn-sdk-js` is the core DWN protocol engine. It implements the [DWN specification](https://identity.foundation/decentralized-web-node/spec/) — processing DWN messages, enforcing protocol rules, managing record storage, and handling subscriptions.
+`@enbox/dwn-sdk-js` is the core DWN module engine. It implements the [DWN specification](https://identity.foundation/decentralized-web-node/spec/) — processing DWN messages, enforcing module rules, managing record storage, and handling subscriptions.
 
 ## What it does
 
-- **Message processing** — Parses, validates, and processes all DWN message types: `RecordsWrite`, `RecordsQuery`, `RecordsRead`, `RecordsDelete`, `RecordsSubscribe`, `ProtocolsConfigure`, `ProtocolsQuery`, and more.
-- **Protocol rule enforcement** — Evaluates protocol definitions (types, structure, `$actions`) to determine whether a given message is authorised. This includes role-based access control, recipient scoping, and hierarchical record permissions.
+- **Message processing** — Parses, validates, and processes all DWN message types: `RecordsWrite`, `RecordsQuery`, `RecordsRead`, `RecordsDelete`, `RecordsSubscribe`, `ModulesConfigure`, `ModulesQuery`, and more.
+- **Module rule enforcement** — Evaluates module definitions (types, structure, `$actions`) to determine whether a given message is authorised. This includes role-based access control, recipient scoping, and hierarchical record permissions.
 - **Storage interfaces** — Defines abstract interfaces (`MessageStore`, `DataStore`, `EventLog`, `ResumableTaskStore`) that storage backends implement. The DWN engine is storage-agnostic.
 - **Event system** — Produces events when records are created, updated, or deleted, enabling the subscription and sync mechanisms used by the agent and server.
-- **Encryption support** — Handles protocol-level encryption rules, key derivation paths, and encrypted record processing.
+- **Encryption support** — Handles module-level encryption rules, key derivation paths, and encrypted record processing.
 
 ## Relationship to other packages
 
@@ -19,22 +19,22 @@ description: The Decentralized Web Node protocol engine — message processing, 
 |---|---|
 | `@enbox/dwn-server` | Running a DWN instance that processes incoming messages |
 | `@enbox/agent` | Processing local DWN operations and maintaining the local store |
-| `@enbox/api` | Type definitions (`ProtocolDefinition`, `DateSort`, `RecordsFilter`, etc.) |
+| `@enbox/api` | Type definitions (`ModuleDefinition`, `DateSort`, `RecordsFilter`, etc.) |
 
 ## When to use it
 
 Most applications do not import from `@enbox/dwn-sdk-js` directly. Use it when you need:
 
-- Access to DWN type definitions like `ProtocolDefinition`, `DateSort`, or `RecordsFilter`
+- Access to DWN type definitions like `ModuleDefinition`, `DateSort`, or `RecordsFilter`
 - To build a custom DWN implementation or storage backend
-- To understand or extend the protocol rule engine
+- To understand or extend the module rule engine
 - Low-level message construction for testing or tooling
 
 ## Key exports
 
 | Export | Description |
 |---|---|
-| `ProtocolDefinition` | Type describing a DWN protocol's types, structure, and rules |
+| `ModuleDefinition` | Type describing a DWN module's types, structure, and rules |
 | `DateSort` | Enum for record sort ordering (`CreatedAscending`, `CreatedDescending`, etc.) |
 | `RecordsFilter` | Filter type for record queries |
 | `MessageStore`, `DataStore` | Storage backend interfaces |
@@ -52,10 +52,10 @@ The owner assigns page roles. Editors can read and edit the owner's page through
 `co-update`; viewers can only read it:
 
 ```ts
-import { resolveProtocolContextRoles, type ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import { resolveModuleContextRoles, type ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 const definition = {
-  protocol: 'https://example.com/protocols/notebook',
+  module: 'https://example.com/modules/notebook',
   published: true,
   types: {
     notebook: { dataFormats: ['application/json'] },
@@ -75,16 +75,16 @@ const definition = {
       },
     },
   },
-} satisfies ProtocolDefinition;
+} satisfies ModuleDefinition;
 
-resolveProtocolContextRoles(definition, 'notebook/page');
+resolveModuleContextRoles(definition, 'notebook/page');
 // ['notebook/page/editor', 'notebook/page/viewer']
 ```
 
 If both assignments exist, the preference puts editor first. If only viewer is
 assigned, the user remains a viewer: order never grants the editor role or its
 write permission. Reversing the two rules changes preference, while each role
-keeps the permissions in its own `can` array. A protocol with child records can
+keeps the permissions in its own `can` array. A module with child records can
 grant additional operations through those paths' own `$actions`.
 
 The helper reads a validated definition and returns the ordered local roles for

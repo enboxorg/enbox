@@ -1,4 +1,4 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   Record,
   RecordData,
@@ -10,10 +10,10 @@ import type {
   TypedEnbox,
 } from '@enbox/api';
 
-import { defineProtocol, recordCodecs } from '@enbox/api';
+import { defineModule, recordCodecs } from '@enbox/api';
 
 const CanonicalRecordDefinition = {
-  protocol  : 'https://example.com/protocols/canonical-record',
+  module    : 'https://example.com/modules/canonical-record',
   published : true,
   types     : {
     task: {
@@ -27,7 +27,7 @@ const CanonicalRecordDefinition = {
     task       : {},
     attachment : {},
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 void CanonicalRecordDefinition;
 
 interface TaskData {
@@ -36,19 +36,19 @@ interface TaskData {
   note?: string;
 }
 
-const CanonicalRecordProtocol = defineProtocol(CanonicalRecordDefinition, {
+const CanonicalRecordModule = defineModule(CanonicalRecordDefinition, {
   task       : recordCodecs.json<TaskData>(),
   attachment : recordCodecs.blob('application/octet-stream'),
 });
-void CanonicalRecordProtocol;
+void CanonicalRecordModule;
 
-// @ts-expect-error every reachable protocol record type requires a codec.
-defineProtocol(CanonicalRecordDefinition, {
+// @ts-expect-error every reachable module record type requires a codec.
+defineModule(CanonicalRecordDefinition, {
   task: recordCodecs.json<TaskData>(),
 });
 
-// @ts-expect-error codecs for types outside the protocol structure are rejected.
-defineProtocol(CanonicalRecordDefinition, {
+// @ts-expect-error codecs for types outside the module structure are rejected.
+defineModule(CanonicalRecordDefinition, {
   task       : recordCodecs.json<TaskData>(),
   attachment : recordCodecs.blob('application/octet-stream'),
   orphan     : recordCodecs.json<unknown>(),
@@ -58,7 +58,7 @@ declare const record: Record<TaskData>;
 declare const untypedRecord: Record;
 declare const typed: TypedEnbox<
   typeof CanonicalRecordDefinition,
-  typeof CanonicalRecordProtocol.codecs
+  typeof CanonicalRecordModule.codecs
 >;
 
 const recordData: RecordData = record.data;
@@ -93,7 +93,7 @@ async function assertCanonicalRecordFlow(): Promise<void> {
   });
   await typed.records.create('task', {
     data       : { title: 'created', completed: false },
-    // @ts-expect-error the protocol codec owns the encoded data format.
+    // @ts-expect-error the module codec owns the encoded data format.
     dataFormat : 'application/json',
   });
   const createdData: TaskData = await created.value();

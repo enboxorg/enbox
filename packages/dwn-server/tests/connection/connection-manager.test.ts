@@ -52,7 +52,7 @@ describe('InMemoryConnectionManager', () => {
   it('returns the total subscription count across all connections', async () => {
     // Connect a client and subscribe to something.
     const alice = await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.generateDidKeyPersona();
-    await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await (await import('@enbox/dwn-sdk-js')).TestDataGenerator.generateRecordsSubscribe({
       author : alice,

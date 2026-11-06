@@ -90,7 +90,7 @@ jobs:
           push-git-tags: false
           # Uses bun pack + npm publish (via scripts/publish.sh) instead of
           # changeset publish because changeset publish calls npm publish on the
-          # raw package dir, which does NOT resolve Bun's workspace:* protocol.
+          # raw package dir, which does NOT resolve Bun's workspace:* module.
           publish-script: bun run release
           # The version script runs changeset version then bun install to
           # regenerate the lockfile so workspace:* resolves to new versions.

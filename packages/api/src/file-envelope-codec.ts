@@ -1,7 +1,7 @@
 import type { RecordData } from './record-data.js';
 import type { EncodedRecordData, RecordCodec } from './record-codec.js';
 
-/** One private file payload carried inside a protocol record. */
+/** One private file payload carried inside a module record. */
 export type FileEnvelopeData = Readonly<{
   /** Safe basename used when presenting or downloading the file. */
   filename: string;
@@ -25,7 +25,7 @@ export type FileEnvelopeCodecOptions = Readonly<{
   maxContentBytes?: number;
 }>;
 
-/** A private-file codec with a protocol-size calculation helper. */
+/** A private-file codec with a module-size calculation helper. */
 export type FileEnvelopeCodec = RecordCodec<FileEnvelopeData> & Readonly<{
   /** Worst-case encoded size for the supplied content bytes and maximum permitted metadata. */
   maxEncodedBytesFor(contentBytes: number): number;

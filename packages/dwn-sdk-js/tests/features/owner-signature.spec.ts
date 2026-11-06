@@ -2,7 +2,7 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { ArrayUtility } from '../../src/utils/array.js';
@@ -60,9 +60,9 @@ export function testOwnerSignature(): void {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      // Install default test protocol for both Bob and Alice (needed because all records require a protocol)
-      await TestDataGenerator.installDefaultTestProtocol(dwn, bob);
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      // Install default test module for both Bob and Alice (needed because all records require a module)
+      await TestDataGenerator.installDefaultTestModule(dwn, bob);
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       // Bob writes a message to his DWN
       const { message, dataStream, dataBytes } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
@@ -100,27 +100,27 @@ export function testOwnerSignature(): void {
       expect(ArrayUtility.byteArraysEqual(dataFetched, dataBytes!)).toBe(true);
     });
 
-    it('should use `ownerSignature` for authorization when it is given - protocol-space', async () => {
-      // scenario: Alice and Bob both have the same protocol which does NOT allow external entities to write,
+    it('should use `ownerSignature` for authorization when it is given - module-space', async () => {
+      // scenario: Alice and Bob both have the same module which does NOT allow external entities to write,
       // but Alice can store a message authored by Bob as a owner in her own DWN
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = minimalProtocolDefinition;
+      const moduleDefinition = minimalModuleDefinition;
 
-      // Alice installs the protocol
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Alice installs the module
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
-      // Sanity test that Bob cannot write to a protocol record to Alice's DWN
+      // Sanity test that Bob cannot write to a module record to Alice's DWN
       const bobRecordsWrite = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo'
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'foo'
       });
       const recordsWriteReply = await dwn.processMessage(alice.did, bobRecordsWrite.message, { dataStream: bobRecordsWrite.dataStream });
       expect(recordsWriteReply.status.code).toBe(401);
@@ -156,8 +156,8 @@ export function testOwnerSignature(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      // Install default test protocol for Carol (the tenant where the message will be processed)
-      await TestDataGenerator.installDefaultTestProtocol(dwn, carol);
+      // Install default test module for Carol (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestModule(dwn, carol);
 
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });
@@ -171,32 +171,32 @@ export function testOwnerSignature(): void {
       expect(carolWriteReply.status.detail).toContain('RecordsWriteOwnerAndTenantMismatch');
     });
 
-    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - protocol-space', async () => {
-      // scenario: Alice, Bob, and Carol all have the same protocol which does NOT allow external entities to write,
+    it('should throw if `ownerSignature` in `authorization` is mismatching with the tenant - module-space', async () => {
+      // scenario: Alice, Bob, and Carol all have the same module which does NOT allow external entities to write,
       // scenario: Carol attempts to store a message with Alice being the owner, and should fail
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = minimalProtocolDefinition;
+      const moduleDefinition = minimalModuleDefinition;
 
       // Bob creates a message, we skip writing to Bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'foo'
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'foo'
       });
 
       // Alice augments Bob's message as an external owner, we also skipping writing to Alice's DWN because that's also orthogonal to this test
       await recordsWrite.signAsOwner(Jws.createSigner(alice));
 
-      // Carol installs the protocol
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Carol installs the module
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: carol,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(carol.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(carol.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Test that Carol is not able to store the message Alice created
       const carolWriteReply = await dwn.processMessage(carol.did, recordsWrite.message, { dataStream });
@@ -209,8 +209,8 @@ export function testOwnerSignature(): void {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      // Install default test protocol for Alice (the tenant where the message will be processed)
-      await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+      // Install default test module for Alice (the tenant where the message will be processed)
+      await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
       // Bob creates a message, we skip writing to bob's DWN because that's orthogonal to this test
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: bob, published: true });

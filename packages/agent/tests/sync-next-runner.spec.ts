@@ -49,7 +49,7 @@ function roleTarget(): SyncTarget {
     authorization: {
       actorDid     : 'did:example:bob',
       kind         : 'role',
-      protocolRole : 'thread/member',
+      moduleRole   : 'thread/member',
       roleRecordId : 'role-record',
     },
     authorizationEpoch: 'role-epoch',
@@ -84,11 +84,11 @@ function operations(
   };
 }
 
-function protocolMessage(name: string): GenericMessage {
+function moduleMessage(name: string): GenericMessage {
   return {
     descriptor: {
-      definition       : { protocol: `https://example.com/${name}`, published: true, structure: {}, types: {} },
-      interface        : 'Protocols',
+      definition       : { module: `https://example.com/${name}`, published: true, structure: {}, types: {} },
+      interface        : 'Modules',
       messageTimestamp : '2026-10-02T00:00:00.000000Z',
       method           : 'Configure',
     },
@@ -118,7 +118,7 @@ describe('SyncNextRunner', () => {
       authorization : syncTarget.authorization,
       scope         : syncTarget.scope,
     });
-    const message = protocolMessage('pending');
+    const message = moduleMessage('pending');
     const messageCid = await Message.getCid(message);
     const source = token(1, messageCid);
     expect(await progressStore.commitPullPage(link, {

@@ -5,7 +5,7 @@ import type { GenericMessage, MessagesQueryReply, MessagesQueryReplyEntry, Messa
 
 import { CryptoUtils } from '@enbox/crypto';
 import { Level } from 'level';
-import { BroadcastChannelWakePublisher, DwnError, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveProtocolRoleContextScope } from '@enbox/dwn-sdk-js';
+import { BroadcastChannelWakePublisher, DwnError, DwnInterfaceName, DwnMethodName, Encoder, Message, Records, resolveModuleRoleContextScope } from '@enbox/dwn-sdk-js';
 import { MAX_TIMER_DELAY_MS, parseDurationInMilliseconds, runSerializedByKey, runWithCrossContextLock, sleep } from '@enbox/common';
 import { RateLimitError, SubscriptionHandlerTerminalError } from '@enbox/dwn-clients';
 
@@ -53,8 +53,8 @@ import type { SyncIdentityTaskRunner, SyncLifecycleDeadline } from './sync-lifec
 import type {
   SyncScopeClosureGrantQuery,
   SyncScopeClosureGrantResolution,
-  SyncScopeProtocolHistoryPage,
-  SyncScopeProtocolHistoryQuery,
+  SyncScopeModuleHistoryPage,
+  SyncScopeModuleHistoryQuery,
 } from './sync-scope-closure-validator.js';
 import type { SyncStatusLink, SyncStatusSnapshot } from './sync-status-reporter.js';
 
@@ -84,12 +84,13 @@ import { SyncRuntime } from './sync-runtime.js';
 import { SyncScopeClosureValidator } from './sync-scope-closure-validator.js';
 import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
-import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, normalizeSyncProtocols, singleProtocolForSyncScope, syncEventScope } from './types/sync.js';
+import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, normalizeSyncModules, singleModuleForSyncScope, syncEventScope } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
+import { ensureSyncStoreFormat, SYNC_STORE_FORMAT, SYNC_STORE_FORMAT_KEY } from './sync-store-format.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext, syncMessageDescriptor } from './sync-messages.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, resolveFollowedSyncRoleRoot } from './followed-sync-source.js';
-import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncProtocolRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
+import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncModuleRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
 import { handleSyncPushFailures, SyncRunCoordinator } from './sync-run-coordinator.js';
 import { isMissingRoleAuthorizationFailure, isNonRetryableSyncAuthorizationFailure, isRetryableSyncRecovery, isTerminalSyncAuthorizationErrorCode, isTerminalSyncAuthorizationFailure, syncErrorMessage, SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
 import { isValidProgressToken, SyncCheckpoint } from './sync-checkpoint.js';
@@ -155,7 +156,7 @@ type PreparedFollowedSource = {
 
 type FollowedSourceChangeEvent = Extract<SyncEvent, { type: 'followed-context:change' }>;
 
-type FollowedContextKey = Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'protocol' | 'sourceDid'>;
+type FollowedContextKey = Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'module' | 'sourceDid'>;
 
 /** Accumulated shape of every `sync()` request joined into one queued follow-up run. */
 type MergedSyncRunRequest = {
@@ -191,6 +192,7 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
+  private _storeFormatReady?: Promise<void>;
   private readonly _connectivityManager: SyncConnectivityManager;
   private readonly _deadLetterStore: SyncDeadLetterStoreLevel;
   private readonly _deferredPullStore: SyncDeferredPullStoreLevel;
@@ -395,8 +397,8 @@ export class SyncEngineLevel implements SyncEngine {
   private createScopeClosureValidator(): SyncScopeClosureValidator {
     return new SyncScopeClosureValidator({
       operations: {
-        queryProtocolHistory: (query): Promise<SyncScopeProtocolHistoryPage> =>
-          this.queryScopeProtocolHistory(query),
+        queryModuleHistory: (query): Promise<SyncScopeModuleHistoryPage> =>
+          this.queryScopeModuleHistory(query),
         resolvePermissionGrantIds: (query): Promise<SyncScopeClosureGrantResolution> =>
           this.resolveScopeClosurePermissionGrantIds(query),
       },
@@ -602,7 +604,7 @@ export class SyncEngineLevel implements SyncEngine {
       const grants = await getMessagesPermissionGrantsForScope({
         did            : query.did,
         delegateDid    : query.delegateDid,
-        protocols      : [query.protocol],
+        modules        : [query.module],
         messageType    : DwnInterface.MessagesQuery,
         permissionsApi : this._permissionsApi,
       });
@@ -611,16 +613,16 @@ export class SyncEngineLevel implements SyncEngine {
         permissionGrantIds : permissionGrantIdsFromEntries(grants),
       };
     } catch (error) {
-      if (error instanceof SyncProtocolRootPermissionGrantMissingError) {
+      if (error instanceof SyncModuleRootPermissionGrantMissingError) {
         return { kind: 'missing' };
       }
       throw error;
     }
   }
 
-  private async queryScopeProtocolHistory(
-    query: SyncScopeProtocolHistoryQuery,
-  ): Promise<SyncScopeProtocolHistoryPage> {
+  private async queryScopeModuleHistory(
+    query: SyncScopeModuleHistoryQuery,
+  ): Promise<SyncScopeModuleHistoryPage> {
     const { reply } = await this.agent.dwn.processRequest({
       author        : query.did,
       target        : query.did,
@@ -629,9 +631,9 @@ export class SyncEngineLevel implements SyncEngine {
       messageParams : {
         cursor  : query.cursor,
         filters : [{
-          interface : DwnInterfaceName.Protocols,
+          interface : DwnInterfaceName.Modules,
           method    : DwnMethodName.Configure,
-          protocol  : query.protocol,
+          module    : query.module,
         }],
         limit              : query.limit,
         permissionGrantIds : query.permissionGrantIds,
@@ -648,6 +650,13 @@ export class SyncEngineLevel implements SyncEngine {
     await this.replicationLinkStore.clear();
     await this._endpointStore.clear();
     await this._db.clear();
+    await this._db.put(SYNC_STORE_FORMAT_KEY, SYNC_STORE_FORMAT);
+  }
+
+  /** Validate the persistent format once before any engine operation uses durable state. */
+  private ensureStoreFormat(): Promise<void> {
+    this._storeFormatReady ??= ensureSyncStoreFormat(this._db, this._lockNamespace);
+    return this._storeFormatReady;
   }
 
   /**
@@ -794,6 +803,7 @@ export class SyncEngineLevel implements SyncEngine {
   public async clear(options: SyncLifecycleOptions = {}): Promise<void> {
     const deadline = SyncEngineLevel.createLifecycleDeadline(options);
     await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
+      await this.ensureStoreFormat();
       await this.stopSyncRuntime(activeDeadline);
       await this.runDestructivePhase(async (): Promise<void> => {
         const followedSources = await this.readFollowedSources();
@@ -951,7 +961,7 @@ export class SyncEngineLevel implements SyncEngine {
   /** Failed inspection or active-but-incomplete coverage never establishes expiry. */
   private async handleSyncAuthorizationFailure(did: string, delegateDid: string | undefined, error: unknown): Promise<boolean> {
     const errorCode = error instanceof DwnError ? error.code : error;
-    if (delegateDid === undefined || !(error instanceof SyncProtocolRootPermissionGrantMissingError ||
+    if (delegateDid === undefined || !(error instanceof SyncModuleRootPermissionGrantMissingError ||
       error instanceof PermissionGrantNotFoundError || isTerminalSyncAuthorizationErrorCode(errorCode))) {
       return false;
     }
@@ -1009,6 +1019,7 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     const deadline = SyncEngineLevel.createLifecycleDeadline(lifecycleOptions);
     await this._lifecycle.runIdentityMutation(async (activeDeadline): Promise<void> => {
+      await this.ensureStoreFormat();
       await this.runIdentityLifecycle(did, operation, activeDeadline);
     }, deadline);
   }
@@ -1111,14 +1122,14 @@ export class SyncEngineLevel implements SyncEngine {
     if (left.delegateDid !== right.delegateDid) {
       return false;
     }
-    if (left.protocols === 'all' || right.protocols === 'all') {
-      return left.protocols === right.protocols;
+    if (left.modules === 'all' || right.modules === 'all') {
+      return left.modules === right.modules;
     }
 
-    const leftProtocols = normalizeSyncProtocols(left.protocols);
-    const rightProtocols = normalizeSyncProtocols(right.protocols);
-    return leftProtocols.length === rightProtocols.length
-      && leftProtocols.every((protocol, index): boolean => protocol === rightProtocols[index]);
+    const leftModules = normalizeSyncModules(left.modules);
+    const rightModules = normalizeSyncModules(right.modules);
+    return leftModules.length === rightModules.length
+      && leftModules.every((module, index): boolean => module === rightModules[index]);
   }
 
   public removeIdentity(did: string, options: SyncIdentityRemovalOptions = {}): Promise<void> {
@@ -1191,6 +1202,7 @@ export class SyncEngineLevel implements SyncEngine {
       this._identityRegistrationRefreshes,
       tenantDid,
       async (): Promise<void> => {
+        await this.ensureStoreFormat();
         const options = await this._identityStore.get(tenantDid);
         this._pausedIdentities.delete(tenantDid);
         this.invalidateSyncTargetsCache();
@@ -1204,6 +1216,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
+    await this.ensureStoreFormat();
     try {
       return await this._identityStore.get(did);
     } catch (error: unknown) {
@@ -1271,6 +1284,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async followSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
+    await this.ensureStoreFormat();
     const normalized = normalizeFollowedSyncSourceInput(input);
     const transitionFence = this.captureTransitionFence();
     const assertTransitionCurrent = (): void => {
@@ -1391,7 +1405,7 @@ export class SyncEngineLevel implements SyncEngine {
     shouldContinue?: () => boolean,
   ): Promise<PreparedFollowedSource | undefined> {
     for (const role of input.roles) {
-      const { protocolPath } = resolveFollowedSyncRoleRoot(input.contextId, role);
+      const { modulePath } = resolveFollowedSyncRoleRoot(input.contextId, role);
       try {
         const batch = await readRoleReplicationSupport({
           ...input,
@@ -1399,12 +1413,12 @@ export class SyncEngineLevel implements SyncEngine {
           delegateDid,
           dwnUrl         : remoteEndpoint,
           permissionsApi : this._permissionsApi,
-          protocolPath,
-          protocolRole   : role,
+          modulePath,
+          moduleRole     : role,
           shouldContinue,
         });
-        const protocolPaths = resolveProtocolRoleContextScope(
-          batch.protocolDefinition,
+        const modulePaths = resolveModuleRoleContextScope(
+          batch.moduleDefinition,
           role,
         ).readablePaths;
         return {
@@ -1414,9 +1428,9 @@ export class SyncEngineLevel implements SyncEngine {
             actorDid     : input.actorDid,
             contextId    : input.contextId,
             id           : batch.roleRecordId,
-            protocol     : input.protocol,
-            protocolPaths,
-            protocolRole : role,
+            module       : input.module,
+            modulePaths,
+            moduleRole   : role,
             remoteEndpoint,
             roles        : input.roles,
             sourceDid    : input.sourceDid,
@@ -1444,10 +1458,10 @@ export class SyncEngineLevel implements SyncEngine {
       fetchReplicationSupport : async () => batch,
       prefetched              : [...batch.dependencies, batch.root],
       scope                   : {
-        kind          : 'context',
-        contextId     : source.contextId,
-        protocol      : source.protocol,
-        protocolPaths : source.protocolPaths,
+        kind        : 'context',
+        contextId   : source.contextId,
+        module      : source.module,
+        modulePaths : source.modulePaths,
       },
       shouldContinue,
     });
@@ -1508,7 +1522,8 @@ export class SyncEngineLevel implements SyncEngine {
     });
   }
 
-  public getFollowedSource(id: string): Promise<FollowedSyncSource | undefined> {
+  public async getFollowedSource(id: string): Promise<FollowedSyncSource | undefined> {
+    await this.ensureStoreFormat();
     return this._followedSourceStore.get(id);
   }
 
@@ -1531,6 +1546,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Decode the durable catalog without changing this engine's applied snapshot. */
   private async readFollowedSources(): Promise<FollowedSyncSource[]> {
+    await this.ensureStoreFormat();
     const sources: FollowedSyncSource[] = [];
     for (const entry of await this._followedSourceStore.list()) {
       if (entry.status === 'valid') {
@@ -1560,6 +1576,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Mark one exact followed source stale and request its active replication sessions to pull. */
   public async markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean> {
+    await this.ensureStoreFormat();
     const expected = normalizeFollowedSyncSource(source);
     const current = await this._followedSourceStore.get(expected.id);
     if (current === undefined || !followedSyncSourceActiveEqual(current, expected)) {
@@ -1582,6 +1599,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Pull one exact accepted source from its verified hosted endpoint. */
   public async pullFollowedSource(source: FollowedSyncSource): Promise<boolean> {
+    await this.ensureStoreFormat();
     const expected = normalizeFollowedSyncSource(source);
     const transitionFence = this.captureTransitionFence();
     const preparation = await this.runFollowedSourceIntake(expected.actorDid, async (identity) => {
@@ -1650,7 +1668,7 @@ export class SyncEngineLevel implements SyncEngine {
       type                       : 'followed-context:change',
       tenantDid                  : source.sourceDid,
       actorDid                   : source.actorDid,
-      protocol                   : source.protocol,
+      module                     : source.module,
       contextId                  : source.contextId,
       followedSourceAcceptanceId : source.acceptanceId,
       followedSourceId           : followedSourceId,
@@ -1687,7 +1705,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private static followedContextKey(source: FollowedContextKey): string {
-    return JSON.stringify([source.sourceDid, source.actorDid, source.protocol, source.contextId]);
+    return JSON.stringify([source.sourceDid, source.actorDid, source.module, source.contextId]);
   }
 
   /** Apply durable catalog changes to this engine's events and replication sessions. */
@@ -1825,7 +1843,7 @@ export class SyncEngineLevel implements SyncEngine {
         const prepared = await this.resolveFollowedSourceAtEndpoint({
           actorDid  : expected.actorDid,
           contextId : expected.contextId,
-          protocol  : expected.protocol,
+          module    : expected.module,
           roles     : expected.roles,
           sourceDid : expected.sourceDid,
         }, identity.delegateDid, expected.remoteEndpoint, shouldContinue);
@@ -1918,12 +1936,16 @@ export class SyncEngineLevel implements SyncEngine {
   // ---------------------------------------------------------------------------
 
   public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
-    if (options?.did !== undefined && await this._identityStore.get(options.did) === undefined) {
-      throw new Error(`SyncEngineLevel: Identity with DID ${options.did} is not registered.`);
+    if (options?.did !== undefined) {
+      await this.ensureStoreFormat();
+      if (await this._identityStore.get(options.did) === undefined) {
+        throw new Error(`SyncEngineLevel: Identity with DID ${options.did} is not registered.`);
+      }
     }
 
     if (this._lifecycle.tryAcquireSync()) {
       try {
+        await this.ensureStoreFormat();
         await this._runCoordinator.run(direction, options);
       } finally {
         this._lifecycle.releaseSync();
@@ -2043,6 +2065,7 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
     try {
+      await this.ensureStoreFormat();
       return await this._drainCoordinator.drain(normalizedEndpoint, options);
     } finally {
       this._lifecycle.releaseSync();
@@ -2082,6 +2105,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
     await this._lifecycle.runTransition(async (): Promise<void> => {
+      await this.ensureStoreFormat();
       await this.startSyncRuntime(params);
     });
   }
@@ -2604,11 +2628,11 @@ export class SyncEngineLevel implements SyncEngine {
       source.sourceDid === target.did &&
       source.remoteEndpoint === target.dwnUrl &&
       source.actorDid === target.authorization.actorDid &&
-      source.protocol === scope.protocol &&
+      source.module === scope.module &&
       source.contextId === scope.contextId &&
-      source.protocolRole === target.authorization.protocolRole &&
-      source.protocolPaths.length === scope.protocolPaths.length &&
-      source.protocolPaths.every((path, index) => path === scope.protocolPaths[index]);
+      source.moduleRole === target.authorization.moduleRole &&
+      source.modulePaths.length === scope.modulePaths.length &&
+      source.modulePaths.every((path, index) => path === scope.modulePaths[index]);
   }
 
   /** Parked identities cannot run; role targets also require their actor's current registration. */
@@ -3391,7 +3415,7 @@ export class SyncEngineLevel implements SyncEngine {
         messageParams : {
           filters,
           permissionGrantIds: toMessagesPermissionGrantIds(currentTarget.permissionGrantIds),
-          ...(roleAuthorization === undefined ? {} : { protocolRole: roleAuthorization.protocolRole }),
+          ...(roleAuthorization === undefined ? {} : { moduleRole: roleAuthorization.moduleRole }),
           ...(currentTarget.authorDelegatedGrant === undefined
             ? {}
             : { delegatedGrant: currentTarget.authorDelegatedGrant }),
@@ -3644,7 +3668,7 @@ export class SyncEngineLevel implements SyncEngine {
       isLatestBaseState,
       message : message.event.message,
       seq     : message.seq ?? message.cursor.position,
-      ...(message.protocol === undefined ? {} : { protocol: message.protocol }),
+      ...(message.module === undefined ? {} : { module: message.module }),
       ...(message.encodedData === undefined ? {} : { encodedData: message.encodedData }),
       ...(message.event.initialWrite === undefined ? {} : { initialWrite: message.event.initialWrite }),
     };
@@ -3983,7 +4007,7 @@ export class SyncEngineLevel implements SyncEngine {
       messageCid     : failure.cid,
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
-      protocol       : failure.protocol ?? singleProtocolForSyncScope(target.scope),
+      module         : failure.module ?? singleModuleForSyncScope(target.scope),
       errorCode      : failure.kind ?? 'Invalid',
       errorDetail    : failure.detail ?? 'push rejected during sync reconciliation',
     });
@@ -4250,7 +4274,7 @@ export class SyncEngineLevel implements SyncEngine {
       delegateDid        : currentTarget.delegateDid,
       delegatedGrant     : currentTarget.authorDelegatedGrant,
       permissionGrantIds : currentTarget.permissionGrantIds,
-      protocolRole       : roleAuthorization?.protocolRole,
+      moduleRole         : roleAuthorization?.moduleRole,
       filters            : messageFeedFiltersForSyncScope(currentTarget.scope),
       cursor,
       cidsOnly,
@@ -4542,8 +4566,8 @@ export class SyncEngineLevel implements SyncEngine {
       quotaBlockedInitialCids,
     );
     const outcome = await this._quotaManager.applyPushResult(target, attributedResult, {
-      protocol : entry.protocol,
-      source   : 'feed',
+      module : entry.module,
+      source : 'feed',
     });
 
     if (attributedResult.failed.length === 0) {
@@ -4737,7 +4761,7 @@ export class SyncEngineLevel implements SyncEngine {
         messageCid     : entry.messageCid,
         tenantDid      : target.did,
         remoteEndpoint : target.dwnUrl,
-        protocol       : entry.protocol ?? SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor),
+        module         : entry.module ?? SyncEngineLevel.moduleFromDescriptor(entry.message?.descriptor),
         errorCode      : 'Deferred',
         errorDetail    : detail ?? 'pull admission deferred beyond retry window',
       });
@@ -4942,7 +4966,7 @@ export class SyncEngineLevel implements SyncEngine {
       messageCid     : entry.messageCid,
       tenantDid      : target.did,
       remoteEndpoint : target.dwnUrl,
-      protocol       : SyncEngineLevel.protocolFromFeedEntry(entry, prefetched),
+      module         : SyncEngineLevel.moduleFromFeedEntry(entry, prefetched),
       errorCode      : outcome.reason,
       errorDetail    : outcome.detail ?? 'replicated message admission failed',
     });
@@ -5049,9 +5073,9 @@ export class SyncEngineLevel implements SyncEngine {
       scope === undefined ||
       (!isWrite && !isDelete)
     ) {
-      const descriptor = message.descriptor as GenericMessage['descriptor'] & { protocolPath?: string; recordId?: string };
+      const descriptor = message.descriptor as GenericMessage['descriptor'] & { modulePath?: string; recordId?: string };
       throw new Error(
-        `SyncEngineLevel: role replication support requires a contextual record mutation; received ${descriptor.interface}/${descriptor.method} at '${descriptor.protocolPath ?? 'unknown'}' (${descriptor.recordId ?? 'unknown'}).`,
+        `SyncEngineLevel: role replication support requires a contextual record mutation; received ${descriptor.interface}/${descriptor.method} at '${descriptor.modulePath ?? 'unknown'}' (${descriptor.recordId ?? 'unknown'}).`,
       );
     }
 
@@ -5068,17 +5092,17 @@ export class SyncEngineLevel implements SyncEngine {
     const recordsWrite = contextualWrite as GenericMessage & {
       contextId?: string;
       recordId?: string;
-      descriptor: GenericMessage['descriptor'] & { protocol?: string; protocolPath?: string };
+      descriptor: GenericMessage['descriptor'] & { module?: string; modulePath?: string };
     };
     const { contextId, recordId } = recordsWrite;
-    const { protocol, protocolPath } = recordsWrite.descriptor;
+    const { module, modulePath } = recordsWrite.descriptor;
     if (
       contextId === undefined ||
       recordId === undefined ||
-      protocol !== scope.protocol ||
-      protocolPath === undefined
+      module !== scope.module ||
+      modulePath === undefined
     ) {
-      throw new Error('SyncEngineLevel: role feed root does not identify an exact record in its followed protocol.');
+      throw new Error('SyncEngineLevel: role feed root does not identify an exact record in its followed module.');
     }
 
     const batch = await readRoleReplicationSupport({
@@ -5089,9 +5113,9 @@ export class SyncEngineLevel implements SyncEngine {
       dwnUrl         : target.dwnUrl,
       expectedRoot   : message as RecordsDeleteMessage | RecordsWriteMessage,
       permissionsApi : this._permissionsApi,
-      protocol,
-      protocolPath,
-      protocolRole   : role.protocolRole,
+      module,
+      modulePath,
+      moduleRole     : role.moduleRole,
       rootData       : root.bufferedData,
       shouldContinue,
       sourceDid      : target.did,
@@ -5103,24 +5127,24 @@ export class SyncEngineLevel implements SyncEngine {
     };
   }
 
-  private static protocolFromFeedEntry(
+  private static moduleFromFeedEntry(
     entry: MessagesQueryReplyEntry,
     prefetched: SyncMessageEntry[],
   ): string | undefined {
-    if (entry.protocol !== undefined) {
-      return entry.protocol;
+    if (entry.module !== undefined) {
+      return entry.module;
     }
 
-    return SyncEngineLevel.protocolFromDescriptor(entry.message?.descriptor) ??
-      SyncEngineLevel.protocolFromDescriptor(prefetched[0]?.message.descriptor);
+    return SyncEngineLevel.moduleFromDescriptor(entry.message?.descriptor) ??
+      SyncEngineLevel.moduleFromDescriptor(prefetched[0]?.message.descriptor);
   }
 
-  private static protocolFromDescriptor(descriptor: GenericMessage['descriptor'] | undefined): string | undefined {
-    if (descriptor === undefined || !('protocol' in descriptor) || typeof descriptor.protocol !== 'string') {
+  private static moduleFromDescriptor(descriptor: GenericMessage['descriptor'] | undefined): string | undefined {
+    if (descriptor === undefined || !('module' in descriptor) || typeof descriptor.module !== 'string') {
       return undefined;
     }
 
-    return descriptor.protocol;
+    return descriptor.module;
   }
 
   private static shouldAbortReconcile(shouldContinue?: () => boolean): boolean {
@@ -5158,10 +5182,11 @@ export class SyncEngineLevel implements SyncEngine {
     messageCid : string;
     tenantDid : string;
     remoteEndpoint : string;
-    protocol? : string;
+    module? : string;
     errorCode? : string;
     errorDetail : string;
   }): Promise<void> {
+    await this.ensureStoreFormat();
     const entry: DeadLetterEntry = {
       ...params,
       failedAt: new Date().toISOString(),
@@ -5191,6 +5216,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
+    await this.ensureStoreFormat();
     const entries = (await this._deadLetterStore.getAll())
       .filter((entry): boolean => !tenantDid || entry.tenantDid === tenantDid);
     // Deterministic ordering: newest first so apps see the most recent failures.
@@ -5233,6 +5259,7 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
+    await this.ensureStoreFormat();
     const [currentLinkIdentityKeys, links] = await Promise.all([
       this.getCurrentLinkIdentityKeys(),
       this.getLinksForStatusReporting(),
@@ -5242,6 +5269,7 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Read every durable source once, then project the requested status snapshot. */
   private async getSyncStatus(tenantDid?: string): Promise<SyncStatusSnapshot> {
+    await this.ensureStoreFormat();
     const [currentLinkIdentityKeys, currentQuotaLinkKeys, links, quotaBlocks, deadLetters] = await Promise.all([
       this.getCurrentLinkIdentityKeys(),
       this.getCurrentQuotaLinkKeys(),
@@ -5263,6 +5291,7 @@ export class SyncEngineLevel implements SyncEngine {
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
     const transitionFence = this.captureTransitionFence();
     const retry = this._retryRemoteQueue.then(async (): Promise<void> => {
+      await this.ensureStoreFormat();
       await this.doRetryRemoteNow(tenantDid, remoteEndpoint, transitionFence);
     });
     this._retryRemoteQueue = retry.catch((): void => {
@@ -5496,7 +5525,8 @@ export class SyncEngineLevel implements SyncEngine {
    * prunes quota blocks for targets that no longer exist, via the planner's
    * `beforeCache` hook.
    */
-  private getSyncTargets(): Promise<SyncTarget[]> {
+  private async getSyncTargets(): Promise<SyncTarget[]> {
+    await this.ensureStoreFormat();
     return this._targetPlanner.getTargets({
       beforeCache: (targets, topologyGeneration): Promise<void> =>
         this._quotaManager.pruneStaleLinkBlocks(

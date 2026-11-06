@@ -219,7 +219,7 @@ export interface ConnectModalOptions {
    */
   theme?: ConnectModalTheme;
 
-  /** DWN protocols and permission scopes being requested. */
+  /** DWN modules and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
   /** Internal dependency seams (tests). */

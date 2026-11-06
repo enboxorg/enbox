@@ -114,7 +114,7 @@ async function consumer(directory, name, targets, packages, devDependencies = {}
 
 async function checkClient(directory, packages) {
   const api = packages.get('@enbox/api');
-  const cwd = await consumer(directory, 'client', ['@enbox/api', '@enbox/browser', '@enbox/protocols'], packages, {
+  const cwd = await consumer(directory, 'client', ['@enbox/api', '@enbox/browser', '@enbox/modules'], packages, {
     typescript    : api.devDependencies.typescript,
     '@types/node' : api.devDependencies['@types/node'],
   });
@@ -210,10 +210,10 @@ async function checkServer(directory, packages) {
 }
 
 async function checkCli(directory, packages) {
-  const cwd = await consumer(directory, 'cli', ['@enbox/cli', '@enbox/protocol-codegen'], packages);
+  const cwd = await consumer(directory, 'cli', ['@enbox/cli', '@enbox/module-codegen'], packages);
   const env = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
-  const version = await run([join(cwd, 'node_modules/.bin/protocol-codegen'), '--version'], cwd, env);
-  assert.equal(version, packages.get('@enbox/protocol-codegen').version);
+  const version = await run([join(cwd, 'node_modules/.bin/module-codegen'), '--version'], cwd, env);
+  assert.equal(version, packages.get('@enbox/module-codegen').version);
 }
 
 const directory = await mkdtemp(join(tmpdir(), 'enbox-packed-consumers-'));

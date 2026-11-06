@@ -93,7 +93,7 @@ export type ConnectClientConnectParams = {
   /** Require and verify an owner proof alongside the requested delegation. */
   authentication?: ConnectAuthenticationParams;
 
-  /** DWN protocols and permission scopes being requested. */
+  /** DWN modules and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
   /**

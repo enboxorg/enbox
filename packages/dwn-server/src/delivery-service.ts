@@ -1,7 +1,7 @@
 import type { DwnServerConfig } from './config.js';
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver, DidService, DidServiceEndpoint } from '@enbox/dids';
-import type { Dwn, GenericMessage, ProtocolDefinition, ProtocolRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModuleDefinition, ModuleRuleSet, RecordsQueryReplyEntry, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
@@ -43,7 +43,7 @@ type DwnEndpoint = {
 };
 
 /**
- * Result of resolving delivery targets for a record at a given protocol path.
+ * Result of resolving delivery targets for a record at a given module path.
  * Each entry maps a target DID to its DWN endpoints.
  */
 type DeliveryTarget = {
@@ -67,8 +67,8 @@ type RequestInitWithDuplex = RequestInit & { duplex?: 'half' };
  *    endpoints (peer replication without the agent mediating).
  *
  * 2. **Record delivery** — When a RecordsWrite/RecordsDelete is processed at a
- *    protocol path with `$delivery`, proactively delivers to participants' DWN
- *    endpoints determined from protocol `$actions` role records.
+ *    module path with `$delivery`, proactively delivers to participants' DWN
+ *    endpoints determined from module `$actions` role records.
  *
  * Both operations are fire-and-forget: failures are logged but never propagate
  * to the original request handler.
@@ -226,28 +226,28 @@ export class DeliveryService implements MessageProcessedHook {
 
   /**
    * Delivers the message to all participant DWN endpoints determined by
-   * the protocol's `$delivery` directive and `$actions` role records.
+   * the module's `$delivery` directive and `$actions` role records.
    */
   async #deliverToParticipants(tenant: string, message: GenericMessage, messageCid: string): Promise<void> {
     const descriptor = message.descriptor as {
-      protocol?: string;
-      protocolPath?: string;
+      module?: string;
+      modulePath?: string;
       contextId?: string;
       recipient?: string;
     };
 
-    // Only protocol-governed records can have $delivery.
-    if (!descriptor.protocol || !descriptor.protocolPath) {
+    // Only module-governed records can have $delivery.
+    if (!descriptor.module || !descriptor.modulePath) {
       return;
     }
 
-    // Look up the protocol definition to check for $delivery.
-    const protocolDefinition = await this.#getProtocolDefinition(tenant, descriptor.protocol);
-    if (!protocolDefinition) {
+    // Look up the module definition to check for $delivery.
+    const moduleDefinition = await this.#getModuleDefinition(tenant, descriptor.module);
+    if (!moduleDefinition) {
       return;
     }
 
-    const ruleSet = getRuleSetAtPath(descriptor.protocolPath, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(descriptor.modulePath, moduleDefinition.structure);
     if (!ruleSet?.$delivery) {
       return;
     }
@@ -255,7 +255,7 @@ export class DeliveryService implements MessageProcessedHook {
     // For 'direct' strategy: resolve targets and push.
     if (ruleSet.$delivery === 'direct') {
       const targets = await this.#resolveDeliveryTargets(
-        tenant, protocolDefinition, ruleSet, descriptor.protocolPath, descriptor.contextId, descriptor.recipient,
+        tenant, moduleDefinition, ruleSet, descriptor.modulePath, descriptor.contextId, descriptor.recipient,
       );
 
       if (targets.length === 0) {
@@ -308,18 +308,18 @@ export class DeliveryService implements MessageProcessedHook {
   // -------------------------------------------------------------------------
 
   /**
-   * Resolves the set of DIDs that should receive a record at the given protocol path.
+   * Resolves the set of DIDs that should receive a record at the given module path.
    * Targets are determined by querying role records in the tenant's DWN.
    *
    * For each `$actions` rule that references a `role`, we query for role records
-   * at that role's protocol path, scoped to the record's contextId. The `recipient`
+   * at that role's module path, scoped to the record's contextId. The `recipient`
    * field of each matching role record is a participant DID.
    */
   async #resolveDeliveryTargets(
     tenant: string,
-    protocolDefinition: ProtocolDefinition,
-    ruleSet: ProtocolRuleSet,
-    protocolPath: string,
+    moduleDefinition: ModuleDefinition,
+    ruleSet: ModuleRuleSet,
+    modulePath: string,
     contextId?: string,
     recipient?: string,
   ): Promise<DeliveryTarget[]> {
@@ -331,7 +331,7 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     // Method 2 & 3: Role-based and actor-based discovery from $actions rules.
-    await this.#collectRoleAndActorTargets(tenant, protocolDefinition, ruleSet, contextId, targetDids);
+    await this.#collectRoleAndActorTargets(tenant, moduleDefinition, ruleSet, contextId, targetDids);
 
     // Resolve endpoints for each target DID.
     const targets: DeliveryTarget[] = [];
@@ -346,15 +346,15 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   /**
-   * Adds delivery target DIDs discovered via a protocol rule set's `$actions`
+   * Adds delivery target DIDs discovered via a module rule set's `$actions`
    * to `targetDids`, mutating the set in place. Covers role-based discovery
    * (Method 2) and actor-based discovery via `who`/`of` (Method 3). Extracted
    * from `#resolveDeliveryTargets()`.
    */
   async #collectRoleAndActorTargets(
     tenant: string,
-    protocolDefinition: ProtocolDefinition,
-    ruleSet: ProtocolRuleSet,
+    moduleDefinition: ModuleDefinition,
+    ruleSet: ModuleRuleSet,
     contextId: string | undefined,
     targetDids: Set<string>,
   ): Promise<void> {
@@ -364,7 +364,7 @@ export class DeliveryService implements MessageProcessedHook {
       // Role-based rules: query for role records at the role path.
       if (rule.role !== undefined) {
         const roleDids = await this.#queryRoleRecipients(
-          tenant, protocolDefinition.protocol, rule.role, contextId,
+          tenant, moduleDefinition.module, rule.role, contextId,
         );
         for (const did of roleDids) {
           targetDids.add(did);
@@ -372,13 +372,13 @@ export class DeliveryService implements MessageProcessedHook {
       }
 
       // Method 3: Actor-based discovery — `who: "author"/"recipient"` + `of` path.
-      // Find the ancestor record at the `of` protocol path within the same context,
+      // Find the ancestor record at the `of` module path within the same context,
       // then extract its author or recipient as a delivery target.
       if (rule.who !== undefined && rule.of !== undefined && rule.who !== 'anyone') {
-        // Skip cross-protocol `of` references (e.g., "threads:thread") for now.
+        // Skip cross-module `of` references (e.g., "threads:thread") for now.
         if (!rule.of.includes(':')) {
           const actorDid = await this.#queryActorFromAncestor(
-            tenant, protocolDefinition.protocol, rule.of, rule.who as string, contextId,
+            tenant, moduleDefinition.module, rule.of, rule.who as string, contextId,
           );
           if (actorDid) {
             targetDids.add(actorDid);
@@ -389,20 +389,20 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   /**
-   * Queries the tenant's DWN for role records at the given protocol path
+   * Queries the tenant's DWN for role records at the given module path
    * and returns the set of unique recipient DIDs.
    */
   async #queryRoleRecipients(
     tenant: string,
-    protocolUri: string,
+    moduleUri: string,
     rolePath: string,
     contextId?: string,
   ): Promise<string[]> {
     try {
       // Build a RecordsQuery to find role records.
       const filter: Record<string, unknown> = {
-        protocol     : protocolUri,
-        protocolPath : rolePath,
+        module     : moduleUri,
+        modulePath : rolePath,
       };
 
       // Scope to context if the role is nested (has ancestors).
@@ -451,10 +451,10 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   /**
-   * Queries the tenant's DWN for the ancestor record at the given protocol path
+   * Queries the tenant's DWN for the ancestor record at the given module path
    * (within the same context) and extracts the author or recipient DID.
    *
-   * This is the delivery-side inverse of `checkActor()` in protocol authorization:
+   * This is the delivery-side inverse of `checkActor()` in module authorization:
    * instead of "is this DID the author/recipient?", we ask "who IS the author/recipient?".
    *
    * @param actorType - `"author"` or `"recipient"`.
@@ -462,15 +462,15 @@ export class DeliveryService implements MessageProcessedHook {
    */
   async #queryActorFromAncestor(
     tenant: string,
-    protocolUri: string,
+    moduleUri: string,
     ofPath: string,
     actorType: string,
     contextId?: string,
   ): Promise<string | undefined> {
     try {
       const filter: Record<string, unknown> = {
-        protocol     : protocolUri,
-        protocolPath : ofPath,
+        module     : moduleUri,
+        modulePath : ofPath,
       };
 
       // Scope to the record's context. The `of` path identifies an ancestor,
@@ -676,21 +676,21 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   // -------------------------------------------------------------------------
-  // Protocol Definition Lookup
+  // Module Definition Lookup
   // -------------------------------------------------------------------------
 
   /**
-   * Fetches the installed protocol definition for a given protocol URI from
+   * Fetches the installed module definition for a given module URI from
    * the tenant's DWN.
    */
-  async #getProtocolDefinition(tenant: string, protocolUri: string): Promise<ProtocolDefinition | undefined> {
+  async #getModuleDefinition(tenant: string, moduleUri: string): Promise<ModuleDefinition | undefined> {
     try {
       const queryMessage = {
         descriptor: {
-          interface        : DwnInterfaceName.Protocols,
+          interface        : DwnInterfaceName.Modules,
           method           : DwnMethodName.Query,
           messageTimestamp : new Date().toISOString(),
-          filter           : { protocol: protocolUri },
+          filter           : { module: moduleUri },
         },
       };
 
@@ -700,10 +700,10 @@ export class DeliveryService implements MessageProcessedHook {
         return undefined;
       }
 
-      const configMessage = reply.entries[0] as { descriptor?: { definition?: ProtocolDefinition } };
+      const configMessage = reply.entries[0] as { descriptor?: { definition?: ModuleDefinition } };
       return configMessage.descriptor?.definition;
     } catch (err) {
-      log.warn(`DeliveryService: failed to query protocol definition for ${protocolUri}`, err);
+      log.warn(`DeliveryService: failed to query module definition for ${moduleUri}`, err);
       return undefined;
     }
   }

@@ -9,7 +9,7 @@
 
   Because the initial `RecordsWrite` references the record ID in multiple places, so this would be a "chicken-and-egg" problem:
   1. `recordId` property contains the record ID
-  1. If the initial `RecordsWrite` is for a root record in a DWN protocol, the record ID is the value of the `contextId` property
+  1. If the initial `RecordsWrite` is for a root record in a DWN module, the record ID is the value of the `contextId` property
   1. If the initial `RecordsWrite` is encrypted, the record ID is used in the final segment of the key derivation path
 
   Because of the above constraints, we had to introduce a different algorithm (a.k.a as `entryId` generation) to deterministically compute the `recordId`.
@@ -26,7 +26,7 @@
 
   The latter question is much easier to answer: an update needs to reference the record that it is updating.
 
-  The answer to the first-part question is more complicated: `recordId` technically is not needed in an initial `RecordsWrite`, but we chose to include it for data model consistency with subsequent `RecordsWrite`, such that we can simply return the latest message of a record as the response to `RecordsRead` and `RecordsQuery` without needing to re-inject/rehydrate `recordId` into any initial `RecordsWrite`. It is also the same reason why `contextId` is required for the initial `RecordsWrite` of a protocol-authorized record.
+  The answer to the first-part question is more complicated: `recordId` technically is not needed in an initial `RecordsWrite`, but we chose to include it for data model consistency with subsequent `RecordsWrite`, such that we can simply return the latest message of a record as the response to `RecordsRead` and `RecordsQuery` without needing to re-inject/rehydrate `recordId` into any initial `RecordsWrite`. It is also the same reason why `contextId` is required for the initial `RecordsWrite` of a module-authorized record.
 
 - Why is `recordId` and `contextId` outside the `descriptor`.
   
@@ -34,11 +34,11 @@
 
   (Last updated: 2024/02/07)
 
-- Why do we require `contextId` for protocol-based `RecordsWrite`? Can't it be inferred from `parentId` and `protocolPath`?
+- Why do we require `contextId` for module-based `RecordsWrite`? Can't it be inferred from `parentId` and `modulePath`?
 
   Yes, it can be inferred. But it is required for the same reason why `recordId` is required: for both implementation and developer convenience.
 
-  For example: protocol authorization and subtree queries often need the `contextId` to evaluate a record in its surrounding context. Without this information readily available, the client would need to compute this value by walking up the ancestral chain themselves.
+  For example: module authorization and subtree queries often need the `contextId` to evaluate a record in its surrounding context. Without this information readily available, the client would need to compute this value by walking up the ancestral chain themselves.
   
   An alternative viable approach is to still not require it in `RecordsWrite` message and compute it internally, and return a constructed `contextId` as additional metadata along side of the `RecordsWrite` message when handling a query. This could incur cognitive load on the developers because they will likely need to pass the `contextId` in addition to the `RecordsWrite` message around instead of just passing `RecordsWrite` message. This would also mean we need to store this constructed `contextId` in the store as metadata (not just as index) so that we can return it as part of the a query (e.g. looking up the `contextId` of the parent). While this is a bigger change, open to feedback if this is indeed the preferred approach.
   
@@ -53,7 +53,7 @@
 
 ## Encryption
 
-- Why is `keyId` required in `ProtocolPathKeyEncryptionInput`?
+- Why is `keyId` required in `ModulePathKeyEncryptionInput`?
 
   (Last updated: 2026/06/29)
 
@@ -64,7 +64,7 @@
   1. The DWN owner might have published multiple encryption keys, and a wrong encryption key is chosen.
   1. The key used to encrypt the record might not be the DWN owner's key at all. For instance, a sender's encryption key is used instead.
 
-- Instead of introducing yet another property `keyId` in `ProtocolPathKeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
+- Instead of introducing yet another property `keyId` in `ModulePathKeyEncryptionInput`, why do we not just use the `kid` property in the public JWK?
 
   (Last updated: 2023/05/19)
 
@@ -81,18 +81,18 @@
   The requirement for using `messageCid` as the cursor for pagination aims to ensure compatibility irrespective of DWN store implementations. The goal is for a query with the same cursor to yield identical results, regardless of which DWN is handling the query. This is useful because, if a DWN becomes unavailable after delivering a page of messages, the caller can switch to another DWN and resume fetching subsequent pages without interruption.
 
 
-## Protocol
-- Can a record that is not protocol-authorized have `protocol` property in its `descriptor`?
+## Module
+- Can a record that is not module-authorized have `module` property in its `descriptor`?
 
   (Last updated: 2023/05/23)
 
   No.
 
-- When making `RecordsQuery` or `RecordsSubscribe` by invoking a protocol role, why is `protocolPath` a required filter property? This means that one cannot filter records under a `protocol` or `contextId` irrespective of the `protocolPath`, thus is forced to make multiple queries (ie. one per `protocolPath`).
+- When making `RecordsQuery` or `RecordsSubscribe` by invoking a module role, why is `modulePath` a required filter property? This means that one cannot filter records under a `module` or `contextId` irrespective of the `modulePath`, thus is forced to make multiple queries (ie. one per `modulePath`).
 
   (Last update: 2023/11/03)
 
-  This design choice is primarily driven by performance considerations. If we were to make `protocolPath` optional, and it is not specified, we would need to search records across protocol paths. Since protocol rules (protocol rule set) are defined at the per protocol path level, this means we would need to parse the protocol rules for every protocol path in the protocol definition to determine which protocol path the invoked role has access to. Then, we would need to make a database query for each qualified protocol path, which could be quite costly. This is not to say that we should never consider it, but this is the current design choice.
+  This design choice is primarily driven by performance considerations. If we were to make `modulePath` optional, and it is not specified, we would need to search records across module paths. Since module rules (module rule set) are defined at the per module path level, this means we would need to parse the module rules for every module path in the module definition to determine which module path the invoked role has access to. Then, we would need to make a database query for each qualified module path, which could be quite costly. This is not to say that we should never consider it, but this is the current design choice.
 
 - What is the difference between `write` and `co-update` actions?
 
@@ -105,7 +105,7 @@
 
   (Last update: 2024/02/16)
 
-  The structure and usage of "global roles" and "context roles" are identical. The distinction lies in their placement within the protocol hierarchy: a "global role" is defined as a root level record without a parent record, whereas a "context role" has a parent record thus making it "contextual". This means that a protocol rule set can have access to all global role records/assignments, hence the "global" designation; conversely, access to context role records/assignment is restricted to the specific context relevant to the message being authorized.
+  The structure and usage of "global roles" and "context roles" are identical. The distinction lies in their placement within the module hierarchy: a "global role" is defined as a root level record without a parent record, whereas a "context role" has a parent record thus making it "contextual". This means that a module rule set can have access to all global role records/assignments, hence the "global" designation; conversely, access to context role records/assignment is restricted to the specific context relevant to the message being authorized.
 
 
   ## Subscriptions
@@ -113,7 +113,7 @@
 
   (Last update: 2026/07/24)
 
-  `MessagesSubscribe` revalidates grant expiry and revocation before delivering each matching event. `RecordsSubscribe` additionally detects a deleted referenced grant and a removed protocol-role assignment. Lost authority terminates the subscription before that event is delivered. The listener receives a terminal error carrying the event cursor so it can distinguish an authorization loss from a retryable delivery failure.
+  `MessagesSubscribe` revalidates grant expiry and revocation before delivering each matching event. `RecordsSubscribe` additionally detects a deleted referenced grant and a removed module-role assignment. Lost authority terminates the subscription before that event is delivered. The listener receives a terminal error carrying the event cursor so it can distinguish an authorization loss from a retryable delivery failure.
 
 - Why are we not notifying deletes in a subscription that uses mutable property as a filter (e.g. `published`, `dataFormat`).
 

@@ -4,7 +4,7 @@ import type { Kysely, Migration } from 'kysely';
 /**
  * Migration 003: Add `squash` boolean column to `messageStoreMessages`.
  *
- * The `squash` column is an index for the `$squash` protocol directive
+ * The `squash` column is an index for the `$squash` module directive
  * introduced in the DWN spec. It follows the same pattern as `published`
  * and `prune` — a nullable boolean column used for query filtering.
  */

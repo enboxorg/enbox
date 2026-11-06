@@ -6,7 +6,7 @@ import sinon from 'sinon';
 import { createContextView } from '../src/context-view.js';
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { createObservationFactory, createObservedCollection } from '../src/store/observed-store.js';
@@ -562,8 +562,8 @@ describe('observed stores', () => {
   });
 
   it('observes encrypted records, singleton children, and owned contexts through the same observe helper', async () => {
-    const protocol = defineProtocol({
-      protocol  : 'https://api.example.test/store-store/native', published : false,
+    const module = defineModule({
+      module    : 'https://api.example.test/store-store/native', published : false,
       types     : {
         note    : { dataFormats: ['application/json'], encryptionRequired: true },
         preview : { dataFormats: ['application/json'], encryptionRequired: true },
@@ -578,9 +578,9 @@ describe('observed stores', () => {
       preview : recordCodecs.json<{ body: string }>(),
       member  : recordCodecs.json<{ label: string }>(),
     });
-    const context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [protocol] }) });
+    const context = await createEnboxTestContext({ application: defineApplicationManifest({ modules: [module] }) });
     const owner = fixture();
-    const typed = context.enbox.using(protocol);
+    const typed = context.enbox.using(module);
     const store = createObservationFactory(owner.scope);
     const notes = store(signal => typed.records.observe<'note', { children: readonly ['note/preview'] }>('note', {
       pagination: { limit: 1 }, materialize: { children: ['note/preview'] }, signal,

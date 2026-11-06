@@ -2,7 +2,7 @@ import type { HandlerDependencies } from '../types/method-handler.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
 import type { RecordsSubscribe } from '../interfaces/records-subscribe.js';
-import type { ResolvedProtocolRole } from '../core/protocol-authorization-action.js';
+import type { ResolvedModuleRole } from '../core/module-authorization-action.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { RecordsFilter, RecordsQueryReplyEntry } from '../types/records-types.js';
 
@@ -10,7 +10,7 @@ import { authenticate } from '../core/auth.js';
 import { DateSort } from '../types/records-types.js';
 import { EncryptionControl } from '../core/encryption-control.js';
 import { Message } from '../core/message.js';
-import { ProtocolAuthorization } from '../core/protocol-authorization.js';
+import { ModuleAuthorization } from '../core/module-authorization.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
@@ -22,7 +22,7 @@ export type RecordsCollectionVisibility = 'nonOwner' | 'owner' | 'published';
 
 export type RecordsCollectionAuthorization = {
   permissionGrantId?: string;
-  resolvedRole?: ResolvedProtocolRole;
+  resolvedRole?: ResolvedModuleRole;
   visibility: RecordsCollectionVisibility;
 };
 
@@ -54,7 +54,7 @@ export async function authorizeRecordsCollection(
   }
 
   const permissionGrantId = Message.getPermissionGrantId(request.signaturePayload!);
-  let resolvedRole: ResolvedProtocolRole | undefined;
+  let resolvedRole: ResolvedModuleRole | undefined;
   if (permissionGrantId !== undefined) {
     const permissionGrant = await deps.validationStateReader.fetchGrant(tenant, permissionGrantId);
     await RecordsGrantAuthorization.authorizeQueryOrSubscribe({
@@ -64,10 +64,10 @@ export async function authorizeRecordsCollection(
       permissionGrant,
       validationStateReader : deps.validationStateReader,
     });
-  } else if (invokesProtocolRole(request)) {
-    // A protocol filter alone does not require protocol authorization because unauthorized
-    // records are removed by the visibility filters. An invoked protocol role does.
-    resolvedRole = await ProtocolAuthorization.authorizeQueryOrSubscribe(tenant, request, deps.validationStateReader);
+  } else if (invokesModuleRole(request)) {
+    // A module filter alone does not require module authorization because unauthorized
+    // records are removed by the visibility filters. An invoked module role does.
+    resolvedRole = await ModuleAuthorization.authorizeQueryOrSubscribe(tenant, request, deps.validationStateReader);
   }
 
   return {
@@ -220,7 +220,7 @@ function buildRecordsVisibilityFilters(input: {
     filters.push(buildRecordsFilter({ author: request.author, dateSort, filter, purpose, published: false }));
   }
 
-  if (invokesProtocolRole(request) || Message.getPermissionGrantId(request.signaturePayload!) !== undefined) {
+  if (invokesModuleRole(request) || Message.getPermissionGrantId(request.signaturePayload!) !== undefined) {
     filters.push(buildRecordsFilter({ dateSort, filter, purpose, published: false }));
   }
 
@@ -262,8 +262,8 @@ function buildRecordsFilter(input: {
   return result;
 }
 
-function invokesProtocolRole(request: RecordsCollectionRequest): boolean {
-  return request.signaturePayload?.protocolRole !== undefined;
+function invokesModuleRole(request: RecordsCollectionRequest): boolean {
+  return request.signaturePayload?.moduleRole !== undefined;
 }
 
 function shouldBuildUnpublishedRecipientFilter(filter: RecordsFilter, recipient: string): boolean {

@@ -1,6 +1,6 @@
-import type { ContextFollowIntent } from '../src/shared-context-protocol.js';
+import type { ContextFollowIntent } from '../src/shared-context-module.js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { PlatformAgentTestHarness } from '@enbox/agent/test';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 import type { Record as EnboxRecord, RecordView, RecordViewState } from '../src/index.js';
 
@@ -9,16 +9,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { PlatformAgentTestHarness as AgentHarness } from '@enbox/agent/test';
 import { AuthManager, MemoryStorage } from '@enbox/auth';
-import { DwnConstant, EncryptionProtocol, Jws, Poller } from '@enbox/dwn-sdk-js';
+import { DwnConstant, EncryptionModule, Jws, Poller } from '@enbox/dwn-sdk-js';
 import { DwnInterface, EnboxUserAgent, executeConnectApproval } from '@enbox/agent';
 
-import { CONTEXT_FOLLOW_PATH } from '../src/shared-context-protocol.js';
-import { publishProtocol } from './utils/test-dwn-operations.js';
+import { CONTEXT_FOLLOW_PATH } from '../src/shared-context-module.js';
+import { publishModule } from './utils/test-dwn-operations.js';
 import { testDwnUrl } from './utils/test-config.js';
-import { defineProtocol, Enbox, recordCodecs } from '../src/index.js';
+import { defineModule, Enbox, recordCodecs } from '../src/index.js';
 
-const protocolDefinition = {
-  protocol  : `https://example.com/shared-context-integration/${crypto.randomUUID()}` as string,
+const moduleDefinition = {
+  module    : `https://example.com/shared-context-integration/${crypto.randomUUID()}` as string,
   published : true,
   types     : {
     admin: {
@@ -88,9 +88,9 @@ const protocolDefinition = {
       },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const SharedNotebookProtocol = defineProtocol(protocolDefinition, {
+const SharedNotebookModule = defineModule(moduleDefinition, {
   admin    : recordCodecs.json<{ name: string }>(),
   change   : recordCodecs.json<{ body: string }>(),
   member   : recordCodecs.json<{ name: string }>(),
@@ -197,10 +197,10 @@ describe('shared context public API integration', () => {
     });
     await memberHarness.clearStorage();
 
-    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookModule);
     const configured = await owner.configure();
     expect(configured.status.code).toBe(202);
-    expect((await publishProtocol(ownerHarness.agent, configured.protocol!, ownerDid, ownerDid)).status)
+    expect((await publishModule(ownerHarness.agent, configured.module!, ownerDid, ownerDid)).status)
       .toEqual({ code: 202, detail: 'Accepted' });
 
     memberAuth = await AuthManager.create({
@@ -209,7 +209,7 @@ describe('shared context public API integration', () => {
       storage        : new MemoryStorage(),
       connectHandler : walletConnectHandler(memberDid, 'Shared context integration'),
     });
-    const memberSession = await memberAuth.connect({ protocols: [SharedNotebookProtocol] });
+    const memberSession = await memberAuth.connect({ modules: [SharedNotebookModule] });
     memberDelegateDid = memberSession.delegateDid!;
     memberEnbox = Enbox.fromSession(memberSession);
 
@@ -244,7 +244,7 @@ describe('shared context public API integration', () => {
       (call): boolean => call.args[0].messageType === DwnInterface.RecordsWrite,
     );
     expect(await ownedTitle.value()).toEqual({ title: 'Page A' });
-    expect(ownerWrite?.args[0].messageParams.protocolRole).toBeUndefined();
+    expect(ownerWrite?.args[0].messageParams.moduleRole).toBeUndefined();
     expect(remoteOwnerRequests.notCalled).toBe(true);
     localOwnerRequests.restore();
     remoteOwnerRequests.restore();
@@ -275,7 +275,7 @@ describe('shared context public API integration', () => {
 
     await ownerHarness.agent.sync.setIdentityOptions({
       did     : ownerDid,
-      options : { protocols: [protocolDefinition.protocol] },
+      options : { modules: [moduleDefinition.module] },
     });
     await ownerHarness.agent.sync.sync('push');
   }, 90_000);
@@ -293,7 +293,7 @@ describe('shared context public API integration', () => {
   });
 
   it('follows, replicates, mutates, reopens, and retires exact encrypted contexts', async () => {
-    const typed = memberEnbox.using(SharedNotebookProtocol);
+    const typed = memberEnbox.using(SharedNotebookModule);
     expect(memberDelegateDid).not.toBe(memberDid);
     expect((await memberHarness.agent.identity.list()).map((identity) => identity.did.uri)).toEqual([memberDelegateDid]);
     expect(await typed.contexts.list()).toEqual([]);
@@ -341,7 +341,7 @@ describe('shared context public API integration', () => {
     expect(contextB.role).toBe('notebook/page/viewer');
 
     await Promise.all([contextA.refresh(), contextB.refresh()]);
-    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+    const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookModule);
     peerHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
       agentStores      : 'dwn',
@@ -354,8 +354,8 @@ describe('shared context public API integration', () => {
       storage        : new MemoryStorage(),
       connectHandler : walletConnectHandler(peerDid, 'Shared context peer'),
     });
-    const peerSession = await peerAuth.connect({ protocols: [SharedNotebookProtocol] });
-    const peerTyped = Enbox.fromSession(peerSession).using(SharedNotebookProtocol);
+    const peerSession = await peerAuth.connect({ modules: [SharedNotebookModule] });
+    const peerTyped = Enbox.fromSession(peerSession).using(SharedNotebookModule);
     const ownerContextA = await owner.contexts.open('notebook/page', contextIds[0]);
     await ownerContextA.members.set(peerDid, {
       data : { name: 'peer' },
@@ -377,7 +377,7 @@ describe('shared context public API integration', () => {
       data            : { body: 'created under a root role' },
       from            : ownerDid,
       parentContextId : contextIds[0],
-      protocolRole    : 'admin',
+      moduleRole      : 'admin',
     });
     const peerAssignments = await owner.records.query('notebook/page/member', {
       filter : { recipient: peerDid },
@@ -388,7 +388,7 @@ describe('shared context public API integration', () => {
       data            : { body: 'created below the author role' },
       from            : ownerDid,
       parentContextId : peerAssignments.records[0].contextId,
-      protocolRole    : 'notebook/page/member',
+      moduleRole      : 'notebook/page/member',
     });
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       const [rootRoleChanges, roleDescendantChanges] = await Promise.all([
@@ -435,7 +435,7 @@ describe('shared context public API integration', () => {
     expect(dependencyRequests.filter((request): boolean =>
       request.messageType === DwnInterface.RecordsQuery &&
       request.target === ownerDid &&
-      request.messageParams?.filter?.protocol === EncryptionProtocol.uri
+      request.messageParams?.filter?.module === EncryptionModule.uri
     )).toHaveLength(0);
     offline.restore();
     localRequests.restore();
@@ -478,17 +478,17 @@ describe('shared context public API integration', () => {
           {
             contextIdPrefix : contextIds[0],
             interface       : 'Records',
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'notebook/page/change',
+            module          : moduleDefinition.module,
+            modulePath      : 'notebook/page/change',
           },
           {
             contextIdPrefix : contextIds[0],
             interface       : 'Records',
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'notebook/page/title',
+            module          : moduleDefinition.module,
+            modulePath      : 'notebook/page/title',
           },
         ],
-        protocolRole: 'notebook/page/member',
+        moduleRole: 'notebook/page/member',
       },
       target: ownerDid,
     });
@@ -537,7 +537,7 @@ describe('shared context public API integration', () => {
     expect(largeDataRead).toMatchObject({
       author        : memberDid,
       granteeDid    : memberDelegateDid,
-      messageParams : { protocolRole: 'notebook/page/member' },
+      messageParams : { moduleRole: 'notebook/page/member' },
       target        : ownerDid,
     });
     expect(largeDataRead.messageParams.delegatedGrant).toBeDefined();
@@ -635,7 +635,7 @@ describe('shared context public API integration', () => {
       agent        : memberHarness.agent,
       connectedDid : memberDid,
       delegateDid  : memberDelegateDid,
-    }).using(SharedNotebookProtocol);
+    }).using(SharedNotebookModule);
     const restored = await reopened.contexts.list();
     expect(restored.map((context) => context.id).sort()).toEqual([...contextIds].sort());
 
@@ -652,7 +652,7 @@ describe('shared context public API integration', () => {
       expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', contexts: [{}, {}] });
     }, Poller.pollRetrySleep, 30_000);
     const observingOwner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid })
-      .using(SharedNotebookProtocol);
+      .using(SharedNotebookModule);
     const memberView = await (await observingOwner.contexts.open('notebook/page', contextIds[0]))
       .members
       .observe();
@@ -726,14 +726,14 @@ describe('shared context public API integration', () => {
         storage        : new MemoryStorage(),
         connectHandler : walletConnectHandler(memberDid, 'Shared context following'),
       });
-      const session = await device.auth.connect({ protocols: [SharedNotebookProtocol], sync: 'off' });
+      const session = await device.auth.connect({ modules: [SharedNotebookModule], sync: 'off' });
       return { delegateDid: session.delegateDid!, enbox: Enbox.fromSession(session), harness };
     };
 
     try {
       const first = await connectDevice('first');
-      const typedFirst = first.enbox.using(SharedNotebookProtocol);
-      const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookProtocol);
+      const typedFirst = first.enbox.using(SharedNotebookModule);
+      const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookModule);
       const notebook = await owner.records.create('notebook', { data: { title: 'Durable follows' } });
       const body = { body: 'restored without another invitation' };
       const page = await owner.records.create('notebook/page', { data: body, parentContextId: notebook.contextId });
@@ -760,7 +760,7 @@ describe('shared context public API integration', () => {
       await waitForView(inbox, (state): boolean => state.records.every(candidate => candidate.contextId !== page.contextId));
 
       const journal = await first.enbox.dwn.records.query({
-        filter: { protocol: protocolDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
+        filter: { module: moduleDefinition.module, modulePath: CONTEXT_FOLLOW_PATH },
       });
       expect(journal.status.code).toBe(200);
       const decisions = await Promise.all((journal.records ?? []).map(async (record) => ({
@@ -781,7 +781,7 @@ describe('shared context public API integration', () => {
       expect(second.enbox.connectedDid).toBe(first.enbox.connectedDid);
       expect(second.delegateDid).not.toBe(first.delegateDid);
       expect(await second.harness.agent.sync.listFollowedSources()).toEqual([]);
-      const typedSecond = second.enbox.using(SharedNotebookProtocol);
+      const typedSecond = second.enbox.using(SharedNotebookModule);
       const secondCatalog = await typedSecond.contexts.observe();
       views.push(secondCatalog);
       expect((await secondCatalog.ready()).contexts).toEqual([]);
@@ -811,7 +811,7 @@ describe('shared context public API integration', () => {
       await expect(accepted.records.query('notebook/page')).rejects.toThrow('is no longer active');
       await expect(restored.records.query('notebook/page')).rejects.toThrow('is no longer active');
       const retained = await first.enbox.dwn.records.query({
-        filter: { protocol: protocolDefinition.protocol, protocolPath: CONTEXT_FOLLOW_PATH },
+        filter: { module: moduleDefinition.module, modulePath: CONTEXT_FOLLOW_PATH },
       });
       const retainedIntents = await Promise.all((retained.records ?? []).map(async record => await record.data.json() as ContextFollowIntent));
       expect(retainedIntents.filter(intent => intent.contextId === page.contextId)).toEqual([saved.value]);

@@ -16,11 +16,11 @@ import { AgentSession, EnboxUserAgent, executeConnectApproval } from '@enbox/age
 import { AuthManager, MemoryStorage } from '@enbox/auth';
 
 import { Enbox } from './enbox.js';
-import { getApplicationProtocolRequests } from './application-manifest.js';
+import { getApplicationModuleRequests } from './application-manifest.js';
 
 /** Options accepted by {@link createEnboxTestContext}. */
 export type CreateEnboxTestContextOptions = {
-  /** Typed application protocols installed before the context is returned. */
+  /** Typed application modules installed before the context is returned. */
   application: ApplicationManifest;
 };
 
@@ -38,7 +38,7 @@ export type EnboxTestContext = {
 
 /** Options accepted by {@link createHostedDelegatedEnboxTestContext}. */
 export type CreateHostedDelegatedEnboxTestContextOptions = {
-  /** Typed application protocols installed and granted by the owner wallet. */
+  /** Typed application modules installed and granted by the owner wallet. */
   application: ApplicationManifest;
 
   /**
@@ -67,7 +67,7 @@ export type HostedDelegatedEnboxTestContext = {
 
   /**
    * Stop sync, close both agents, and remove local temporary data.
-   * Hosted protocol, grant, revocation, and record state is not deleted.
+   * Hosted module, grant, revocation, and record state is not deleted.
    */
   close(): Promise<void>;
 };
@@ -75,7 +75,7 @@ export type HostedDelegatedEnboxTestContext = {
 /**
  * Create an isolated local Enbox context for Node integration tests.
  *
- * Protocols are installed through the same readiness path used by
+ * Modules are installed through the same readiness path used by
  * applications. Hosted publication is disabled so the context needs no
  * network services.
  */
@@ -121,7 +121,7 @@ export async function createEnboxTestContext(
     });
     enbox = Enbox.fromSession(session);
 
-    await enbox.protocols.ensureReady({ application, publish: false });
+    await enbox.modules.ensureReady({ application, publish: false });
 
     return { close, enbox, session };
   } catch (error: unknown) {
@@ -230,7 +230,7 @@ export async function createHostedDelegatedEnboxTestContext(
       sync             : 'live',
     });
     const session = await auth.connect({
-      protocols: getApplicationProtocolRequests(application),
+      modules: getApplicationModuleRequests(application),
     });
     if (session.delegateDid === undefined) {
       throw new Error('Hosted delegated connect returned an owner session instead of a delegate session.');

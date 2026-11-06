@@ -2,6 +2,8 @@ import type { ConnectApproval, ConnectPermissionRequest, ConnectRequest, Connect
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
 import { DidJwk } from '@enbox/dids';
 import { X25519 } from '@enbox/crypto';
 import { CONNECT_DENIED_TOKEN, ConnectProvider, createOwnerAuthenticationProof, randomToken } from '@enbox/connect';
@@ -30,9 +32,9 @@ const EVIL_ORIGIN = 'https://evil.example.com';
 /** Minimal ConnectPermissionRequest for tests. */
 function stubPermissionRequest(): ConnectPermissionRequest {
   return {
-    protocolDefinition : { protocol: 'https://proto.example.com', types: {}, structure: {} },
-    permissionScopes   : [{ protocol: 'https://proto.example.com', interface: 'Records', method: 'Write' }],
-  } as unknown as ConnectPermissionRequest;
+    moduleDefinition : { module: 'https://modules.example.com', published: false, types: {}, structure: {} },
+    permissionScopes : [{ module: 'https://modules.example.com', interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+  };
 }
 
 type PostedMessage = { data: Record<string, unknown>; targetOrigin: string };

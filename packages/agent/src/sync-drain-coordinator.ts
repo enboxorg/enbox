@@ -17,7 +17,7 @@ import type {
   SyncDurableFeedReconcileResult,
 } from './sync-durable-feed-reconciler.js';
 
-import { syncScopeFromProtocols } from './types/sync.js';
+import { syncScopeFromModules } from './types/sync.js';
 
 export type SyncDrainStopReason = 'cancelled' | 'topology-changed';
 
@@ -389,7 +389,7 @@ export class SyncDrainCoordinator {
 
   private static scopeForFailure(options: SyncIdentityOptions): SyncScope | undefined {
     try {
-      return syncScopeFromProtocols(options.protocols);
+      return syncScopeFromModules(options.modules);
     } catch {
       return;
     }

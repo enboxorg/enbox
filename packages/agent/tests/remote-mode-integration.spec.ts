@@ -2,7 +2,7 @@ import type { BearerDid } from '@enbox/dids';
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { DwnServerConfig } from '../../dwn-server/src/config.js';
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
-import type { Dwn, MessageSigner, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { Dwn, MessageSigner, ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -26,7 +26,7 @@ import { TestAgent } from './utils/test-agent.js';
 import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/sync.js';
 
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnInterfaceName, DwnMethodName, Encoder, Message, MessagesQuery, ProtocolsConfigure, RecordsRead, RecordsWrite, Time } from '@enbox/dwn-sdk-js';
+import { DataStream, DwnInterfaceName, DwnMethodName, Encoder, Message, MessagesQuery, ModulesConfigure, RecordsRead, RecordsWrite, Time } from '@enbox/dwn-sdk-js';
 
 import type { SyncTarget } from '../src/sync-target-resolver.js';
 
@@ -48,8 +48,8 @@ type RemoteModeContext = {
 
 type NoteRecordWriteParams = {
   dataFormat: string;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   schema: string;
 };
 
@@ -60,9 +60,9 @@ type MessageCidEntry = {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-const notesProtocol: ProtocolDefinition = {
+const notesModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://remote-mode.integration.example/notes',
+  module    : 'https://remote-mode.integration.example/notes',
   types     : {
     note: {
       schema      : 'https://remote-mode.integration.example/schemas/note',
@@ -93,7 +93,7 @@ describe('Agent remote mode integration', () => {
     context = await setupRemoteModeContext('materialization-confirmation', { authenticatedLocalNode: true });
     const { alice, testHarness } = context;
 
-    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    await configureLocalModule(testHarness.agent, alice.did.uri, notesModule);
     // Exercise a DataStore-backed body; small records are embedded in the write message.
     const write = await writeLocalRecord(testHarness.agent, alice.did.uri, 'x'.repeat(31_000));
 
@@ -108,8 +108,8 @@ describe('Agent remote mode integration', () => {
     context = await setupRemoteModeContext('quarantine-confirmation', { authenticatedLocalNode: true });
     const { alice, bob, remoteServer, testHarness } = context;
     const agent = testHarness.agent;
-    await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
-    await configureProtocolOnServer(agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    await configureLocalModule(agent, alice.did.uri, notesModule);
+    await configureModuleOnServer(agent, remoteServer.httpUrl, alice.did, notesModule);
 
     const grant = await agent.permissions.createGrant({
       author      : alice.did.uri,
@@ -135,7 +135,7 @@ describe('Agent remote mode integration', () => {
       kind        : 'delegate' as const,
       permissionGrantIds,
     };
-    const scope = { kind: 'protocolSet' as const, protocols: [notesProtocol.protocol] as [string] };
+    const scope = { kind: 'moduleSet' as const, modules: [notesModule.module] as [string] };
     const target: SyncTarget = {
       authorization,
       authorizationEpoch: await computeAuthorizationEpoch({
@@ -205,13 +205,13 @@ describe('Agent remote mode integration', () => {
     context = await setupRemoteModeContext('ordinary-quarantine');
     const { alice, localServer, remoteServer, testHarness } = context;
     const agent = testHarness.agent;
-    await configureLocalProtocol(agent, alice.did.uri, notesProtocol);
-    await configureProtocolOnServer(agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    await configureLocalModule(agent, alice.did.uri, notesModule);
+    await configureModuleOnServer(agent, remoteServer.httpUrl, alice.did, notesModule);
 
     const body = 'ordinary server body '.repeat(3000);
     const write = await writeRecordToServer(agent, remoteServer.httpUrl, alice.did, body);
     const messageCid = await Message.getCid(write);
-    const scope = { kind: 'protocolSet' as const, protocols: [notesProtocol.protocol] as [string] };
+    const scope = { kind: 'moduleSet' as const, modules: [notesModule.module] as [string] };
     const target: SyncTarget = {
       authorization      : { kind: 'owner' },
       authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
@@ -265,7 +265,7 @@ describe('Agent remote mode integration', () => {
     const { alice, bob, localServer, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
-    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    await configureLocalModule(testHarness.agent, alice.did.uri, notesModule);
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'local push body');
     const tenantWideMessagesGrant = await testHarness.agent.permissions.createGrant({
       author      : alice.did.uri,
@@ -286,14 +286,14 @@ describe('Agent remote mode integration', () => {
 
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
+      options : { modules: [notesModule.module] },
     });
     await testHarness.agent.sync.sync('push');
 
     expect(await readRecordTextFromServer(testHarness.agent, remoteServer.httpUrl, alice.did, localWrite.recordId)).toBe('local push body');
 
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'remote pull body');
-    await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, bob.did, notesProtocol);
+    await configureModuleOnServer(testHarness.agent, remoteServer.httpUrl, bob.did, notesModule);
     const bobRemoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, bob.did, 'bob must not pull');
 
     await testHarness.agent.sync.sync('pull');
@@ -315,14 +315,14 @@ describe('Agent remote mode integration', () => {
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
-    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    await configureLocalModule(testHarness.agent, alice.did.uri, notesModule);
     const localWrite = await writeLocalRecord(testHarness.agent, alice.did.uri, 'drained local body');
-    await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    await configureModuleOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesModule);
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'drained remote body');
 
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
+      options : { modules: [notesModule.module] },
     });
 
     const endpointResolutionStub = testHarness.agent.dwn.getRemoteDwnEndpointUrls as sinon.SinonStub;
@@ -368,7 +368,7 @@ describe('Agent remote mode integration', () => {
 
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
+      options : { modules: [notesModule.module] },
     });
     await syncEngine.registerSupplementalDwnEndpoint(localServer.httpUrl);
 
@@ -385,13 +385,13 @@ describe('Agent remote mode integration', () => {
 
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
+      options : { modules: [notesModule.module] },
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
 
     expect(testHarness.agent.sync.hasActiveSubscriptions).toBe(true);
 
-    await configureProtocolOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesProtocol);
+    await configureModuleOnServer(testHarness.agent, remoteServer.httpUrl, alice.did, notesModule);
     const remoteWrite = await writeRecordToServer(testHarness.agent, remoteServer.httpUrl, alice.did, 'durable pull body');
 
     await waitFor(async () =>
@@ -415,10 +415,10 @@ describe('Agent remote mode integration', () => {
     const { alice, remoteServer, testHarness } = context;
     const syncEngine = testHarness.agent.sync as any;
 
-    await configureLocalProtocol(testHarness.agent, alice.did.uri, notesProtocol);
+    await configureLocalModule(testHarness.agent, alice.did.uri, notesModule);
     await testHarness.agent.sync.setIdentityOptions({
       did     : alice.did.uri,
-      options : { protocols: [notesProtocol.protocol] },
+      options : { modules: [notesModule.module] },
     });
     await testHarness.agent.sync.startSync({ interval: '30s' });
 
@@ -546,28 +546,28 @@ async function closeTestServer(server: TestDwnRpcServer | undefined): Promise<vo
   await server.dwn.close();
 }
 
-async function configureLocalProtocol(
+async function configureLocalModule(
   agent: EnboxPlatformAgent,
   did: string,
-  definition: ProtocolDefinition,
+  definition: ModuleDefinition,
 ): Promise<void> {
   const { reply } = await agent.dwn.processRequest({
     author        : did,
     target        : did,
-    messageType   : DwnInterface.ProtocolsConfigure,
+    messageType   : DwnInterface.ModulesConfigure,
     messageParams : { definition },
   });
 
   expect(reply.status.code).toBe(202);
 }
 
-async function configureProtocolOnServer(
+async function configureModuleOnServer(
   agent: EnboxPlatformAgent,
   dwnUrl: string,
   did: BearerDid,
-  definition: ProtocolDefinition,
+  definition: ModuleDefinition,
 ): Promise<void> {
-  const protocolsConfigure = await ProtocolsConfigure.create({
+  const modulesConfigure = await ModulesConfigure.create({
     definition,
     signer: await signerForDid(did),
   });
@@ -575,7 +575,7 @@ async function configureProtocolOnServer(
   const reply = await agent.rpc.sendDwnRequest({
     dwnUrl,
     targetDid : did.uri,
-    message   : protocolsConfigure.message,
+    message   : modulesConfigure.message,
   });
 
   expect(reply.status.code).toBe(202);
@@ -623,10 +623,10 @@ async function writeRecordToServer(
 
 function recordWriteParams(): NoteRecordWriteParams {
   return {
-    dataFormat   : 'text/plain',
-    protocol     : notesProtocol.protocol,
-    protocolPath : 'note',
-    schema       : notesProtocol.types.note.schema!,
+    dataFormat : 'text/plain',
+    module     : notesModule.module,
+    modulePath : 'note',
+    schema     : notesModule.types.note.schema!,
   };
 }
 

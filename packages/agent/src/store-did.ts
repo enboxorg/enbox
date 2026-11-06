@@ -3,22 +3,22 @@ import type { PortableDid } from '@enbox/dids';
 
 import { isPortableDid } from '@enbox/dids';
 
-import { IdentityProtocolDefinition } from './store-data-protocols.js';
+import { IdentityModuleDefinition } from './store-data-modules.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export class DwnDidStore extends DwnDataStore<PortableDid> {
   protected name = 'DwnDidStore';
 
-  protected _recordProtocolDefinition = IdentityProtocolDefinition;
+  protected _recordModuleDefinition = IdentityModuleDefinition;
 
   /**
    * Properties to use when writing and querying DID records with the DWN store.
    */
   protected _recordProperties = {
-    dataFormat   : 'application/json',
-    protocol     : this._recordProtocolDefinition.protocol,
-    protocolPath : 'portableDid',
-    schema       : this._recordProtocolDefinition.types.portableDid.schema,
+    dataFormat : 'application/json',
+    module     : this._recordModuleDefinition.module,
+    modulePath : 'portableDid',
+    schema     : this._recordModuleDefinition.types.portableDid.schema,
   };
 
   /**

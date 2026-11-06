@@ -1,9 +1,9 @@
-import type { ProtocolDefinition } from '../../src/index.js';
+import type { ModuleDefinition } from '../../src/index.js';
 
 import { describe, expect, it } from 'bun:test';
 
 import { TestDataGenerator } from '../utils/test-data-generator.js';
-import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionProtocol, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
+import { DwnErrorCode, ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, EncryptionModule, replicationApplyResultFromReply, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/index.js';
 
 describe('replicationApplyResultFromReply', () => {
   it('classifies successful and idempotent replies', async () => {
@@ -31,8 +31,8 @@ describe('replicationApplyResultFromReply', () => {
   });
 
   it('classifies missing initial writes as retryable dependencies', async () => {
-    const protocol = 'https://example.com/protocol';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
@@ -41,128 +41,128 @@ describe('replicationApplyResultFromReply', () => {
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'InitialWrite', recordId: message.recordId, protocol }],
+      missing : [{ type: 'InitialWrite', recordId: message.recordId, module }],
     });
   });
 
-  it('classifies protocol and parent misses from status detail', async () => {
-    const protocol = 'https://example.com/protocol';
-    const composedProtocol = 'https://example.com/composed';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+  it('classifies module and parent misses from status detail', async () => {
+    const module = 'https://example.com/module';
+    const composedModule = 'https://example.com/composed';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationProtocolNotFound}: protocol is not installed`,
+        detail : `${DwnErrorCode.ModuleAuthorizationModuleNotFound}: module is not installed`,
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Protocol', protocol }],
+      missing : [{ type: 'Module', module }],
     });
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolsConfigureComposedProtocolNotInstalled}: composed protocol '${composedProtocol}' is not installed`,
+        detail : `${DwnErrorCode.ModulesConfigureComposedModuleNotInstalled}: composed module '${composedModule}' is not installed`,
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Protocol', protocol: composedProtocol }],
+      missing : [{ type: 'Module', module: composedModule }],
     });
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: parent record 'parent-record' in protocol '${protocol}' was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentRecordNotFound}: parent record 'parent-record' in module '${module}' was not found`,
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Parent', recordId: 'parent-record', protocol }],
+      missing : [{ type: 'Parent', recordId: 'parent-record', module }],
     });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: parent record 'parent-record' was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentRecordNotFound}: parent record 'parent-record' was not found`,
       },
     }, { parentRecordPruned: true })).toEqual({ kind: 'Superseded' });
   });
 
-  it('classifies parent-chain misses with the incoming protocol', async () => {
-    const protocol = 'https://example.com/protocol';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+  it('classifies parent-chain misses with the incoming module', async () => {
+    const module = 'https://example.com/module';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain}: parent with ID parent-record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain}: parent with ID parent-record was not found`,
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Ancestor', recordId: 'parent-record', protocol }],
+      missing : [{ type: 'Ancestor', recordId: 'parent-record', module }],
     });
   });
 
   it('emits Ancestor refs above a batched missing parent in a single Incomplete', async () => {
-    const protocol = 'https://example.com/protocol';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: Could not find parent record 'baz-record'.`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentRecordNotFound}: Could not find parent record 'baz-record'.`,
       },
     }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
       kind    : 'Incomplete',
       missing : [
-        { type: 'Ancestor', recordId: 'foo-record', protocol },
-        { type: 'Ancestor', recordId: 'bar-record', protocol },
-        { type: 'Parent', recordId: 'baz-record', protocol },
+        { type: 'Ancestor', recordId: 'foo-record', module },
+        { type: 'Ancestor', recordId: 'bar-record', module },
+        { type: 'Parent', recordId: 'baz-record', module },
       ],
     });
   });
 
   it('emits one Ancestor ref per batched missing ancestor in a single Incomplete', async () => {
-    const protocol = 'https://example.com/protocol';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain}: parent with ID baz-record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain}: parent with ID baz-record was not found`,
       },
     }, { missingAncestorRecordIds: ['foo-record', 'bar-record', 'baz-record'] })).toEqual({
       kind    : 'Incomplete',
       missing : [
-        { type: 'Ancestor', recordId: 'foo-record', protocol },
-        { type: 'Ancestor', recordId: 'bar-record', protocol },
-        { type: 'Ancestor', recordId: 'baz-record', protocol },
+        { type: 'Ancestor', recordId: 'foo-record', module },
+        { type: 'Ancestor', recordId: 'bar-record', module },
+        { type: 'Ancestor', recordId: 'baz-record', module },
       ],
     });
   });
 
   it('falls back to the failure-named ancestor when the batched missing-ancestor set is empty', async () => {
-    const protocol = 'https://example.com/protocol';
-    const { message } = await TestDataGenerator.generateRecordsWrite({ protocol });
+    const module = 'https://example.com/module';
+    const { message } = await TestDataGenerator.generateRecordsWrite({ module });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain}: parent with ID parent-record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain}: parent with ID parent-record was not found`,
       },
     }, { missingAncestorRecordIds: [] })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'Ancestor', recordId: 'parent-record', protocol }],
+      missing : [{ type: 'Ancestor', recordId: 'parent-record', module }],
     });
   });
 
   it('classifies grant, record data, and delete initial-write dependencies', async () => {
-    const protocol = 'https://example.com/protocol';
+    const module = 'https://example.com/module';
     const permissionGrantId = 'grant-1';
     const dataCid = 'bafyreib3xmaq5x6o6lhn5jvcnv6hvgh7e64xw66z3c3rgyk7wwq7qv2b5a';
     const { message } = await TestDataGenerator.generateRecordsWrite({
       dataCid,
       dataSize: 42,
       permissionGrantId,
-      protocol,
+      module,
     });
     const deleteMessage = await TestDataGenerator.generateRecordsDelete({ recordId: 'deleted-record' });
 
@@ -182,7 +182,7 @@ describe('replicationApplyResultFromReply', () => {
       },
     })).toEqual({
       kind    : 'Incomplete',
-      missing : [{ type: 'RecordData', recordId: message.recordId, dataCid, protocol }],
+      missing : [{ type: 'RecordData', recordId: message.recordId, dataCid, module }],
     });
     expect(replicationApplyResultFromReply(deleteMessage.message, {
       status: { code: 404 },
@@ -193,66 +193,66 @@ describe('replicationApplyResultFromReply', () => {
   });
 
   it('classifies missing role records from the signed authorization payload', async () => {
-    const protocol = 'https://example.com/protocol';
-    const protocolRole = 'member';
+    const module = 'https://example.com/module';
+    const moduleRole = 'member';
     const { author, message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: 'chat/message',
-      protocolRole,
+      module,
+      modulePath: 'chat/message',
+      moduleRole,
     });
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
     })).toEqual({
       kind    : 'Incomplete',
       missing : [{
-        type         : 'Role',
-        protocol,
-        protocolPath : protocolRole,
-        recipient    : author.did,
+        type       : 'Role',
+        module,
+        modulePath : moduleRole,
+        recipient  : author.did,
       }],
     });
   });
 
   it('includes context prefixes for nested role dependencies', async () => {
-    const protocol = 'https://example.com/protocol';
-    const protocolRole = 'thread/member';
+    const module = 'https://example.com/module';
+    const moduleRole = 'thread/member';
     const { author, message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: 'thread/message',
-      protocolRole,
+      module,
+      modulePath: 'thread/message',
+      moduleRole,
     });
     (message.descriptor as Record<string, unknown>).contextId = 'thread-context/member-context';
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
     })).toEqual({
       kind    : 'Incomplete',
       missing : [{
         type          : 'Role',
         contextPrefix : 'thread-context',
-        protocol,
-        protocolPath  : protocolRole,
+        module,
+        modulePath    : moduleRole,
         recipient     : author.did,
       }],
     });
   });
 
-  it('resolves cross-protocol role dependencies through the composing protocol uses map', async () => {
-    const protocol = 'https://example.com/composing-protocol';
-    const roleProtocol = 'https://example.com/roles-protocol';
-    const protocolRole = 'roles:thread/member';
-    const protocolDefinition: ProtocolDefinition = {
-      protocol,
+  it('resolves cross-module role dependencies through the composing module uses map', async () => {
+    const module = 'https://example.com/composing-module';
+    const roleModule = 'https://example.com/roles-module';
+    const moduleRole = 'roles:thread/member';
+    const moduleDefinition: ModuleDefinition = {
+      module,
       published : false,
       uses      : {
-        roles: roleProtocol,
+        roles: roleModule,
       },
       types: {
         message: {},
@@ -262,24 +262,24 @@ describe('replicationApplyResultFromReply', () => {
       },
     };
     const { author, message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: 'message',
-      protocolRole,
+      module,
+      modulePath: 'message',
+      moduleRole,
     });
     (message.descriptor as Record<string, unknown>).contextId = 'thread-context/member-context';
 
     expect(replicationApplyResultFromReply(message, {
       status: {
         code   : 401,
-        detail : `${DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound}: matching role record was not found`,
       },
-    }, { protocolDefinition })).toEqual({
+    }, { moduleDefinition })).toEqual({
       kind    : 'Incomplete',
       missing : [{
         type          : 'Role',
         contextPrefix : 'thread-context',
-        protocol      : roleProtocol,
-        protocolPath  : 'thread/member',
+        module        : roleModule,
+        modulePath    : 'thread/member',
         recipient     : author.did,
       }],
     });
@@ -289,12 +289,12 @@ describe('replicationApplyResultFromReply', () => {
   it('classifies grantKey grant dependencies from tags', async () => {
     const grantId = 'grant-record-id';
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      protocol     : EncryptionProtocol.uri,
-      protocolPath : EncryptionProtocol.grantKeyPath,
-      tags         : {
+      module     : EncryptionModule.uri,
+      modulePath : EncryptionModule.grantKeyPath,
+      tags       : {
         grantId,
-        protocol : 'https://example.com/protocol',
-        keyId    : 'abc',
+        module : 'https://example.com/module',
+        keyId  : 'abc',
       },
     });
 
@@ -310,11 +310,11 @@ describe('replicationApplyResultFromReply', () => {
   });
 
   it('classifies roleAudience audience dependencies from encrypted application records', async () => {
-    const protocol = 'https://example.com/encrypted-chat';
+    const module = 'https://example.com/encrypted-chat';
     const rolePath = 'thread/member';
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: 'thread/chat',
+      module,
+      modulePath: 'thread/chat',
     });
     message.contextId = 'thread-record/chat-record';
     message.encryption = {
@@ -327,7 +327,7 @@ describe('replicationApplyResultFromReply', () => {
           encryptedKey       : 'encrypted-key-1',
           ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
           keyId              : 'abc',
-          protocol,
+          module,
           rolePath,
         },
         {
@@ -336,13 +336,13 @@ describe('replicationApplyResultFromReply', () => {
           encryptedKey       : 'encrypted-key-2',
           ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
           keyId              : 'def',
-          protocol,
+          module,
           rolePath,
         },
       ],
     } as any;
 
-    const detail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceMissing}: ` +
+    const detail = `${DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing}: ` +
       `encrypted record references a missing audience for role '${rolePath}'`;
 
     expect(replicationApplyResultFromReply(message, {
@@ -354,22 +354,22 @@ describe('replicationApplyResultFromReply', () => {
       kind    : 'Incomplete',
       missing : [
         {
-          type         : 'EncryptionControl',
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          type       : 'EncryptionControl',
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-record',
             rolePath,
             keyId     : 'abc',
           },
         },
         {
-          type         : 'EncryptionControl',
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          type       : 'EncryptionControl',
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-record',
             rolePath,
             keyId     : 'def',
@@ -379,16 +379,16 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
-  it('classifies delivery audience dependencies from source-protocol delivery records', async () => {
-    const protocol = 'https://example.com/encrypted-chat';
+  it('classifies delivery audience dependencies from source-module delivery records', async () => {
+    const module = 'https://example.com/encrypted-chat';
     const rolePath = 'thread/member';
     const contextId = 'thread-record';
     const keyId = 'audience-key';
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-      tags         : {
-        protocol,
+      module,
+      modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      tags       : {
+        module,
         rolePath,
         contextId,
         keyId,
@@ -403,11 +403,11 @@ describe('replicationApplyResultFromReply', () => {
     })).toEqual({
       kind    : 'Incomplete',
       missing : [{
-        type         : 'EncryptionControl',
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-        tags         : {
-          protocol,
+        type       : 'EncryptionControl',
+        module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        tags       : {
+          module,
           rolePath,
           contextId,
           keyId,
@@ -416,17 +416,17 @@ describe('replicationApplyResultFromReply', () => {
     });
   });
 
-  it('classifies delivery recipient role dependencies from source-protocol delivery records', async () => {
-    const protocol = 'https://example.com/encrypted-chat';
+  it('classifies delivery recipient role dependencies from source-module delivery records', async () => {
+    const module = 'https://example.com/encrypted-chat';
     const rolePath = 'thread/member';
     const contextId = 'thread-record';
     const recipient = 'did:example:bob';
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      module,
+      modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
       recipient,
-      tags         : {
-        protocol,
+      tags       : {
+        module,
         rolePath,
         contextId,
         keyId: 'audience-key',
@@ -442,8 +442,8 @@ describe('replicationApplyResultFromReply', () => {
       kind    : 'Incomplete',
       missing : [{
         type          : 'Role',
-        protocol,
-        protocolPath  : rolePath,
+        module,
+        modulePath    : rolePath,
         recipient,
         contextPrefix : contextId,
       }],
@@ -451,12 +451,12 @@ describe('replicationApplyResultFromReply', () => {
   });
 
   it('ignores role text in missing roleAudience error details', async () => {
-    const protocol = 'https://example.com/encrypted-chat';
+    const module = 'https://example.com/encrypted-chat';
     const missingRolePath = 'thread/member';
     const otherRolePath = 'thread/admin';
     const { message } = await TestDataGenerator.generateRecordsWrite({
-      protocol,
-      protocolPath: 'thread/chat',
+      module,
+      modulePath: 'thread/chat',
     });
     message.contextId = 'thread-record/chat-record';
     message.encryption = {
@@ -469,7 +469,7 @@ describe('replicationApplyResultFromReply', () => {
           encryptedKey       : 'missing-source-key',
           ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
           keyId              : 'missing-source',
-          protocol,
+          module,
           rolePath           : missingRolePath,
         },
         {
@@ -478,13 +478,13 @@ describe('replicationApplyResultFromReply', () => {
           encryptedKey       : 'other-source-key',
           ephemeralPublicKey : { kty: 'OKP', crv: 'X25519', x: 'x' },
           keyId              : 'other-source',
-          protocol,
+          module,
           rolePath           : otherRolePath,
         },
       ],
     } as any;
 
-    const misleadingDetail = `${DwnErrorCode.ProtocolAuthorizationEncryptionRoleAudienceMissing}: ` +
+    const misleadingDetail = `${DwnErrorCode.ModuleAuthorizationEncryptionRoleAudienceMissing}: ` +
       `encrypted record references a missing audience for role '${otherRolePath}'`;
 
     expect(replicationApplyResultFromReply(message, {
@@ -496,22 +496,22 @@ describe('replicationApplyResultFromReply', () => {
       kind    : 'Incomplete',
       missing : [
         {
-          type         : 'EncryptionControl',
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          type       : 'EncryptionControl',
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-record',
             rolePath  : missingRolePath,
             keyId     : 'missing-source',
           },
         },
         {
-          type         : 'EncryptionControl',
-          protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol,
+          type       : 'EncryptionControl',
+          module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module,
             contextId : 'thread-record',
             rolePath  : otherRolePath,
             keyId     : 'other-source',

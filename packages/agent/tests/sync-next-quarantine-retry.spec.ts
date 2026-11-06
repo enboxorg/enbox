@@ -32,15 +32,15 @@ function roleTarget(): SyncTarget {
     authorization: {
       actorDid     : 'did:example:bob',
       kind         : 'role',
-      protocolRole : 'thread/member',
+      moduleRole   : 'thread/member',
       roleRecordId : 'role-record',
     },
     authorizationEpoch : 'role-epoch',
     scope              : {
-      contextId     : 'thread',
-      kind          : 'context',
-      protocol      : 'https://example.com/chat',
-      protocolPaths : ['thread/message'],
+      contextId   : 'thread',
+      kind        : 'context',
+      module      : 'https://example.com/chat',
+      modulePaths : ['thread/message'],
     },
   };
 }
@@ -68,16 +68,16 @@ function token(position: number, messageCid?: string): ProgressToken {
   };
 }
 
-function protocolMessage(name: string): GenericMessage {
+function moduleMessage(name: string): GenericMessage {
   return {
     descriptor: {
       definition: {
-        protocol  : `https://example.com/${name}`,
+        module    : `https://example.com/${name}`,
         published : true,
         structure : {},
         types     : {},
       },
-      interface        : 'Protocols',
+      interface        : 'Modules',
       messageTimestamp : `2026-09-28T00:00:${String(name.length).padStart(2, '0')}.000000Z`,
       method           : 'Configure',
     },
@@ -195,8 +195,8 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('attempts one oldest row and settles duplicate receipts for its CID', async () => {
-    const first = await feedEntry(protocolMessage('first'), 1);
-    const second = await feedEntry(protocolMessage('second'), 2);
+    const first = await feedEntry(moduleMessage('first'), 1);
+    const second = await feedEntry(moduleMessage('second'), 2);
     const fixture = fakeAgent();
     await retain(target(), [first, second]);
     await retain(target('https://second.example.com'), [{ ...first, seq: '1' }]);
@@ -215,7 +215,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('allows redundant concurrent attempts to settle idempotently', async () => {
-    const entry = await feedEntry(protocolMessage('shared'), 1);
+    const entry = await feedEntry(moduleMessage('shared'), 1);
     const fixture = fakeAgent();
     fixture.apply.onFirstCall().resolves({ kind: 'Applied' }).onSecondCall().resolves({ kind: 'Duplicate' });
     await retain(target(), [entry]);
@@ -234,8 +234,8 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('rotates a malformed oldest row and attempts its healthy peer next', async () => {
-    const first = await feedEntry(protocolMessage('first'), 1);
-    const second = await feedEntry(protocolMessage('second'), 2);
+    const first = await feedEntry(moduleMessage('first'), 1);
+    const second = await feedEntry(moduleMessage('second'), 2);
     const fixture = fakeAgent();
     await retain(target(), [first, second]);
     const rows = await progressStore.getQuarantineForLink(syncNextLinkIdentity(target()));
@@ -415,7 +415,7 @@ describe('retryOneQuarantinedRoot', () => {
     const generated = await TestDataGenerator.generateRecordsWrite({ data: new Uint8Array([1, 2, 3]) });
     const scopedTarget: SyncTarget = {
       ...target(),
-      scope: { kind: 'protocolSet', protocols: ['https://example.com/other'] },
+      scope: { kind: 'moduleSet', modules: ['https://example.com/other'] },
     };
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
@@ -483,15 +483,15 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('keeps a dataless parent\'s receipt while retrying its child', async () => {
-    const protocol = 'https://example.com/dependencies';
+    const module = 'https://example.com/dependencies';
     const parent = await TestDataGenerator.generateRecordsWrite({
       data: new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(1),
-      protocol,
+      module,
     });
     const child = await TestDataGenerator.generateRecordsWrite({
       data     : new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(2),
       parentId : parent.message.recordId,
-      protocol,
+      module,
     });
     const childEntry = await feedEntry(child.message, 1);
     const parentEntry = await feedEntry(parent.message, 2);
@@ -507,7 +507,7 @@ describe('retryOneQuarantinedRoot', () => {
       if (admitted === 1) {
         return Promise.resolve({
           kind    : 'Incomplete',
-          missing : [{ type: 'Parent', protocol, recordId: parent.message.recordId }],
+          missing : [{ type: 'Parent', module, recordId: parent.message.recordId }],
         });
       }
       return Promise.resolve(admitted === 2 ? { ancestryOnly: true, kind: 'Applied' } : { kind: 'Applied' });
@@ -544,7 +544,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('retains a terminal admission outcome instead of purging it', async () => {
-    const entry = await feedEntry(protocolMessage('invalid'), 1);
+    const entry = await feedEntry(moduleMessage('invalid'), 1);
     const fixture = fakeAgent();
     fixture.apply.resolves({ kind: 'Invalid', reason: 'invalid signature' });
     await retain(target(), [entry]);
@@ -558,8 +558,8 @@ describe('retryOneQuarantinedRoot', () => {
     const generated = await TestDataGenerator.generateRecordsWrite({
       data            : new Uint8Array([1, 2, 3]),
       parentContextId : 'thread',
-      protocol        : 'https://example.com/chat',
-      protocolPath    : 'thread/message',
+      module          : 'https://example.com/chat',
+      modulePath      : 'thread/message',
     });
     const entry = await feedEntry(generated.message, 1);
     const fixture = fakeAgent();
@@ -578,7 +578,7 @@ describe('retryOneQuarantinedRoot', () => {
 
   it('keeps role rows pending without owner-shaped reads', async () => {
     const fixture = fakeAgent();
-    await retain(roleTarget(), [await feedEntry(protocolMessage('role'), 1)]);
+    await retain(roleTarget(), [await feedEntry(moduleMessage('role'), 1)]);
 
     expect(await retryOneQuarantinedRoot({ agent: fixture.agent, progressStore, target: roleTarget() }))
       .toEqual({ kind: 'pending' });
@@ -590,8 +590,8 @@ describe('retryOneQuarantinedRoot', () => {
   it('rotates a pending row behind a newer peer when the clock does not move', async () => {
     const clock = sinon.useFakeTimers(new Date('2026-09-28T12:00:00.000Z'));
     const fixture = fakeAgent();
-    const first = await feedEntry(protocolMessage('first'), 1);
-    const second = await feedEntry(protocolMessage('second'), 2);
+    const first = await feedEntry(moduleMessage('first'), 1);
+    const second = await feedEntry(moduleMessage('second'), 2);
     await retain(roleTarget(), [first]);
     clock.tick(1);
     await retain(roleTarget(), [second]);
@@ -643,7 +643,7 @@ describe('retryOneQuarantinedRoot', () => {
   });
 
   it('aborts after admission without mutating quarantine', async () => {
-    const entry = await feedEntry(protocolMessage('cancelled'), 1);
+    const entry = await feedEntry(moduleMessage('cancelled'), 1);
     const fixture = fakeAgent();
     let current = true;
     fixture.apply.callsFake(async (): Promise<{ kind: 'Applied' }> => {

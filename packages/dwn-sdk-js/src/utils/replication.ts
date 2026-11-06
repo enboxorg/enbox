@@ -1,8 +1,8 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { KeyValues } from '../types/query-types.js';
 
-import { EncryptionProtocol } from '../protocols/encryption.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
+import { EncryptionModule } from '../modules/encryption.js';
+import { PermissionsModule } from '../modules/permissions.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 const POSITION_PAD_WIDTH = 20;
@@ -17,29 +17,29 @@ type ReplicationMessageDescriptor = GenericMessage['descriptor'] & {
 export class Replication {
   public static readonly globalDomain = '';
 
-  public static protocolDomain(protocolUri: string): string {
-    return `protocol:${protocolUri}`;
+  public static moduleDomain(moduleUri: string): string {
+    return `module:${moduleUri}`;
   }
 
-  public static permissionDomain(protocolUri: string): string {
-    return `perm:${protocolUri}`;
+  public static permissionDomain(moduleUri: string): string {
+    return `perm:${moduleUri}`;
   }
 
-  public static encryptionDomain(protocolUri: string): string {
-    return `enc:${protocolUri}`;
+  public static encryptionDomain(moduleUri: string): string {
+    return `enc:${moduleUri}`;
   }
 
-  public static taggedCoreProtocolDomains(protocolUri: string, protocolsInScope: ReadonlySet<string> = new Set()): string[] {
-    if (Replication.isCoreProtocolUri(protocolUri)) {
+  public static taggedCoreModuleDomains(moduleUri: string, modulesInScope: ReadonlySet<string> = new Set()): string[] {
+    if (Replication.isCoreModuleUri(moduleUri)) {
       return [];
     }
 
     const domains: string[] = [];
-    if (!protocolsInScope.has(PermissionsProtocol.uri)) {
-      domains.push(Replication.permissionDomain(protocolUri));
+    if (!modulesInScope.has(PermissionsModule.uri)) {
+      domains.push(Replication.permissionDomain(moduleUri));
     }
-    if (!protocolsInScope.has(EncryptionProtocol.uri)) {
-      domains.push(Replication.encryptionDomain(protocolUri));
+    if (!modulesInScope.has(EncryptionModule.uri)) {
+      domains.push(Replication.encryptionDomain(moduleUri));
     }
     return domains;
   }
@@ -55,17 +55,17 @@ export class Replication {
     const scopes = [Replication.globalDomain];
 
     const descriptor: ReplicationMessageDescriptor = message.descriptor;
-    const protocol = indexes.protocol;
-    if (typeof protocol === 'string') {
-      scopes.push(Replication.protocolDomain(protocol));
+    const module = indexes.module;
+    if (typeof module === 'string') {
+      scopes.push(Replication.moduleDomain(module));
 
-      const indexedTaggedProtocol = indexes['tag.protocol'];
-      const taggedProtocol = indexedTaggedProtocol ?? descriptor.tags?.protocol;
-      if (typeof taggedProtocol === 'string') {
-        if (protocol === PermissionsProtocol.uri) {
-          scopes.push(Replication.permissionDomain(taggedProtocol));
-        } else if (protocol === EncryptionProtocol.uri) {
-          scopes.push(Replication.encryptionDomain(taggedProtocol));
+      const indexedTaggedModule = indexes['tag.module'];
+      const taggedModule = indexedTaggedModule ?? descriptor.tags?.module;
+      if (typeof taggedModule === 'string') {
+        if (module === PermissionsModule.uri) {
+          scopes.push(Replication.permissionDomain(taggedModule));
+        } else if (module === EncryptionModule.uri) {
+          scopes.push(Replication.encryptionDomain(taggedModule));
         }
       }
     }
@@ -100,9 +100,9 @@ export class Replication {
     );
   }
 
-  /** Whether a protocol URI is one of the core protocols (permissions, encryption). */
-  public static isCoreProtocolUri(protocolUri: string): boolean {
-    return protocolUri === PermissionsProtocol.uri || protocolUri === EncryptionProtocol.uri;
+  /** Whether a module URI is one of the core modules (permissions, encryption). */
+  public static isCoreModuleUri(moduleUri: string): boolean {
+    return moduleUri === PermissionsModule.uri || moduleUri === EncryptionModule.uri;
   }
 
   public static async hashMessageCid(messageCid: string): Promise<Uint8Array> {

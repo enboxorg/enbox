@@ -1,6 +1,6 @@
 import type { ContextRecordsApi } from '../src/typed-enbox.js';
 import type { DwnSubscriptionMessage } from '@enbox/dwn-clients';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 import type { DwnApi, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
 
@@ -12,13 +12,13 @@ import { DateSort, Poller } from '@enbox/dwn-sdk-js';
 
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const definition = {
-  protocol  : 'https://example.com/protocols/typed-record-subscription',
+  module    : 'https://example.com/modules/typed-record-subscription',
   published : true,
   types     : {
     note: {
@@ -38,14 +38,14 @@ const definition = {
     },
   },
   structure: { ignored: {}, label: {}, note: {} },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const protocol = defineProtocol(definition, {
+const module = defineModule(definition, {
   ignored : recordCodecs.json<{ value: string }>(),
   label   : recordCodecs.json<{ text: string }>(),
   note    : recordCodecs.json<{ title: string }>(),
 });
-const application = defineApplicationManifest({ protocols: [protocol] } as const);
+const application = defineApplicationManifest({ modules: [module] } as const);
 
 function testRecord(
   id: string,
@@ -73,15 +73,15 @@ function testRecord(
         dataSize         : 1,
         dateCreated      : timestamp,
         messageTimestamp : timestamp,
-        protocol         : definition.protocol,
-        protocolPath     : path,
+        module           : definition.module,
+        modulePath       : path,
       },
     };
   return {
-    deleted      : options.deleted === true,
+    deleted    : options.deleted === true,
     id,
-    protocolPath : path,
-    rawMessage   : message,
+    modulePath : path,
+    rawMessage : message,
   } as Record;
 }
 
@@ -98,21 +98,21 @@ function event(): DwnSubscriptionMessage {
 
 function contextRecords(dwn: DwnApi): ContextRecordsApi<
   typeof definition,
-  typeof protocol.codecs,
+  typeof module.codecs,
   'note'
 > {
-  return new TypedEnbox(dwn, protocol, {
+  return new TypedEnbox(dwn, module, {
     context: {
-      contextId     : 'noteContext',
-      protocolPath  : 'note',
-      protocolPaths : new Set(['note']),
+      contextId   : 'noteContext',
+      modulePath  : 'note',
+      modulePaths : new Set(['note']),
     },
-  }).records as unknown as ContextRecordsApi<typeof definition, typeof protocol.codecs, 'note'>;
+  }).records as unknown as ContextRecordsApi<typeof definition, typeof module.codecs, 'note'>;
 }
 
 describe('typed record subscriptions', () => {
   it('requires context scope for initial replay', async () => {
-    const notes = new TypedEnbox({} as DwnApi, protocol);
+    const notes = new TypedEnbox({} as DwnApi, module);
     const subscribe = notes.records.subscribe as unknown as (...args: unknown[]) => Promise<unknown>;
 
     await expect(subscribe('note', { initial: true }, (): void => {}))
@@ -136,7 +136,7 @@ describe('typed record subscriptions', () => {
       followedSourceId  : undefined,
       recordTenantDid   : 'did:example:alice',
       subscribeRecordFrames,
-    } as unknown as DwnApi, protocol);
+    } as unknown as DwnApi, module);
     (typed as unknown as { _configured: boolean })._configured = true;
 
     const activeController = new AbortController();
@@ -208,7 +208,7 @@ describe('typed record subscriptions', () => {
         },
       },
       subscribeRecordFrames: async (
-        _request: { paths: readonly string[]; protocol: string },
+        _request: { paths: readonly string[]; module: string },
         handler: typeof deliver,
       ) => {
         order.push('subscribe');
@@ -297,7 +297,7 @@ describe('typed record subscriptions', () => {
       recordTenantDid       : 'did:example:alice',
       records               : { query: async (): Promise<RecordsQueryResponse> => queryReply([]) },
       subscribeRecordFrames : async (
-        _request: { paths: readonly string[]; protocol: string },
+        _request: { paths: readonly string[]; module: string },
         handler: typeof deliver,
       ) => {
         deliver = handler;
@@ -347,7 +347,7 @@ describe('typed record subscriptions', () => {
       recordTenantDid       : 'did:example:alice',
       records               : { query: async (): Promise<RecordsQueryResponse> => queryReply([]) },
       subscribeRecordFrames : async (
-        _request: { paths: readonly string[]; protocol: string },
+        _request: { paths: readonly string[]; module: string },
         handler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
       ) => {
         for (let index = 0; index <= 1_000; index++) {
@@ -383,7 +383,7 @@ describe('typed record subscriptions', () => {
       recordTenantDid       : 'did:example:alice',
       records               : { query },
       subscribeRecordFrames : async (
-        _request: { paths: readonly string[]; protocol: string },
+        _request: { paths: readonly string[]; module: string },
         handler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
       ) => {
         await handler(event(), buffered);
@@ -503,7 +503,7 @@ describe('typed record subscriptions', () => {
       followedSourceId      : undefined,
       recordTenantDid       : 'did:example:alice',
       subscribeRecordFrames : async (
-        _request: { paths: readonly string[]; protocol: string },
+        _request: { paths: readonly string[]; module: string },
         handler: typeof deliver,
       ) => {
         deliver = handler;
@@ -531,9 +531,9 @@ describe('typed record subscriptions', () => {
     const processRequest = sinon.spy(context.enbox.agent, 'processDwnRequest');
 
     try {
-      const notes = context.enbox.using(protocol);
+      const notes = context.enbox.using(module);
       await expect(notes.records.subscribe([], (): void => {})).rejects.toThrow(
-        'at least one protocol path is required',
+        'at least one module path is required',
       );
       await notes.records.create('note', { data: { title: 'existing snapshot' } });
       const changes: Array<{ id: string; path: 'label' | 'note'; value?: string; type: 'write' | 'delete' }> = [];
@@ -561,8 +561,8 @@ describe('typed record subscriptions', () => {
       expect(subscribeRequest).toMatchObject({
         messageParams: {
           filters: [
-            { interface: 'Records', protocol: definition.protocol, protocolPath: 'note' },
-            { interface: 'Records', protocol: definition.protocol, protocolPath: 'label' },
+            { interface: 'Records', module: definition.module, modulePath: 'note' },
+            { interface: 'Records', module: definition.module, modulePath: 'label' },
           ],
         },
         target: context.session.did,

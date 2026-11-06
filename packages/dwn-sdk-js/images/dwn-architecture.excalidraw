@@ -1090,11 +1090,11 @@
       "locked": false,
       "fontSize": 20,
       "fontFamily": 1,
-      "text": "Protocols\nHandler",
+      "text": "Modules\nHandler",
       "textAlign": "center",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Protocols\nHandler",
+      "originalText": "Modules\nHandler",
       "lineHeight": 1.2,
       "baseline": 41
     },

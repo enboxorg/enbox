@@ -316,15 +316,15 @@ describe('filters util', () => {
       it('prioritizes known properties', async () => {
         // recordId
         const inputFilter:Filter = {
-          recordId     : 'some-record-id',
-          attester     : 'some-attester',
-          parentId     : 'some-parent-id',
-          recipient    : 'some-recipient',
-          contextId    : 'some-context-id',
-          protocolPath : 'some-protocol-path',
-          schema       : 'some-schema',
-          protocol     : 'some-protocol',
-          some         : 'property'
+          recordId   : 'some-record-id',
+          attester   : 'some-attester',
+          parentId   : 'some-parent-id',
+          recipient  : 'some-recipient',
+          contextId  : 'some-context-id',
+          modulePath : 'some-module-path',
+          schema     : 'some-schema',
+          module     : 'some-module',
+          some       : 'property'
         };
 
         // go through in order of priority deleting the property after checking for it
@@ -343,13 +343,13 @@ describe('filters util', () => {
         expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ contextId: 'some-context-id' });
         delete inputFilter.contextId;
 
-        expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ protocolPath: 'some-protocol-path' });
-        delete inputFilter.protocolPath;
+        expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ modulePath: 'some-module-path' });
+        delete inputFilter.modulePath;
 
         expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ schema: 'some-schema' });
         delete inputFilter.schema;
 
-        expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ protocol: 'some-protocol' });
+        expect(FilterSelector.reduceFilter(inputFilter)).toEqual({ module: 'some-module' });
       });
 
       it('returns first filter if no known filters exist', async () => {

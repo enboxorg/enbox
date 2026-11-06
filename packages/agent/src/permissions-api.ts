@@ -7,7 +7,7 @@ import { isRecordsType } from './dwn-type-guards.js';
 import { mapConcurrent } from './utils.js';
 import { Convert, TtlCache } from '@enbox/common';
 import { DwnInterface, DwnPermissionGrant, DwnPermissionRequest } from './types/dwn.js';
-import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionScopeMatcher, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
 
 const REVOCATION_CHECK_CONCURRENCY = 8;
 const PERMISSION_CATALOG_CACHE_MAX = 100;
@@ -22,11 +22,11 @@ type GrantMatchRank = {
 
 /** Indicates that no active permission grant matches a delegated request. */
 export class PermissionGrantNotFoundError extends Error {
-  public constructor({ messageType, protocol, protocolPath, contextId }: Pick<
+  public constructor({ messageType, module, modulePath, contextId }: Pick<
     GetPermissionParams,
-    'messageType' | 'protocol' | 'protocolPath' | 'contextId'
+    'messageType' | 'module' | 'modulePath' | 'contextId'
   >) {
-    const scope = [protocol, protocolPath, contextId].filter(Boolean).join('/') || undefined;
+    const scope = [module, modulePath, contextId].filter(Boolean).join('/') || undefined;
     super(`AgentPermissionsApi: No matching permission grant found for ${messageType}: ${scope}`);
     this.name = 'PermissionGrantNotFoundError';
   }
@@ -65,8 +65,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     delegateDid,
     delegate,
     messageType,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     contextId,
     forceRefresh = false
   }: GetPermissionParams): Promise<PermissionGrantEntry> {
@@ -78,8 +78,8 @@ export class AgentPermissionsApi implements PermissionsApi {
         delegateDid,
         delegate,
         messageType,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         contextId,
       }, cachedCatalog);
       if (cachedGrant !== undefined) {
@@ -101,13 +101,13 @@ export class AgentPermissionsApi implements PermissionsApi {
       delegateDid,
       delegate,
       messageType,
-      protocol,
-      protocolPath,
+      module,
+      modulePath,
       contextId,
     }, permissionGrants);
 
     if (grant === undefined) {
-      throw new PermissionGrantNotFoundError({ messageType, protocol, protocolPath, contextId });
+      throw new PermissionGrantNotFoundError({ messageType, module, modulePath, contextId });
     }
 
     return grant;
@@ -161,14 +161,14 @@ export class AgentPermissionsApi implements PermissionsApi {
 
   /** Selects one active, non-revoked grant from a pair-level catalog. */
   private async matchGrantForRequest(
-    { connectedDid, delegateDid, delegate, messageType, protocol, protocolPath, contextId }: Omit<GetPermissionParams, 'forceRefresh'>,
+    { connectedDid, delegateDid, delegate, messageType, module, modulePath, contextId }: Omit<GetPermissionParams, 'forceRefresh'>,
     permissionGrants: PermissionGrantEntry[],
   ): Promise<PermissionGrantEntry | undefined> {
     const activeGrants = permissionGrants.filter(({ grant }): boolean => !this._revokedGrantIds.has(grant.id));
     return AgentPermissionsApi.matchGrantFromArray(
       connectedDid,
       delegateDid,
-      { messageType, protocol, protocolPath, contextId },
+      { messageType, module, modulePath, contextId },
       activeGrants,
       delegate,
     );
@@ -179,14 +179,14 @@ export class AgentPermissionsApi implements PermissionsApi {
     target,
     grantee,
     grantor,
-    protocol,
+    module,
     remote = false,
     checkRevoked = false,
   }: FetchPermissionsParams): Promise<PermissionGrantEntry[]> {
     const cacheGeneration = this._permissionCacheGeneration;
 
-    // filter by a protocol using tags if provided
-    const tags = protocol ? { protocol } : undefined;
+    // filter by a module using tags if provided
+    const tags = module ? { module } : undefined;
 
     const params: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
       author        : author,
@@ -194,10 +194,10 @@ export class AgentPermissionsApi implements PermissionsApi {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          author       : grantor, // the author of the grant would be the grantor
-          recipient    : grantee, // the recipient of the grant would be the grantee
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.grantPath,
+          author     : grantor, // the author of the grant would be the grantor
+          recipient  : grantee, // the recipient of the grant would be the grantee
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.grantPath,
           tags
         }
       }
@@ -267,11 +267,11 @@ export class AgentPermissionsApi implements PermissionsApi {
   async fetchRequests({
     author,
     target,
-    protocol,
+    module,
     remote = false
   }:FetchPermissionRequestParams):Promise<PermissionRequestEntry[]> {
-    // filter by a protocol using tags if provided
-    const tags = protocol ? { protocol } : undefined;
+    // filter by a module using tags if provided
+    const tags = module ? { module } : undefined;
 
     const params: ProcessDwnRequest<DwnInterface.RecordsQuery> = {
       author        : author,
@@ -279,8 +279,8 @@ export class AgentPermissionsApi implements PermissionsApi {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.requestPath,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.requestPath,
           tags
         }
       }
@@ -326,9 +326,9 @@ export class AgentPermissionsApi implements PermissionsApi {
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
         filter: {
-          parentId     : grantRecordId,
-          protocol     : PermissionsProtocol.uri,
-          protocolPath : PermissionsProtocol.revocationPath,
+          parentId   : grantRecordId,
+          module     : PermissionsModule.uri,
+          modulePath : PermissionsModule.revocationPath,
         }
       }
     };
@@ -354,8 +354,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     const { author, store = false, delegated = false, ...createGrantParams } = params;
 
     let tags = undefined;
-    if (PermissionsProtocol.hasProtocolScope(createGrantParams.scope)) {
-      tags = { protocol: createGrantParams.scope.protocol };
+    if (PermissionsModule.hasModuleScope(createGrantParams.scope)) {
+      tags = { module: createGrantParams.scope.module };
     }
 
     const permissionGrantData: PermissionGrantData = {
@@ -373,10 +373,10 @@ export class AgentPermissionsApi implements PermissionsApi {
     const permissionsGrantBytes = Convert.object(permissionGrantData).toUint8Array();
 
     const messageParams: DwnMessageParams[DwnInterface.RecordsWrite] = {
-      recipient    : createGrantParams.grantedTo,
-      protocol     : PermissionsProtocol.uri,
-      protocolPath : PermissionsProtocol.grantPath,
-      dataFormat   : 'application/json',
+      recipient  : createGrantParams.grantedTo,
+      module     : PermissionsModule.uri,
+      modulePath : PermissionsModule.grantPath,
+      dataFormat : 'application/json',
       tags
     };
 
@@ -411,8 +411,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     const { author, store = false, delegated = false, ...createGrantParams } = params;
 
     let tags = undefined;
-    if (PermissionsProtocol.hasProtocolScope(createGrantParams.scope)) {
-      tags = { protocol: createGrantParams.scope.protocol };
+    if (PermissionsModule.hasModuleScope(createGrantParams.scope)) {
+      tags = { module: createGrantParams.scope.module };
     }
 
     const permissionRequestData: PermissionRequestData = {
@@ -424,9 +424,9 @@ export class AgentPermissionsApi implements PermissionsApi {
     const permissionRequestBytes = Convert.object(permissionRequestData).toUint8Array();
 
     const messageParams: DwnMessageParams[DwnInterface.RecordsWrite] = {
-      protocol     : PermissionsProtocol.uri,
-      protocolPath : PermissionsProtocol.requestPath,
-      dataFormat   : 'application/json',
+      module     : PermissionsModule.uri,
+      modulePath : PermissionsModule.requestPath,
+      dataFormat : 'application/json',
       tags
     };
 
@@ -461,14 +461,14 @@ export class AgentPermissionsApi implements PermissionsApi {
     const permissionRevocationBytes = Convert.object(revokeData).toUint8Array();
 
     let tags = undefined;
-    if (PermissionsProtocol.hasProtocolScope(grant.scope)) {
-      tags = { protocol: grant.scope.protocol };
+    if (PermissionsModule.hasModuleScope(grant.scope)) {
+      tags = { module: grant.scope.module };
     }
 
     const messageParams: DwnMessageParams[DwnInterface.RecordsWrite] = {
       parentContextId : grant.id,
-      protocol        : PermissionsProtocol.uri,
-      protocolPath    : PermissionsProtocol.revocationPath,
+      module          : PermissionsModule.uri,
+      modulePath      : PermissionsModule.revocationPath,
       dataFormat      : 'application/json',
       tags
     };
@@ -525,8 +525,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantee: string,
     messageParams: {
       messageType: T,
-      protocol?: string,
-      protocolPath?: string,
+      module?: string,
+      modulePath?: string,
       contextId?: string,
     },
     grants: PermissionGrantEntry[],
@@ -544,9 +544,9 @@ export class AgentPermissionsApi implements PermissionsApi {
       if (delegated === true && grant.delegated !== true) {
         continue;
       }
-      const { messageType, protocol, protocolPath, contextId } = messageParams;
+      const { messageType, module, modulePath, contextId } = messageParams;
 
-      if (this.matchScopeFromGrant(grantor, grantee, messageType, grant, protocol, protocolPath, contextId)) {
+      if (this.matchScopeFromGrant(grantor, grantee, messageType, grant, module, modulePath, contextId)) {
         const rank = AgentPermissionsApi.getGrantMatchRank(messageType, grant);
         if (bestRank === undefined || AgentPermissionsApi.isGrantMatchRankBetter(rank, bestRank)) {
           bestEntry = { grant, message };
@@ -570,13 +570,13 @@ export class AgentPermissionsApi implements PermissionsApi {
 
   private static getScopeSpecificity(grant: PermissionGrant): number {
     const scope = grant.scope;
-    if ('protocolPath' in scope && typeof scope.protocolPath === 'string') {
-      return 2_000 + scope.protocolPath.split('/').length;
+    if ('modulePath' in scope && typeof scope.modulePath === 'string') {
+      return 2_000 + scope.modulePath.split('/').length;
     }
     if ('contextId' in scope && typeof scope.contextId === 'string') {
       return 1_000 + scope.contextId.split('/').length;
     }
-    if ('protocol' in scope && typeof scope.protocol === 'string') {
+    if ('module' in scope && typeof scope.module === 'string') {
       return 1;
     }
     return 0;
@@ -607,8 +607,8 @@ export class AgentPermissionsApi implements PermissionsApi {
     grantee: string,
     messageType: T,
     grant: PermissionGrant,
-    protocol?: string,
-    protocolPath?: string,
+    module?: string,
+    modulePath?: string,
     contextId?: string
   ): boolean {
     // Check if the grant matches the provided parameters
@@ -651,10 +651,10 @@ export class AgentPermissionsApi implements PermissionsApi {
     if (isMessagesScopeMatch || isRecordsScopeMatch || isOtherScopeMatch) {
       if (isRecordsType(messageType)) {
         const recordScope = scope as DwnRecordsPermissionScope;
-        return PermissionScopeMatcher.matches(recordScope, { protocol, protocolPath, contextId });
+        return PermissionScopeMatcher.matches(recordScope, { module, modulePath, contextId });
       } else {
         const messagesScope = scope;
-        return PermissionScopeMatcher.matches(messagesScope, { protocol, protocolPath, contextId });
+        return PermissionScopeMatcher.matches(messagesScope, { module, modulePath, contextId });
       }
     }
 

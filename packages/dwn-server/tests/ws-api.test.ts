@@ -79,7 +79,7 @@ describe('websocket api', function () {
 
   it('RecordsWrite messages are not supported', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { recordsWrite, dataStream } = await createRecordsWriteMessage(alice);
     const dataBytes = await DataStream.toBytes(dataStream);
@@ -103,7 +103,7 @@ describe('websocket api', function () {
 
   it('applies replicated RecordsWrite messages with large data over HTTP', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const dataBytes = new Uint8Array(1_048_577);
     dataBytes.fill(17);
@@ -134,7 +134,7 @@ describe('websocket api', function () {
 
   it('completes a stored ancestry-only write with the same CID over HTTP', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const data = new Uint8Array(31_000).fill(9);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
     const client = new HttpDwnRpcClient();
@@ -160,7 +160,7 @@ describe('websocket api', function () {
 
   it('completes a stored ancestry-only write with the same CID over WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
     const data = new Uint8Array([9, 10, 11, 12]);
     const { recordsWrite } = await createRecordsWriteMessage(alice, { data });
     const client = new WebSocketDwnRpcClient();
@@ -186,7 +186,7 @@ describe('websocket api', function () {
 
   it('applies replicated RecordsWrite messages with large data over WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const dataBytes = new Uint8Array(1_048_577);
     dataBytes.fill(23);
@@ -217,7 +217,7 @@ describe('websocket api', function () {
 
   it('rejects data-bearing replicated RecordsWrite messages without data over WebSocket', async function () {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { recordsWrite } = await createRecordsWriteMessage(alice);
     const requestId = crypto.randomUUID();
@@ -279,7 +279,7 @@ describe('websocket api', function () {
 
   it('subscribes to records and receives updates', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -355,7 +355,7 @@ describe('websocket api', function () {
 
   it('stops receiving updates when subscription is closed', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -446,7 +446,7 @@ describe('websocket api', function () {
 
   it('should fail to add subscription using a `JsonRpcId` that already exists for a subscription in that socket', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -539,7 +539,7 @@ describe('websocket api', function () {
 
   it('should receive an updated message as well as the initial write when subscribing to a record', async () => {
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     // write an initial message
     const initialWrite = await TestDataGenerator.generateRecordsWrite({
@@ -772,7 +772,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     await setupServer(2); // maxInFlight = 2
 
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -812,7 +812,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     await setupServer(1); // maxInFlight = 1
 
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -847,7 +847,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     await setupServer(2); // maxInFlight = 2
 
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,
@@ -896,7 +896,7 @@ describe('websocket backpressure (rpc.ack)', function () {
     await setupServer(1); // maxInFlight = 1
 
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
     const { message } = await TestDataGenerator.generateRecordsSubscribe({
       author : alice,

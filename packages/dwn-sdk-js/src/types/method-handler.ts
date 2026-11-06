@@ -1,4 +1,4 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
+import type { CoreModuleRegistry } from '../core/core-module.js';
 import type { DataStore } from './data-store.js';
 import type { DidResolver } from '@enbox/dids';
 import type { MessageStore } from './message-store.js';
@@ -36,6 +36,6 @@ export type HandlerDependencies = {
   validationStateReader: ValidationStateReader;
   dataStore?: DataStore;
   resumableTaskManager?: ResumableTaskManager;
-  coreProtocols?: CoreProtocolRegistry;
+  coreModules?: CoreModuleRegistry;
   eventLog?: EventLog;
 };

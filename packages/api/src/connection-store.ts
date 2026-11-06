@@ -56,13 +56,13 @@ import { isConnectDeniedError } from '@enbox/auth';
 import { omitUndefined } from '@enbox/common';
 import {
   isServiceConfigNoticeDelivery,
-  syncRegistrationCoversProtocol,
+  syncRegistrationCoversModule,
 } from '@enbox/agent';
 
 import { Enbox } from './enbox.js';
-import { getApplicationProtocolRequests } from './application-manifest.js';
+import { getApplicationModuleRequests } from './application-manifest.js';
 import { latestPausedRecoveryLink } from './sync-status-error.js';
-import { ProtocolReadinessError } from './protocol-readiness.js';
+import { ModuleReadinessError } from './module-readiness.js';
 import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
 /**
@@ -144,7 +144,7 @@ type ConnectionSnapshotContents = Readonly<{
 
   /**
    * Latest resolution status of the connected DID's advertised remote DWN
-   * service. Live changes require read access to `ServiceConfigProtocol`.
+   * service. Live changes require read access to `ServiceConfigModule`.
    */
   remoteDwn?: DwnEndpointResolution;
 
@@ -162,8 +162,8 @@ type ConnectionSnapshotContents = Readonly<{
 
   /**
    * Whether delegated grants have expired or been revoked, the wallet's
-   * protocol configuration is missing or incompatible, or the session's sync
-   * registration no longer covers every application protocol that requested
+   * module configuration is missing or incompatible, or the session's sync
+   * registration no longer covers every application module that requested
    * read access. Continuing requires fresh wallet approval. Call
    * {@link ConnectionStore.connect}; it refreshes a repairable retained
    * session or starts a new connection after that session has ended. Cleared
@@ -204,19 +204,19 @@ type ConnectedConnectionSnapshot = Extract<ConnectionSnapshot, { phase: 'connect
 type ConnectionSnapshotPatch = Partial<ConnectionSnapshotContents & { phase: ConnectionPhase }>;
 type SnapshotListener = (snapshot: ConnectionSnapshot) => void;
 
-/** Delegated-connect options for a connection store, whose protocols come only from the manifest. */
-export type ConnectionStoreConnectOptions = Omit<HandlerConnectOptions, 'protocols' | 'sync'> & {
+/** Delegated-connect options for a connection store, whose modules come only from the manifest. */
+export type ConnectionStoreConnectOptions = Omit<HandlerConnectOptions, 'modules' | 'sync'> & {
   createIdentity?: never;
   dwnEndpoints?: never;
-  identitySyncProtocols?: never;
+  identitySyncModules?: never;
   metadata?: never;
-  protocols?: never;
+  modules?: never;
   sync?: never;
 };
 
-/** Refresh options for a connection store, whose protocols come only from the manifest. */
-export type ConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & {
-  protocols?: never;
+/** Refresh options for a connection store, whose modules come only from the manifest. */
+export type ConnectionStoreRefreshOptions = Omit<RefreshOptions, 'modules'> & {
+  modules?: never;
 };
 
 /**
@@ -225,21 +225,21 @@ export type ConnectionStoreRefreshOptions = Omit<RefreshOptions, 'protocols'> & 
  * Accepts `AuthManagerOptions` except `agent` — everything the store does not
  * consume itself (`connectHandler`, `sync`, `storage`, `password`, …) is
  * forwarded to `AuthManager.create()` during the first action. An omitted
- * local identity sync scope defaults to the manifest's protocol URIs for a
+ * local identity sync scope defaults to the manifest's module URIs for a
  * store-owned manager. To use a caller-owned agent, create an `AuthManager`
  * around it and pass that manager through `auth`.
  */
-type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent' | 'identitySyncProtocols'> & {
+type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent' | 'identitySyncModules'> & {
   /** Raw agents have ambiguous ownership; pass a caller-owned manager through {@link auth}. */
   agent?: never;
 
   /**
    * Local identity sync scope for a store-owned manager. Defaults to all
-   * application protocol URIs, including during session restoration. Explicit
+   * application module URIs, including during session restoration. Explicit
    * scopes override this default; a per-call vault override applies only to
    * that call. Configure a persistent broader scope here. Ignored with `auth`.
    */
-  identitySyncProtocols?: NonNullable<AuthManagerOptions['identitySyncProtocols']>;
+  identitySyncModules?: NonNullable<AuthManagerOptions['identitySyncModules']>;
 
   /**
    * A pre-built `AuthManager` to drive instead of creating one.
@@ -257,15 +257,15 @@ type ConnectionStoreSharedOptions = Omit<AuthManagerOptions, 'agent' | 'identity
 
 /** Options for a connection store backed by one canonical application manifest. */
 export type ConnectionStoreOptions = ConnectionStoreSharedOptions & {
-  /** One or more typed protocols used for delegated grants and session-local readiness. */
+  /** One or more typed modules used for delegated grants and session-local readiness. */
   application: ApplicationManifest;
 
-  /** Delegated monitor options whose automatic refresh derives protocols from {@link application}. */
+  /** Delegated monitor options whose automatic refresh derives modules from {@link application}. */
   monitor?: (Omit<ConnectionMonitorOptions, 'autoRefresh'> & {
     autoRefresh?: ConnectionStoreRefreshOptions;
   }) | false;
 
-  /** Require owner protocols to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
+  /** Require owner modules to be published and verified at the hosted DWN before connecting. Defaults to `false`. */
   requireHostedReadiness?: boolean;
 };
 
@@ -299,7 +299,7 @@ export interface ConnectionStore extends ObservableStore<ConnectionSnapshot> {
   initialize(): Promise<ConnectionSnapshot>;
 
   /**
-   * Runs the delegated wallet flow with protocols from the application
+   * Runs the delegated wallet flow with modules from the application
    * manifest. When a delegated session requires wallet reapproval and still
    * survives, this repairs it through `AuthManager.refresh()` instead of
    * starting a second session.
@@ -454,16 +454,16 @@ function isAuthoritativeActiveSession(
 
 /** Whether readiness rejected a delegated definition that needs fresh wallet approval. */
 function requiresWalletReapproval(error: Error): boolean {
-  return error instanceof ProtocolReadinessError &&
+  return error instanceof ModuleReadinessError &&
     error.cause instanceof WalletReapprovalRequiredError;
 }
 
 /** Internal actionable failure for an incomplete delegated application sync registration. */
 class ManifestSyncRegistrationCoverageError extends Error {
-  public constructor(session: AgentSession, requiredProtocols: readonly string[]) {
+  public constructor(session: AgentSession, requiredModules: readonly string[]) {
     super(
       `[@enbox/api] The delegated session for '${session.did}' does not have a sync registration ` +
-      `for delegate '${session.delegateDid}' covering every read protocol: ${requiredProtocols.join(', ')}. ` +
+      `for delegate '${session.delegateDid}' covering every read module: ${requiredModules.join(', ')}. ` +
       'Refresh the wallet approval to continue.'
     );
     this.name = 'ManifestSyncRegistrationCoverageError';
@@ -477,15 +477,15 @@ type ManifestCoverageBinding = {
   unsubscribe?: () => void;
 };
 
-/** Whether one exact registration matches the delegate and every manifest read protocol. */
+/** Whether one exact registration matches the delegate and every manifest read module. */
 function manifestRegistrationCoversSession(
   session: AgentSession,
-  requiredProtocols: readonly string[],
+  requiredModules: readonly string[],
   registration: SyncIdentityOptions | undefined,
 ): boolean {
   return registration?.delegateDid === session.delegateDid
-    && requiredProtocols.every((protocol): boolean => (
-      syncRegistrationCoversProtocol(registration, protocol)
+    && requiredModules.every((module): boolean => (
+      syncRegistrationCoversModule(registration, module)
     ));
 }
 
@@ -527,7 +527,7 @@ type SyncStatusBinding = {
 class HeadlessConnectionStore implements ConnectionStore {
   private readonly _application: ApplicationManifest;
   private readonly _authManagerOptions: AuthManagerOptions;
-  private readonly _manifestReadProtocols: readonly string[];
+  private readonly _manifestReadModules: readonly string[];
   private readonly _providedAuth?: AuthManager;
   private readonly _monitor: Exclude<ConnectionStoreOptions['monitor'], undefined>;
   private readonly _requireHostedReadiness: boolean;
@@ -555,14 +555,14 @@ class HeadlessConnectionStore implements ConnectionStore {
       );
     }
     const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
-    const [firstProtocol, ...remainingProtocols] = application.protocols;
-    if (firstProtocol === undefined) {
-      throw new TypeError('[@enbox/api] createConnectionStore requires at least one application protocol.');
+    const [firstModule, ...remainingModules] = application.modules;
+    if (firstModule === undefined) {
+      throw new TypeError('[@enbox/api] createConnectionStore requires at least one application module.');
     }
     this._application = application;
-    this._manifestReadProtocols = application.protocols.flatMap(({ permissions, protocol }): string[] => (
+    this._manifestReadModules = application.modules.flatMap(({ permissions, module }): string[] => (
       permissions.includes('read')
-        ? [protocol.definition.protocol]
+        ? [module.definition.module]
         : []
     ));
     this._providedAuth = auth;
@@ -570,9 +570,9 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
     if (auth === undefined) {
-      authManagerOptions.identitySyncProtocols ??= [
-        firstProtocol.protocol.definition.protocol,
-        ...remainingProtocols.map(({ protocol }): string => protocol.definition.protocol),
+      authManagerOptions.identitySyncModules ??= [
+        firstModule.module.definition.module,
+        ...remainingModules.map(({ module }): string => module.definition.module),
       ];
     }
     this._authManagerOptions = authManagerOptions;
@@ -605,7 +605,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   public connect(options?: ConnectionStoreConnectOptions): Promise<ConnectionSnapshot> {
-    const protocols = getApplicationProtocolRequests(this._application);
+    const modules = getApplicationModuleRequests(this._application);
     return this._startConnectFlow((auth: AuthManager): Promise<AgentSession> => {
       if (this._snapshot.walletReapprovalRequired === true
         && isActiveSession(auth.session)
@@ -615,7 +615,7 @@ class HeadlessConnectionStore implements ConnectionStore {
           : { connectHandler: options.connectHandler };
         return auth.refresh(this._refreshOptions(refreshOptions));
       }
-      return auth.connect({ ...options, protocols });
+      return auth.connect({ ...options, modules });
     });
   }
 
@@ -1084,7 +1084,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       return existing;
     }
     this._unbindManifestCoverage();
-    if (session.delegateDid === undefined || this._manifestReadProtocols.length === 0) {
+    if (session.delegateDid === undefined || this._manifestReadModules.length === 0) {
       return undefined;
     }
 
@@ -1110,7 +1110,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       if (this._isAuthoritativeSession(session)) {
         this._manifestCoverageMissing = !manifestRegistrationCoversSession(
           session,
-          this._manifestReadProtocols,
+          this._manifestReadModules,
           event.options,
         );
       }
@@ -1142,12 +1142,12 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
       const covered = manifestRegistrationCoversSession(
         binding.session,
-        this._manifestReadProtocols,
+        this._manifestReadModules,
         registration,
       );
       this._manifestCoverageMissing = !covered;
       if (!covered) {
-        throw new ManifestSyncRegistrationCoverageError(binding.session, this._manifestReadProtocols);
+        throw new ManifestSyncRegistrationCoverageError(binding.session, this._manifestReadModules);
       }
       return revision;
     }
@@ -1188,7 +1188,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     application: ApplicationManifest,
   ): Promise<Error | undefined> {
     try {
-      await enbox.protocols.ensureReady({ application, publish: this._requireHostedReadiness });
+      await enbox.modules.ensureReady({ application, publish: this._requireHostedReadiness });
       return undefined;
     } catch (cause: unknown) {
       return toError(cause);
@@ -1232,7 +1232,7 @@ class HeadlessConnectionStore implements ConnectionStore {
    *
    * - An active auth session that survived an auth/approval failure (e.g. a
    *   denied refresh) keeps the store `'connected'`, with `error` set.
-   *   Protocol-readiness failures are the fail-closed exception: their
+   *   Module-readiness failures are the fail-closed exception: their
    *   unready session stays unpublished.
    * - A denial without a surviving session rests at `'disconnected'` —
    *   denial is a user decision, not a failure phase.
@@ -1247,7 +1247,7 @@ class HeadlessConnectionStore implements ConnectionStore {
     if (error instanceof ManifestSyncRegistrationCoverageError) {
       return this._publishManifestCoverageFailure(error);
     }
-    if (error instanceof ProtocolReadinessError) {
+    if (error instanceof ModuleReadinessError) {
       const walletReapprovalRequired = requiresWalletReapproval(error)
         ? true
         : this._manifestCoverageMissing || undefined;
@@ -1367,7 +1367,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         return;
       }
       const error = toError(cause);
-      if (error instanceof ProtocolReadinessError
+      if (error instanceof ModuleReadinessError
         || error instanceof ManifestSyncRegistrationCoverageError
         || this._snapshot.session !== auth.session) {
         this._applyActionFailure(generation, error);
@@ -1391,7 +1391,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   }
 
   private _refreshOptions(options: ConnectionStoreRefreshOptions): RefreshOptions {
-    return { ...options, protocols: getApplicationProtocolRequests(this._application) };
+    return { ...options, modules: getApplicationModuleRequests(this._application) };
   }
 
   private _publishDisconnected(): ConnectionSnapshot {
@@ -1472,10 +1472,10 @@ class HeadlessConnectionStore implements ConnectionStore {
       }
       if (event.type === 'identity:registration-change'
         && session.delegateDid !== undefined
-        && this._manifestReadProtocols.length > 0
-        && !manifestRegistrationCoversSession(session, this._manifestReadProtocols, event.options)) {
+        && this._manifestReadModules.length > 0
+        && !manifestRegistrationCoversSession(session, this._manifestReadModules, event.options)) {
         this._publishManifestCoverageFailure(
-          new ManifestSyncRegistrationCoverageError(session, this._manifestReadProtocols),
+          new ManifestSyncRegistrationCoverageError(session, this._manifestReadModules),
           session,
         );
         return;

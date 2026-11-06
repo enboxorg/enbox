@@ -13,7 +13,7 @@ import { Encoder } from './encoder.js';
 import { FilterUtility } from './filter.js';
 import { Jws } from './jws.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { SortDirection } from '../types/query-types.js';
 import { X25519 } from '@enbox/crypto';
@@ -22,7 +22,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 import { Encryption, ROLE_AUDIENCE_DERIVATION_SCHEME } from './encryption.js';
 import { ENCRYPTION_CONTROL_PATHS, isEncryptionControlPath } from '../core/constants.js';
 import { HdKey, KeyDerivationScheme } from './hd-key.js';
-import { normalizeProtocolUrl, normalizeSchemaUrl } from './url.js';
+import { normalizeModuleUrl, normalizeSchemaUrl } from './url.js';
 
 type AuthorDelegableMessage =
   | MessagesQueryMessage
@@ -162,8 +162,8 @@ export class Records {
   ): string[] {
 
     const descriptor = recordsWriteMessage.descriptor;
-    if (keyDerivationScheme === KeyDerivationScheme.ProtocolPath) {
-      return Records.constructKeyDerivationPathUsingProtocolPathScheme(descriptor);
+    if (keyDerivationScheme === KeyDerivationScheme.ModulePath) {
+      return Records.constructKeyDerivationPathUsingModulePathScheme(descriptor);
     }
 
     if (keyDerivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME) {
@@ -177,19 +177,19 @@ export class Records {
   }
 
   /**
-   * Constructs the full key derivation path using `protocolPath` scheme.
+   * Constructs the full key derivation path using `modulePath` scheme.
    *
-   * The path is `[scheme, protocol, ...protocolPathSegments]`. Because each record's `protocol`
-   * field always refers to the protocol it was written under, records in composed protocols
-   * naturally derive independent key hierarchies — a `$ref` parent (referenced protocol) and
-   * its children (composing protocol) use different protocol URIs and thus different key trees.
+   * The path is `[scheme, module, ...modulePathSegments]`. Because each record's `module`
+   * field always refers to the module it was written under, records in composed modules
+   * naturally derive independent key hierarchies — a `$ref` parent (referenced module) and
+   * its children (composing module) use different module URIs and thus different key trees.
    */
-  public static constructKeyDerivationPathUsingProtocolPathScheme(descriptor: RecordsWriteDescriptor): string[] {
-    const protocolPathSegments = descriptor.protocolPath.split('/');
+  public static constructKeyDerivationPathUsingModulePathScheme(descriptor: RecordsWriteDescriptor): string[] {
+    const modulePathSegments = descriptor.modulePath.split('/');
     const fullDerivationPath = [
-      KeyDerivationScheme.ProtocolPath,
-      descriptor.protocol,
-      ...protocolPathSegments
+      KeyDerivationScheme.ModulePath,
+      descriptor.module,
+      ...modulePathSegments
     ];
 
     return fullDerivationPath;
@@ -260,17 +260,17 @@ export class Records {
   }
 
   /**
-   * Normalizes the protocol and schema URLs within a provided RecordsFilter and returns a copy of RecordsFilter with the modified values.
+   * Normalizes the module and schema URLs within a provided RecordsFilter and returns a copy of RecordsFilter with the modified values.
    *
    * @param filter incoming RecordsFilter to normalize.
    * @returns {RecordsFilter} a copy of the incoming RecordsFilter with the normalized properties.
    */
   public static normalizeFilter(filter: RecordsFilter): RecordsFilter {
-    let protocol;
-    if (filter.protocol === undefined) {
-      protocol = undefined;
+    let module;
+    if (filter.module === undefined) {
+      module = undefined;
     } else {
-      protocol = normalizeProtocolUrl(filter.protocol);
+      module = normalizeModuleUrl(filter.module);
     }
 
     let schema;
@@ -282,7 +282,7 @@ export class Records {
 
     const filterCopy = {
       ...filter,
-      protocol,
+      module,
       schema,
     };
 
@@ -291,24 +291,24 @@ export class Records {
   }
 
   /**
-   * Nested protocol-path collection requests must select one or more direct
+   * Nested module-path collection requests must select one or more direct
    * parents, the target path itself, or one of its ancestor contexts. A
    * bounded path-wide subscription may omit that scope because its initial
    * page is explicitly capped; record-limited results still project each
    * direct-parent population independently.
    */
-  public static validateNestedProtocolPathScope(
+  public static validateNestedModulePathScope(
     filter: RecordsFilter,
     errorCode: DwnErrorCode,
     operationName: string,
     allowBoundedPathWideSelection = false,
   ): void {
-    const { contextId, parentId, protocolPath } = filter;
-    if (!protocolPath?.includes('/')) {
+    const { contextId, parentId, modulePath } = filter;
+    if (!modulePath?.includes('/')) {
       return;
     }
 
-    if (isEncryptionControlPath(protocolPath)) {
+    if (isEncryptionControlPath(modulePath)) {
       return;
     }
 
@@ -320,11 +320,11 @@ export class Records {
       return;
     }
 
-    const protocolPathDepth = protocolPath.split('/').length;
+    const modulePathDepth = modulePath.split('/').length;
     const contextIdSegments = contextId?.split('/');
     if (
       contextIdSegments !== undefined &&
-      contextIdSegments.length <= protocolPathDepth &&
+      contextIdSegments.length <= modulePathDepth &&
       contextIdSegments.every(segment => segment.length > 0)
     ) {
       return;
@@ -332,7 +332,7 @@ export class Records {
 
     throw new DwnError(
       errorCode,
-      `${operationName} for nested protocol path '${protocolPath}' must include parentId or a contextId selecting that path or one of its ancestors`
+      `${operationName} for nested module path '${modulePath}' must include parentId or a contextId selecting that path or one of its ancestors`
     );
   }
 
@@ -430,16 +430,16 @@ export class Records {
   public static buildControlRecordsFilters(filters: Filter[]): Filter[] {
     const controlFilters: Filter[] = [];
     for (const filter of filters) {
-      const protocolPath = filter.protocolPath;
-      if (typeof protocolPath === 'string') {
-        if (isEncryptionControlPath(protocolPath)) {
+      const modulePath = filter.modulePath;
+      if (typeof modulePath === 'string') {
+        if (isEncryptionControlPath(modulePath)) {
           controlFilters.push(filter);
         }
         continue;
       }
 
       for (const controlPath of ENCRYPTION_CONTROL_PATHS) {
-        controlFilters.push({ ...filter, protocolPath: controlPath });
+        controlFilters.push({ ...filter, modulePath: controlPath });
       }
     }
 

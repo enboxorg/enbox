@@ -24,29 +24,29 @@ describe('FollowedSyncSourceStoreLevel', () => {
 
   it('should persist a source under its role record ID with canonical paths', async () => {
     const source = followedSource({
-      protocolPaths: ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
+      modulePaths: ['notebook/page/delta', 'notebook', 'notebook/page'] as [string, ...string[]],
     });
 
     await store.replace(source);
 
     expect(await store.get(source.id)).toEqual({
       ...source,
-      protocolPaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
+      modulePaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
     });
     expect((await store.list())[0]).toEqual({
       status : 'valid',
       source : {
         ...source,
-        protocolPaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
+        modulePaths: ['notebook', 'notebook/page', 'notebook/page/delta'],
       },
     });
   });
 
   it('should reject an empty path set', async () => {
     await expect(store.replace(followedSource({
-      protocolPaths: [] as unknown as [string, ...string[]],
+      modulePaths: [] as unknown as [string, ...string[]],
     })))
-      .rejects.toThrow('\'protocolPaths\' must contain non-empty paths');
+      .rejects.toThrow('\'modulePaths\' must contain non-empty paths');
   });
 
   it('should reject empty or duplicate role candidates', async () => {
@@ -71,8 +71,8 @@ describe('FollowedSyncSourceStoreLevel', () => {
       'notebook/viewer',
     ]);
     await expect(store.replace(followedSource({
-      protocolPaths : ['notebook'],
-      protocolRole  : 'notebook/outsider',
+      modulePaths : ['notebook'],
+      moduleRole  : 'notebook/outsider',
     }))).rejects.toThrow('active role must belong to \'roles\'');
   });
 
@@ -118,7 +118,7 @@ describe('FollowedSyncSourceStoreLevel', () => {
 
   it('should atomically replace former followed sources', async () => {
     const former = followedSource();
-    const replacement = followedSource({ id: 'role-b', protocolRole: 'notebook/collaborator' });
+    const replacement = followedSource({ id: 'role-b', moduleRole: 'notebook/collaborator' });
     await store.replace(former);
 
     await store.replace(replacement, [former.id]);
@@ -129,8 +129,8 @@ describe('FollowedSyncSourceStoreLevel', () => {
 });
 
 function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
-  const protocolRole = overrides.protocolRole ?? 'notebook/viewer';
-  const protocolPaths = overrides.protocolPaths ?? (protocolRole === 'notebook/collaborator'
+  const moduleRole = overrides.moduleRole ?? 'notebook/viewer';
+  const modulePaths = overrides.modulePaths ?? (moduleRole === 'notebook/collaborator'
     ? ['notebook', 'notebook/page', 'notebook/page/delta']
     : ['notebook', 'notebook/page']);
   return {
@@ -139,10 +139,10 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example/dwn',
     actorDid       : 'did:example:member',
-    protocol       : 'https://example.com/notebooks',
+    module         : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    protocolRole,
-    protocolPaths,
+    moduleRole,
+    modulePaths,
     roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };

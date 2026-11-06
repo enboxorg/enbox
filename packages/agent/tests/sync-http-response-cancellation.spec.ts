@@ -113,7 +113,7 @@ describe('sync HTTP response cleanup', (): void => {
       rpc               : server.client,
       dwn               : {
         // Local admission may reject a message before reading its body.
-        applyReplicatedMessage: async (): Promise<ReplicationApplyResult> => ({ kind: 'Invalid', reason: 'protocol authorization denied' }),
+        applyReplicatedMessage: async (): Promise<ReplicationApplyResult> => ({ kind: 'Invalid', reason: 'module authorization denied' }),
       },
     } as unknown as EnboxPlatformAgent;
     try {

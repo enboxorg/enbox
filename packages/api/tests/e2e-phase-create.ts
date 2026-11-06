@@ -11,7 +11,7 @@
  */
 
 import { EnboxUserAgent } from '@enbox/agent';
-import { ProfileProtocol } from '@enbox/protocols';
+import { ProfileModule } from '@enbox/modules';
 
 import { Enbox } from '../src/index.js';
 
@@ -79,10 +79,10 @@ async function main(): Promise<void> {
   // Construct the Enbox instance.
   const web5 = new Enbox({ agent, connectedDid: did });
 
-  // Install Profile protocol and write persona
-  const profile = web5.using(ProfileProtocol);
+  // Install Profile module and write persona
+  const profile = web5.using(ProfileModule);
   await profile.configure();
-  log('Profile protocol installed');
+  log('Profile module installed');
 
   await profile.records.create('profile', { data: persona });
   log(`Profile written: ${persona.displayName}`);
@@ -109,8 +109,8 @@ async function main(): Promise<void> {
   // Identity metadata, portable DID, and encrypted keys are stored under the
   // agent DID's tenant — these must be pushed so recovery can pull them back.
   log('Syncing to remote DWN...');
-  await agent.sync.setIdentityOptions({ did: agent.agentDid.uri, options: { protocols: 'all' } });
-  await agent.sync.setIdentityOptions({ did, options: { protocols: 'all' } });
+  await agent.sync.setIdentityOptions({ did: agent.agentDid.uri, options: { modules: 'all' } });
+  await agent.sync.setIdentityOptions({ did, options: { modules: 'all' } });
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {

@@ -31,7 +31,7 @@ type ResolverFixture = {
   resolver: SyncTargetResolver;
 };
 
-function createGrant(id: string, grantor: string, grantee: string, protocol?: string): PermissionGrantEntry {
+function createGrant(id: string, grantor: string, grantee: string, module?: string): PermissionGrantEntry {
   return {
     grant: {
       id,
@@ -42,7 +42,7 @@ function createGrant(id: string, grantor: string, grantee: string, protocol?: st
       scope       : {
         interface : 'Messages',
         method    : 'Read',
-        protocol,
+        module,
       },
     },
     message: {},
@@ -167,7 +167,7 @@ describe('SyncTargetResolver', () => {
         pull               : {},
         push               : {},
         remoteEndpoint     : 'https://dwn.example.com',
-        scope              : { kind: 'protocolSet', protocols: ['https://protocol.example/notes'] },
+        scope              : { kind: 'moduleSet', modules: ['https://module.example/notes'] },
         status             : 'live',
         tenantDid          : 'did:example:alice',
       } satisfies ReplicationLinkState;
@@ -189,7 +189,7 @@ describe('SyncTargetResolver', () => {
         authorization: {
           kind         : 'role',
           actorDid     : 'did:example:member',
-          protocolRole : 'notebook/viewer',
+          moduleRole   : 'notebook/viewer',
           roleRecordId : 'role-a',
         },
         authorizationEpoch : 'role-epoch',
@@ -199,10 +199,10 @@ describe('SyncTargetResolver', () => {
         push               : {},
         remoteEndpoint     : 'https://dwn.example.com',
         scope              : {
-          kind          : 'context',
-          protocol      : 'https://example.com/notebooks',
-          contextId     : 'notebook-a',
-          protocolPaths : ['notebook/page'],
+          kind        : 'context',
+          module      : 'https://example.com/notebooks',
+          contextId   : 'notebook-a',
+          modulePaths : ['notebook/page'],
         },
         status    : 'live',
         tenantDid : 'did:example:owner',
@@ -212,18 +212,18 @@ describe('SyncTargetResolver', () => {
       expect(target.authorDelegatedGrant).toBeUndefined();
     });
 
-    it('should build a deterministic owner target for all protocols', async () => {
+    it('should build a deterministic owner target for all modules', async () => {
       const { getEndpointDiscovery, resolver } = createResolver();
 
       const [first] = await resolver.buildTargetsForEndpoint(
         'did:example:alice',
         'https://dwn.example.com',
-        { protocols: 'all' },
+        { modules: 'all' },
       );
       const [second] = await resolver.buildTargetsForEndpoint(
         'did:example:alice',
         'https://dwn.example.com',
-        { protocols: 'all' },
+        { modules: 'all' },
       );
 
       expect(first).toEqual(second);
@@ -238,37 +238,37 @@ describe('SyncTargetResolver', () => {
       expect(getEndpointDiscovery.notCalled).toBe(true);
     });
 
-    it('should normalize protocol sets before building a target', async () => {
+    it('should normalize module sets before building a target', async () => {
       const { resolver } = createResolver();
 
       const [target] = await resolver.buildTargetsForEndpoint(
         'did:example:alice',
         'https://dwn.example.com',
-        { protocols: ['https://protocol.example/b', 'https://protocol.example/a', 'https://protocol.example/a'] },
+        { modules: ['https://module.example/b', 'https://module.example/a', 'https://module.example/a'] },
       );
 
       expect(target.scope).toEqual({
-        kind      : 'protocolSet',
-        protocols : ['https://protocol.example/a', 'https://protocol.example/b'],
+        kind    : 'moduleSet',
+        modules : ['https://module.example/a', 'https://module.example/b'],
       });
     });
 
     it('should derive delegated authorization from active Messages.Read grants', async () => {
       const did = 'did:example:alice';
       const delegateDid = 'did:example:delegate';
-      const protocol = 'https://protocol.example/notes';
-      const grant = createGrant('grant-1', did, delegateDid, protocol);
+      const module = 'https://module.example/notes';
+      const grant = createGrant('grant-1', did, delegateDid, module);
       const { fetchGrants, resolver } = createResolver({ grants: [grant] });
 
       const [target] = await resolver.buildTargetsForEndpoint(did, 'https://dwn.example.com', {
         delegateDid,
-        protocols: [protocol],
+        modules: [module],
       });
 
       expect(target).toMatchObject({
         delegateDid,
         permissionGrantIds : ['grant-1'],
-        scope              : { kind: 'protocolSet', protocols: [protocol] },
+        scope              : { kind: 'moduleSet', modules: [module] },
         authorization      : {
           kind               : 'delegate',
           delegateDid,
@@ -292,9 +292,9 @@ describe('SyncTargetResolver', () => {
         'https://dwn.example.com',
         {
           delegateDid : 'did:example:delegate',
-          protocols   : ['https://protocol.example/notes'],
+          modules     : ['https://module.example/notes'],
         },
-      )).rejects.toThrow('No active protocol-root Messages.Read permission');
+      )).rejects.toThrow('No active module-root Messages.Read permission');
     });
 
     it('should bind a followed source to its accepted endpoint and actor role', async () => {
@@ -308,15 +308,15 @@ describe('SyncTargetResolver', () => {
         did    : source.sourceDid,
         dwnUrl : source.remoteEndpoint,
         scope  : {
-          kind          : 'context',
-          protocol      : source.protocol,
-          contextId     : source.contextId,
-          protocolPaths : source.protocolPaths,
+          kind        : 'context',
+          module      : source.module,
+          contextId   : source.contextId,
+          modulePaths : source.modulePaths,
         },
         authorization: {
           kind         : 'role',
           actorDid     : source.actorDid,
-          protocolRole : source.protocolRole,
+          moduleRole   : source.moduleRole,
           roleRecordId : source.id,
         },
       });
@@ -338,7 +338,7 @@ describe('SyncTargetResolver', () => {
       expect(target.authorization).toEqual({
         kind         : 'role',
         actorDid     : source.actorDid,
-        protocolRole : source.protocolRole,
+        moduleRole   : source.moduleRole,
         roleRecordId : source.id,
       });
       expect(target.authorDelegatedGrant).toBeUndefined();
@@ -348,7 +348,7 @@ describe('SyncTargetResolver', () => {
     it('should refresh the full role delegate grant without changing durable target identity', async () => {
       const delegateDid = 'did:example:delegate';
       const source = followedSource();
-      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.protocol);
+      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.module);
       const refreshedGrant = { ...initialGrant, message: { recordId: 'fresh-grant' } } as PermissionGrantEntry;
       const { getPermissionForRequest, resolver } = createResolver({
         remoteEndpoints: ['https://owner.example.com'],
@@ -381,10 +381,10 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    protocol       : 'https://example.com/notebooks',
+    module         : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    protocolRole   : 'notebook/viewer',
-    protocolPaths  : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    moduleRole     : 'notebook/viewer',
+    modulePaths    : ['notebook', 'notebook/page', 'notebook/page/delta'],
     roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };

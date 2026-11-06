@@ -227,12 +227,12 @@ Per-tenant quotas and rate limits can be overridden at runtime via the admin API
 
 ### Sync: delivery & forwarding
 
-When a `RecordsWrite` / `RecordsDelete` is processed, the server can proactively push it to a tenant's other DWN endpoints (forwarding) or to protocol participants' endpoints (delivery). Both are off by default.
+When a `RecordsWrite` / `RecordsDelete` is processed, the server can proactively push it to a tenant's other DWN endpoints (forwarding) or to module participants' endpoints (delivery). Both are off by default.
 
 | Env var                            | Description                                                     | Default |
 | ---------------------------------- | -------------------------------------------------------------- | ------- |
 | `DWN_FORWARDING_ENABLED`           | Forward messages to the tenant's other DWN endpoints           | `false` |
-| `DWN_DELIVERY_ENABLED`             | Deliver records to protocol participants' endpoints            | `false` |
+| `DWN_DELIVERY_ENABLED`             | Deliver records to module participants' endpoints            | `false` |
 | `DWN_DELIVERY_MAX_CONCURRENCY`     | Max concurrent outbound delivery/forwarding requests           | `10`    |
 | `DWN_DELIVERY_ENDPOINT_CACHE_TTL`  | TTL (seconds) for cached DID → endpoint resolutions            | `300`   |
 | `DWN_FORWARDING_DEDUP_TTL`         | TTL (seconds) for the forwarded-message dedup cache            | `60`    |
@@ -258,7 +258,7 @@ The default event bus is in-process. To coordinate durable-log wakes across proc
 
 ## JSON-RPC API
 
-[JSON-RPC](https://www.jsonrpc.org/specification) is a lightweight, transport-agnostic RPC protocol. The server registers the following methods (see [`src/json-rpc-api.ts`](./src/json-rpc-api.ts)):
+[JSON-RPC](https://www.jsonrpc.org/specification) is a lightweight, transport-agnostic RPC module. The server registers the following methods (see [`src/json-rpc-api.ts`](./src/json-rpc-api.ts)):
 
 | Method                              | Transport      | Purpose                                                          |
 | ----------------------------------- | -------------- | --------------------------------------------------------------- |
@@ -378,8 +378,8 @@ Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-
 | `POST` | `/connect/callback`                    | Submit an identity-provider response.                                       |
 | `GET`  | `/connect/token/:state.jwt`           | Retrieve a stored ID token.                                                  |
 | `GET`  | `/:did/read/records/:recordId`        | Convenience read of a record's data over HTTP.                             |
-| `GET`  | `/:did/read/protocols/:protocol/*`    | Convenience read of a protocol record over HTTP.                           |
-| `GET`  | `/:did/query` · `/:did/query/protocols` | Convenience record / protocol queries over HTTP.                         |
+| `GET`  | `/:did/read/modules/:module/*`    | Convenience read of a module record over HTTP.                           |
+| `GET`  | `/:did/query` · `/:did/query/modules` | Convenience record / module queries over HTTP.                         |
 | `*`    | `/admin/api/*`, `/admin/*`            | Admin API and UI (disabled unless an admin token is set) — see [Admin API](#admin-api). |
 
 > **Provider-auth note:** the built-in `/provider-auth/*` routes are served **only** when the built-in OpenAuth handler is active — that is, provider-auth is enabled with `DWN_PROVIDER_AUTH_JWT_SECRET` and no custom plugin. JWKS-only or custom-plugin deployments do not expose these routes; clients use the provider-auth URLs advertised at `/info` (or your provider's own endpoints) instead.

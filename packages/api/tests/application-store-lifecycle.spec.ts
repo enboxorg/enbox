@@ -35,7 +35,7 @@ describe('application store lifecycle boundaries', () => {
     let signal: AbortSignal | undefined;
     let releases = 0;
     const feature = defineStore({
-      protocols: {},
+      modules: {},
       create(context): object {
         signal = context.signal;
         context.onClose((): void => { releases += 1; });
@@ -53,7 +53,7 @@ describe('application store lifecycle boundaries', () => {
   it('reports a failed cleanup even when it settled before disposal began', async () => {
     const warning = sinon.stub(console, 'warn');
     const feature = defineStore({
-      protocols: {},
+      modules: {},
       create({ onClose }): never {
         onClose((): never => { throw new Error('Earlier cleanup failed'); });
         throw new Error('Factory failed');
@@ -81,7 +81,7 @@ describe('application store lifecycle boundaries', () => {
     let disposed = false;
     const nativeClose = new Promise<void>((resolve): void => { completeConnection = resolve; });
     const lateRelease = new Promise<void>((resolve): void => { completeRelease = resolve; });
-    const feature = defineStore({ protocols: {}, create({ onClose }): object { register = onClose; return {}; } });
+    const feature = defineStore({ modules: {}, create({ onClose }): object { register = onClose; return {}; } });
     const native = connectionFixture();
     native.connection.dispose = async (): Promise<void> => { disposalStarted = true; await nativeClose; };
     const app = createApplication({ stores: { feature }, connection: () => native.connection });
@@ -102,8 +102,8 @@ describe('application store lifecycle boundaries', () => {
     let leakedSignal: AbortSignal | undefined;
     let cleanupCalls = 0;
     const failed = defineStore({
-      protocols : {},
-      create    : ({ signal, onClose }): never => {
+      modules : {},
+      create  : ({ signal, onClose }): never => {
         leakedSignal = signal;
         onClose((): void => { cleanupCalls += 1; });
         throw new Error('Feature factory failed');
@@ -122,8 +122,8 @@ describe('application store lifecycle boundaries', () => {
   it('shares disposal completion when a synchronous abort listener reenters dispose', async () => {
     let reentered: Promise<void> | undefined;
     const feature = defineStore({
-      protocols : {},
-      create    : ({ signal }): object => {
+      modules : {},
+      create  : ({ signal }): object => {
         signal.addEventListener('abort', (): void => { reentered = app.dispose(); }, { once: true });
         return {};
       },
@@ -142,12 +142,12 @@ describe('application store lifecycle boundaries', () => {
     let finishCleanup!: () => void;
     const slowCleanup = new Promise<void>((resolve): void => { finishCleanup = resolve; });
     const slow = defineStore({
-      protocols : {},
-      create    : ({ onClose }): object => { onClose(() => slowCleanup); return {}; },
+      modules : {},
+      create  : ({ onClose }): object => { onClose(() => slowCleanup); return {}; },
     });
     const failed = defineStore({
-      protocols : {},
-      create    : ({ onClose }): never => {
+      modules : {},
+      create  : ({ onClose }): never => {
         onClose((): never => { throw new Error('Failed factory release'); });
         throw new Error('Factory failed');
       },

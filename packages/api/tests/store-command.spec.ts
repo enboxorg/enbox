@@ -13,7 +13,7 @@ function createScope(): { scope: StoreScope; retire(): void; cleanupCount(): num
     assertCurrent : (): void => {
       if (controller.signal.aborted) { throw new StoreRetiredError(); }
     },
-    getEnbox : (): never => { throw new Error('Command fixture does not read protocols.'); },
+    getEnbox : (): never => { throw new Error('Command fixture does not read modules.'); },
     onClose  : (close): (() => void) => {
       cleanups.add(close);
       return (): void => { cleanups.delete(close); };

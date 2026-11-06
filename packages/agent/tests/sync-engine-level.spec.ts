@@ -1,5 +1,5 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
 import type { SyncDurableFeedReconcileResult } from '../src/sync-durable-feed-reconciler.js';
 import type { SyncIdentityOptions } from '../src/index.js';
@@ -22,7 +22,7 @@ import { SyncRuntime } from '../src/sync-runtime.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllModuleDefinition from './fixtures/module-definitions/free-for-all.json' with { type: 'json' };
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -48,6 +48,7 @@ describe('SyncEngineLevel', () => {
         agentDid: 'did:method:abc123'
       };
       const syncEngine = new SyncEngineLevel({ agent: mockAgent, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const agent = syncEngine.agent;
       expect(agent).toBeDefined();
       expect(agent.agentDid).toBe('did:method:abc123');
@@ -55,6 +56,7 @@ describe('SyncEngineLevel', () => {
 
     it(`throws an error if the 'agent' instance property is undefined`, async () => {
       const syncEngine = new SyncEngineLevel({ db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       expect(() =>
         syncEngine.agent
       ).toThrow('Unable to determine agent execution context');
@@ -64,6 +66,7 @@ describe('SyncEngineLevel', () => {
   describe('live subscription delivery', () => {
     it('retains a durable pull wake until the paired replication baseline is ready', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
       const linkKey = 'link-key';
@@ -106,7 +109,7 @@ describe('SyncEngineLevel', () => {
 
       await internal.handleLivePullMessage(context, {
         cursor : { epoch: 'event-epoch', position: '99', streamId: 'event-stream' },
-        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        event  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
         type   : 'event',
       });
 
@@ -124,6 +127,7 @@ describe('SyncEngineLevel', () => {
 
     it('uses durable pull for events missing metadata and refuses uncovered ACKs', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -164,7 +168,7 @@ describe('SyncEngineLevel', () => {
         linkKey    : 'link-key',
       }, {
         cursor : eventCursor,
-        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        event  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
         type   : 'event',
       });
       expect(controller.isPullCurrent).toBe(true);
@@ -186,7 +190,7 @@ describe('SyncEngineLevel', () => {
         linkKey    : 'link-key',
       }, {
         cursor : missedCursor,
-        event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+        event  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
         type   : 'event',
       }).then(
         (): undefined => undefined,
@@ -204,6 +208,7 @@ describe('SyncEngineLevel', () => {
 
     it('restores pull currentness only after the last coalesced pull reaches its head', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -260,6 +265,7 @@ describe('SyncEngineLevel', () => {
 
     it('keeps repair reconciliation non-current until the live gap-closing pass drains', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -307,6 +313,7 @@ describe('SyncEngineLevel', () => {
 
     it('clears pulled and pushed echo state when live sync stops', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const tenantDid = 'did:example:alice';
       const messageCid = 'bafy-message';
@@ -322,6 +329,7 @@ describe('SyncEngineLevel', () => {
 
     it('degrades pull currentness before stop waits for subscription closure', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -366,6 +374,7 @@ describe('SyncEngineLevel', () => {
 
     it('degrades pull currentness when a same-key controller is hot-replaced', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const linkKey = 'link-key';
       const link: ReplicationLinkState = {
@@ -412,6 +421,7 @@ describe('SyncEngineLevel', () => {
   describe('replication status projection', () => {
     it('overlays active runtime state without exposing uncommitted checkpoints', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const durableLive: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -499,7 +509,7 @@ describe('SyncEngineLevel', () => {
       const tenantDid = 'did:example:alice';
       const registeredIdentities = {
         async *iterator(): AsyncGenerator<[string, string]> {
-          yield [tenantDid, JSON.stringify({ protocols: 'all' })];
+          yield [tenantDid, JSON.stringify({ modules: 'all' })];
         },
       };
       const followedSyncSources = {
@@ -515,6 +525,7 @@ describe('SyncEngineLevel', () => {
         },
       };
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: db as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const currentTarget = target('https://a.example');
       sinon.stub(internal.targetResolver, 'getEndpointUrls').resolves([currentTarget.dwnUrl]);
@@ -545,6 +556,7 @@ describe('SyncEngineLevel', () => {
 
     it('abandons a Retry-now request queued across an engine lifecycle change', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const getSyncTargets = sinon.stub(internal, 'getSyncTargets').resolves([]);
       expect(internal._lifecycle.tryAcquireSync()).toBe(true);
@@ -580,6 +592,7 @@ describe('SyncEngineLevel', () => {
 
     it('does not transition a feed push after its link becomes stale in flight', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       let current = true;
       let releasePush!: () => void;
@@ -617,6 +630,7 @@ describe('SyncEngineLevel', () => {
 
     it('attributes an unexpected feed push exception to the exact entry', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const entries = [
         { seq: '1', messageCid: 'cid-1', isLatestBaseState: true },
@@ -644,6 +658,7 @@ describe('SyncEngineLevel', () => {
 
     it('does not transition a permission-grant response after its link becomes stale in flight', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       let current = true;
       let releasePush!: () => void;
@@ -735,7 +750,7 @@ describe('SyncEngineLevel', () => {
         did                : ownerDid,
         dwnUrl,
         permissionGrantIds : [permissionGrantId],
-        scope              : { kind: 'protocolSet', protocols: ['https://protocol.example'] },
+        scope              : { kind: 'moduleSet', modules: ['https://module.example'] },
       });
 
       expect(result).toEqual({
@@ -792,18 +807,18 @@ describe('SyncEngineLevel', () => {
       await testHarness.agent.permissions.clear();
       testHarness.dwnStores.clear();
 
-      // Install free-for-all protocol after clearing stores.
+      // Install free-for-all module after clearing stores.
       await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: freeForAllProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: freeForAllModuleDefinition }
       });
       await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
-        messageParams : { definition: freeForAllProtocolDefinition }
+        messageType   : DwnInterface.ModulesConfigure,
+        messageParams : { definition: freeForAllModuleDefinition }
       });
     });
 
@@ -814,16 +829,16 @@ describe('SyncEngineLevel', () => {
     });
 
     it('syncs multiple messages in both directions', async () => {
-      // scenario:  Alice installs a protocol only on her local DWN and writes some messages associated with it
-      //            Alice installs a protocol only on her remote DWN and writes some messages associated with it
+      // scenario:  Alice installs a module only on her local DWN and writes some messages associated with it
+      //            Alice installs a module only on her remote DWN and writes some messages associated with it
       //            Alice registers her DID to be synchronized, and kicks off a sync
       //            The sync should complete and the same records should exist on both remote and local DWNs
 
 
-      // create 1 local protocol configure
-      const protocolDefinition1: ProtocolDefinition = {
+      // create 1 local module configure
+      const moduleDefinition1: ModuleDefinition = {
         published : true,
-        protocol  : 'https://protocol.xyz/example/1',
+        module    : 'https://module.xyz/example/1',
         types     : {
           foo: {
             schema      : 'https://schemas.xyz/foo',
@@ -835,19 +850,19 @@ describe('SyncEngineLevel', () => {
         }
       };
 
-      const protocolsConfigure1 = await testHarness.agent.processDwnRequest({
+      const modulesConfigure1 = await testHarness.agent.processDwnRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition1
+          definition: moduleDefinition1
         }
       });
 
-      // create 1 remote protocol configure
-      const protocolDefinition2: ProtocolDefinition = {
+      // create 1 remote module configure
+      const moduleDefinition2: ModuleDefinition = {
         published : true,
-        protocol  : 'https://protocol.xyz/example/2',
+        module    : 'https://module.xyz/example/2',
         types     : {
           bar: {
             schema      : 'https://schemas.xyz/bar',
@@ -859,12 +874,12 @@ describe('SyncEngineLevel', () => {
         }
       };
 
-      const protocolsConfigure2 = await testHarness.agent.sendDwnRequest({
+      const modulesConfigure2 = await testHarness.agent.sendDwnRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsConfigure,
+        messageType   : DwnInterface.ModulesConfigure,
         messageParams : {
-          definition: protocolDefinition2
+          definition: moduleDefinition2
         }
       });
 
@@ -877,10 +892,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
@@ -893,12 +908,12 @@ describe('SyncEngineLevel', () => {
             target        : alice.did.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              recordId     : writeResponse.message!.recordId,
-              protocol     : 'http://free-for-all.xyz',
-              protocolPath : 'post',
-              dataFormat   : 'text/plain',
-              schema       : writeResponse.message!.descriptor.schema,
-              dateCreated  : writeResponse.message!.descriptor.dateCreated
+              recordId    : writeResponse.message!.recordId,
+              module      : 'http://free-for-all.xyz',
+              modulePath  : 'post',
+              dataFormat  : 'text/plain',
+              schema      : writeResponse.message!.descriptor.schema,
+              dateCreated : writeResponse.message!.descriptor.dateCreated
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
@@ -916,10 +931,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob([`Hello, ${i}`])
         });
@@ -932,12 +947,12 @@ describe('SyncEngineLevel', () => {
             target        : alice.did.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              recordId     : writeResponse.message!.recordId,
-              protocol     : 'http://free-for-all.xyz',
-              protocolPath : 'post',
-              dataFormat   : 'text/plain',
-              schema       : writeResponse.message!.descriptor.schema,
-              dateCreated  : writeResponse.message!.descriptor.dateCreated
+              recordId    : writeResponse.message!.recordId,
+              module      : 'http://free-for-all.xyz',
+              modulePath  : 'post',
+              dataFormat  : 'text/plain',
+              schema      : writeResponse.message!.descriptor.schema,
+              dateCreated : writeResponse.message!.descriptor.dateCreated
             },
             dataStream: new Blob([`Hello, ${i} updated!`]),
           });
@@ -946,17 +961,17 @@ describe('SyncEngineLevel', () => {
         remoteRecords.push((writeResponse.message!).recordId);
       }
 
-      // check that protocol1 exists locally
-      let localProtocolsQueryResponse = await testHarness.agent.dwn.processRequest({
+      // check that module1 exists locally
+      let localModulesQueryResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {}
       });
-      let localProtocolsQueryReply = localProtocolsQueryResponse.reply;
-      expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries).toHaveLength(2);
-      expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message ]));
+      let localModulesQueryReply = localModulesQueryResponse.reply;
+      expect(localModulesQueryReply.status.code).toBe(200);
+      expect(localModulesQueryReply.entries).toHaveLength(2);
+      expect(localModulesQueryReply.entries).toEqual(expect.arrayContaining([ modulesConfigure1.message ]));
 
       // query local and check for only local records
       let localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -976,17 +991,17 @@ describe('SyncEngineLevel', () => {
       let localRecordsFromQuery = localRecordsQueryReply.entries?.map(entry => entry.recordId);
       expect(localRecordsFromQuery).toEqual(expect.arrayContaining(localRecords));
 
-      // check that protocol2 exists remotely
-      let remoteProtocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
+      // check that module2 exists remotely
+      let remoteModulesQueryResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {}
       });
-      let remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-      expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries).toHaveLength(2);
-      expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure2.message ]));
+      let remoteModulesQueryReply = remoteModulesQueryResponse.reply;
+      expect(remoteModulesQueryReply.status.code).toBe(200);
+      expect(remoteModulesQueryReply.entries).toHaveLength(2);
+      expect(remoteModulesQueryReply.entries).toEqual(expect.arrayContaining([ modulesConfigure2.message ]));
 
       // query remote and check for only remote records
       let remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -1009,23 +1024,23 @@ describe('SyncEngineLevel', () => {
       // Register Alice's DID to be synchronized.
       await testHarness.agent.sync.setIdentityOptions({
         did     : alice.did.uri,
-        options : { protocols: 'all' },
+        options : { modules: 'all' },
       });
 
       // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
       await syncEngine.sync();
 
-      // query local to see all protocols
-      localProtocolsQueryResponse = await testHarness.agent.dwn.processRequest({
+      // query local to see all modules
+      localModulesQueryResponse = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {}
       });
-      localProtocolsQueryReply = localProtocolsQueryResponse.reply;
-      expect(localProtocolsQueryReply.status.code).toBe(200);
-      expect(localProtocolsQueryReply.entries).toHaveLength(3);
-      expect(localProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
+      localModulesQueryReply = localModulesQueryResponse.reply;
+      expect(localModulesQueryReply.status.code).toBe(200);
+      expect(localModulesQueryReply.entries).toHaveLength(3);
+      expect(localModulesQueryReply.entries).toEqual(expect.arrayContaining([ modulesConfigure1.message, modulesConfigure2.message ]));
 
       // query local node to see all records
       localRecordsQueryResponse = await testHarness.agent.dwn.processRequest({
@@ -1045,17 +1060,17 @@ describe('SyncEngineLevel', () => {
       localRecordsFromQuery = localRecordsQueryReply.entries?.map(entry => entry.recordId);
       expect(localRecordsFromQuery).toEqual(expect.arrayContaining([...localRecords, ...remoteRecords]));
 
-      // query remote node to see all protocols
-      remoteProtocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
+      // query remote node to see all modules
+      remoteModulesQueryResponse = await testHarness.agent.dwn.sendRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
+        messageType   : DwnInterface.ModulesQuery,
         messageParams : {}
       });
-      remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-      expect(remoteProtocolsQueryReply.status.code).toBe(200);
-      expect(remoteProtocolsQueryReply.entries).toHaveLength(3);
-      expect(remoteProtocolsQueryReply.entries).toEqual(expect.arrayContaining([ protocolsConfigure1.message, protocolsConfigure2.message ]));
+      remoteModulesQueryReply = remoteModulesQueryResponse.reply;
+      expect(remoteModulesQueryReply.status.code).toBe(200);
+      expect(remoteModulesQueryReply.entries).toHaveLength(3);
+      expect(remoteModulesQueryReply.entries).toEqual(expect.arrayContaining([ modulesConfigure1.message, modulesConfigure2.message ]));
 
       // query remote node to see all records
       remoteRecordsQueryResponse = await testHarness.agent.dwn.sendRequest({
@@ -1081,7 +1096,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -1263,10 +1278,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1280,12 +1295,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId     : testRecordId,
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema,
-            dateCreated  : writeResponse1.message!.descriptor.dateCreated
+            recordId    : testRecordId,
+            module      : 'http://free-for-all.xyz',
+            modulePath  : 'post',
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : writeResponse1.message!.descriptor.dateCreated
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
@@ -1313,7 +1328,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -1364,20 +1379,20 @@ describe('SyncEngineLevel', () => {
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
-            protocols   : [ 'https://protocol.xyz/foo' ]
+            modules     : [ 'https://module.xyz/foo' ]
           }
-        })).rejects.toThrow('lacks Messages.Read grants for closure protocols: https://protocol.xyz/foo');
+        })).rejects.toThrow('lacks Messages.Read grants for closure modules: https://module.xyz/foo');
       });
 
       it('succeeds with only a MessagesQuery grant when messages are inlined in the diff response', async () => {
-        // The batched diff protocol bundles small messages directly in the diff response,
+        // The batched diff module bundles small messages directly in the diff response,
         // so a MessagesRead grant is only needed for large payloads that can't be inlined.
         // This test verifies that sync works with ONLY a MessagesQuery grant.
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
-        const protocolFoo: ProtocolDefinition = {
+        const moduleFoo: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/foo',
+          module    : 'https://module.xyz/foo',
           types     : {
             foo: {
               schema      : 'https://schemas.xyz/foo',
@@ -1389,16 +1404,16 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        // install a protocol on the remote node for aliceSync
-        const protocolsFoo = await testHarness.agent.sendDwnRequest({
+        // install a module on the remote node for aliceSync
+        const modulesFoo = await testHarness.agent.sendDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolFoo
+            definition: moduleFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).toBe(202);
+        expect(modulesFoo.reply.status.code).toBe(202);
 
         // create a record that will be synced
         const record1 = await testHarness.agent.sendDwnRequest({
@@ -1406,10 +1421,10 @@ describe('SyncEngineLevel', () => {
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'https://protocol.xyz/foo',
-            protocolPath : 'foo',
-            schema       : 'https://schemas.xyz/foo',
-            dataFormat   : 'text/plain',
+            module     : 'https://module.xyz/foo',
+            modulePath : 'foo',
+            schema     : 'https://schemas.xyz/foo',
+            dataFormat : 'text/plain',
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1430,7 +1445,7 @@ describe('SyncEngineLevel', () => {
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : 'https://protocol.xyz/foo'
+            module    : 'https://module.xyz/foo'
           }
         });
 
@@ -1460,7 +1475,7 @@ describe('SyncEngineLevel', () => {
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
-            protocols   : [ 'https://protocol.xyz/foo' ]
+            modules     : [ 'https://module.xyz/foo' ]
           }
         });
 
@@ -1473,7 +1488,7 @@ describe('SyncEngineLevel', () => {
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsQuery,
-          messageParams : { filter: { protocol: 'https://protocol.xyz/foo' } }
+          messageParams : { filter: { module: 'https://module.xyz/foo' } }
         });
         expect(queryResponse.reply.status.code).toBe(200);
         expect(queryResponse.reply.entries!.length).toBeGreaterThanOrEqual(1);
@@ -1486,10 +1501,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1516,7 +1531,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -1540,9 +1555,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, world 2!'])
         });
@@ -1581,7 +1596,7 @@ describe('SyncEngineLevel', () => {
         // register alice
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // create a remote record
@@ -1591,9 +1606,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(Array(LARGE_DATA_SIZE).fill('a')) //large data
         });
@@ -1644,18 +1659,18 @@ describe('SyncEngineLevel', () => {
         // Create a second Identity to author the DWN messages.
         const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
-        // Install free-for-all protocol on Bob's local and remote DWNs.
+        // Install free-for-all module on Bob's local and remote DWNs.
         await testHarness.agent.dwn.processRequest({
           author        : bob.did.uri,
           target        : bob.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          messageParams : { definition: freeForAllProtocolDefinition }
+          messageType   : DwnInterface.ModulesConfigure,
+          messageParams : { definition: freeForAllModuleDefinition }
         });
         await testHarness.agent.dwn.sendRequest({
           author        : bob.did.uri,
           target        : bob.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          messageParams : { definition: freeForAllProtocolDefinition }
+          messageType   : DwnInterface.ModulesConfigure,
+          messageParams : { definition: freeForAllModuleDefinition }
         });
 
         // Write a test record to Alice's remote DWN.
@@ -1664,9 +1679,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, Bob!'])
         });
@@ -1680,9 +1695,9 @@ describe('SyncEngineLevel', () => {
           target        : bob.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, Alice!'])
         });
@@ -1693,13 +1708,13 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Register Bob's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : bob.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's and Bob's remove DWNs to their local DWNs.
@@ -1737,10 +1752,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1754,12 +1769,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId     : testRecordId,
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema,
-            dateCreated  : writeResponse1.message!.descriptor.dateCreated
+            recordId    : testRecordId,
+            module      : 'http://free-for-all.xyz',
+            modulePath  : 'post',
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : writeResponse1.message!.descriptor.dateCreated
           },
           dataStream: new Blob(['Hello, world updated!'])
         });
@@ -1787,7 +1802,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to pull all records from Alice's remote DWN to Alice's local DWN.
@@ -1838,17 +1853,17 @@ describe('SyncEngineLevel', () => {
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
-            protocols   : [ 'https://protocol.xyz/foo' ]
+            modules     : [ 'https://module.xyz/foo' ]
           }
-        })).rejects.toThrow('lacks Messages.Read grants for closure protocols: https://protocol.xyz/foo');
+        })).rejects.toThrow('lacks Messages.Read grants for closure modules: https://module.xyz/foo');
       });
 
       it('pushes a missing delegate grant dependency before a scoped local record', async () => {
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
-        const protocolFoo: ProtocolDefinition = {
+        const moduleFoo: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/foo',
+          module    : 'https://module.xyz/foo',
           types     : {
             foo: {
               schema      : 'https://schemas.xyz/foo',
@@ -1860,16 +1875,16 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        // install a protocol on the local node for aliceSync
-        const protocolsFoo = await testHarness.agent.processDwnRequest({
+        // install a module on the local node for aliceSync
+        const modulesFoo = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolFoo
+            definition: moduleFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).toBe(202);
+        expect(modulesFoo.reply.status.code).toBe(202);
 
         // create a record locally
         const record1 = await testHarness.agent.processDwnRequest({
@@ -1877,10 +1892,10 @@ describe('SyncEngineLevel', () => {
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'https://protocol.xyz/foo',
-            protocolPath : 'foo',
-            schema       : 'https://schemas.xyz/foo',
-            dataFormat   : 'text/plain',
+            module     : 'https://module.xyz/foo',
+            modulePath : 'foo',
+            schema     : 'https://schemas.xyz/foo',
+            dataFormat : 'text/plain',
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1901,7 +1916,7 @@ describe('SyncEngineLevel', () => {
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : 'https://protocol.xyz/foo'
+            module    : 'https://module.xyz/foo'
           }
         });
 
@@ -1920,7 +1935,7 @@ describe('SyncEngineLevel', () => {
           did     : aliceSync.did.uri,
           options : {
             delegateDid : delegateDid.did.uri,
-            protocols   : [ 'https://protocol.xyz/foo' ]
+            modules     : [ 'https://module.xyz/foo' ]
           }
         });
 
@@ -1952,9 +1967,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, world!'])
         });
@@ -1976,7 +1991,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to push all records from Alice's local DWN to Alice's remote DWN.
@@ -1999,9 +2014,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, world 2!'])
         });
@@ -2040,7 +2055,7 @@ describe('SyncEngineLevel', () => {
         //register alice
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // create a local record
@@ -2049,9 +2064,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(Array(LARGE_DATA_SIZE).fill('a')) //large data
         });
@@ -2101,12 +2116,12 @@ describe('SyncEngineLevel', () => {
         // Create a second Identity to author the DWN messages.
         const bob = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
 
-        // Install free-for-all protocol on Bob's local DWN.
+        // Install free-for-all module on Bob's local DWN.
         await testHarness.agent.dwn.processRequest({
           author        : bob.did.uri,
           target        : bob.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          messageParams : { definition: freeForAllProtocolDefinition }
+          messageType   : DwnInterface.ModulesConfigure,
+          messageParams : { definition: freeForAllModuleDefinition }
         });
 
         // Write a test record to Alice's local DWN.
@@ -2115,9 +2130,9 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, Bob!'])
         });
@@ -2131,9 +2146,9 @@ describe('SyncEngineLevel', () => {
           target        : bob.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain'
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain'
           },
           dataStream: new Blob(['Hello, Alice!'])
         });
@@ -2144,13 +2159,13 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Register Bob's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : bob.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Execute Sync to push all records from Alice's and Bob's local DWNs to their remote DWNs.
@@ -2189,7 +2204,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID for sync.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Write a record to Alice's remote DWN.
@@ -2198,10 +2213,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Record to be deleted'])
         });
@@ -2251,7 +2266,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID for sync.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Write a record to Alice's local DWN.
@@ -2260,10 +2275,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Record to be deleted'])
         });
@@ -2314,7 +2329,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID for sync.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Write a record locally.
@@ -2323,10 +2338,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Idempotent sync test'])
         });
@@ -2388,7 +2403,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID for sync.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Write a record locally.
@@ -2397,10 +2412,10 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema
+            module     : 'http://free-for-all.xyz',
+            modulePath : 'post',
+            dataFormat : 'text/plain',
+            schema     : randomSchema
           },
           dataStream: new Blob(['Original data'])
         });
@@ -2434,12 +2449,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId     : testRecordId,
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema,
-            dateCreated  : dateCreated,
+            recordId    : testRecordId,
+            module      : 'http://free-for-all.xyz',
+            modulePath  : 'post',
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : dateCreated,
           },
           dataStream: new Blob(['Remote update'])
         });
@@ -2451,12 +2466,12 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            recordId     : testRecordId,
-            protocol     : 'http://free-for-all.xyz',
-            protocolPath : 'post',
-            dataFormat   : 'text/plain',
-            schema       : randomSchema,
-            dateCreated  : dateCreated,
+            recordId    : testRecordId,
+            module      : 'http://free-for-all.xyz',
+            modulePath  : 'post',
+            dataFormat  : 'text/plain',
+            schema      : randomSchema,
+            dateCreated : dateCreated,
           },
           dataStream: new Blob(['Local update — later'])
         });
@@ -2505,7 +2520,7 @@ describe('SyncEngineLevel', () => {
       it('runs the durable feed settle check at each interval', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Live link initialization is not under test — resolve no targets.
@@ -2545,7 +2560,7 @@ describe('SyncEngineLevel', () => {
       ])('recovers startup after $label on the existing settle cadence', async ({ cause, expectedConnectivity, shouldReport }) => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const initStub = sinon.stub(SyncEngineLevel.prototype as any, 'initializeLinkTarget');
@@ -2597,7 +2612,7 @@ describe('SyncEngineLevel', () => {
       it('does not start a settle pass while startup initialization is still open', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const settleStub = sinon.stub((testHarness.agent.sync as any)._runCoordinator, 'settle').resolves();
@@ -2638,7 +2653,7 @@ describe('SyncEngineLevel', () => {
       it('skips settle checks while sync work is already in progress', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2680,7 +2695,7 @@ describe('SyncEngineLevel', () => {
       it('should replace the settle-check interval when startSync is called again', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
@@ -2721,7 +2736,7 @@ describe('SyncEngineLevel', () => {
       it('should log settle check errors, but continue at the next interval', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2844,7 +2859,7 @@ describe('SyncEngineLevel', () => {
       it('clamps a sub-second settle-check interval to the one-second floor', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
@@ -2876,7 +2891,7 @@ describe('SyncEngineLevel', () => {
       it('stops the sync interval', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2906,7 +2921,7 @@ describe('SyncEngineLevel', () => {
       it('waits for the current sync to complete before stopping', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2946,7 +2961,7 @@ describe('SyncEngineLevel', () => {
       it('throws if ongoing sync does not complete within 2 seconds', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -2981,7 +2996,7 @@ describe('SyncEngineLevel', () => {
       it('only waits for the ongoing sync for the given timeout before failing', async () => {
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
@@ -3028,18 +3043,18 @@ describe('SyncEngineLevel', () => {
 
         await testHarness.agent.sync.setIdentityOptions({
           did,
-          options: { protocols: ['https://protocol.xyz/foo'] },
+          options: { modules: ['https://module.xyz/foo'] },
         });
         await testHarness.agent.sync.setIdentityOptions({
           did,
-          options: { protocols: ['https://protocol.xyz/bar'] },
+          options: { modules: ['https://module.xyz/bar'] },
         });
         await testHarness.agent.sync.removeIdentity(did);
         unsubscribe();
 
         expect(registrations).toEqual([
-          { protocols: ['https://protocol.xyz/foo'] },
-          { protocols: ['https://protocol.xyz/bar'] },
+          { modules: ['https://module.xyz/foo'] },
+          { modules: ['https://module.xyz/bar'] },
           undefined,
         ]);
       });
@@ -3047,7 +3062,7 @@ describe('SyncEngineLevel', () => {
       it('sets an identity in the sync engine', async () => {
         const did = alice.did.uri;
         const syncOption: SyncIdentityOptions = {
-          protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar', 'https://protocol.xyz/baz']
+          modules: ['https://module.xyz/foo', 'https://module.xyz/bar', 'https://module.xyz/baz']
         };
         await testHarness.agent.sync.setIdentityOptions({ did, options: syncOption });
 
@@ -3058,7 +3073,7 @@ describe('SyncEngineLevel', () => {
       it('removes an identity from the sync engine', async () => {
         const did = alice.did.uri;
         const syncOption: SyncIdentityOptions = {
-          protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar', 'https://protocol.xyz/baz']
+          modules: ['https://module.xyz/foo', 'https://module.xyz/bar', 'https://module.xyz/baz']
         };
         await testHarness.agent.sync.setIdentityOptions({ did, options: syncOption });
 
@@ -3081,7 +3096,7 @@ describe('SyncEngineLevel', () => {
       it('gets the sync options for a specific identity', async () => {
         const did = alice.did.uri;
         const syncOption: SyncIdentityOptions = {
-          protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar', 'https://protocol.xyz/baz']
+          modules: ['https://module.xyz/foo', 'https://module.xyz/bar', 'https://module.xyz/baz']
         };
         await testHarness.agent.sync.setIdentityOptions({ did, options: syncOption });
 
@@ -3107,7 +3122,7 @@ describe('SyncEngineLevel', () => {
       it('replaces the sync options for a specific identity', async () => {
         const did = alice.did.uri;
         const syncOption: SyncIdentityOptions = {
-          protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar', 'https://protocol.xyz/baz']
+          modules: ['https://module.xyz/foo', 'https://module.xyz/bar', 'https://module.xyz/baz']
         };
         await testHarness.agent.sync.setIdentityOptions({ did, options: syncOption });
 
@@ -3116,7 +3131,7 @@ describe('SyncEngineLevel', () => {
         expect(identityOptions).toEqual(syncOption);
 
         const updatedSyncOption: SyncIdentityOptions = {
-          protocols: ['https://protocol.xyz/foo', 'https://protocol.xyz/bar']
+          modules: ['https://module.xyz/foo', 'https://module.xyz/bar']
         };
         await testHarness.agent.sync.setIdentityOptions({ did, options: updatedSyncOption });
 
@@ -3124,14 +3139,14 @@ describe('SyncEngineLevel', () => {
         expect(identityOptions).toEqual(updatedSyncOption);
       });
 
-      it('syncs only specified protocols', async () => {
+      it('syncs only specified modules', async () => {
         // create new identity to not conflict the previous tests's remote records
         const aliceSync = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
-        // create 3 local protocols
-        const protocolFoo: ProtocolDefinition = {
+        // create 3 local modules
+        const moduleFoo: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/foo',
+          module    : 'https://module.xyz/foo',
           types     : {
             foo: {
               schema      : 'https://schemas.xyz/foo',
@@ -3143,9 +3158,9 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        const protocolBar: ProtocolDefinition = {
+        const moduleBar: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/bar',
+          module    : 'https://module.xyz/bar',
           types     : {
             bar: {
               schema      : 'https://schemas.xyz/bar',
@@ -3157,9 +3172,9 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        const protocolBaz: ProtocolDefinition = {
+        const moduleBaz: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/baz',
+          module    : 'https://module.xyz/baz',
           types     : {
             baz: {
               schema      : 'https://schemas.xyz/baz',
@@ -3171,46 +3186,46 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        const protocolsFoo = await testHarness.agent.processDwnRequest({
+        const modulesFoo = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolFoo
+            definition: moduleFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).toBe(202);
+        expect(modulesFoo.reply.status.code).toBe(202);
 
-        const protocolsBar = await testHarness.agent.processDwnRequest({
+        const modulesBar = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolBar
+            definition: moduleBar
           }
         });
-        expect(protocolsBar.reply.status.code).toBe(202);
+        expect(modulesBar.reply.status.code).toBe(202);
 
-        const protocolsBaz = await testHarness.agent.processDwnRequest({
+        const modulesBaz = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolBaz
+            definition: moduleBaz
           }
         });
-        expect(protocolsBaz.reply.status.code).toBe(202);
+        expect(modulesBaz.reply.status.code).toBe(202);
 
-        // write a record for each protocol
+        // write a record for each module
         const recordFoo = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolFoo.protocol,
-            protocolPath : 'foo',
-            schema       : protocolFoo.types.foo.schema
+            dataFormat : 'text/plain',
+            module     : moduleFoo.module,
+            modulePath : 'foo',
+            schema     : moduleFoo.types.foo.schema
           },
           dataStream: new Blob(['Hello, foo!'])
         });
@@ -3221,10 +3236,10 @@ describe('SyncEngineLevel', () => {
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolBar.protocol,
-            protocolPath : 'bar',
-            schema       : protocolBar.types.bar.schema
+            dataFormat : 'text/plain',
+            module     : moduleBar.module,
+            modulePath : 'bar',
+            schema     : moduleBar.types.bar.schema
           },
           dataStream: new Blob(['Hello, bar!'])
         });
@@ -3235,37 +3250,37 @@ describe('SyncEngineLevel', () => {
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolBaz.protocol,
-            protocolPath : 'baz',
-            schema       : protocolBaz.types.baz.schema
+            dataFormat : 'text/plain',
+            module     : moduleBaz.module,
+            modulePath : 'baz',
+            schema     : moduleBaz.types.baz.schema
           },
           dataStream: new Blob(['Hello, baz!'])
         });
         expect(recordBaz.reply.status.code).toBe(202);
 
-        // Register Alice's DID to be synchronized with only foo and bar protocols
+        // Register Alice's DID to be synchronized with only foo and bar modules
         await testHarness.agent.sync.setIdentityOptions({
           did     : aliceSync.did.uri,
           options : {
-            protocols: [ 'https://protocol.xyz/foo', 'https://protocol.xyz/bar' ]
+            modules: [ 'https://module.xyz/foo', 'https://module.xyz/bar' ]
           }
         });
 
-        // Execute Sync to push sync, only foo protocol should be synced
+        // Execute Sync to push sync, only foo module should be synced
         await syncEngine.sync('push');
 
-        // query remote to see foo protocol
-        const remoteProtocolsQueryResponse = await testHarness.agent.dwn.sendRequest({
+        // query remote to see foo module
+        const remoteModulesQueryResponse = await testHarness.agent.dwn.sendRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
-          messageType   : DwnInterface.ProtocolsQuery,
+          messageType   : DwnInterface.ModulesQuery,
           messageParams : {}
         });
-        const remoteProtocolsQueryReply = remoteProtocolsQueryResponse.reply;
-        expect(remoteProtocolsQueryReply.status.code).toBe(200);
-        expect(remoteProtocolsQueryReply.entries).toHaveLength(2);
-        expect(remoteProtocolsQueryReply.entries).toEqual([ protocolsFoo.message, protocolsBar.message ]);
+        const remoteModulesQueryReply = remoteModulesQueryResponse.reply;
+        expect(remoteModulesQueryReply.status.code).toBe(200);
+        expect(remoteModulesQueryReply.entries).toHaveLength(2);
+        expect(remoteModulesQueryReply.entries).toEqual([ modulesFoo.message, modulesBar.message ]);
 
         // query remote to see foo record
         const remoteFooRecordsResponse = await testHarness.agent.dwn.sendRequest({
@@ -3274,7 +3289,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolFoo.protocol,
+              module: moduleFoo.module,
             }
           }
         });
@@ -3291,7 +3306,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBar.protocol,
+              module: moduleBar.module,
             }
           }
         });
@@ -3308,7 +3323,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBaz.protocol,
+              module: moduleBaz.module,
             }
           }
         });
@@ -3320,31 +3335,31 @@ describe('SyncEngineLevel', () => {
         // now write a foo record remotely, and a bar record locally
         // initiate a sync to both push and pull the records respectively
 
-        // write a record to the remote for the foo protocol
+        // write a record to the remote for the foo module
         const recordFoo2 = await testHarness.agent.sendDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolFoo.protocol,
-            protocolPath : 'foo',
-            schema       : protocolFoo.types.foo.schema
+            dataFormat : 'text/plain',
+            module     : moduleFoo.module,
+            modulePath : 'foo',
+            schema     : moduleFoo.types.foo.schema
           },
           dataStream: new Blob(['Hello, foo 2!'])
         });
         expect(recordFoo2.reply.status.code).toBe(202);
 
-        // write a local record to the bar protocol
+        // write a local record to the bar module
         const recordBar2 = await testHarness.agent.processDwnRequest({
           author        : aliceSync.did.uri,
           target        : aliceSync.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolBar.protocol,
-            protocolPath : 'bar',
-            schema       : protocolBar.types.bar.schema
+            dataFormat : 'text/plain',
+            module     : moduleBar.module,
+            modulePath : 'bar',
+            schema     : moduleBar.types.bar.schema
           },
           dataStream: new Blob(['Hello, bar 2!'])
         });
@@ -3357,7 +3372,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolFoo.protocol,
+              module: moduleFoo.module,
             }
           }
         });
@@ -3375,7 +3390,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBar.protocol,
+              module: moduleBar.module,
             }
           }
         });
@@ -3395,7 +3410,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolFoo.protocol,
+              module: moduleFoo.module,
             }
           }
         });
@@ -3412,7 +3427,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBar.protocol,
+              module: moduleBar.module,
             }
           }
         });
@@ -3429,7 +3444,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBaz.protocol,
+              module: moduleBaz.module,
             }
           }
         });
@@ -3438,7 +3453,7 @@ describe('SyncEngineLevel', () => {
         expect(remoteBazRecordsReply.entries).toHaveLength(0);
       });
 
-      it('syncs only specified protocols and delegates', async () => {
+      it('syncs only specified modules and delegates', async () => {
         const alice = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
 
         const aliceDeviceXHarness = await PlatformAgentTestHarness.setup({
@@ -3456,10 +3471,10 @@ describe('SyncEngineLevel', () => {
           metadata  : { name: 'Alice Device X', connectedDid: alice.did.uri }
         });
 
-        // Alice create 2 protocols on alice's remote DWN
-        const protocolFoo: ProtocolDefinition = {
+        // Alice create 2 modules on alice's remote DWN
+        const moduleFoo: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/foo',
+          module    : 'https://module.xyz/foo',
           types     : {
             foo: {
               schema      : 'https://schemas.xyz/foo',
@@ -3471,9 +3486,9 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        const protocolBar: ProtocolDefinition = {
+        const moduleBar: ModuleDefinition = {
           published : true,
-          protocol  : 'https://protocol.xyz/bar',
+          module    : 'https://module.xyz/bar',
           types     : {
             bar: {
               schema      : 'https://schemas.xyz/bar',
@@ -3485,34 +3500,34 @@ describe('SyncEngineLevel', () => {
           }
         };
 
-        // configure the protocols
-        const protocolsFoo = await testHarness.agent.sendDwnRequest({
+        // configure the modules
+        const modulesFoo = await testHarness.agent.sendDwnRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolFoo
+            definition: moduleFoo
           }
         });
-        expect(protocolsFoo.reply.status.code).toBe(202);
+        expect(modulesFoo.reply.status.code).toBe(202);
 
-        const protocolsBar = await testHarness.agent.sendDwnRequest({
+        const modulesBar = await testHarness.agent.sendDwnRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
-          messageType   : DwnInterface.ProtocolsConfigure,
+          messageType   : DwnInterface.ModulesConfigure,
           messageParams : {
-            definition: protocolBar
+            definition: moduleBar
           }
         });
-        expect(protocolsBar.reply.status.code).toBe(202);
+        expect(modulesBar.reply.status.code).toBe(202);
 
-        // create grants for foo protocol, granted to aliceDeviceX
+        // create grants for foo module, granted to aliceDeviceX
         const messagesReadGrant = await testHarness.agent.permissions.createGrant({
           store       : true,
           author      : alice.did.uri,
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
+          scope       : { module: moduleFoo.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
         });
 
         const messagesQueryGrant = await testHarness.agent.permissions.createGrant({
@@ -3520,7 +3535,7 @@ describe('SyncEngineLevel', () => {
           author      : alice.did.uri,
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
+          scope       : { module: moduleFoo.module, interface: DwnInterfaceName.Messages, method: DwnMethodName.Read }
         });
 
         const recordsQueryGrant = await testHarness.agent.permissions.createGrant({
@@ -3529,7 +3544,7 @@ describe('SyncEngineLevel', () => {
           grantedTo   : aliceDeviceX.did.uri,
           dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
           delegated   : true,
-          scope       : { protocol: protocolFoo.protocol, interface: DwnInterfaceName.Records, method: DwnMethodName.Read }
+          scope       : { module: moduleFoo.module, interface: DwnInterfaceName.Records, method: DwnMethodName.Read }
         });
 
         const { encodedData: readGrantData, ... messagesReadGrantMessage } = messagesReadGrant.message;
@@ -3602,16 +3617,16 @@ describe('SyncEngineLevel', () => {
         expect(processRecordsQueryGrant.reply.status.code).toBe(202);
 
 
-        // create a record for each protocol
+        // create a record for each module
         const recordFoo = await testHarness.agent.sendDwnRequest({
           author        : alice.did.uri,
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolFoo.protocol,
-            protocolPath : 'foo',
-            schema       : protocolFoo.types.foo.schema
+            dataFormat : 'text/plain',
+            module     : moduleFoo.module,
+            modulePath : 'foo',
+            schema     : moduleFoo.types.foo.schema
           },
           dataStream: new Blob(['Hello, foo!'])
         });
@@ -3622,25 +3637,25 @@ describe('SyncEngineLevel', () => {
           target        : alice.did.uri,
           messageType   : DwnInterface.RecordsWrite,
           messageParams : {
-            dataFormat   : 'text/plain',
-            protocol     : protocolBar.protocol,
-            protocolPath : 'bar',
-            schema       : protocolBar.types.bar.schema
+            dataFormat : 'text/plain',
+            module     : moduleBar.module,
+            modulePath : 'bar',
+            schema     : moduleBar.types.bar.schema
           },
           dataStream: new Blob(['Hello, bar!'])
         });
         expect(recordBar.reply.status.code).toBe(202);
 
-        // Register Alice's DID to be synchronized with only foo protocol
+        // Register Alice's DID to be synchronized with only foo module
         await aliceDeviceXHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
           options : {
-            protocols   : [ protocolFoo.protocol ],
+            modules     : [ moduleFoo.module ],
             delegateDid : aliceDeviceX.did.uri
           }
         });
 
-        // Execute pull sync, only foo protocol should be synced.
+        // Execute pull sync, only foo module should be synced.
         await aliceDeviceXHarness.agent.sync.sync('pull');
 
         // query aliceDeviceX to see foo records
@@ -3652,7 +3667,7 @@ describe('SyncEngineLevel', () => {
           messageParams : {
             delegatedGrant : recordsQueryGrant.message,
             filter         : {
-              protocol: protocolFoo.protocol,
+              module: moduleFoo.module,
             }
           }
         });
@@ -3663,7 +3678,7 @@ describe('SyncEngineLevel', () => {
         expect(localFooRecords.reply.entries?.map(entry => entry.recordId)).toEqual([ recordFoo.message?.recordId ]);
 
         // sanity check that bar records do not exist on aliceDeviceX
-        // since aliceDeviceX does not have a grant for the bar protocol, query the records using alice's signatures.
+        // since aliceDeviceX does not have a grant for the bar module, query the records using alice's signatures.
         // confirm that the query was successful on alice's remote DWN and returns the message
         const localBarRecordsQuery = await testHarness.agent.dwn.sendRequest({
           author        : alice.did.uri,
@@ -3671,7 +3686,7 @@ describe('SyncEngineLevel', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              protocol: protocolBar.protocol,
+              module: moduleBar.module,
             }
           }
         });
@@ -3689,20 +3704,20 @@ describe('SyncEngineLevel', () => {
         expect(localBarRecords.reply.entries).toHaveLength(0);
       });
 
-      it('defaults to all protocols and undefined delegate if no options are provided', async () => {
+      it('defaults to all modules and undefined delegate if no options are provided', async () => {
         // spy on AbstractLevel put
         const abstractLevelPut = sinon.spy(AbstractLevel.prototype, 'put');
 
         // register identity without any options
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const registerIdentitiesPutCall = abstractLevelPut.args[0];
         const options = JSON.parse(registerIdentitiesPutCall[1] as string);
-        // confirm that the options are stored as-is with protocols: 'all'
-        expect(options).toEqual({ protocols: 'all' });
+        // confirm that the options are stored as-is with modules: 'all'
+        expect(options).toEqual({ modules: 'all' });
       });
     });
 
@@ -3715,7 +3730,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID to be synchronized.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         await syncEngine.sync();
@@ -3729,7 +3744,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // First sync to get to online state.
@@ -3755,7 +3770,7 @@ describe('SyncEngineLevel', () => {
         // Register Alice's DID.
         await testHarness.agent.sync.setIdentityOptions({
           did     : alice.did.uri,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         // Successful sync -> online.
@@ -3792,8 +3807,8 @@ describe('SyncEngineLevel', () => {
         // Create two identities that share the same DWN URL.
         const alice2 = await testHarness.createIdentity({ name: 'Alice', testDwnUrls });
         const bob2 = await testHarness.createIdentity({ name: 'Bob', testDwnUrls });
-        await syncEngine.setIdentityOptions({ did: alice2.did.uri, options: { protocols: 'all' } });
-        await syncEngine.setIdentityOptions({ did: bob2.did.uri, options: { protocols: 'all' } });
+        await syncEngine.setIdentityOptions({ did: alice2.did.uri, options: { modules: 'all' } });
+        await syncEngine.setIdentityOptions({ did: bob2.did.uri, options: { modules: 'all' } });
 
         // Stub feed pull to fail for the first target.
         const consoleErrorStub = sinon.stub(console, 'error');
@@ -3823,7 +3838,7 @@ describe('SyncEngineLevel', () => {
         const did = alice.did.uri;
         await syncEngine.setIdentityOptions({
           did     : did,
-          options : { protocols: 'all' },
+          options : { modules: 'all' },
         });
 
         const [target] = await syncEngine['getSyncTargets']();
@@ -3988,7 +4003,7 @@ describe('SyncEngineLevel', () => {
 
           await syncEngine.setIdentityOptions({
             did,
-            options: { protocols: 'all', delegateDid: 'did:example:old-delegate' },
+            options: { modules: 'all', delegateDid: 'did:example:old-delegate' },
           });
 
           syncEngine['_runtime'] = new SyncRuntime(true);
@@ -4015,7 +4030,7 @@ describe('SyncEngineLevel', () => {
 
           await syncEngine.setIdentityOptions({
             did,
-            options: { protocols: 'all', delegateDid: 'did:example:new-delegate' },
+            options: { modules: 'all', delegateDid: 'did:example:new-delegate' },
           });
 
           const reloadedLinks = await replicationLinkStore.getLinksForTenant(did);
@@ -4036,7 +4051,7 @@ describe('SyncEngineLevel', () => {
         it('should detect stale link via object identity after remove and re-add', async () => {
           const did = alice.did.uri;
 
-          await syncEngine.setIdentityOptions({ did, options: { protocols: 'all' } });
+          await syncEngine.setIdentityOptions({ did, options: { modules: 'all' } });
           syncEngine['_runtime'] = new SyncRuntime(true);
 
           const replicationLinkStore = syncEngine['replicationLinkStore'];
@@ -4073,13 +4088,29 @@ describe('SyncEngineLevel', () => {
   describe('connectivityState', () => {
     it('should default to unknown', () => {
       const engine = new SyncEngineLevel({ db: {} as any });
+      sinon.stub(engine as any, 'ensureStoreFormat').resolves();
       expect(engine.connectivityState).toBe('unknown');
     });
   });
 
   describe('startSync parameters', () => {
+    let parameterHarness: PlatformAgentTestHarness;
+
+    beforeAll(async () => {
+      parameterHarness = await PlatformAgentTestHarness.setup({
+        agentClass: TestAgent, agentStores: 'memory', testDataLocation: '__TESTDATA__/sync-parameters-spec',
+      });
+      await parameterHarness.clearStorage();
+      await parameterHarness.createAgentDid({ publish: false });
+    });
+
+    afterAll(async () => {
+      sinon.restore();
+      await parameterHarness.closeStorage();
+    });
+
     it('should start the live runtime', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       try {
@@ -4094,7 +4125,7 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should default the settle-check interval when none is given', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const syncSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       try {
@@ -4109,7 +4140,7 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should reject an invalid interval before starting any runtime', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
       const liveSpy = sinon.spy(syncEngine as any, 'startLiveSync');
 
       await expect(syncEngine.startSync({ interval: 'not-a-duration' })).rejects.toThrow(
@@ -4122,7 +4153,8 @@ describe('SyncEngineLevel', () => {
     });
 
     it('should leave a running runtime untouched when a reconfiguration passes an invalid interval', async () => {
-      const syncEngine = new SyncEngineLevel({ db: testHarness.syncStore, agent: testHarness.agent });
+      const syncEngine = new SyncEngineLevel({ db: parameterHarness.syncStore, agent: parameterHarness.agent });
+      await syncEngine.clear();
       const getSyncTargetsStub = sinon.stub(SyncEngineLevel.prototype as any, 'getSyncTargets');
       getSyncTargetsStub.resolves([]);
       const settleStub = sinon.stub((syncEngine as any)._runCoordinator, 'settle').resolves();

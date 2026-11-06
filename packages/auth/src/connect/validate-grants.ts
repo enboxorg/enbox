@@ -2,7 +2,7 @@ import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { ConnectResult } from '../types.js';
 import type { DwnPermissionScope } from '@enbox/agent';
 
-import { DwnPermissionGrant, DwnPermissionsProtocol } from '@enbox/agent';
+import { DwnPermissionGrant, DwnPermissionsModule } from '@enbox/agent';
 
 /**
  * Validates that a wallet's connect result grants within what was requested.
@@ -77,8 +77,8 @@ function isSessionRevocationGrant(
 
   return grant.scope.interface === 'Records' &&
     grant.scope.method === 'Write' &&
-    'protocol' in grant.scope &&
-    grant.scope.protocol === DwnPermissionsProtocol.uri &&
+    'module' in grant.scope &&
+    grant.scope.module === DwnPermissionsModule.uri &&
     'contextId' in grant.scope &&
     grant.scope.contextId === revokedGrantId;
 }

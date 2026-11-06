@@ -11,10 +11,10 @@
  */
 
 import type { BearerIdentity, EnboxUserAgent } from '@enbox/agent';
-import type { IdentitySyncProtocols, RegistrationOptions } from '../types.js';
+import type { IdentitySyncModules, RegistrationOptions } from '../types.js';
 
 import { DidErrorCode, getDwnEndpointStatus } from '@enbox/dids';
-import { IdentityProtocolDefinition, JwkProtocolDefinition } from '@enbox/agent';
+import { IdentityModuleDefinition, JwkModuleDefinition } from '@enbox/agent';
 
 import { registerDwnTenants } from '../registration.js';
 import { applyIdentitySyncScope, registerSyncScopeForIdentity } from './lifecycle.js';
@@ -36,17 +36,17 @@ type RecoveredIdentityRouting = {
 };
 
 /**
- * Internal protocols that store recovery-critical data in the agent DID's DWN.
+ * Internal modules that store recovery-critical data in the agent DID's DWN.
  * Syncing these ensures that seed phrase recovery can pull identity metadata,
  * portable DIDs, and encrypted private keys from the remote.
  */
-export const AGENT_DID_SYNC_PROTOCOLS: [string, ...string[]] = [
-  IdentityProtocolDefinition.protocol,
-  JwkProtocolDefinition.protocol,
+export const AGENT_DID_SYNC_MODULES: [string, ...string[]] = [
+  IdentityModuleDefinition.module,
+  JwkModuleDefinition.module,
 ];
 
 /**
- * Set the agent DID's recovery-critical sync protocols.
+ * Set the agent DID's recovery-critical sync modules.
  *
  * This is a prerequisite for both normal operation (pushing identity
  * metadata to the remote) and seed phrase recovery (pulling it back).
@@ -55,7 +55,7 @@ export async function registerAgentDidForSync(userAgent: EnboxUserAgent): Promis
   await applyIdentitySyncScope({
     userAgent,
     connectedDid : userAgent.agentDid.uri,
-    scope        : AGENT_DID_SYNC_PROTOCOLS,
+    scope        : AGENT_DID_SYNC_MODULES,
   });
 }
 
@@ -128,8 +128,8 @@ async function setRecoveredDwnEndpoints(
  *   agent DID's DWN.
  *
  * Phase 2 — restore explicitly scoped sync for each recovered identity,
- *   then pull the requested protocol data. If no
- *   `identitySyncProtocols` is provided, auth recovers identity metadata only
+ *   then pull the requested module data. If no
+ *   `identitySyncModules` is provided, auth recovers identity metadata only
  *   and leaves product-scoped record sync to the application.
  *
  * Returns the recovered identities, or an empty array if the remote
@@ -138,10 +138,10 @@ async function setRecoveredDwnEndpoints(
 export async function recoverIdentitiesFromRemote(params: {
   userAgent: EnboxUserAgent;
   replacementDwnEndpoints?: string[];
-  identitySyncProtocols?: IdentitySyncProtocols;
+  identitySyncModules?: IdentitySyncModules;
   registration?: RegistrationOptions;
 } & RecoveryLifecycle): Promise<BearerIdentity[]> {
-  const { userAgent, replacementDwnEndpoints, identitySyncProtocols, registration } = params;
+  const { userAgent, replacementDwnEndpoints, identitySyncModules, registration } = params;
   // Phase 1: pull identity metadata + encrypted DID keys.
   const identities = await params.runMutation(async (): Promise<BearerIdentity[]> => {
     await userAgent.sync.sync('pull');
@@ -171,7 +171,7 @@ export async function recoverIdentitiesFromRemote(params: {
       );
     }
 
-    if (identitySyncProtocols === undefined || registeredRoutingDids.has(routingDid)
+    if (identitySyncModules === undefined || registeredRoutingDids.has(routingDid)
       || (ownedDid !== routingDid && localOwnerDids.has(routingDid))) {
       continue;
     }
@@ -180,7 +180,7 @@ export async function recoverIdentitiesFromRemote(params: {
         userAgent,
         connectedDid : routingDid,
         delegateDid  : ownedDid === routingDid ? undefined : ownedDid,
-        identitySyncProtocols,
+        identitySyncModules,
       }),
     );
     if (registered) {
@@ -190,7 +190,7 @@ export async function recoverIdentitiesFromRemote(params: {
 
   await params.runMutation(async (): Promise<void> => {
     if (registeredRoutingDids.size > 0) {
-      // Phase 2: pull explicitly scoped protocol configurations and records.
+      // Phase 2: pull explicitly scoped module configurations and records.
       await userAgent.sync.sync('pull');
     }
   });

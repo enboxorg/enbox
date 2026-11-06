@@ -1,10 +1,10 @@
-import type { ProtocolRuleSet } from '../../src/types/protocols-types.js';
+import type { ModuleRuleSet } from '../../src/types/modules-types.js';
 
 import { describe, expect, it } from 'bun:test';
 
 import fc from 'fast-check';
 
-import { getRuleSetAtPath } from '../../src/utils/protocols.js';
+import { getRuleSetAtPath } from '../../src/utils/modules.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
 
@@ -22,7 +22,7 @@ describe('getRuleSetAtPath — fuzz', () => {
     it('should return the rule set for a root-level type', () => {
       fc.assert(
         fc.property(arbTypeName, (typeName) => {
-          const ruleSet: ProtocolRuleSet = { $size: { min: 0, max: 100 } };
+          const ruleSet: ModuleRuleSet = { $size: { min: 0, max: 100 } };
           const structure = { [typeName]: ruleSet };
           const result = getRuleSetAtPath(typeName, structure);
           expect(result).toBe(ruleSet);
@@ -40,15 +40,15 @@ describe('getRuleSetAtPath — fuzz', () => {
             .filter((segs) => new Set(segs).size === segs.length), // unique segments
           (segments) => {
             // Build a nested structure: segments[0] > segments[1] > ... > leaf
-            const leafRuleSet: ProtocolRuleSet = { $role: true };
+            const leafRuleSet: ModuleRuleSet = { $role: true };
 
-            let current: { [key: string]: ProtocolRuleSet } = { [segments[segments.length - 1]]: leafRuleSet };
+            let current: { [key: string]: ModuleRuleSet } = { [segments[segments.length - 1]]: leafRuleSet };
             for (let i = segments.length - 2; i >= 0; i--) {
-              current = { [segments[i]]: current as unknown as ProtocolRuleSet };
+              current = { [segments[i]]: current as unknown as ModuleRuleSet };
             }
 
-            const protocolPath = segments.join('/');
-            const result = getRuleSetAtPath(protocolPath, current);
+            const modulePath = segments.join('/');
+            const result = getRuleSetAtPath(modulePath, current);
             expect(result).toBe(leafRuleSet);
           }
         ),
@@ -64,7 +64,7 @@ describe('getRuleSetAtPath — fuzz', () => {
           arbTypeName,
           arbTypeName.filter((s) => s !== 'existing'),
           (missingName, _otherName) => {
-            const structure = { existing: { $size: { min: 0 } } as ProtocolRuleSet };
+            const structure = { existing: { $size: { min: 0 } } as ModuleRuleSet };
             // Only if missingName !== 'existing' will this be undefined
             if (missingName === 'existing') {
               return;
@@ -92,8 +92,8 @@ describe('getRuleSetAtPath — fuzz', () => {
             }
             const structure = {
               [seg1]: {
-                [seg2]: { $role: true } as ProtocolRuleSet,
-              } as unknown as ProtocolRuleSet,
+                [seg2]: { $role: true } as ModuleRuleSet,
+              } as unknown as ModuleRuleSet,
             };
             const result = getRuleSetAtPath(`${seg1}/${missing}`, structure);
             expect(result).toBeUndefined();
@@ -107,9 +107,9 @@ describe('getRuleSetAtPath — fuzz', () => {
   describe('prototype pollution immunity', () => {
     it('should return undefined for Object.prototype property names not in the structure', () => {
       const prototypeNames = Object.getOwnPropertyNames(Object.prototype)
-        .filter((name) => /^[a-zA-Z]+$/.test(name)); // only names valid as protocolPath segments
+        .filter((name) => /^[a-zA-Z]+$/.test(name)); // only names valid as modulePath segments
 
-      const structure = { message: { $size: { min: 0 } } as ProtocolRuleSet };
+      const structure = { message: { $size: { min: 0 } } as ModuleRuleSet };
 
       for (const name of prototypeNames) {
         const result = getRuleSetAtPath(name, structure);

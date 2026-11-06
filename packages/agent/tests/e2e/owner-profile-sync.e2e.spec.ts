@@ -4,12 +4,12 @@
  * Models two wallet instances that both possess the same identity keys. The
  * second wallet writes a profile, avatar, and hero to its local DWN
  * and sends the same messages to the remote DWN. The first wallet then pulls
- * the scoped protocols and must converge to the full profile subtree.
+ * the scoped modules and must converge to the full profile subtree.
  *
  * Requires: DWN server running on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
-import type { ProtocolDefinition, RecordsFilter, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsFilter, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
@@ -25,12 +25,12 @@ import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { TestAgent } from '../utils/test-agent.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { EnboxUserAgent as UserAgent } from '../../src/enbox-user-agent.js';
-import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/store-data-protocols.js';
+import { IdentityModuleDefinition, JwkModuleDefinition } from '../../src/store-data-modules.js';
 
 const testDwnUrls = [testDwnUrl];
 
-const profileProtocol: ProtocolDefinition = {
-  protocol  : 'https://identity.foundation/protocols/profile',
+const profileModule: ModuleDefinition = {
+  module    : 'https://identity.foundation/modules/profile',
   published : true,
   types     : {
     profile: {
@@ -78,8 +78,8 @@ const profileProtocol: ProtocolDefinition = {
   },
 };
 
-const profileSyncProtocols: [string, ...string[]] = [profileProtocol.protocol];
-const agentDidSyncProtocols: [string, ...string[]] = [IdentityProtocolDefinition.protocol, JwkProtocolDefinition.protocol];
+const profileSyncModules: [string, ...string[]] = [profileModule.module];
+const agentDidSyncModules: [string, ...string[]] = [IdentityModuleDefinition.module, JwkModuleDefinition.module];
 
 async function setupHarness(testDataLocation: string): Promise<PlatformAgentTestHarness> {
   const harness = await AgentTestHarness.setup({
@@ -145,15 +145,15 @@ async function retryFreshDidResolution<T extends { reply: { status: { code: numb
   return result;
 }
 
-async function installProtocolLocalAndRemote(
+async function installModuleLocalAndRemote(
   harness: PlatformAgentTestHarness,
   did: string,
-  definition: ProtocolDefinition
+  definition: ModuleDefinition
 ): Promise<void> {
   const localResult = await harness.agent.dwn.processRequest({
     author        : did,
     target        : did,
-    messageType   : DwnInterface.ProtocolsConfigure,
+    messageType   : DwnInterface.ModulesConfigure,
     messageParams : { definition },
   });
   expect(localResult.reply.status.code).toBe(202);
@@ -161,7 +161,7 @@ async function installProtocolLocalAndRemote(
   const remoteResult = await retryFreshDidResolution(() => harness.agent.dwn.sendRequest({
     author      : did,
     target      : did,
-    messageType : DwnInterface.ProtocolsConfigure,
+    messageType : DwnInterface.ModulesConfigure,
     rawMessage  : localResult.message!,
   }));
   expect(remoteResult.reply.status.code).toBe(202);
@@ -171,8 +171,8 @@ async function writeRecordLocalAndRemote(
   harness: PlatformAgentTestHarness,
   did: string,
   messageParams: {
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     schema?: string;
     parentContextId?: string;
     dataFormat: string;
@@ -201,16 +201,16 @@ async function writeRecordLocalAndRemote(
   return localResult.message!;
 }
 
-async function expectProtocolInstalled(
+async function expectModuleInstalled(
   harness: PlatformAgentTestHarness,
   did: string,
-  protocol: string
+  module: string
 ): Promise<void> {
   const result = await harness.agent.dwn.processRequest({
     author        : did,
     target        : did,
-    messageType   : DwnInterface.ProtocolsQuery,
-    messageParams : { filter: { protocol } },
+    messageType   : DwnInterface.ModulesQuery,
+    messageParams : { filter: { module } },
   });
   expect(result.reply.status.code).toBe(200);
   expect(result.reply.entries?.length ?? 0).toBeGreaterThan(0);
@@ -278,22 +278,22 @@ describe('E2E: same-owner profile sync convergence', () => {
       testDwnUrls,
     });
 
-    await installProtocolLocalAndRemote(walletA, identity.did.uri, profileProtocol);
+    await installModuleLocalAndRemote(walletA, identity.did.uri, profileModule);
 
     const portableIdentity = await identity.export();
     await walletB.agent.identity.import({
       portableIdentity: structuredClone(portableIdentity),
     });
 
-    await installProtocolLocalAndRemote(walletB, identity.did.uri, profileProtocol);
+    await installModuleLocalAndRemote(walletB, identity.did.uri, profileModule);
 
     await walletA.agent.sync.setIdentityOptions({
       did     : identity.did.uri,
-      options : { protocols: profileSyncProtocols },
+      options : { modules: profileSyncModules },
     });
     await walletB.agent.sync.setIdentityOptions({
       did     : identity.did.uri,
-      options : { protocols: profileSyncProtocols },
+      options : { modules: profileSyncModules },
     });
   }, 60_000);
 
@@ -318,24 +318,24 @@ describe('E2E: same-owner profile sync convergence', () => {
     const heroBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 5, 6, 7, 8]);
 
     const profileRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile',
-      schema       : profileProtocol.types.profile.schema,
-      dataFormat   : 'application/json',
-      published    : true,
+      module     : profileModule.module,
+      modulePath : 'profile',
+      schema     : profileModule.types.profile.schema,
+      dataFormat : 'application/json',
+      published  : true,
     }, profileBytes);
 
     const avatarRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/avatar',
+      module          : profileModule.module,
+      modulePath      : 'profile/avatar',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
     }, avatarBytes);
 
     const heroRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/hero',
+      module          : profileModule.module,
+      modulePath      : 'profile/hero',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
@@ -343,28 +343,28 @@ describe('E2E: same-owner profile sync convergence', () => {
 
     await walletA.agent.sync.sync('pull');
 
-    await expectProtocolInstalled(walletA, did, profileProtocol.protocol);
+    await expectModuleInstalled(walletA, did, profileModule.module);
 
     const pulledProfile = await expectRecord(walletA, did, {
-      protocol : profileProtocol.protocol,
+      module   : profileModule.module,
       recordId : profileRecord.recordId,
     });
     expect(pulledProfile.contextId).toBe(profileRecord.contextId);
 
     const pulledAvatar = await expectRecord(walletA, did, {
-      contextId    : profileRecord.contextId,
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile/avatar',
-      recordId     : avatarRecord.recordId,
+      contextId  : profileRecord.contextId,
+      module     : profileModule.module,
+      modulePath : 'profile/avatar',
+      recordId   : avatarRecord.recordId,
     });
     expect(pulledAvatar.contextId).toBe(avatarRecord.contextId);
     expect(pulledAvatar.descriptor.parentId).toBe(profileRecord.recordId);
 
     const pulledHero = await expectRecord(walletA, did, {
-      contextId    : profileRecord.contextId,
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile/hero',
-      recordId     : heroRecord.recordId,
+      contextId  : profileRecord.contextId,
+      module     : profileModule.module,
+      modulePath : 'profile/hero',
+      recordId   : heroRecord.recordId,
     });
     expect(pulledHero.contextId).toBe(heroRecord.contextId);
     expect(pulledHero.descriptor.parentId).toBe(profileRecord.recordId);
@@ -397,7 +397,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     for (const wallet of [walletA, walletB]) {
       await wallet.agent.sync.setIdentityOptions({
         did     : wallet.agent.agentDid.uri,
-        options : { protocols: agentDidSyncProtocols },
+        options : { modules: agentDidSyncModules },
       });
     }
   }, 60_000);
@@ -434,7 +434,7 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     expect(walletADiscoveredIdentity.metadata.tenant).toBe(walletA.agent.agentDid.uri);
 
     const did = discoveredIdentity.did.uri;
-    await installProtocolLocalAndRemote(walletB, did, profileProtocol);
+    await installModuleLocalAndRemote(walletB, did, profileModule);
 
     const profileData = {
       displayName : 'Discovered Wallet Identity',
@@ -446,24 +446,24 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
     const heroBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 14, 15, 16]);
 
     const profileRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile',
-      schema       : profileProtocol.types.profile.schema,
-      dataFormat   : 'application/json',
-      published    : true,
+      module     : profileModule.module,
+      modulePath : 'profile',
+      schema     : profileModule.types.profile.schema,
+      dataFormat : 'application/json',
+      published  : true,
     }, profileBytes);
 
     const avatarRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/avatar',
+      module          : profileModule.module,
+      modulePath      : 'profile/avatar',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
     }, avatarBytes);
 
     const heroRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/hero',
+      module          : profileModule.module,
+      modulePath      : 'profile/hero',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
@@ -471,36 +471,36 @@ describe('E2E: same-owner identity discovery and profile sync convergence', () =
 
     await walletA.agent.sync.setIdentityOptions({
       did     : did,
-      options : { protocols: profileSyncProtocols },
+      options : { modules: profileSyncModules },
     });
     await walletB.agent.sync.setIdentityOptions({
       did     : did,
-      options : { protocols: profileSyncProtocols },
+      options : { modules: profileSyncModules },
     });
 
     await walletA.agent.sync.sync('pull');
 
-    await expectProtocolInstalled(walletA, did, profileProtocol.protocol);
+    await expectModuleInstalled(walletA, did, profileModule.module);
 
     const pulledProfile = await expectRecord(walletA, did, {
-      protocol : profileProtocol.protocol,
+      module   : profileModule.module,
       recordId : profileRecord.recordId,
     });
     expect(pulledProfile.contextId).toBe(profileRecord.contextId);
 
     const pulledAvatar = await expectRecord(walletA, did, {
-      contextId    : profileRecord.contextId,
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile/avatar',
-      recordId     : avatarRecord.recordId,
+      contextId  : profileRecord.contextId,
+      module     : profileModule.module,
+      modulePath : 'profile/avatar',
+      recordId   : avatarRecord.recordId,
     });
     expect(pulledAvatar.descriptor.parentId).toBe(profileRecord.recordId);
 
     const pulledHero = await expectRecord(walletA, did, {
-      contextId    : profileRecord.contextId,
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile/hero',
-      recordId     : heroRecord.recordId,
+      contextId  : profileRecord.contextId,
+      module     : profileModule.module,
+      modulePath : 'profile/hero',
+      recordId   : heroRecord.recordId,
     });
     expect(pulledHero.descriptor.parentId).toBe(profileRecord.recordId);
 

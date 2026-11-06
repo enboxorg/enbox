@@ -6,6 +6,7 @@ import { Level } from 'level';
 import { Message } from '@enbox/dwn-sdk-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
+import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
@@ -65,7 +66,7 @@ function createLiveMockAgent(): LiveMockAgent {
 
 describe('SyncEngineLevel late subscription callbacks', () => {
   let db: Level<string, string>;
-  const scope = { kind: 'protocolSet', protocols: ['https://proto.example.com'] };
+  const scope = { kind: 'moduleSet', modules: ['https://modules.example.com'] };
   const target = {
     did                : 'did:example:alice',
     dwnUrl             : 'https://dwn.example.com',
@@ -90,11 +91,14 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-late-callbacks-spec');
+    await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-late-callbacks.spec.ts');
   });
 
   afterEach(async () => {
     sinon.restore();
     await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-late-callbacks.spec.ts');
   });
 
   afterAll(async () => {
@@ -140,7 +144,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
 
     await handler!({
       type  : 'event',
-      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      event : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
     });
 
     expect(request.notCalled).toBe(true);
@@ -178,7 +182,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     expect(handler).toBeDefined();
     const message = {
       descriptor: {
-        interface        : 'Protocols',
+        interface        : 'Modules',
         method           : 'Configure',
         messageTimestamp : '2026-08-12T00:00:00.000000Z',
       },
@@ -256,7 +260,7 @@ describe('SyncEngineLevel late subscription callbacks', () => {
     await handler!({
       type   : 'event',
       cursor : { streamId: 's1', epoch: 'e1', position: '1', messageCid: 'cid-1' },
-      event  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      event  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
     });
 
     expect(request.called).toBe(false);

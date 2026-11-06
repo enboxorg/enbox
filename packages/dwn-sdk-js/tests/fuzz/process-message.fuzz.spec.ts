@@ -105,7 +105,7 @@ describe('Dwn.processMessage — fuzz', () => {
           fc.constant('did:example:test'),
           fc.record({
             descriptor: fc.record({
-              interface        : fc.constantFrom('Records', 'Protocols', 'Messages'),
+              interface        : fc.constantFrom('Records', 'Modules', 'Messages'),
               method           : fc.constantFrom('Write', 'Query', 'Read', 'Delete', 'Configure'),
               messageTimestamp : fc.constant('2024-01-01T00:00:00.000000Z'),
             }),

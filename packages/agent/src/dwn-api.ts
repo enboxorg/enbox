@@ -7,11 +7,11 @@ import type {
   EventLog,
   GenericMessage,
   MessageStore,
+  ModuleActionRule,
+  ModuleDefinition,
+  ModuleRuleSet,
+  ModuleType,
   ProgressToken,
-  ProtocolActionRule,
-  ProtocolDefinition,
-  ProtocolRuleSet,
-  ProtocolType,
   RecordsWriteDescriptor,
   RecordsWriteMessage,
   ReplicationApplyOptions,
@@ -33,18 +33,18 @@ import {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   EncryptionControl,
   EncryptionControlDeliveryRecipientAuthority,
-  EncryptionProtocol,
+  EncryptionModule,
   getRoleAudienceContextId,
   getRuleSetAtPath,
   getTypeName,
-  isCrossProtocolRef,
+  isCrossModuleRef,
   isEncryptionControlPath,
   KeyAgreementAlgorithm,
   KeyDerivationScheme,
   Message,
-  parseCrossProtocolRef,
-  PermissionsProtocol,
-  Protocols,
+  Modules,
+  parseCrossModuleRef,
+  PermissionsModule,
   RecordsWrite,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
   Time,
@@ -81,8 +81,8 @@ import { scanActiveAudienceKeyDeliveryIntents } from './audience-key-delivery-re
 import { verifyRemoteDwnResponse } from './remote-dwn-response.js';
 import {
   areReplicationLinksCurrent,
-  syncRegistrationCoversProtocol,
-  syncScopeCoversProtocol,
+  syncRegistrationCoversModule,
+  syncScopeCoversModule,
 } from './types/sync.js';
 import { AudienceKeyDeliveryConfigurationError, classifyAudienceKeyDeliveryFailure } from './audience-key-delivery.js';
 import {
@@ -117,12 +117,12 @@ import {
   resolveAudienceDecryptionKey as resolveAudienceDecryptionKeyFn,
 } from './dwn-encryption.js';
 
-// Import extracted protocol definition fetching functions
+// Import extracted module definition fetching functions
 import {
-  fetchRemoteProtocolDefinition as fetchRemoteProtocolDefinitionFn,
-  getProtocolDefinition as getProtocolDefinitionFn,
-  RemoteProtocolDefinitionError,
-} from './dwn-protocol-cache.js';
+  fetchRemoteModuleDefinition as fetchRemoteModuleDefinitionFn,
+  getModuleDefinition as getModuleDefinitionFn,
+  RemoteModuleDefinitionError,
+} from './dwn-module-cache.js';
 
 type DwnRpcData = Blob | ReadableStream<Uint8Array>;
 
@@ -139,8 +139,8 @@ type PendingAudienceRecord = {
 
 type RecordEncryptionPolicy = {
   encryptionRequired: boolean;
-  protocolDefinition: ProtocolDefinition;
-  ruleSet: ProtocolRuleSet;
+  moduleDefinition: ModuleDefinition;
+  ruleSet: ModuleRuleSet;
 };
 
 type PreparedDwnData = {
@@ -148,7 +148,7 @@ type PreparedDwnData = {
   readableStream?: ReadableStream<Uint8Array>;
 };
 
-type ProtocolDefinitionSource = 'local' | 'remote';
+type ModuleDefinitionSource = 'local' | 'remote';
 
 function audienceKeyDeliveryFailure(error: unknown, recipientDid: string): AudienceKeyDeliveryOutcome {
   return {
@@ -302,11 +302,11 @@ export class AgentDwnApi {
   private readonly _localDwnEndpoint?: string;
 
   /**
-   * Protocol definition cache — TTL 30 minutes. Protocols rarely change.
+   * Module definition cache — TTL 30 minutes. Modules rarely change.
    * Keys include the lookup source, authorization scope, target DID, and
-   * protocol URI so public, owner, and delegated results cannot cross sessions.
+   * module URI so public, owner, and delegated results cannot cross sessions.
    */
-  private readonly _protocolDefinitionCache = new TtlCache<string, ProtocolDefinition>({
+  private readonly _moduleDefinitionCache = new TtlCache<string, ModuleDefinition>({
     ttl: 30 * 60 * 1000
   });
 
@@ -334,7 +334,7 @@ export class AgentDwnApi {
 
   /**
    * Coalesces concurrent owner-authorized {@link reprovisionAudienceKeyDelivery}
-   * calls for the same (target, protocol, rolePath, contextId, recipientDid,
+   * calls for the same (target, module, rolePath, contextId, recipientDid,
    * recipient wrap target) onto one execution, so the non-atomic check-then-write
    * cannot race itself into duplicate delivery records within one agent. Calls
    * carrying an explicit authorization context are never coalesced: each must
@@ -594,7 +594,7 @@ export class AgentDwnApi {
     // Web ReadableStream.
     const { message, dataStream, data } = await this.constructDwnMessage({
       request,
-      protocolDefinitionSource: 'local',
+      moduleDefinitionSource: 'local',
     });
 
     const subscriptionHandler = request.subscriptionHandler;
@@ -631,7 +631,7 @@ export class AgentDwnApi {
     }
 
     if (request.store !== false) {
-      this.invalidateAcceptedProtocolDefinition(request.target, message, reply.status.code);
+      this.invalidateAcceptedModuleDefinition(request.target, message, reply.status.code);
     }
 
     const audienceKeyDelivery = await this.provisionAudienceKeyDeliveryForReply(request, message, reply);
@@ -709,9 +709,9 @@ export class AgentDwnApi {
   private async assertRoleRecipientPathDeliverable(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
   ): Promise<void> {
-    const { protocol, protocolPath, recipient } = request.messageParams ?? {};
+    const { module, modulePath, recipient } = request.messageParams ?? {};
     const resolved = await this.resolveDeliverableRoleAudience({
-      target: request.target, protocol, protocolPath, recipient, granteeDid: request.granteeDid,
+      target: request.target, module, modulePath, recipient, granteeDid: request.granteeDid,
     });
     if (!resolved.deliverable) {
       throw new Error(
@@ -722,9 +722,9 @@ export class AgentDwnApi {
   }
 
   /**
-   * Resolves whether `protocolPath` on `protocol` (as installed at `target`) is a
+   * Resolves whether `modulePath` on `module` (as installed at `target`) is a
    * deliverable role audience for a grant to `recipient`: the write must name all
-   * three, the protocol must resolve, the path must be a `$role` rule, and that
+   * three, the module must resolve, the path must be a `$role` rule, and that
    * rule must carry a `$keyAgreement` audience to wrap the delivery to. Returns the
    * (now-defined) identifiers when deliverable, or a human-readable reason it is
    * not. The pre-write strict guard throws the reason; post-write provisioning
@@ -732,30 +732,30 @@ export class AgentDwnApi {
    */
   private async resolveDeliverableRoleAudience(params: {
     target: string;
-    protocol?: string;
-    protocolPath?: string;
+    module?: string;
+    modulePath?: string;
     recipient?: string;
     granteeDid?: string;
   }): Promise<
-    | { deliverable: true; protocol: string; protocolPath: string; recipient: string }
+    | { deliverable: true; module: string; modulePath: string; recipient: string }
     | { deliverable: false; reason: string }
   > {
-    const { target, protocol, protocolPath, recipient, granteeDid } = params;
-    if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
-      return { deliverable: false, reason: 'the write must set protocol, protocolPath, and recipient (a $role grant to a specific recipient)' };
+    const { target, module, modulePath, recipient, granteeDid } = params;
+    if (module === undefined || modulePath === undefined || recipient === undefined) {
+      return { deliverable: false, reason: 'the write must set module, modulePath, and recipient (a $role grant to a specific recipient)' };
     }
-    const protocolDefinition = await this.getProtocolDefinition(target, protocol, granteeDid);
-    if (protocolDefinition === undefined) {
-      return { deliverable: false, reason: `protocol '${protocol}' is not installed on target '${target}'` };
+    const moduleDefinition = await this.getModuleDefinition(target, module, granteeDid);
+    if (moduleDefinition === undefined) {
+      return { deliverable: false, reason: `module '${module}' is not installed on target '${target}'` };
     }
-    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(modulePath, moduleDefinition.structure);
     if (ruleSet?.$role !== true) {
-      return { deliverable: false, reason: `'${protocol}/${protocolPath}' is not a $role path` };
+      return { deliverable: false, reason: `'${module}/${modulePath}' is not a $role path` };
     }
     if (ruleSet.$keyAgreement?.publicKeyJwk === undefined) {
-      return { deliverable: false, reason: `'${protocol}/${protocolPath}' has no $keyAgreement audience` };
+      return { deliverable: false, reason: `'${module}/${modulePath}' has no $keyAgreement audience` };
     }
-    return { deliverable: true, protocol, protocolPath, recipient };
+    return { deliverable: true, module, modulePath, recipient };
   }
 
   /**
@@ -801,7 +801,7 @@ export class AgentDwnApi {
       }
       // A non-role (non-deliverable) write has nothing to deliver — no outcome. But a
       // supplied key targeted a specific recipient and the preflight proved the path
-      // deliverable, so a skip here is an unexpected race (e.g. a concurrent protocol
+      // deliverable, so a skip here is an unexpected race (e.g. a concurrent module
       // reconfigure). Report it as a failure rather than dropping it silently.
       if (request.recipientRolePublicKey !== undefined) {
         return {
@@ -823,14 +823,14 @@ export class AgentDwnApi {
     }
   }
 
-  /** Maintains reconstructable delivery state after accepted role, delete, and protocol messages. */
+  /** Maintains reconstructable delivery state after accepted role, delete, and module messages. */
   private async updateAudienceKeyDeliveryProjection<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
     message: DwnMessage[T],
     reply: DwnMessageReply[T],
     outcome?: AudienceKeyDeliveryOutcome,
   ): Promise<void> {
-    const configured = isDwnMessage(DwnInterface.ProtocolsConfigure, message);
+    const configured = isDwnMessage(DwnInterface.ModulesConfigure, message);
     const store = this._audienceKeyDeliveryStore;
     if (store === undefined || request.store === false ||
         (reply.status.code !== 202 && !(configured && reply.status.code === 409))) {
@@ -849,7 +849,7 @@ export class AgentDwnApi {
       }
 
       if (configured) {
-        this.wakeAudienceKeyDelivery(message.descriptor.definition.protocol);
+        this.wakeAudienceKeyDelivery(message.descriptor.definition.module);
       }
     } catch {
       // Accepted DWN messages remain authoritative; the private projection is reconstructed later.
@@ -862,19 +862,19 @@ export class AgentDwnApi {
     recordsWrite: RecordsWriteMessage,
     outcome: AudienceKeyDeliveryOutcome,
   ): Promise<void> {
-    const { protocol, protocolPath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
+    const { module, modulePath: rolePath, recipient: recipientDid } = recordsWrite.descriptor;
     const contextId = rolePath === undefined ? undefined : getRoleAudienceContextId(rolePath, recordsWrite.contextId);
-    if (protocol === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
+    if (module === undefined || rolePath === undefined || recipientDid === undefined || contextId === undefined) {
       return;
     }
 
     if (!outcome.delivered && outcome.failure === 'retryable') {
-      this.scheduleAudienceKeyDeliveryRetry(target, protocol);
+      this.scheduleAudienceKeyDeliveryRetry(target, module);
     }
     await store.record({
       intent: {
         contextId,
-        protocol,
+        module,
         recipientDid,
         rolePath,
         roleRecordId : recordsWrite.recordId,
@@ -892,17 +892,17 @@ export class AgentDwnApi {
     }
   }
 
-  private scheduleAudienceKeyDeliveryRetry(target: string, protocol: string): void {
+  private scheduleAudienceKeyDeliveryRetry(target: string, module: string): void {
     for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
-      if (coordinator.targetDid === target && coordinator.protocol === protocol) {
+      if (coordinator.targetDid === target && coordinator.module === module) {
         coordinator.retry();
       }
     }
   }
 
-  private wakeAudienceKeyDelivery(protocol: string): void {
+  private wakeAudienceKeyDelivery(module: string): void {
     for (const coordinator of this._audienceKeyDeliveryCoordinators.values()) {
-      if (coordinator.protocol === protocol) {
+      if (coordinator.module === module) {
         coordinator.wake();
       }
     }
@@ -911,7 +911,7 @@ export class AgentDwnApi {
   private async runAudienceKeyDeliveryPass(
     params: {
       granteeDid?: string;
-      protocol: string;
+      module: string;
       signal: AbortSignal;
       target: string;
     },
@@ -922,22 +922,22 @@ export class AgentDwnApi {
       return false;
     }
 
-    const protocolDefinition = await this.getProtocolDefinition(params.target, params.protocol, params.granteeDid);
-    if (protocolDefinition === undefined) {
+    const moduleDefinition = await this.getModuleDefinition(params.target, params.module, params.granteeDid);
+    if (moduleDefinition === undefined) {
       return false;
     }
-    const states = await store.reconcileProtocol({
-      protocol  : params.protocol,
+    const states = await store.reconcileModule({
+      module    : params.module,
       sourceDid : params.target,
       scan      : async () => {
-        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.protocol);
+        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.module);
         const intents = await scanActiveAudienceKeyDeliveryIntents({
           agent       : this.agent,
           delegateDid : params.granteeDid,
-          protocolDefinition,
+          moduleDefinition,
           sourceDid   : params.target,
         });
-        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.protocol);
+        await this.assertAudienceKeyDeliveryFeedCurrent(params.target, params.module);
         return intents;
       },
     });
@@ -951,7 +951,7 @@ export class AgentDwnApi {
       const outcome = await this.reprovisionAudienceKeyDelivery({
         contextId    : state.contextId,
         granteeDid   : params.granteeDid,
-        protocol     : state.protocol,
+        module       : state.module,
         recipientDid : state.recipientDid,
         rolePath     : state.rolePath,
         target       : state.sourceDid,
@@ -962,14 +962,14 @@ export class AgentDwnApi {
     return retry;
   }
 
-  private async assertAudienceKeyDeliveryFeedCurrent(target: string, protocol: string): Promise<void> {
+  private async assertAudienceKeyDeliveryFeedCurrent(target: string, module: string): Promise<void> {
     const registration = await this.agent.sync.getIdentityOptions(target);
-    if (!syncRegistrationCoversProtocol(registration, protocol)) {
+    if (!syncRegistrationCoversModule(registration, module)) {
       return;
     }
 
     const links = (await this.agent.sync.getReplicationLinks(target)).filter(link =>
-      link.scope.kind !== 'context' && syncScopeCoversProtocol(link.scope, protocol)
+      link.scope.kind !== 'context' && syncScopeCoversModule(link.scope, module)
     );
     if (!areReplicationLinksCurrent(links)) {
       throw new AudienceKeyDeliveryReplicaNotCurrentError();
@@ -1009,7 +1009,7 @@ export class AgentDwnApi {
       });
     }
 
-    this.invalidateAcceptedProtocolDefinition(tenant, message, reply.status.code);
+    this.invalidateAcceptedModuleDefinition(tenant, message, reply.status.code);
     return reply;
   }
 
@@ -1044,7 +1044,7 @@ export class AgentDwnApi {
       });
     }
 
-    this.invalidateReplicatedProtocolDefinition(tenant, message, result);
+    this.invalidateReplicatedModuleDefinition(tenant, message, result);
     return result;
   }
 
@@ -1089,7 +1089,7 @@ export class AgentDwnApi {
       // Otherwise, construct a new message.
       ({ message, dataStream: data, data: responseData } = await this.constructDwnMessage({
         request,
-        protocolDefinitionSource: 'remote',
+        moduleDefinitionSource: 'remote',
       }));
       subscriptionHandler = request.subscriptionHandler;
     }
@@ -1112,7 +1112,7 @@ export class AgentDwnApi {
       resubscribeFactory,
       verifyResponse : true,
     });
-    this.invalidateAcceptedProtocolDefinition(request.target, message, reply.status.code);
+    this.invalidateAcceptedModuleDefinition(request.target, message, reply.status.code);
 
     // If the message CID was not given in the `request`, compute it.
     messageCid ??= await Message.getCid(message);
@@ -1125,14 +1125,14 @@ export class AgentDwnApi {
   /** Reconstruct and re-sign a subscription at its last transport cursor. */
   private createResubscribeFactory<T extends DwnInterface>(
     request: ProcessDwnRequest<T>,
-    protocolDefinitionSource: ProtocolDefinitionSource,
+    moduleDefinitionSource: ModuleDefinitionSource,
   ): ResubscribeFactory {
     return async (cursor?: ProgressToken): Promise<GenericMessage> => {
       const resumeParams = cursor === undefined
         ? request.messageParams
         : { ...request.messageParams, cursor } as DwnMessageParams[T];
       const resumeRequest: ProcessDwnRequest<T> = { ...request, messageParams: resumeParams };
-      const { message } = await this.constructDwnMessage({ request: resumeRequest, protocolDefinitionSource });
+      const { message } = await this.constructDwnMessage({ request: resumeRequest, moduleDefinitionSource });
       return message;
     };
   }
@@ -1210,20 +1210,20 @@ export class AgentDwnApi {
   ): Promise<AudienceKeyDeliveryOutcome | undefined> {
     const descriptor = recordsWrite.descriptor;
     const resolved = await this.resolveDeliverableRoleAudience({
-      target       : request.target,
-      protocol     : descriptor.protocol,
-      protocolPath : descriptor.protocolPath,
-      recipient    : descriptor.recipient,
-      granteeDid   : request.granteeDid,
+      target     : request.target,
+      module     : descriptor.module,
+      modulePath : descriptor.modulePath,
+      recipient  : descriptor.recipient,
+      granteeDid : request.granteeDid,
     });
     if (!resolved.deliverable) {
       return;
     }
-    const { protocol, protocolPath, recipient } = resolved;
+    const { module, modulePath, recipient } = resolved;
 
-    const contextId = getRoleAudienceContextId(protocolPath, recordsWrite.contextId);
+    const contextId = getRoleAudienceContextId(modulePath, recordsWrite.contextId);
     if (contextId === undefined) {
-      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${protocolPath}'.`);
+      throw new Error(`AgentDwnApi: Unable to determine role audience context for '${modulePath}'.`);
     }
 
     const audienceKey = await this.getOrCreateAudienceKey({
@@ -1232,21 +1232,21 @@ export class AgentDwnApi {
       delegatedGrant    : request.messageParams?.delegatedGrant,
       granteeDid        : request.granteeDid,
       permissionGrantId : request.messageParams?.permissionGrantId,
-      protocol,
-      protocolRole      : request.messageParams?.protocolRole,
-      rolePath          : protocolPath,
+      module,
+      moduleRole        : request.messageParams?.moduleRole,
+      rolePath          : modulePath,
       sourceDid         : request.target,
     });
     // Prefer a caller-supplied recipient role-path key. Endpoint-less recipients
     // (e.g. a bare `did:jwk` in "remote-only" mode) publish no DWN to resolve, so
     // the caller — which learned the key out of band (e.g. from the recipient's
     // enrollment request) — supplies it here. Otherwise resolve it from the
-    // recipient's installed protocol definition.
+    // recipient's installed module definition.
     const recipientRolePublicKey = request.recipientRolePublicKey
       ?? await this.getRecipientRolePublicKey({
-        protocol,
+        module,
         recipientDid : recipient,
-        rolePath     : protocolPath,
+        rolePath     : modulePath,
       });
 
     await createAudienceDeliveryRecordFn({
@@ -1256,7 +1256,7 @@ export class AgentDwnApi {
       delegatedGrant     : request.messageParams?.delegatedGrant,
       granteeDid         : request.granteeDid,
       permissionGrantId  : request.messageParams?.permissionGrantId,
-      protocolRole       : request.messageParams?.protocolRole,
+      moduleRole         : request.messageParams?.moduleRole,
       recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
       recipientDid       : recipient,
       recipientRolePublicKey,
@@ -1268,55 +1268,55 @@ export class AgentDwnApi {
 
   /** @internal Reads the local, reconstructable delivery projection for one role record. */
   public async getAudienceKeyDeliveryState(params: {
-    protocol: string;
+    module: string;
     roleRecordId: string;
     signal: AbortSignal;
     target: string;
   }): Promise<AudienceKeyDeliveryState | undefined> {
-    this.requireAudienceKeyDeliveryCoordinator(params.protocol, params.signal, params.target);
+    this.requireAudienceKeyDeliveryCoordinator(params.module, params.signal, params.target);
     const state = await this._audienceKeyDeliveryStore?.get(params.target, params.roleRecordId);
     params.signal.throwIfAborted();
-    return state?.protocol === params.protocol ? state : undefined;
+    return state?.module === params.module ? state : undefined;
   }
 
-  /** @internal Reconciles the session's protocol deliveries and returns one updated projection. */
+  /** @internal Reconciles the session's module deliveries and returns one updated projection. */
   public async retryAudienceKeyDeliveryState(params: {
-    protocol: string;
+    module: string;
     roleRecordId: string;
     signal: AbortSignal;
     target: string;
   }): Promise<AudienceKeyDeliveryState | undefined> {
-    const coordinator = this.requireAudienceKeyDeliveryCoordinator(params.protocol, params.signal, params.target);
+    const coordinator = this.requireAudienceKeyDeliveryCoordinator(params.module, params.signal, params.target);
     coordinator.wake();
     await coordinator.whenIdle();
     return this.getAudienceKeyDeliveryState(params);
   }
 
-  /** @internal Subscribe to committed delivery-projection changes for one tenant and protocol. */
+  /** @internal Subscribe to committed delivery-projection changes for one tenant and module. */
   public subscribeAudienceKeyDeliveryChanges(params: {
     listener: () => void;
-    protocol: string;
+    module: string;
     target: string;
   }): () => void {
     return this.requireAudienceKeyDeliveryStore().subscribe(change => {
-      if (change.sourceDid === params.target && change.protocol === params.protocol) {
+      if (change.sourceDid === params.target && change.module === params.module) {
         params.listener();
       }
     });
   }
 
   private requireAudienceKeyDeliveryCoordinator(
-    protocol: string,
+    module: string,
     signal: AbortSignal,
     target: string,
   ): AudienceKeyDeliveryCoordinator {
     signal.throwIfAborted();
     this.requireAudienceKeyDeliveryStore();
     const coordinator = [...this._audienceKeyDeliveryCoordinators].find(candidate =>
-      candidate.protocol === protocol && candidate.sessionSignal === signal && candidate.targetDid === target
+      candidate.module === module && candidate.sessionSignal === signal && candidate.targetDid === target
     );
     if (coordinator === undefined) {
-      throw new Error(`AgentDwnApi: no audience-key delivery coordinator is registered for protocol '${protocol}'.`);
+      throw new Error(`AgentDwnApi: no audience-key delivery coordinator is registered for module '${module}'.`);
     }
     return coordinator;
   }
@@ -1330,10 +1330,10 @@ export class AgentDwnApi {
     return this._audienceKeyDeliveryStore;
   }
 
-  /** @internal Registers one protocol with the active session's background delivery coordinator. */
-  public registerAudienceKeyDeliveryProtocol(params: {
+  /** @internal Registers one module with the active session's background delivery coordinator. */
+  public registerAudienceKeyDeliveryModule(params: {
     granteeDid?: string;
-    protocol: string;
+    module: string;
     /** Authored role paths used only to wake on relevant local writes. */
     rolePaths: readonly string[];
     signal: AbortSignal;
@@ -1344,7 +1344,7 @@ export class AgentDwnApi {
     }
 
     for (const coordinator of this._audienceKeyDeliveryCoordinators) {
-      if (coordinator.sessionSignal === params.signal && coordinator.protocol === params.protocol) {
+      if (coordinator.sessionSignal === params.signal && coordinator.module === params.module) {
         return;
       }
     }
@@ -1352,11 +1352,11 @@ export class AgentDwnApi {
     const rolePaths = new Set(params.rolePaths);
     const coordinator = new AudienceKeyDeliveryCoordinator({
       onClosed : (): void => { this._audienceKeyDeliveryCoordinators.delete(coordinator); },
-      protocol : params.protocol,
+      module   : params.module,
       rolePaths,
       run      : (includeDormant): Promise<boolean> => this.runAudienceKeyDeliveryPass({
         granteeDid : params.granteeDid,
-        protocol   : params.protocol,
+        module     : params.module,
         signal     : params.signal,
         target     : params.target,
       }, includeDormant),
@@ -1375,7 +1375,7 @@ export class AgentDwnApi {
    *         supplied `recipientRolePublicKey`, or a nested `rolePath` without a deep-enough `contextId`.
    */
   public async reprovisionAudienceKeyDelivery(params: ReprovisionAudienceKeyDeliveryParams): Promise<AudienceKeyDeliveryOutcome> {
-    const { target, protocol, rolePath, recipientDid } = params;
+    const { target, module, rolePath, recipientDid } = params;
     const contextId = AgentDwnApi.getRoleAudienceContextIdOrThrow('reprovisionAudienceKeyDelivery', rolePath, params.contextId);
     if (params.recipientRolePublicKey !== undefined) {
       await assertX25519RolePublicKey(params.recipientRolePublicKey);
@@ -1384,18 +1384,18 @@ export class AgentDwnApi {
     let recipientRoleKeyId: string;
     try {
       recipientRolePublicKey = params.recipientRolePublicKey
-        ?? await this.getRecipientRolePublicKey({ protocol, recipientDid, rolePath });
+        ?? await this.getRecipientRolePublicKey({ module, recipientDid, rolePath });
       recipientRoleKeyId = await Encryption.getKeyId(recipientRolePublicKey);
     } catch (error) {
       return audienceKeyDeliveryFailure(error, recipientDid);
     }
     const executionInput = { ...params, contextId, recipientRoleKeyId, recipientRolePublicKey };
     const hasExplicitAuthorizationContext = params.granteeDid !== undefined ||
-      params.permissionGrantId !== undefined || params.delegatedGrant !== undefined || params.protocolRole !== undefined;
+      params.permissionGrantId !== undefined || params.delegatedGrant !== undefined || params.moduleRole !== undefined;
     if (hasExplicitAuthorizationContext) {
       return this.executeAudienceKeyDeliveryReprovision(executionInput);
     }
-    const flightKey = JSON.stringify([target, protocol, rolePath, contextId, recipientDid, recipientRoleKeyId]);
+    const flightKey = JSON.stringify([target, module, rolePath, contextId, recipientDid, recipientRoleKeyId]);
     const inFlight = this._reprovisionInFlight.get(flightKey);
     if (inFlight !== undefined) {
       return inFlight;
@@ -1411,7 +1411,7 @@ export class AgentDwnApi {
 
   /** Single-flight body of {@link reprovisionAudienceKeyDelivery}; never throws — failures resolve to the failure outcome. */
   private async executeAudienceKeyDeliveryReprovision(input: ExecuteAudienceKeyDeliveryReprovisionInput): Promise<AudienceKeyDeliveryOutcome> {
-    const { target, protocol, rolePath, contextId, recipientDid, granteeDid, permissionGrantId, protocolRole } = input;
+    const { target, module, rolePath, contextId, recipientDid, granteeDid, permissionGrantId, moduleRole } = input;
     let { delegatedGrant } = input;
     try {
       const isDelegate = granteeDid !== undefined && granteeDid !== target;
@@ -1421,15 +1421,15 @@ export class AgentDwnApi {
           delegate     : true,
           delegateDid  : granteeDid,
           messageType  : DwnInterface.RecordsWrite,
-          protocol,
-          protocolPath : rolePath,
+          module,
+          modulePath   : rolePath,
         })).message;
       }
       if (!isDelegate) {
         const currentAudience = await this.resolveCurrentAudienceRecord({
           authorDid : target,
           contextId,
-          protocol,
+          module,
           rolePath,
           sourceDid : target,
         });
@@ -1438,7 +1438,7 @@ export class AgentDwnApi {
             agent     : this.agent,
             contextId,
             keyId     : currentAudience.payload.keyId,
-            protocol,
+            module,
             recipientDid,
             rolePath,
             sourceDid : target,
@@ -1454,8 +1454,8 @@ export class AgentDwnApi {
         delegatedGrant,
         granteeDid,
         permissionGrantId,
-        protocol,
-        protocolRole,
+        module,
+        moduleRole,
         rolePath,
         sourceDid : target,
       });
@@ -1466,7 +1466,7 @@ export class AgentDwnApi {
         delegatedGrant,
         granteeDid,
         permissionGrantId,
-        protocolRole,
+        moduleRole,
         recipientAuthority     : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
         recipientDid,
         recipientRolePublicKey : input.recipientRolePublicKey,
@@ -1496,29 +1496,29 @@ export class AgentDwnApi {
     permissionGrantId?: string;
     delegatedGrant?: DataEncodedRecordsWriteMessage;
     sourceDid: string;
-    protocol: string;
-    sourceProtocolPath: string;
+    module: string;
+    sourceModulePath: string;
     parentContextId?: string;
-    protocolRole?: string;
-    protocolDefinition: ProtocolDefinition;
-    sourceRuleSet: ProtocolRuleSet;
+    moduleRole?: string;
+    moduleDefinition: ModuleDefinition;
+    sourceRuleSet: ModuleRuleSet;
   }): Promise<{ inputs: SourceRoleAudienceKeyEncryptionInput[]; pendingAudienceRecords: PendingAudienceRecord[] }> {
     const inputs: SourceRoleAudienceKeyEncryptionInput[] = [];
     const pendingAudienceRecords: PendingAudienceRecord[] = [];
-    const readRules = params.sourceRuleSet.$actions?.filter((rule: ProtocolActionRule): boolean =>
+    const readRules = params.sourceRuleSet.$actions?.filter((rule: ModuleActionRule): boolean =>
       rule.role !== undefined && rule.can?.includes('read')
     ) ?? [];
 
     for (const rule of readRules) {
-      const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.protocolDefinition, params.parentContextId);
+      const roleAudience = this.resolveRoleAudienceRule(rule.role!, params.moduleDefinition, params.parentContextId);
       const pendingRoleAudience = roleAudience === undefined &&
         this.canPreparePendingAudienceRecord(rule.role!, params.parentContextId)
-        ? await this.preparePendingAudienceRecord(rule.role!, params.protocolDefinition)
+        ? await this.preparePendingAudienceRecord(rule.role!, params.moduleDefinition)
         : undefined;
       if (roleAudience === undefined && pendingRoleAudience === undefined) {
         throw new Error(
           `AgentDwnApi: Unable to resolve encrypted role audience '${rule.role}' ` +
-          `for '${params.protocol}/${params.sourceProtocolPath}'.`
+          `for '${params.module}/${params.sourceModulePath}'.`
         );
       }
 
@@ -1530,8 +1530,8 @@ export class AgentDwnApi {
           delegatedGrant    : params.delegatedGrant,
           granteeDid        : params.granteeDid,
           permissionGrantId : params.permissionGrantId,
-          protocol          : roleAudience.protocol,
-          protocolRole      : params.protocolRole,
+          module            : roleAudience.module,
+          moduleRole        : params.moduleRole,
           rolePath          : roleAudience.rolePath,
           sourceDid         : params.sourceDid,
         });
@@ -1546,7 +1546,7 @@ export class AgentDwnApi {
         algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
         derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
         keyId            : audienceKey.keyId,
-        protocol         : audienceKey.protocol,
+        module           : audienceKey.module,
         publicKey        : audiencePublicKey,
         rolePath         : audienceKey.rolePath,
       });
@@ -1559,7 +1559,7 @@ export class AgentDwnApi {
     roleRef: string,
     parentContextId: string | undefined,
   ): boolean {
-    if (isCrossProtocolRef(roleRef)) {
+    if (isCrossModuleRef(roleRef)) {
       return false;
     }
 
@@ -1569,13 +1569,13 @@ export class AgentDwnApi {
 
   private async preparePendingAudienceRecord(
     roleRef: string,
-    protocolDefinition: ProtocolDefinition,
+    moduleDefinition: ModuleDefinition,
   ): Promise<PendingAudienceRecord | undefined> {
-    if (isCrossProtocolRef(roleRef)) {
+    if (isCrossModuleRef(roleRef)) {
       return undefined;
     }
 
-    const ruleSet = getRuleSetAtPath(roleRef, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(roleRef, moduleDefinition.structure);
     const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
     if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
       return undefined;
@@ -1584,7 +1584,7 @@ export class AgentDwnApi {
     return {
       audienceKey: await generateAudienceKeyFn({
         contextId : '',
-        protocol  : protocolDefinition.protocol,
+        module    : moduleDefinition.module,
         rolePath  : roleRef,
       }),
       rolePath: roleRef,
@@ -1594,15 +1594,15 @@ export class AgentDwnApi {
 
   private resolveRoleAudienceRule(
     roleRef: string,
-    protocolDefinition: ProtocolDefinition,
+    moduleDefinition: ModuleDefinition,
     parentContextId: string | undefined,
-  ): { protocol: string; rolePath: string; contextId: string } | undefined {
-    if (isCrossProtocolRef(roleRef)) {
+  ): { module: string; rolePath: string; contextId: string } | undefined {
+    if (isCrossModuleRef(roleRef)) {
       return undefined;
     }
 
     const contextId = getRoleAudienceContextId(roleRef, parentContextId);
-    return contextId === undefined ? undefined : { protocol: protocolDefinition.protocol, rolePath: roleRef, contextId };
+    return contextId === undefined ? undefined : { module: moduleDefinition.module, rolePath: roleRef, contextId };
   }
 
   private getRoleAudienceSourceContextId(params: {
@@ -1621,15 +1621,15 @@ export class AgentDwnApi {
   private async getOrCreateAudiencePublicKey(params: {
     authorDid: string;
     sourceDid: string;
-    protocol: string;
+    module: string;
     contextId: string;
     rolePath: string;
     granteeDid?: string;
     permissionGrantId?: string;
     delegatedGrant?: DataEncodedRecordsWriteMessage;
-    protocolRole?: string;
+    moduleRole?: string;
   }): Promise<{
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId: string;
@@ -1638,7 +1638,7 @@ export class AgentDwnApi {
     const existingAudience = await this.resolveCurrentAudienceRecord({
       authorDid : params.granteeDid ?? params.authorDid,
       contextId : params.contextId,
-      protocol  : params.protocol,
+      module    : params.module,
       rolePath  : params.rolePath,
       sourceDid : params.sourceDid,
     });
@@ -1646,7 +1646,7 @@ export class AgentDwnApi {
       return {
         contextId    : existingAudience.payload.contextId,
         keyId        : existingAudience.payload.keyId,
-        protocol     : existingAudience.payload.protocol,
+        module       : existingAudience.payload.module,
         publicKeyJwk : existingAudience.payload.publicKeyJwk,
         rolePath     : existingAudience.payload.rolePath,
       };
@@ -1656,7 +1656,7 @@ export class AgentDwnApi {
     return {
       contextId    : audienceKey.contextId,
       keyId        : audienceKey.keyId,
-      protocol     : audienceKey.protocol,
+      module       : audienceKey.module,
       publicKeyJwk : audienceKey.keyMaterial.publicKeyJwk,
       rolePath     : audienceKey.rolePath,
     };
@@ -1665,18 +1665,18 @@ export class AgentDwnApi {
   private async getOrCreateAudienceKey(params: {
     authorDid: string;
     sourceDid: string;
-    protocol: string;
+    module: string;
     contextId: string;
     rolePath: string;
     granteeDid?: string;
     permissionGrantId?: string;
     delegatedGrant?: DataEncodedRecordsWriteMessage;
-    protocolRole?: string;
+    moduleRole?: string;
   }): Promise<AudienceKeyPayload> {
     const existingAudience = await this.resolveCurrentAudienceRecord({
       authorDid : params.granteeDid ?? params.authorDid,
       contextId : params.contextId,
-      protocol  : params.protocol,
+      module    : params.module,
       rolePath  : params.rolePath,
       sourceDid : params.sourceDid,
     });
@@ -1688,7 +1688,7 @@ export class AgentDwnApi {
         contextId                  : existingAudience.payload.contextId,
         granteeDid                 : params.granteeDid,
         keyId                      : existingAudience.payload.keyId,
-        protocol                   : existingAudience.payload.protocol,
+        module                     : existingAudience.payload.module,
         recipientDid               : params.authorDid,
         rolePath                   : existingAudience.payload.rolePath,
         sourceDid                  : params.sourceDid,
@@ -1702,31 +1702,31 @@ export class AgentDwnApi {
         contextId   : existingAudience.payload.contextId,
         keyId       : existingAudience.payload.keyId,
         keyMaterial : resolved.keyMaterial,
-        protocol    : existingAudience.payload.protocol,
+        module      : existingAudience.payload.module,
         rolePath    : existingAudience.payload.rolePath,
       };
     }
 
-    const protocolDefinition = await this.getProtocolDefinition(params.sourceDid, params.protocol, params.granteeDid);
-    if (protocolDefinition === undefined) {
+    const moduleDefinition = await this.getModuleDefinition(params.sourceDid, params.module, params.granteeDid);
+    if (moduleDefinition === undefined) {
       throw new AudienceKeyDeliveryConfigurationError(
-        `AgentDwnApi: protocol '${params.protocol}' is not installed for '${params.sourceDid}'.`
+        `AgentDwnApi: module '${params.module}' is not installed for '${params.sourceDid}'.`
       );
     }
 
-    const ruleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(params.rolePath, moduleDefinition.structure);
     const sealingPublicKey = ruleSet?.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
     if (ruleSet?.$role !== true || sealingPublicKey === undefined) {
       throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: role '${params.rolePath}' is not an encrypted audience ` +
-        `(requires $role with $keyAgreement) in protocol '${params.protocol}'.`,
+        `(requires $role with $keyAgreement) in module '${params.module}'.`,
       );
     }
 
     await this.assertAudienceSealCoverage({
       contextId  : params.contextId,
       granteeDid : params.granteeDid,
-      protocol   : params.protocol,
+      module     : params.module,
       rolePath   : params.rolePath,
       sourceDid  : params.sourceDid,
     });
@@ -1738,8 +1738,8 @@ export class AgentDwnApi {
       delegatedGrant    : params.delegatedGrant,
       granteeDid        : params.granteeDid,
       permissionGrantId : params.permissionGrantId,
-      protocol          : params.protocol,
-      protocolRole      : params.protocolRole,
+      module            : params.module,
+      moduleRole        : params.moduleRole,
       rolePath          : params.rolePath,
       sealingPublicKey,
       sourceDid         : params.sourceDid,
@@ -1747,14 +1747,14 @@ export class AgentDwnApi {
     this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
       contextId    : params.contextId,
       keyId        : created.audienceKey.keyId,
-      protocol     : params.protocol,
+      module       : params.module,
       recipientDid : params.authorDid,
       rolePath     : params.rolePath,
       sourceDid    : params.sourceDid,
     }), {
       contextId    : params.contextId,
       keyMaterial  : created.audienceKey.keyMaterial,
-      protocol     : params.protocol,
+      module       : params.module,
       recipientDid : params.authorDid,
       rolePath     : params.rolePath,
       sourceDid    : params.sourceDid,
@@ -1765,7 +1765,7 @@ export class AgentDwnApi {
 
   private async assertAudienceSealCoverage(params: {
     sourceDid: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     granteeDid?: string;
@@ -1774,13 +1774,13 @@ export class AgentDwnApi {
       agent                      : this.agent,
       delegateDecryptionKeyCache : this._delegateDecryptionKeyCache,
       granteeDid                 : params.granteeDid,
-      protocol                   : params.protocol,
+      module                     : params.module,
       rolePath                   : params.rolePath,
       sourceDid                  : params.sourceDid,
     });
     if (!hasCoverage) {
       throw new AudienceKeyDeliveryConfigurationError(
-        `AgentDwnApi: Cannot mint role audience (${params.protocol}, ${params.rolePath}, ${params.contextId}) without seal coverage. ` +
+        `AgentDwnApi: Cannot mint role audience (${params.module}, ${params.rolePath}, ${params.contextId}) without seal coverage. ` +
         'Use the owner identity or a delegate with grantKey material covering the role path, or provision the audience with a seal-covered actor first.'
       );
     }
@@ -1789,7 +1789,7 @@ export class AgentDwnApi {
   private async resolveCurrentAudienceRecord(params: {
     authorDid: string;
     sourceDid: string;
-    protocol: string;
+    module: string;
     contextId: string;
     rolePath: string;
   }): Promise<{ message: RecordsWriteMessage; payload: EncryptionControlAudiencePayload } | undefined> {
@@ -1797,7 +1797,7 @@ export class AgentDwnApi {
       const record = await EncryptionControl.resolveCurrentAudienceRecord({
         contextId    : params.contextId,
         messageStore : this._dwn.storage.messageStore,
-        protocol     : params.protocol,
+        module       : params.module,
         rolePath     : params.rolePath,
         tenant       : params.sourceDid,
       });
@@ -1813,10 +1813,10 @@ export class AgentDwnApi {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : params.protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol  : params.protocol,
+          module     : params.module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module    : params.module,
             rolePath  : params.rolePath,
             contextId : params.contextId,
           },
@@ -1874,24 +1874,24 @@ export class AgentDwnApi {
 
   private async getRecipientRolePublicKey(params: {
     recipientDid: string;
-    protocol: string;
+    module: string;
     rolePath: string;
   }): Promise<PublicKeyJwk> {
-    let protocolDefinition: ProtocolDefinition | undefined;
+    let moduleDefinition: ModuleDefinition | undefined;
     try {
-      protocolDefinition = await this.getProtocolDefinition(params.recipientDid, params.protocol);
+      moduleDefinition = await this.getModuleDefinition(params.recipientDid, params.module);
     } catch {
-      protocolDefinition = undefined;
+      moduleDefinition = undefined;
     }
 
-    protocolDefinition ??= await this.fetchRemoteProtocolDefinition(params.recipientDid, params.protocol);
+    moduleDefinition ??= await this.fetchRemoteModuleDefinition(params.recipientDid, params.module);
 
-    const roleRuleSet = getRuleSetAtPath(params.rolePath, protocolDefinition.structure);
+    const roleRuleSet = getRuleSetAtPath(params.rolePath, moduleDefinition.structure);
     const publicKeyJwk = roleRuleSet?.$keyAgreement?.publicKeyJwk;
     if (publicKeyJwk === undefined) {
       throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: Recipient '${params.recipientDid}' has no encryption key for role path ` +
-        `'${params.protocol}/${params.rolePath}'.`
+        `'${params.module}/${params.rolePath}'.`
       );
     }
 
@@ -1900,7 +1900,7 @@ export class AgentDwnApi {
     } catch (error) {
       throw new AudienceKeyDeliveryConfigurationError(
         `AgentDwnApi: Recipient '${params.recipientDid}' has an invalid encryption key for role path ` +
-        `'${params.protocol}/${params.rolePath}'.`,
+        `'${params.module}/${params.rolePath}'.`,
         { cause: error },
       );
     }
@@ -1923,78 +1923,78 @@ export class AgentDwnApi {
     return RecordsWrite.createDescriptor(descriptorOptions);
   }
 
-  /** Resolves the target DWN's protocol-owned encryption policy for one write. */
+  /** Resolves the target DWN's module-owned encryption policy for one write. */
   private async resolveRecordEncryptionPolicy(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
-    protocolDefinitionSource: ProtocolDefinitionSource,
+    moduleDefinitionSource: ModuleDefinitionSource,
   ): Promise<RecordEncryptionPolicy | undefined> {
     const messageParams = request.messageParams;
     if (messageParams === undefined) {
       return undefined;
     }
 
-    const { protocol, protocolPath } = messageParams;
-    const isSystemEncryptionWrite = protocol === EncryptionProtocol.uri || isEncryptionControlPath(protocolPath);
+    const { module, modulePath } = messageParams;
+    const isSystemEncryptionWrite = module === EncryptionModule.uri || isEncryptionControlPath(modulePath);
     if (!isSystemEncryptionWrite && messageParams.encryptionInput !== undefined) {
       throw new Error(
         'AgentDwnApi: caller-supplied encryptionInput is not supported; ' +
-        'RecordsWrite encryption is determined by the target protocol definition.'
+        'RecordsWrite encryption is determined by the target module definition.'
       );
     }
 
-    if (protocol === undefined || protocolPath === undefined || isSystemEncryptionWrite) {
+    if (module === undefined || modulePath === undefined || isSystemEncryptionWrite) {
       return undefined;
     }
 
-    const protocolDefinition = await this.resolveTargetProtocolDefinition({
+    const moduleDefinition = await this.resolveTargetModuleDefinition({
       granteeDid : request.granteeDid,
-      protocol,
-      source     : protocolDefinitionSource,
+      module,
+      source     : moduleDefinitionSource,
       targetDid  : request.target,
     });
-    const ruleSet = getRuleSetAtPath(protocolPath, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(modulePath, moduleDefinition.structure);
     if (ruleSet === undefined) {
       throw new Error(
-        `AgentDwnApi: Protocol '${protocol}' installed for '${request.target}' ` +
-        `does not define protocol path '${protocolPath}'.`
+        `AgentDwnApi: Module '${module}' installed for '${request.target}' ` +
+        `does not define module path '${modulePath}'.`
       );
     }
 
-    let protocolTypes = protocolDefinition.types;
-    const segments = protocolPath.split('/');
-    const rootRuleSet = protocolDefinition.structure[segments[0]];
+    let moduleTypes = moduleDefinition.types;
+    const segments = modulePath.split('/');
+    const rootRuleSet = moduleDefinition.structure[segments[0]];
     if (segments.length === 1 && rootRuleSet?.$ref !== undefined) {
-      const reference = parseCrossProtocolRef(rootRuleSet.$ref);
-      const referencedProtocol = reference === undefined
+      const reference = parseCrossModuleRef(rootRuleSet.$ref);
+      const referencedModule = reference === undefined
         ? undefined
-        : protocolDefinition.uses?.[reference.alias];
-      if (referencedProtocol === undefined) {
+        : moduleDefinition.uses?.[reference.alias];
+      if (referencedModule === undefined) {
         throw new Error(
-          `AgentDwnApi: Protocol '${protocol}' has an unresolved $ref at path '${protocolPath}'.`
+          `AgentDwnApi: Module '${module}' has an unresolved $ref at path '${modulePath}'.`
         );
       }
 
-      const referencedDefinition = await this.resolveTargetProtocolDefinition({
+      const referencedDefinition = await this.resolveTargetModuleDefinition({
         granteeDid : request.granteeDid,
-        protocol   : referencedProtocol,
-        source     : protocolDefinitionSource,
+        module     : referencedModule,
+        source     : moduleDefinitionSource,
         targetDid  : request.target,
       });
-      protocolTypes = referencedDefinition.types;
+      moduleTypes = referencedDefinition.types;
     }
 
-    const typeName = getTypeName(protocolPath);
-    const protocolType = protocolTypes[typeName];
-    if (protocolType === undefined) {
+    const typeName = getTypeName(modulePath);
+    const moduleType = moduleTypes[typeName];
+    if (moduleType === undefined) {
       throw new Error(
-        `AgentDwnApi: Protocol '${protocol}' installed for '${request.target}' ` +
-        `does not define type '${typeName}' for path '${protocolPath}'.`
+        `AgentDwnApi: Module '${module}' installed for '${request.target}' ` +
+        `does not define type '${typeName}' for path '${modulePath}'.`
       );
     }
 
     return {
-      encryptionRequired: protocolType.encryptionRequired === true,
-      protocolDefinition,
+      encryptionRequired: moduleType.encryptionRequired === true,
+      moduleDefinition,
       ruleSet,
     };
   }
@@ -2006,48 +2006,48 @@ export class AgentDwnApi {
    * back to plaintext would expose application bytes to a remote endpoint
    * before that endpoint could reject an encryption-required write.
    */
-  private async resolveTargetProtocolDefinition(params: {
+  private async resolveTargetModuleDefinition(params: {
     granteeDid?: string;
-    protocol: string;
-    source: ProtocolDefinitionSource;
+    module: string;
+    source: ModuleDefinitionSource;
     targetDid: string;
-  }): Promise<ProtocolDefinition> {
-    if (params.protocol === PermissionsProtocol.uri) {
-      return PermissionsProtocol.definition;
+  }): Promise<ModuleDefinition> {
+    if (params.module === PermissionsModule.uri) {
+      return PermissionsModule.definition;
     }
 
     try {
       const definition = params.source === 'local'
-        ? await this.getProtocolDefinition(params.targetDid, params.protocol, params.granteeDid)
-        : await this.fetchRemoteProtocolDefinition(params.targetDid, params.protocol, params.granteeDid);
+        ? await this.getModuleDefinition(params.targetDid, params.module, params.granteeDid)
+        : await this.fetchRemoteModuleDefinition(params.targetDid, params.module, params.granteeDid);
       if (definition === undefined) {
-        throw new Error('protocol definition was not found');
+        throw new Error('module definition was not found');
       }
       return definition;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `AgentDwnApi: Unable to resolve protocol '${params.protocol}' for target '${params.targetDid}': ${detail}`,
+        `AgentDwnApi: Unable to resolve module '${params.module}' for target '${params.targetDid}': ${detail}`,
         { cause: error },
       );
     }
   }
 
   /** Encrypts plaintext once and replaces it with the authoritative stored bytes. */
-  private async encryptRecordDataForProtocol(
+  private async encryptRecordDataForModule(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
     policy: RecordEncryptionPolicy,
   ): Promise<{ data: Blob; readableStream: ReadableStream<Uint8Array> }> {
     const messageParams = request.messageParams;
-    if (messageParams?.protocol === undefined || messageParams.protocolPath === undefined) {
-      throw new Error('AgentDwnApi: Protocol and protocolPath are required for policy-driven encryption.');
+    if (messageParams?.module === undefined || messageParams.modulePath === undefined) {
+      throw new Error('AgentDwnApi: Module and modulePath are required for policy-driven encryption.');
     }
 
-    const protocolPathPublicKey = policy.ruleSet.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
-    if (protocolPathPublicKey === undefined) {
+    const modulePathPublicKey = policy.ruleSet.$keyAgreement?.publicKeyJwk as PublicKeyJwk | undefined;
+    if (modulePathPublicKey === undefined) {
       throw new Error(
-        `AgentDwnApi: Protocol '${messageParams.protocol}' requires encryption at path ` +
-        `'${messageParams.protocolPath}' but the installed definition has no $keyAgreement key.`
+        `AgentDwnApi: Module '${messageParams.module}' requires encryption at path ` +
+        `'${messageParams.modulePath}' but the installed definition has no $keyAgreement key.`
       );
     }
 
@@ -2059,9 +2059,9 @@ export class AgentDwnApi {
     const encryptionInput = buildEncryptionInputFn(
       dataEncryptionKey,
       dataEncryptionIV,
-      await Encryption.getKeyId(protocolPathPublicKey),
-      protocolPathPublicKey,
-      KeyDerivationScheme.ProtocolPath,
+      await Encryption.getKeyId(modulePathPublicKey),
+      modulePathPublicKey,
+      KeyDerivationScheme.ModulePath,
     );
     const roleAudienceInputs = await this.getRoleAudienceKeyEncryptionInputs({
       authorDid       : request.author,
@@ -2071,13 +2071,13 @@ export class AgentDwnApi {
         parentContextId : messageParams.parentContextId,
         recordId        : messageParams.recordId,
       }),
-      permissionGrantId  : messageParams.permissionGrantId,
-      protocol           : messageParams.protocol,
-      protocolRole       : messageParams.protocolRole,
-      protocolDefinition : policy.protocolDefinition,
-      sourceDid          : request.target,
-      sourceProtocolPath : messageParams.protocolPath,
-      sourceRuleSet      : policy.ruleSet,
+      permissionGrantId : messageParams.permissionGrantId,
+      module            : messageParams.module,
+      moduleRole        : messageParams.moduleRole,
+      moduleDefinition  : policy.moduleDefinition,
+      sourceDid         : request.target,
+      sourceModulePath  : messageParams.modulePath,
+      sourceRuleSet     : policy.ruleSet,
     });
     encryptionInput.keyEncryptionInputs.push(...roleAudienceInputs.inputs);
 
@@ -2186,7 +2186,7 @@ export class AgentDwnApi {
     await this.assertAudienceSealCoverage({
       contextId,
       granteeDid : request.granteeDid,
-      protocol   : pending.audienceKey.protocol,
+      module     : pending.audienceKey.module,
       rolePath   : pending.audienceKey.rolePath,
       sourceDid  : request.target,
     });
@@ -2200,8 +2200,8 @@ export class AgentDwnApi {
       delegatedGrant    : messageParams.delegatedGrant,
       granteeDid        : request.granteeDid,
       permissionGrantId : messageParams.permissionGrantId,
-      protocol          : audienceKey.protocol,
-      protocolRole      : messageParams.protocolRole,
+      module            : audienceKey.module,
+      moduleRole        : messageParams.moduleRole,
       rolePath          : audienceKey.rolePath,
       sealingPublicKey  : pending.sealingPublicKey,
       sourceDid         : request.target,
@@ -2209,35 +2209,35 @@ export class AgentDwnApi {
     this._audienceDecryptionKeyCache.set(getAudienceDecryptionKeyCacheKey({
       contextId,
       keyId        : audienceKey.keyId,
-      protocol     : audienceKey.protocol,
+      module       : audienceKey.module,
       recipientDid : request.author,
       rolePath     : audienceKey.rolePath,
       sourceDid    : request.target,
     }), {
       contextId,
       keyMaterial  : audienceKey.keyMaterial,
-      protocol     : audienceKey.protocol,
+      module       : audienceKey.module,
       recipientDid : request.author,
       rolePath     : audienceKey.rolePath,
       sourceDid    : request.target,
     });
   }
 
-  private async constructDwnMessage<T extends DwnInterface>({ request, protocolDefinitionSource }: {
+  private async constructDwnMessage<T extends DwnInterface>({ request, moduleDefinitionSource }: {
     request: ProcessDwnRequest<T>;
-    protocolDefinitionSource: ProtocolDefinitionSource;
+    moduleDefinitionSource: ModuleDefinitionSource;
   }): Promise<DwnMessageWithData<T>> {
     if (request.granteeDid && !this.hasGrantParams(request.messageParams)) {
       throw new Error('AgentDwnApi: Requested to sign with a permission but no grant messageParams were provided in the request');
     }
 
-    if (isDwnRequest(request, DwnInterface.ProtocolsConfigure)) {
-      await this.prepareProtocolsConfigureDefinition(request);
+    if (isDwnRequest(request, DwnInterface.ModulesConfigure)) {
+      await this.prepareModulesConfigureDefinition(request);
     }
 
     let preparedData: PreparedDwnData = {};
     if (isDwnRequest(request, DwnInterface.RecordsWrite)) {
-      preparedData = await this.prepareRecordsWriteData(request, protocolDefinitionSource);
+      preparedData = await this.prepareRecordsWriteData(request, moduleDefinitionSource);
     }
 
     const dwnMessage = await this.constructDwnMessageInstance(request);
@@ -2249,9 +2249,9 @@ export class AgentDwnApi {
     };
   }
 
-  /** Injects public encryption keys only when constructing a new encrypted protocol definition. */
-  private async prepareProtocolsConfigureDefinition(
-    request: ProcessDwnRequest<DwnInterface.ProtocolsConfigure>,
+  /** Injects public encryption keys only when constructing a new encrypted module definition. */
+  private async prepareModulesConfigureDefinition(
+    request: ProcessDwnRequest<DwnInterface.ModulesConfigure>,
   ): Promise<void> {
     const messageParams = request.messageParams;
     if (request.rawMessage !== undefined || messageParams === undefined) {
@@ -2259,37 +2259,37 @@ export class AgentDwnApi {
     }
 
     const hasEncryptedTypes = Object.values(messageParams.definition.types)
-      .some((type: ProtocolType): boolean => type.encryptionRequired === true);
+      .some((type: ModuleType): boolean => type.encryptionRequired === true);
     if (!hasEncryptedTypes) {
       return;
     }
 
     const keyDeriver = await getEncryptionKeyDeriverFn(this.agent, request.author);
-    messageParams.definition = await Protocols.deriveAndInjectPublicEncryptionKeys(
+    messageParams.definition = await Modules.deriveAndInjectPublicEncryptionKeys(
       messageParams.definition,
       keyDeriver,
     );
   }
 
-  /** Applies protocol encryption, then normalizes the authoritative bytes for message construction. */
+  /** Applies module encryption, then normalizes the authoritative bytes for message construction. */
   private async prepareRecordsWriteData(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
-    protocolDefinitionSource: ProtocolDefinitionSource,
+    moduleDefinitionSource: ModuleDefinitionSource,
   ): Promise<PreparedDwnData> {
-    const encryptedData = await this.applyRecordEncryptionPolicy(request, protocolDefinitionSource);
+    const encryptedData = await this.applyRecordEncryptionPolicy(request, moduleDefinitionSource);
     return this.normalizeRecordsWriteData(request, encryptedData);
   }
 
-  /** Applies the resolved protocol policy without allowing plaintext fallback on lookup failure. */
+  /** Applies the resolved module policy without allowing plaintext fallback on lookup failure. */
   private async applyRecordEncryptionPolicy(
     request: ProcessDwnRequest<DwnInterface.RecordsWrite>,
-    protocolDefinitionSource: ProtocolDefinitionSource,
+    moduleDefinitionSource: ModuleDefinitionSource,
   ): Promise<PreparedDwnData> {
     if (request.rawMessage !== undefined) {
       return {};
     }
 
-    const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request, protocolDefinitionSource);
+    const encryptionPolicy = await this.resolveRecordEncryptionPolicy(request, moduleDefinitionSource);
     if (encryptionPolicy === undefined) {
       return {};
     }
@@ -2298,7 +2298,7 @@ export class AgentDwnApi {
     if (!encryptionPolicy.encryptionRequired) {
       if (encryptionEnvelope !== undefined) {
         throw new Error(
-          `AgentDwnApi: Protocol type at '${request.messageParams?.protocolPath}' requires plaintext; ` +
+          `AgentDwnApi: Module type at '${request.messageParams?.modulePath}' requires plaintext; ` +
           'a pre-built encryption envelope is not allowed.'
         );
       }
@@ -2306,7 +2306,7 @@ export class AgentDwnApi {
     }
 
     if (encryptionEnvelope === undefined) {
-      return this.encryptRecordDataForProtocol(request, encryptionPolicy);
+      return this.encryptRecordDataForModule(request, encryptionPolicy);
     }
 
     if (request.messageParams?.data !== undefined || request.dataStream !== undefined) {
@@ -2430,8 +2430,8 @@ export class AgentDwnApi {
     return dwnMessageConstructors[request.messageType].create({ ...params, signer });
   }
 
-  /** Invalidates cached policy after a target accepts or already has a protocol message. */
-  private invalidateAcceptedProtocolDefinition(
+  /** Invalidates cached policy after a target accepts or already has a module message. */
+  private invalidateAcceptedModuleDefinition(
     target: string,
     message: GenericMessage,
     statusCode: number,
@@ -2440,11 +2440,11 @@ export class AgentDwnApi {
       return;
     }
 
-    this.invalidateProtocolDefinition(target, message);
+    this.invalidateModuleDefinition(target, message);
   }
 
-  /** Invalidates cached policy after replication stores or recognizes a protocol message. */
-  private invalidateReplicatedProtocolDefinition(
+  /** Invalidates cached policy after replication stores or recognizes a module message. */
+  private invalidateReplicatedModuleDefinition(
     target: string,
     message: GenericMessage,
     result: ReplicationApplyResult,
@@ -2453,21 +2453,21 @@ export class AgentDwnApi {
       return;
     }
 
-    this.invalidateProtocolDefinition(target, message);
+    this.invalidateModuleDefinition(target, message);
   }
 
-  private invalidateProtocolDefinition(target: string, message: GenericMessage): void {
-    if (!isDwnMessage(DwnInterface.ProtocolsConfigure, message)) {
+  private invalidateModuleDefinition(target: string, message: GenericMessage): void {
+    if (!isDwnMessage(DwnInterface.ModulesConfigure, message)) {
       return;
     }
 
     const { definition } = message.descriptor;
-    const directCacheKey = `${target}~${definition.protocol}`;
-    const scopedCacheKeySuffix = `~${target}~${definition.protocol}`;
+    const directCacheKey = `${target}~${definition.module}`;
+    const scopedCacheKeySuffix = `~${target}~${definition.module}`;
 
-    for (const [cacheKey] of this._protocolDefinitionCache) {
+    for (const [cacheKey] of this._moduleDefinitionCache) {
       if (cacheKey === directCacheKey || cacheKey.endsWith(scopedCacheKeySuffix)) {
-        this._protocolDefinitionCache.delete(cacheKey);
+        this._moduleDefinitionCache.delete(cacheKey);
       }
     }
   }
@@ -2594,91 +2594,91 @@ export class AgentDwnApi {
   }
 
   /**
-   * Fetches a protocol definition from the local DWN, with caching.
-   * Returns undefined if the protocol is not installed.
+   * Fetches a module definition from the local DWN, with caching.
+   * Returns undefined if the module is not installed.
    *
    * @param tenantDid - The tenant DID to query
-   * @param protocolUri - The protocol URI to fetch
-   * @returns The protocol definition, or undefined if not found
+   * @param moduleUri - The module URI to fetch
+   * @returns The module definition, or undefined if not found
    */
-  private async getProtocolDefinition(
+  private async getModuleDefinition(
     tenantDid: string,
-    protocolUri: string,
+    moduleUri: string,
     granteeDid?: string,
-  ): Promise<ProtocolDefinition | undefined> {
+  ): Promise<ModuleDefinition | undefined> {
     if (!this._dwn) {
       // Remote mode still has a configured local DWN server. Query it
       // directly rather than resolving the tenant's advertised remote DWN.
       try {
-        const authorization = await this.getProtocolQueryAuthorization(
-          tenantDid, protocolUri, granteeDid,
+        const authorization = await this.getModuleQueryAuthorization(
+          tenantDid, moduleUri, granteeDid,
         );
-        return await fetchRemoteProtocolDefinitionFn(
+        return await fetchRemoteModuleDefinitionFn(
           tenantDid,
-          protocolUri,
+          moduleUri,
           async (): Promise<string[]> => [this._localDwnEndpoint!],
           this.sendDwnRpcRequest.bind(this),
-          this._protocolDefinitionCache,
+          this._moduleDefinitionCache,
           'local-rpc',
           authorization,
         );
       } catch (error: unknown) {
-        // Only treat "not found" responses as missing protocols.  Transient
+        // Only treat "not found" responses as missing modules.  Transient
         // errors (network timeouts, auth failures) are rethrown so the
-        // caller does not silently skip encryption or other protocol-
+        // caller does not silently skip encryption or other module-
         // required behaviours.
-        if (error instanceof RemoteProtocolDefinitionError && error.failure === 'not-found') {
+        if (error instanceof RemoteModuleDefinitionError && error.failure === 'not-found') {
           return undefined;
         }
         throw error;
       }
     }
-    // When operating as a delegate, resolve the ProtocolsQuery grant so
-    // the local DWN authorises the query for unpublished protocols.
+    // When operating as a delegate, resolve the ModulesQuery grant so
+    // the local DWN authorises the query for unpublished modules.
     const permissionGrantId = await resolveDelegatePermissionGrantId({
       did            : tenantDid,
       delegateDid    : granteeDid,
       permissionsApi : this.agent.permissions,
-    }, DwnInterface.ProtocolsQuery, protocolUri);
+    }, DwnInterface.ModulesQuery, moduleUri);
 
-    return getProtocolDefinitionFn(
-      tenantDid, protocolUri, this._dwn,
-      this.getSigner.bind(this), this._protocolDefinitionCache,
+    return getModuleDefinitionFn(
+      tenantDid, moduleUri, this._dwn,
+      this.getSigner.bind(this), this._moduleDefinitionCache,
       granteeDid, permissionGrantId,
     );
   }
 
   /**
-   * Fetches a protocol definition from a remote DWN.
-   * Public protocols use an unsigned query; delegates use their covering
-   * Protocols.Query grant when one is available.
+   * Fetches a module definition from a remote DWN.
+   * Public modules use an unsigned query; delegates use their covering
+   * Modules.Query grant when one is available.
    */
-  private async fetchRemoteProtocolDefinition(
+  private async fetchRemoteModuleDefinition(
     targetDid: string,
-    protocolUri: string,
+    moduleUri: string,
     granteeDid?: string,
-  ): Promise<ProtocolDefinition> {
-    const authorization = await this.getProtocolQueryAuthorization(
-      targetDid, protocolUri, granteeDid,
+  ): Promise<ModuleDefinition> {
+    const authorization = await this.getModuleQueryAuthorization(
+      targetDid, moduleUri, granteeDid,
     );
-    return fetchRemoteProtocolDefinitionFn(
-      targetDid, protocolUri, this.getRemoteDwnEndpointUrls.bind(this),
-      this.sendDwnRpcRequest.bind(this), this._protocolDefinitionCache,
+    return fetchRemoteModuleDefinitionFn(
+      targetDid, moduleUri, this.getRemoteDwnEndpointUrls.bind(this),
+      this.sendDwnRpcRequest.bind(this), this._moduleDefinitionCache,
       'remote', authorization,
     );
   }
 
-  /** Resolve delegate authorization for an unpublished protocol query. */
-  private async getProtocolQueryAuthorization(
+  /** Resolve delegate authorization for an unpublished module query. */
+  private async getModuleQueryAuthorization(
     connectedDid: string,
-    protocol: string,
+    module: string,
     granteeDid?: string,
   ): Promise<{ permissionGrantId: string; signer: DwnSigner } | undefined> {
     const permissionGrantId = await resolveDelegatePermissionGrantId({
       did            : connectedDid,
       delegateDid    : granteeDid,
       permissionsApi : this.agent.permissions,
-    }, DwnInterface.ProtocolsQuery, protocol);
+    }, DwnInterface.ModulesQuery, module);
     if (permissionGrantId === undefined || granteeDid === undefined) {
       return undefined;
     }

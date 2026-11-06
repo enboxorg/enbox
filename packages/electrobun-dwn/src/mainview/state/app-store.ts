@@ -68,7 +68,7 @@ const defaultConnectionSnapshot: ConnectionSnapshot = {
 };
 
 // TODO: Remove placeholder app connections once real connection data is
-// populated from protocol grants / DWN permission records.
+// populated from module grants / DWN permission records.
 const defaultAppConnections: AppConnection[] = [
   {
     id             : 'google-photos',

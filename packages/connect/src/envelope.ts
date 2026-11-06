@@ -23,11 +23,12 @@
 
 import type { BearerDid } from '@enbox/dids';
 import type { Jwk } from '@enbox/crypto';
-import type { ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
+import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRequest, ConnectRequestDecryption, ConnectRequestEncryption, ConnectResponse } from './types.js';
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
 import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
+import { validateModuleDefinitionSchema, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
 import { signJwt, verifyJwt } from './jwt.js';
@@ -171,11 +172,38 @@ function requireSessionRevocations(payload: Record<string, unknown>, context: st
 // ─── Boundary assertions ────────────────────────────────────────────────
 //
 // Each `assertConnect*` describes the shape of its target type as a list
-// of per-field requirements. The structural existence/primitive checks
-// are the only validation done at the JWT-payload boundary; deeper
-// validation of nested arrays/objects (permission scopes, grants,
-// portable DID structure) happens downstream in DWN-aware validators
-// where the richer logic already lives.
+// of per-field requirements. Requests also validate their nested module
+// definitions and permission scopes before consent or approval side effects.
+// Permission grant authorization and portable DID validation remain with
+// their downstream validators.
+
+/** Validates the exact permission-request DTO and its authored definitions and scopes. */
+export function assertConnectPermissionRequests(requests: unknown): asserts requests is ConnectPermissionRequest[] {
+  const ctx = 'invalid connect request';
+  if (!Array.isArray(requests)) {
+    fail(ctx, 'permissionRequests', 'must be an array');
+  }
+  for (const [index, request] of requests.entries()) {
+    const field = `permissionRequests[${index}]`;
+    if (!isPlainObject(request)) {
+      fail(ctx, field, 'must be an object');
+    }
+    const extraField = Object.keys(request).find(key => key !== 'moduleDefinition' && key !== 'permissionScopes');
+    if (extraField !== undefined) {
+      fail(ctx, `${field}.${extraField}`, 'is not allowed');
+    }
+    if (!isPlainObject(request.moduleDefinition)) {
+      fail(ctx, `${field}.moduleDefinition`, 'must be an object');
+    }
+    validateModuleDefinitionSchema(request.moduleDefinition);
+    if (!Array.isArray(request.permissionScopes)) {
+      fail(ctx, `${field}.permissionScopes`, 'must be an array');
+    }
+    for (const scope of request.permissionScopes) {
+      validatePermissionScope(scope);
+    }
+  }
+}
 
 /**
  * Runtime assertion that a verified JWT payload has the shape of a
@@ -204,6 +232,7 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireReplyDescriptor(payload, ctx);
   if (payload.authentication !== undefined) { assertConnectRequestAuthentication(payload as ConnectRequest); }
   if (payload.requestType === 'authenticate') { assertConnectAuthenticationRequest(payload as ConnectRequest); }
+  assertConnectPermissionRequests(payload.permissionRequests);
 }
 
 /**

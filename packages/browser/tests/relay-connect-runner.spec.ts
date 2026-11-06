@@ -9,6 +9,8 @@ import type {
 
 import { describe, expect, it } from 'bun:test';
 
+import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
+
 import { CompactJwe } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { DidJwk } from '@enbox/dids';
@@ -24,9 +26,9 @@ import {
 
 const PERMISSIONS: ConnectPermissionRequest[] = [
   {
-    protocolDefinition : { protocol: 'https://proto.example.com', types: {}, structure: {} },
-    permissionScopes   : [{ protocol: 'https://proto.example.com', interface: 'Records', method: 'Write' }],
-  } as unknown as ConnectPermissionRequest,
+    moduleDefinition : { module: 'https://modules.example.com', published: false, types: {}, structure: {} },
+    permissionScopes : [{ module: 'https://modules.example.com', interface: DwnInterfaceName.Records, method: DwnMethodName.Write }],
+  },
 ];
 
 /**

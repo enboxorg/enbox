@@ -172,7 +172,7 @@ export interface BrowserConnectHandlerOptions {
  *   }),
  * });
  *
- * const session = await auth.connect({ protocols: [NotesProtocol] });
+ * const session = await auth.connect({ modules: [NotesModule] });
  * ```
  */
 export function BrowserConnectHandler(

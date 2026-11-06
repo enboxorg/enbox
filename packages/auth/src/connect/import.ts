@@ -23,7 +23,7 @@ export async function importFromPortable(
 ): Promise<AgentSession> {
   const { userAgent, emitter, storage } = ctx;
   const sync = options.sync ?? ctx.defaultSync;
-  const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
+  const identitySyncModules = options.identitySyncModules ?? ctx.defaultIdentitySyncModules;
   ctx.assertActive();
 
   const identity = await ctx.runMutation(() => userAgent.identity.import({
@@ -35,7 +35,7 @@ export async function importFromPortable(
   return ctx.commitSession(async (): Promise<AgentSession> => {
     // Register sync. For delegates, derive scope from grants (not 'all').
     if (delegateDid !== undefined || sync !== 'off') {
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncModules });
     }
 
     // Persist session info and build the AgentSession for the manager to publish.

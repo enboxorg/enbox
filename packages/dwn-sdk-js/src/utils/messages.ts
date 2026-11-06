@@ -1,10 +1,10 @@
-import type { CoreProtocolRegistry } from '../core/core-protocol.js';
+import type { CoreModuleRegistry } from '../core/core-module.js';
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessagesFilter } from '../types/messages-types.js';
 
 import { FilterUtility } from './filter.js';
-import { normalizeProtocolUrl } from './url.js';
+import { normalizeModuleUrl } from './url.js';
 import { Records } from './records.js';
 import { Replication } from './replication.js';
 import { isEmptyObject, removeUndefinedProperties } from '@enbox/common';
@@ -25,12 +25,12 @@ export class Messages {
 
     // normalize each filter, and only add non-empty filters to the returned array
     for (const filter of filters) {
-      // normalize the protocol URL if it exists
-      const protocol = filter.protocol === undefined ? undefined : normalizeProtocolUrl(filter.protocol);
+      // normalize the module URL if it exists
+      const module = filter.module === undefined ? undefined : normalizeModuleUrl(filter.module);
 
       const messagesFilter = {
         ...filter,
-        protocol,
+        module,
       };
 
       // remove any empty filter properties and do not add if empty
@@ -46,18 +46,18 @@ export class Messages {
   /**
    *  Converts an incoming array of MessagesFilter into an array of Filter usable by MessageLog.
    *
-   * When a `CoreProtocolRegistry` is provided, each registered core protocol's
+   * When a `CoreModuleRegistry` is provided, each registered core module's
    * `constructAdditionalMessageFilter` hook is invoked per filter. This replaces the previous
-   * hardcoded permission-records shadow filter with a generic loop over all core protocols.
+   * hardcoded permission-records shadow filter with a generic loop over all core modules.
    *
    * @param filters An array of MessagesFilter
-   * @param coreProtocols Optional registry of core protocols whose additional filters are injected.
-   * @param includeShadowFilters Whether to include protocol support-record filters.
+   * @param coreModules Optional registry of core modules whose additional filters are injected.
+   * @param includeShadowFilters Whether to include module support-record filters.
    * @returns {Filter[]} an array of generic Filter able to be used when querying.
    */
   public static convertFilters(
     filters: MessagesFilter[],
-    coreProtocols?: CoreProtocolRegistry,
+    coreModules?: CoreModuleRegistry,
     includeShadowFilters = true,
   ): Filter[] {
     if (!includeShadowFilters) {
@@ -67,13 +67,13 @@ export class Messages {
     const messagesQueryFilters: Filter[] = [];
 
     for (const filter of filters) {
-      // Ask each core protocol whether it needs an additional shadow filter for this query.
-      messagesQueryFilters.push(...this.constructCoreProtocolFilters(filter, coreProtocols));
+      // Ask each core module whether it needs an additional shadow filter for this query.
+      messagesQueryFilters.push(...this.constructCoreModuleFilters(filter, coreModules));
 
       messagesQueryFilters.push(this.convertFilter(filter));
 
-      // When a protocol path or context scope is used with a protocol, inject a shadow filter for ProtocolsConfigure events.
-      const metadataFilter = this.constructProtocolConfigureShadowFilter(filter);
+      // When a module path or context scope is used with a module, inject a shadow filter for ModulesConfigure events.
+      const metadataFilter = this.constructModuleConfigureShadowFilter(filter);
       if (metadataFilter !== undefined) {
         messagesQueryFilters.push(metadataFilter);
       }
@@ -83,18 +83,18 @@ export class Messages {
   }
 
   /**
-   * Asks each core protocol whether it needs an additional shadow filter for the given query filter.
-   * For example, the Permissions protocol injects a filter for grants/requests/revocations
-   * tagged with the target protocol so they appear alongside that protocol's own records.
+   * Asks each core module whether it needs an additional shadow filter for the given query filter.
+   * For example, the Permissions module injects a filter for grants/requests/revocations
+   * tagged with the target module so they appear alongside that module's own records.
    */
-  private static constructCoreProtocolFilters(filter: MessagesFilter, coreProtocols?: CoreProtocolRegistry): Filter[] {
-    if (coreProtocols === undefined) {
+  private static constructCoreModuleFilters(filter: MessagesFilter, coreModules?: CoreModuleRegistry): Filter[] {
+    if (coreModules === undefined) {
       return [];
     }
 
     const additionalFilters: Filter[] = [];
-    for (const coreProtocol of coreProtocols.all()) {
-      const additionalFilter = coreProtocol.constructAdditionalMessageFilter?.(filter);
+    for (const coreModule of coreModules.all()) {
+      const additionalFilter = coreModule.constructAdditionalMessageFilter?.(filter);
       if (additionalFilter !== undefined) {
         additionalFilters.push(additionalFilter);
       }
@@ -104,24 +104,24 @@ export class Messages {
   }
 
   /**
-   * When protocolPath, protocolPathPrefix, or contextIdPrefix is used with a protocol, constructs a shadow filter
-   * for ProtocolsConfigure events. Without this, protocol metadata updates would be excluded
-   * (ProtocolsConfigure indexes have no protocolPath). This mirrors the core-protocol additional-filter
+   * When modulePath, modulePathPrefix, or contextIdPrefix is used with a module, constructs a shadow filter
+   * for ModulesConfigure events. Without this, module metadata updates would be excluded
+   * (ModulesConfigure indexes have no modulePath). This mirrors the core-module additional-filter
    * pattern above. The messageTimestamp constraint is carried over so time-bounded queries
    * (including cursor-based subscriptions) also apply to the shadow filter.
    */
-  private static constructProtocolConfigureShadowFilter(filter: MessagesFilter): Filter | undefined {
+  private static constructModuleConfigureShadowFilter(filter: MessagesFilter): Filter | undefined {
     if (
-      (filter.protocolPath === undefined && filter.protocolPathPrefix === undefined && filter.contextIdPrefix === undefined)
-      || filter.protocol === undefined
+      (filter.modulePath === undefined && filter.modulePathPrefix === undefined && filter.contextIdPrefix === undefined)
+      || filter.module === undefined
     ) {
       return undefined;
     }
 
     const metadataFilter: Filter = {
-      interface : 'Protocols',
+      interface : 'Modules',
       method    : 'Configure',
-      protocol  : filter.protocol,
+      module    : filter.module,
     };
 
     if (filter.messageTimestamp !== undefined) {
@@ -137,8 +137,8 @@ export class Messages {
   /**
    * Maps a filter set onto the replication fingerprint domains it covers, or
    * `undefined` when the filters do not correspond to fingerprint domains.
-   * An empty filter set covers the global domain; a set of protocol-only
-   * filters covers each protocol's domain plus its tagged core-protocol
+   * An empty filter set covers the global domain; a set of module-only
+   * filters covers each module's domain plus its tagged core-module
    * domains. Any other filter shape has no domain mapping.
    */
   public static computeFingerprintScopes(filters: MessagesFilter[]): string[] | undefined {
@@ -146,32 +146,32 @@ export class Messages {
       return [Replication.globalDomain];
     }
 
-    const protocols = new Set<string>();
+    const modules = new Set<string>();
     for (const filter of filters) {
       const keys = Object.keys(filter);
-      if (keys.length !== 1 || typeof filter.protocol !== 'string') {
+      if (keys.length !== 1 || typeof filter.module !== 'string') {
         return undefined;
       }
 
-      protocols.add(filter.protocol);
+      modules.add(filter.module);
     }
 
-    // Fail closed for filter sets naming a core protocol directly: the core
-    // protocols contribute no tagged domains for themselves, so the domain
+    // Fail closed for filter sets naming a core module directly: the core
+    // modules contribute no tagged domains for themselves, so the domain
     // set would not span everything such filters enumerate — two feeds could
     // fingerprint identically while differing in enumerable messages. No
     // fingerprint beats one whose coverage is known-incomplete.
-    for (const protocol of protocols) {
-      if (Replication.isCoreProtocolUri(protocol)) {
+    for (const module of modules) {
+      if (Replication.isCoreModuleUri(module)) {
         return undefined;
       }
     }
 
     const scopes: string[] = [];
-    for (const protocol of protocols) {
+    for (const module of modules) {
       scopes.push(
-        Replication.protocolDomain(protocol),
-        ...Replication.taggedCoreProtocolDomains(protocol, protocols),
+        Replication.moduleDomain(module),
+        ...Replication.taggedCoreModuleDomains(module, modules),
       );
     }
 
@@ -200,17 +200,17 @@ export class Messages {
   private static convertFilter(filter: MessagesFilter): Filter {
     const filterCopy = { ...filter } as Filter;
 
-    const { messageTimestamp, protocolPathPrefix, contextIdPrefix } = filter;
+    const { messageTimestamp, modulePathPrefix, contextIdPrefix } = filter;
     const messageTimestampFilter = messageTimestamp ? FilterUtility.convertRangeCriterion(messageTimestamp) : undefined;
     if (messageTimestampFilter) {
       filterCopy.messageTimestamp = messageTimestampFilter;
       delete filterCopy.dateUpdated;
     }
 
-    // Convert protocolPathPrefix into a segment-aware protocolPath subtree filter.
-    if (protocolPathPrefix !== undefined) {
-      delete (filterCopy as any).protocolPathPrefix;
-      filterCopy.protocolPath = { subtree: protocolPathPrefix };
+    // Convert modulePathPrefix into a segment-aware modulePath subtree filter.
+    if (modulePathPrefix !== undefined) {
+      delete (filterCopy as any).modulePathPrefix;
+      filterCopy.modulePath = { subtree: modulePathPrefix };
     }
 
     // Convert contextIdPrefix into the same segment-aware subtree filter.

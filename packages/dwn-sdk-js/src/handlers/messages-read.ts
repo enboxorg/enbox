@@ -46,7 +46,7 @@ export class MessagesReadHandler implements MethodHandler {
       return messageReplyFromError(error, 401);
     }
 
-    // Owner and protocol-wide RecordsWrite reads include data when available.
+    // Owner and module-wide RecordsWrite reads include data when available.
     // Subtree grants receive only the signed message and its metadata.
     const { message: replyMessage, encodedData } = Messages.detachEncodedData(messageResult);
     const entry: MessagesReadReplyEntry = { message: replyMessage, messageCid: message.descriptor.messageCid };
@@ -100,6 +100,6 @@ export class MessagesReadHandler implements MethodHandler {
       });
     }
 
-    throw new DwnError(DwnErrorCode.MessagesReadAuthorizationFailed, 'protocol message failed authorization');
+    throw new DwnError(DwnErrorCode.MessagesReadAuthorizationFailed, 'module message failed authorization');
   }
 }

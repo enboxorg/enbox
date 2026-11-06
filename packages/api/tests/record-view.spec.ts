@@ -1,5 +1,5 @@
 import type { DwnApi } from '../src/dwn-api.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
 import type { RecordsQueryRequest, RecordsQueryResponse, RecordsSubscribeRequest, RecordsSubscribeResponse } from '../src/dwn-api.js';
@@ -15,14 +15,14 @@ import { describe, expect, it } from 'bun:test';
 import { compileRecordQuery } from '../src/record-query.js';
 import { ContextRetiredError } from '../src/context-errors.js';
 import { createRecordView } from '../src/record-view.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const ViewDefinition = {
-  protocol  : 'https://example.com/protocols/record-view',
+  module    : 'https://example.com/modules/record-view',
   published : true,
   types     : {
     folder: {
@@ -68,9 +68,9 @@ const ViewDefinition = {
       $recordLimit: { max: 1 },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const ViewProtocol = defineProtocol(ViewDefinition, {
+const ViewModule = defineModule(ViewDefinition, {
   folder     : recordCodecs.json<{ name: string }>(),
   item       : recordCodecs.json<{ value: string }>(),
   label      : recordCodecs.text(),
@@ -137,8 +137,8 @@ function createHarness(query: QueryFactory): ViewHarness {
 function createTyped(
   harness: ViewHarness,
   options: { signal?: AbortSignal; sync?: SyncEngine } = {},
-): TypedEnbox<typeof ViewDefinition, typeof ViewProtocol.codecs> {
-  const typed = new TypedEnbox(harness.dwn, ViewProtocol, options);
+): TypedEnbox<typeof ViewDefinition, typeof ViewModule.codecs> {
+  const typed = new TypedEnbox(harness.dwn, ViewModule, options);
   (typed as unknown as { _configured: boolean })._configured = true;
   return typed;
 }
@@ -212,7 +212,7 @@ function createSync(): FakeSync {
     },
     listenerCount : (): number => listeners.size,
     links         : [],
-    options       : { protocols: [ViewDefinition.protocol] },
+    options       : { modules: [ViewDefinition.module] },
     sync          : undefined as unknown as SyncEngine,
   };
   state.sync = {
@@ -234,7 +234,7 @@ function link(
   return {
     tenantDid      : TENANT_DID,
     remoteEndpoint : 'https://dwn.example',
-    scope          : { kind: 'protocolSet', protocols: [ViewDefinition.protocol] },
+    scope          : { kind: 'moduleSet', modules: [ViewDefinition.module] },
     status,
     connectivity,
     isPullCurrent,
@@ -242,12 +242,12 @@ function link(
 }
 
 describe('RecordView', () => {
-  it('rejects invalid runtime requests before protocol readiness or subscription side effects', async () => {
+  it('rejects invalid runtime requests before module readiness or subscription side effects', async () => {
     const harness = createHarness(async () => ok([]));
-    const queryProtocols = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
-    const configureProtocol = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-    (harness.dwn as any).protocols = { configure: configureProtocol, query: queryProtocols };
-    const typed = new TypedEnbox(harness.dwn, ViewProtocol);
+    const queryModules = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, modules: [] });
+    const configureModule = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+    (harness.dwn as any).modules = { configure: configureModule, query: queryModules };
+    const typed = new TypedEnbox(harness.dwn, ViewModule);
     const observe = typed.records.observe as (
       path: 'note',
       request?: {
@@ -262,7 +262,7 @@ describe('RecordView', () => {
     ) => Promise<unknown>;
     const set = typed.records.set as unknown as (
       path: string,
-      request: { data: unknown; from?: string; protocolRole?: string },
+      request: { data: unknown; from?: string; moduleRole?: string },
     ) => Promise<unknown>;
     const nestedItemPath = 'folder/section/item';
 
@@ -283,7 +283,7 @@ describe('RecordView', () => {
     await expect(observe('note', {
       materialize : { children: [nestedItemPath, nestedItemPath] },
       pagination  : { limit: 10 },
-    })).rejects.toThrow('children must contain unique protocol paths');
+    })).rejects.toThrow('children must contain unique module paths');
     await expect(observe('note', {
       materialize : { children: [nestedItemPath] },
       pagination  : { limit: 10 },
@@ -295,11 +295,11 @@ describe('RecordView', () => {
       from : 'did:example:remote',
     })).rejects.toThrow('remote targets are not supported');
     await expect(set('preference', {
-      data         : 'dark',
-      protocolRole : 'member',
-    })).rejects.toThrow('protocol roles are not supported');
-    expect(queryProtocols.notCalled).toBe(true);
-    expect(configureProtocol.notCalled).toBe(true);
+      data       : 'dark',
+      moduleRole : 'member',
+    })).rejects.toThrow('module roles are not supported');
+    expect(queryModules.notCalled).toBe(true);
+    expect(configureModule.notCalled).toBe(true);
     expect(harness.queryRequests).toHaveLength(0);
     expect(harness.subscribeRequests).toHaveLength(0);
   });
@@ -317,8 +317,8 @@ describe('RecordView', () => {
     expect(queryRecordsWithRequiredGrant.calledOnce).toBe(true);
     expect(queryRecordsWithRequiredGrant.firstCall.args[0]).toMatchObject({
       filter: {
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'preference',
+        module     : ViewDefinition.module,
+        modulePath : 'preference',
       },
       pagination: { limit: 1 },
     });
@@ -341,34 +341,34 @@ describe('RecordView', () => {
     expect(queryRecordsWithRequiredGrant.calledOnce).toBe(true);
     expect(queryRecordsWithRequiredGrant.firstCall.args[0]).toMatchObject({
       filter: {
-        contextId    : 'notecontext',
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'note/label',
+        contextId  : 'notecontext',
+        module     : ViewDefinition.module,
+        modulePath : 'note/label',
       },
       pagination: { limit: 1 },
     });
   });
 
-  it('forwards the source and protocol role to a batched child materialization query', async () => {
+  it('forwards the source and module role to a batched child materialization query', async () => {
     const parent = decodedRecord('note-1', { title: 'First' });
     const child = decodedRecord('label-1', 'important', parent.id);
     const harness = createHarness(async (_request, call) => ok(call === 1 ? [parent] : [child]));
     const typed = createTyped(harness);
 
     const page = await typed.records.query('note', {
-      from         : 'did:example:remote',
-      materialize  : { children: ['note/label'] as const },
-      pagination   : { limit: 10 },
-      protocolRole : 'member',
+      from        : 'did:example:remote',
+      materialize : { children: ['note/label'] as const },
+      pagination  : { limit: 10 },
+      moduleRole  : 'member',
     });
 
     expect(page.records[0]?.children.label?.value).toBe('important');
     expect(harness.queryRequests[1]).toMatchObject({
-      from         : 'did:example:remote',
-      protocolRole : 'member',
-      filter       : {
-        parentId     : [parent.id],
-        protocolPath : 'note/label',
+      from       : 'did:example:remote',
+      moduleRole : 'member',
+      filter     : {
+        parentId   : [parent.id],
+        modulePath : 'note/label',
       },
     });
   });
@@ -382,11 +382,11 @@ describe('RecordView', () => {
     fakeSync.links = [link('paused', 'offline')];
 
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
-      from         : remoteDid,
-      materialize  : { children: ['note/label'] as const },
-      pagination   : { limit: 10 },
-      protocolRole : 'member',
-      within       : 'root',
+      from        : remoteDid,
+      materialize : { children: ['note/label'] as const },
+      pagination  : { limit: 10 },
+      moduleRole  : 'member',
+      within      : 'root',
     });
 
     await waitFor(() => { expect(view.getSnapshot().status).toBe('ready'); });
@@ -395,15 +395,15 @@ describe('RecordView', () => {
     expect(harness.subscribeRequests).toHaveLength(2);
     for (const request of harness.subscribeRequests) {
       expect(request).toMatchObject({
-        from         : remoteDid,
-        protocolRole : 'member',
+        from       : remoteDid,
+        moduleRole : 'member',
       });
     }
     expect(harness.queryRequests).toHaveLength(2);
     for (const request of harness.queryRequests) {
       expect(request).toMatchObject({
-        from         : remoteDid,
-        protocolRole : 'member',
+        from       : remoteDid,
+        moduleRole : 'member',
       });
     }
 
@@ -501,8 +501,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : false,
       to             : true,
     });
@@ -563,18 +563,18 @@ describe('RecordView', () => {
     const controller = new AbortController();
     const reason = new Error('session already ended');
     controller.abort(reason);
-    const queryProtocols = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, protocols: [] });
-    const configureProtocol = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
-    (harness.dwn as any).protocols = { configure: configureProtocol, query: queryProtocols };
-    const typed = new TypedEnbox(harness.dwn, ViewProtocol, {
+    const queryModules = sinon.stub().resolves({ status: { code: 200, detail: 'OK' }, modules: [] });
+    const configureModule = sinon.stub().resolves({ status: { code: 202, detail: 'Accepted' } });
+    (harness.dwn as any).modules = { configure: configureModule, query: queryModules };
+    const typed = new TypedEnbox(harness.dwn, ViewModule, {
       signal : controller.signal,
       sync   : fakeSync.sync,
     });
 
     await expect(typed.records.observe('note', { pagination: { limit: 10 } })).rejects.toBe(reason);
 
-    expect(queryProtocols.notCalled).toBe(true);
-    expect(configureProtocol.notCalled).toBe(true);
+    expect(queryModules.notCalled).toBe(true);
+    expect(configureModule.notCalled).toBe(true);
     expect(harness.queryRequests).toHaveLength(0);
     expect(harness.subscribeRequests).toHaveLength(0);
     expect(fakeSync.listenerCount()).toBe(0);
@@ -629,10 +629,10 @@ describe('RecordView', () => {
     expect(harness.subscribeRequests).toHaveLength(1);
     expect(harness.subscribeRequests[0]).toMatchObject({
       filter: {
-        contextId    : 'root',
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'note',
-        recordId     : 'note-1',
+        contextId  : 'root',
+        module     : ViewDefinition.module,
+        modulePath : 'note',
+        recordId   : 'note-1',
       },
       pagination: { limit: 1 },
     });
@@ -641,13 +641,13 @@ describe('RecordView', () => {
     expect(harness.subscribeRequests[0].filter).not.toHaveProperty('tags');
     expect(harness.queryRequests[0]).toMatchObject({
       filter: {
-        author       : 'did:example:bob',
-        contextId    : 'root',
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'note',
-        published    : true,
-        recordId     : 'note-1',
-        tags         : { status: 'draft' },
+        author     : 'did:example:bob',
+        contextId  : 'root',
+        module     : ViewDefinition.module,
+        modulePath : 'note',
+        published  : true,
+        recordId   : 'note-1',
+        tags       : { status: 'draft' },
       },
       pagination: { limit: 10 },
     });
@@ -667,9 +667,9 @@ describe('RecordView', () => {
 
     const view = await createRecordView<string>({
       additionalWakeFilters: [{
-        contextId    : 'folder-1',
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'folder/section/item',
+        contextId  : 'folder-1',
+        module     : ViewDefinition.module,
+        modulePath : 'folder/section/item',
       }],
       definition : ViewDefinition,
       dwn        : harness.dwn,
@@ -680,13 +680,13 @@ describe('RecordView', () => {
 
     expect(harness.subscribeRequests.map((request) => request.filter)).toEqual([
       {
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'note',
+        module     : ViewDefinition.module,
+        modulePath : 'note',
       },
       {
-        contextId    : 'folder-1',
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'folder/section/item',
+        contextId  : 'folder-1',
+        module     : ViewDefinition.module,
+        modulePath : 'folder/section/item',
       },
     ]);
 
@@ -1024,9 +1024,9 @@ describe('RecordView', () => {
     await waitFor(() => { expect(view.getSnapshot().records).toHaveLength(1); });
 
     expect(harness.subscribeRequests[0]?.filter).toEqual({
-      contextId    : 'f1/s1',
-      protocol     : ViewDefinition.protocol,
-      protocolPath : 'folder/section/item',
+      contextId  : 'f1/s1',
+      module     : ViewDefinition.module,
+      modulePath : 'folder/section/item',
     });
 
     // Two earlier-ranked siblings fill the max:2 group. Their write wakes
@@ -1055,8 +1055,8 @@ describe('RecordView', () => {
 
       expect(harness.subscribeRequests[0]?.filter).toEqual({
         contextId,
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'folder/section/item',
+        module     : ViewDefinition.module,
+        modulePath : 'folder/section/item',
       });
       await view.close();
     }
@@ -1265,8 +1265,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://second-dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : false,
       to             : true,
     });
@@ -1277,8 +1277,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : true,
       to             : false,
     });
@@ -1301,10 +1301,10 @@ describe('RecordView', () => {
       tenantDid      : sourceDid,
       remoteEndpoint : 'https://source-dwn.example',
       scope          : {
-        kind          : 'context',
-        protocol      : ViewDefinition.protocol,
+        kind        : 'context',
+        module      : ViewDefinition.module,
         contextId,
-        protocolPaths : ['note'],
+        modulePaths : ['note'],
       },
       status           : 'live',
       connectivity     : 'online',
@@ -1314,10 +1314,10 @@ describe('RecordView', () => {
       tenantDid      : sourceDid,
       remoteEndpoint : 'https://old-source-dwn.example',
       scope          : {
-        kind          : 'context',
-        protocol      : ViewDefinition.protocol,
+        kind        : 'context',
+        module      : ViewDefinition.module,
         contextId,
-        protocolPaths : ['note'],
+        modulePaths : ['note'],
       },
       status           : 'paused',
       connectivity     : 'offline',
@@ -1345,8 +1345,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : sourceDid,
       remoteEndpoint : 'https://sibling-dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       contextId      : 'siblingRoot',
       from           : true,
       to             : false,
@@ -1359,8 +1359,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : sourceDid,
       remoteEndpoint : 'https://source-dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       contextId,
       from           : true,
       to             : false,
@@ -1386,10 +1386,10 @@ describe('RecordView', () => {
       isPullCurrent    : true,
       remoteEndpoint   : 'https://source-dwn.example',
       scope            : {
-        kind          : 'context',
+        kind        : 'context',
         contextId,
-        protocol      : ViewDefinition.protocol,
-        protocolPaths : ['note'],
+        module      : ViewDefinition.module,
+        modulePaths : ['note'],
       },
       status    : 'live',
       tenantDid : sourceDid,
@@ -1413,7 +1413,7 @@ describe('RecordView', () => {
       contextId,
       followedSourceAcceptanceId : 'acceptance-b',
       followedSourceId           : 'current-role',
-      protocol                   : ViewDefinition.protocol,
+      module                     : ViewDefinition.module,
       tenantDid                  : sourceDid,
     });
 
@@ -1422,10 +1422,10 @@ describe('RecordView', () => {
     await view.close();
   });
 
-  it('ignores unrelated tenants, protocols, and replication links', async () => {
+  it('ignores unrelated tenants, modules, and replication links', async () => {
     const harness = createHarness(async () => ok([testRecord('local')]));
     const fakeSync = createSync();
-    fakeSync.options = { protocols: 'all' };
+    fakeSync.options = { modules: 'all' };
     fakeSync.links = [
       {
         ...link('live'),
@@ -1434,7 +1434,7 @@ describe('RecordView', () => {
       {
         ...link('paused', 'offline'),
         remoteEndpoint : 'https://unrelated-dwn.example',
-        scope          : { kind: 'protocolSet', protocols: ['https://example.com/protocols/unrelated'] },
+        scope          : { kind: 'moduleSet', modules: ['https://example.com/modules/unrelated'] },
       },
     ];
     const view = await createTyped(harness, { sync: fakeSync.sync }).records.observe('note', {
@@ -1449,8 +1449,8 @@ describe('RecordView', () => {
       type           : 'link:status-change',
       tenantDid      : 'did:example:unrelated',
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : 'live',
       to             : 'paused',
     });
@@ -1458,8 +1458,8 @@ describe('RecordView', () => {
       type           : 'link:status-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://unrelated-dwn.example',
-      protocol       : 'https://example.com/protocols/unrelated',
-      protocols      : ['https://example.com/protocols/unrelated'],
+      module         : 'https://example.com/modules/unrelated',
+      modules        : ['https://example.com/modules/unrelated'],
       from           : 'live',
       to             : 'paused',
     });
@@ -1639,8 +1639,8 @@ describe('RecordView', () => {
 
     const opening = createRecordView<string>({
       additionalWakeFilters: [{
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'folder/section/item',
+        module     : ViewDefinition.module,
+        modulePath : 'folder/section/item',
       }],
       definition         : ViewDefinition,
       dwn                : harness.dwn,
@@ -1718,8 +1718,8 @@ describe('RecordView', () => {
 
     const opening = createRecordView<string>({
       additionalWakeFilters: [{
-        protocol     : ViewDefinition.protocol,
-        protocolPath : 'folder/section/item',
+        module     : ViewDefinition.module,
+        modulePath : 'folder/section/item',
       }],
       callerSignal       : controller.signal,
       definition         : ViewDefinition,
@@ -1789,12 +1789,12 @@ describe('RecordView', () => {
     });
     await waitFor(() => { expect(view.getSnapshot().status).toBe('ready'); });
 
-    fakeSync.options = { protocols: [ViewDefinition.protocol] };
+    fakeSync.options = { modules: [ViewDefinition.module] };
     fakeSync.links = [];
     fakeSync.emit({
       type      : 'identity:registration-change',
       tenantDid : TENANT_DID,
-      options   : { protocols: [ViewDefinition.protocol] },
+      options   : { modules: [ViewDefinition.module] },
     });
     expect(view.getSnapshot()).toMatchObject({ status: 'ready', current: false });
     await waitFor(() => { expect(harness.queryRequests).toHaveLength(2); });
@@ -1806,8 +1806,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : false,
       to             : true,
     });
@@ -1835,8 +1835,8 @@ describe('RecordView', () => {
       type           : 'pull:currentness-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : false,
       to             : true,
     });
@@ -1848,8 +1848,8 @@ describe('RecordView', () => {
       type           : 'link:connectivity-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : 'online',
       to             : 'offline',
     });
@@ -1865,8 +1865,8 @@ describe('RecordView', () => {
       type           : 'link:status-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : 'repairing',
       to             : 'paused',
     });
@@ -1903,8 +1903,8 @@ describe('RecordView', () => {
       type           : 'link:status-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : 'repairing',
       to             : 'paused',
     });
@@ -1916,8 +1916,8 @@ describe('RecordView', () => {
       type           : 'link:connectivity-change',
       tenantDid      : TENANT_DID,
       remoteEndpoint : 'https://dwn.example',
-      protocol       : ViewDefinition.protocol,
-      protocols      : [ViewDefinition.protocol],
+      module         : ViewDefinition.module,
+      modules        : [ViewDefinition.module],
       from           : 'online',
       to             : 'offline',
     });
@@ -1957,7 +1957,7 @@ describe('RecordView session lifecycle integration', () => {
         sync    : 'off',
       });
       const session = await auth.switchIdentity(firstIdentity.did.uri);
-      const typed = Enbox.fromSession(session).using(ViewProtocol);
+      const typed = Enbox.fromSession(session).using(ViewModule);
       await typed.configure();
 
       let releaseQuery!: (response: RecordsQueryResponse) => void;

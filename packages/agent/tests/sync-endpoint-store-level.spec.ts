@@ -66,12 +66,12 @@ describe('SyncEndpointStoreLevel', () => {
     const metadata = db.sublevel('syncMetadata');
     await store.set('https://dwn.example.com');
     await metadata.put('futureMetadataKey', 'preserve me');
-    await db.sublevel('registeredIdentities').put('did:example:alice', JSON.stringify({ protocols: 'all' }));
+    await db.sublevel('registeredIdentities').put('did:example:alice', JSON.stringify({ modules: 'all' }));
 
     await store.clear();
 
     expect(await store.get()).toBeUndefined();
     expect(await metadata.get('futureMetadataKey')).toBe('preserve me');
-    expect(await db.sublevel('registeredIdentities').get('did:example:alice')).toBe(JSON.stringify({ protocols: 'all' }));
+    expect(await db.sublevel('registeredIdentities').get('did:example:alice')).toBe(JSON.stringify({ modules: 'all' }));
   });
 });

@@ -28,7 +28,7 @@ import {
   AgentPermissionsApi,
   DwnInterface,
   getRecordAuthor,
-  getRecordProtocolRole,
+  getRecordModuleRole,
 } from '@enbox/agent';
 import { Convert, isEmptyObject, removeUndefinedProperties, Stream } from '@enbox/common';
 
@@ -42,7 +42,7 @@ type StoredRecordDataReadParams = {
   agent: EnboxAgent;
   dataAccess: RecordDataAccess;
   dataCid: string;
-  protocolRole?: string;
+  moduleRole?: string;
   recordId: string;
 };
 
@@ -104,7 +104,7 @@ export class Record<T = unknown> implements RecordModel {
   private readonly _connectedDid: string;
   /** The optional DID that is delegated to act on behalf of the connectedDid */
   private readonly _delegateDid?: string;
-  /** Cache for fetching a permission grant, keyed by message type and protocol. */
+  /** Cache for fetching a permission grant, keyed by message type and module. */
   private readonly _permissionsApi: PermissionsApi;
   /** Optional default target for mutations of a locally replicated foreign record. */
   private readonly _executionContext?: RecordExecutionContext;
@@ -142,7 +142,7 @@ export class Record<T = unknown> implements RecordModel {
   /** Unique identifier of the record. */
   private readonly _recordId: string;
   /** Role under which the record is written. */
-  private _protocolRole?: RecordOptions['protocolRole'];
+  private _moduleRole?: RecordOptions['moduleRole'];
 
   /** Cached reconstructed raw message, invalidated when record state changes. */
   private _rawMessageCache?: DwnMessage[DwnInterface.RecordsWrite] | DwnMessage[DwnInterface.RecordsDelete];
@@ -176,11 +176,11 @@ export class Record<T = unknown> implements RecordModel {
   /** Record's parent ID */
   get parentId(): string | undefined { return this._immutableProperties.parentId; }
 
-  /** Record's protocol */
-  get protocol(): string | undefined { return this._immutableProperties.protocol; }
+  /** Record's module */
+  get module(): string | undefined { return this._immutableProperties.module; }
 
-  /** Record's protocol path */
-  get protocolPath(): string | undefined { return this._immutableProperties.protocolPath; }
+  /** Record's module path */
+  get modulePath(): string | undefined { return this._immutableProperties.modulePath; }
 
   /** Record's recipient */
   get recipient(): string | undefined { return this._immutableProperties.recipient; }
@@ -188,7 +188,7 @@ export class Record<T = unknown> implements RecordModel {
   /** Record's schema */
   get schema(): string | undefined { return this._immutableProperties.schema; }
 
-  /** Whether the initial write carried the protocol squash directive. */
+  /** Whether the initial write carried the module squash directive. */
   get squash(): boolean {
     return (this._initialWrite?.descriptor ?? this._recordsWriteDescriptor)?.squash === true;
   }
@@ -234,8 +234,8 @@ export class Record<T = unknown> implements RecordModel {
   /** Record's attestation signature. */
   get attestation(): DwnMessage[DwnInterface.RecordsWrite]['attestation'] | undefined { return this._attestation; }
 
-  /** Protocol role carried by the request that produced this instance and reused by follow-up operations unless overridden. */
-  get protocolRole(): string | undefined { return this._protocolRole; }
+  /** Module role carried by the request that produced this instance and reused by follow-up operations unless overridden. */
+  get moduleRole(): string | undefined { return this._moduleRole; }
 
   /** Record's deleted state (true/false) */
   get deleted(): boolean { return this.isRecordsDeleteDescriptor(this._descriptor); }
@@ -309,7 +309,7 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = options.encryption;
     this._initialWrite = options.initialWrite;
     this._recordId = this.isRecordsDeleteDescriptor(options.descriptor) ? options.descriptor.recordId : options.recordId;
-    this._protocolRole = options.protocolRole;
+    this._moduleRole = options.moduleRole;
 
     if (!this.deleted) {
       this._storedData = this.createStoredDataSource(options.storedData);
@@ -335,35 +335,35 @@ export class Record<T = unknown> implements RecordModel {
       return this._agent.decryptRecordData({
         ...this._dataAccess,
         dataStream,
-        protocolRole : this.protocolRole,
+        moduleRole   : this.moduleRole,
         recordsWrite : this.rawMessage as DwnMessage[DwnInterface.RecordsWrite],
       });
     }, this.dataFormat);
   }
 
   /**
-   * Decode this record through the codec declared by its typed protocol.
+   * Decode this record through the codec declared by its typed module.
    *
-   * Records returned by `Enbox.using(protocol).records` carry that codec.
+   * Records returned by `Enbox.using(module).records` carry that codec.
    * Records obtained from the raw DWN API instead expose their representation
    * through {@link Record.data}. Codec convenience methods may buffer data;
    * use `record.data.stream()` for large streaming payloads.
    *
-   * @throws `Error` when this record did not come from a typed protocol API.
+   * @throws `Error` when this record did not come from a typed module API.
    */
   async value(): Promise<T> {
     await this.assertActive();
     const binding = getRecordCodecBinding(this);
     if (binding === undefined) {
-      throw new Error('Record.value: this record is not bound to a protocol codec.');
+      throw new Error('Record.value: this record is not bound to a module codec.');
     }
     if (this.dataFormat === undefined) {
       throw new Error('Record.value: this record does not have a data format.');
     }
     return await binding.codec.decode(this.data, this.dataFormat, {
-      protocolPath : this.protocolPath,
-      recordId     : this.id,
-      schema       : this.schema,
+      modulePath : this.modulePath,
+      recordId   : this.id,
+      schema     : this.schema,
     });
   }
 
@@ -384,9 +384,9 @@ export class Record<T = unknown> implements RecordModel {
       datePublished : this.datePublished,
       encryption    : this.encryption,
       parentId      : this.parentId,
-      protocol      : this.protocol,
-      protocolPath  : this.protocolPath,
-      protocolRole  : this.protocolRole,
+      module        : this.module,
+      modulePath    : this.modulePath,
+      moduleRole    : this.moduleRole,
       published     : this.published,
       recipient     : this.recipient,
       recordId      : this.id,
@@ -405,7 +405,7 @@ export class Record<T = unknown> implements RecordModel {
     let str = `Record: {\n`;
     str += `  ID: ${this.id}\n`;
     str += this.contextId ? `  Context ID: ${this.contextId}\n` : '';
-    str += this.protocol ? `  Protocol: ${this.protocol}\n` : '';
+    str += this.module ? `  Module: ${this.module}\n` : '';
     str += this.schema ? `  Schema: ${this.schema}\n` : '';
 
     // Only display data properties if the record has not been deleted.
@@ -441,7 +441,7 @@ export class Record<T = unknown> implements RecordModel {
    * @beta
    */
   async update(
-    { timestamp, data, protocolRole, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
+    { timestamp, data, moduleRole, recipientRolePublicKey, from, ...params }: RecordUpdateParams<T>
   ): Promise<Record<T>> {
 
     await this.assertActive();
@@ -449,7 +449,7 @@ export class Record<T = unknown> implements RecordModel {
     if (this._executionContext !== undefined && from !== undefined && from !== this._executionContext.tenantDid) {
       throw new TypeError('Context-bound records cannot be updated on another tenant.');
     }
-    const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
+    const effectiveModuleRole = this.resolveModuleRole(moduleRole);
 
     if (this.deleted) {
       throw new Error('Record: Cannot revive a deleted record.');
@@ -467,14 +467,14 @@ export class Record<T = unknown> implements RecordModel {
       ...descriptor,
       ...params,
       parentContextId,
-      protocolRole     : effectiveProtocolRole,
+      moduleRole       : effectiveModuleRole,
       messageTimestamp : timestamp, // Map Record class `timestamp` property to DWN SDK `messageTimestamp`
       recordId         : this._recordId
     };
 
     // Metadata-only updates retain the exact encryption envelope and stored data
     // version. Updates with replacement data receive a fresh envelope from the
-    // target protocol's policy-driven encryption pipeline.
+    // target module's policy-driven encryption pipeline.
     if (data === undefined && this._encryption !== undefined) {
       updateMessage.encryption = this._encryption;
     }
@@ -543,7 +543,7 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = msg.encryption;
     this._contextId = msg.contextId;
     this._initialWrite = initialWrite;
-    this._protocolRole = effectiveProtocolRole;
+    this._moduleRole = effectiveModuleRole;
     this._author = updatedAuthor;
     this._dataAccess = dataAccess;
     this._storedData = this.createStoredDataSource(responseData);
@@ -554,14 +554,14 @@ export class Record<T = unknown> implements RecordModel {
   }
 
   /** Resolve the role fixed by a bound context or retain normal record behavior. */
-  private resolveProtocolRole(protocolRole: string | undefined): string | undefined {
+  private resolveModuleRole(moduleRole: string | undefined): string | undefined {
     if (this._executionContext === undefined) {
-      return protocolRole ?? this._protocolRole;
+      return moduleRole ?? this._moduleRole;
     }
-    if (protocolRole !== undefined && protocolRole !== this._executionContext.protocolRole) {
-      throw new TypeError('Context-bound records cannot invoke another protocol role.');
+    if (moduleRole !== undefined && moduleRole !== this._executionContext.moduleRole) {
+      throw new TypeError('Context-bound records cannot invoke another module role.');
     }
-    return this._executionContext.protocolRole;
+    return this._executionContext.moduleRole;
   }
 
   /** Encode replacement data and remove descriptor fields recomputed by RecordsWrite. */
@@ -581,9 +581,9 @@ export class Record<T = unknown> implements RecordModel {
     }
 
     const encoded = await encodeRecordValue(codecBinding.codec, data, codecBinding.dataFormats, {
-      protocolPath : this.protocolPath,
-      recordId     : this.id,
-      schema       : this.schema,
+      modulePath : this.modulePath,
+      recordId   : this.id,
+      schema     : this.schema,
     });
     updateMessage.dataFormat = encoded.dataFormat;
     return encoded.data;
@@ -600,8 +600,8 @@ export class Record<T = unknown> implements RecordModel {
    */
   async delete(deleteParams?: RecordDeleteParams): Promise<void> {
     await this.assertActive();
-    const { protocolRole, timestamp } = deleteParams || {};
-    const effectiveProtocolRole = this.resolveProtocolRole(protocolRole);
+    const { moduleRole, timestamp } = deleteParams || {};
+    const effectiveModuleRole = this.resolveModuleRole(moduleRole);
 
     if (this.deleted && !this._initialWrite) {
       throw new Error('Record: Record is in an invalid state, initial write is missing.');
@@ -629,8 +629,8 @@ export class Record<T = unknown> implements RecordModel {
     };
 
     // A cached tombstone can only be reused under the role that signed it.
-    const differentRole = this.deleted && effectiveProtocolRole !== undefined
-      && getRecordProtocolRole(this.rawMessage) !== effectiveProtocolRole;
+    const differentRole = this.deleted && effectiveModuleRole !== undefined
+      && getRecordModuleRole(this.rawMessage) !== effectiveModuleRole;
     // A request that escalates a plain tombstone to a prune, or explicitly re-stamps the
     // tombstone's timestamp, must construct a new RecordsDelete: resending the cached message
     // would silently ignore the request and lose to the standing tombstone as a 409 Conflict.
@@ -653,7 +653,7 @@ export class Record<T = unknown> implements RecordModel {
         prune            : prune,
         recordId         : this._recordId,
         messageTimestamp : timestamp,
-        protocolRole     : effectiveProtocolRole,
+        moduleRole       : effectiveModuleRole,
       };
     }
 
@@ -675,7 +675,7 @@ export class Record<T = unknown> implements RecordModel {
     this._encryption = undefined;
     this._authorization = deleteMsg.authorization;
     this._contextId = undefined;
-    this._protocolRole = effectiveProtocolRole;
+    this._moduleRole = effectiveModuleRole;
     this._storedData = undefined;
     this._rawMessageDirty = true;
     await invalidateRecordReplica(this._executionContext);
@@ -744,11 +744,11 @@ export class Record<T = unknown> implements RecordModel {
       : storedData instanceof Blob ? storedData : undefined;
     let dataStream = storedData instanceof ReadableStream ? storedData : undefined;
     const readParams: StoredRecordDataReadParams = {
-      agent        : this._agent,
-      dataAccess   : { ...this._dataAccess },
+      agent      : this._agent,
+      dataAccess : { ...this._dataAccess },
       dataCid,
-      protocolRole : this._protocolRole,
-      recordId     : this.id,
+      moduleRole : this._moduleRole,
+      recordId   : this.id,
     };
 
     return {
@@ -788,7 +788,7 @@ export class Record<T = unknown> implements RecordModel {
     agent,
     dataAccess,
     dataCid,
-    protocolRole,
+    moduleRole,
     recordId,
   }: StoredRecordDataReadParams): Promise<ReadableStream<Uint8Array>> {
     const { author, delegatedGrant, granteeDid, remote, target } = dataAccess;
@@ -796,7 +796,7 @@ export class Record<T = unknown> implements RecordModel {
       author,
       messageParams: {
         filter: { recordId },
-        protocolRole,
+        moduleRole,
         ...(delegatedGrant === undefined ? {} : { delegatedGrant }),
       },
       messageType: DwnInterface.RecordsRead,
@@ -862,8 +862,8 @@ export class Record<T = unknown> implements RecordModel {
     const { message: delegatedGrant } = await this._permissionsApi.getPermissionForRequest({
       connectedDid : this._connectedDid,
       delegateDid  : this._delegateDid,
-      protocol     : this.protocol,
-      protocolPath : this.protocolPath,
+      module       : this.module,
+      modulePath   : this.modulePath,
       contextId    : this.contextId,
       delegate     : true,
       messageType  : requestOptions.messageType

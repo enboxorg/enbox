@@ -1,6 +1,6 @@
+import type { ModulesConfigureMessage } from '../types/modules-types.js';
 import type { PaginationCursor } from '../types/query-types.js';
 import type { ProgressToken } from '../types/subscriptions.js';
-import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
 import type { RecordsReadReplyEntry } from '../types/records-types.js';
 import type { GenericMessageReply, MessageSubscription, QueryResultEntry, Status } from '../types/message-types.js';
 import type { MessagesQueryReplyEntry, MessagesReadReplyEntry } from '../types/messages-types.js';
@@ -43,7 +43,7 @@ export type UnionMessageReply = GenericMessageReply & {
    * e.g. the resulting messages from a RecordsQuery or MessagesQuery.
    * Mutually exclusive with `record`.
    */
-  entries?: QueryResultEntry[] | ProtocolsConfigureMessage[] | MessagesQueryReplyEntry[] | string[];
+  entries?: QueryResultEntry[] | ModulesConfigureMessage[] | MessagesQueryReplyEntry[] | string[];
 
   /**
    * A cursor for pagination if applicable (e.g. RecordsQuery).

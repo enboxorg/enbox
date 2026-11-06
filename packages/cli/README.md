@@ -21,7 +21,7 @@ import {
 } from '@enbox/cli';
 
 const application = defineApplicationManifest({
-  protocols: [{ protocol: NotesProtocol, permissions: ['write'] }],
+  modules: [{ module: NotesModule, permissions: ['write'] }],
 } as const);
 const store = createConnectionStore({
   application,

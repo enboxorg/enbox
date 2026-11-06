@@ -7,13 +7,13 @@ import type { Arbitrary } from 'fast-check';
 import fc from 'fast-check';
 
 /** The set of valid DWN interface names. */
-const dwnInterfaces = ['Records', 'Protocols', 'Messages'] as const;
+const dwnInterfaces = ['Records', 'Modules', 'Messages'] as const;
 
 /** Map from interface name to the set of valid method names. */
 const dwnMethodsByInterface: Record<string, string[]> = {
-  Records   : ['Write', 'Query', 'Read', 'Delete', 'Count', 'Subscribe'],
-  Protocols : ['Configure', 'Query'],
-  Messages  : ['Read', 'Subscribe', 'Sync'],
+  Records  : ['Write', 'Query', 'Read', 'Delete', 'Count', 'Subscribe'],
+  Modules  : ['Configure', 'Query'],
+  Messages : ['Read', 'Subscribe', 'Sync'],
 };
 
 /** All valid (interface, method) pairs. */

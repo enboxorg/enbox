@@ -10,11 +10,11 @@ export type { RecordedValidationRead } from './core/recording-validation-state-r
 export { RecordingValidationStateReader } from './core/recording-validation-state-reader.js';
 export type { MessagesFilter, MessagesQueryDescriptor, MessagesQueryMessage, MessagesQueryReply, MessagesQueryReplyEntry, MessagesReadMessage, MessagesReadReply, MessagesReadReplyEntry, MessagesReadDescriptor, MessagesSubscribeDescriptor, MessagesSubscribeMessage, MessagesSubscribeReply, MessagesSubscribeMessageOptions } from './types/messages-types.js';
 export type { GT, LT, Filter, FilterValue, KeyValues, EqualFilter, OneOfFilter, RangeFilter, RangeCriterion, PaginationCursor, QueryOptions, RangeValue, StartsWithFilter, SubtreeFilter } from './types/query-types.js';
-export type { ProtocolsConfigureDescriptor, ProtocolDefinition, ProtocolTypes, ProtocolRuleSet, ProtocolsQueryFilter, ProtocolsConfigureMessage, ProtocolsQueryMessage, ProtocolsQueryReply, ProtocolActionRule, ProtocolDeliveryStrategy, ProtocolKeyAgreement, ProtocolsQueryDescriptor, ProtocolRecordLimitDefinition, ProtocolSizeDefinition, ProtocolTagsDefinition, ProtocolTagSchema, ProtocolType, ProtocolUses } from './types/protocols-types.js';
+export type { ModulesConfigureDescriptor, ModuleDefinition, ModuleTypes, ModuleRuleSet, ModulesQueryFilter, ModulesConfigureMessage, ModulesQueryMessage, ModulesQueryReply, ModuleActionRule, ModuleDeliveryStrategy, ModuleKeyAgreement, ModulesQueryDescriptor, ModuleRecordLimitDefinition, ModuleSizeDefinition, ModuleTagsDefinition, ModuleTagSchema, ModuleType, ModuleUses } from './types/modules-types.js';
 export type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCountMessage, RecordsCountReply, RecordsDeleteMessage, RecordsFilter, RecordsQueryMessage, RecordsQueryReply, RecordsQueryReplyEntry, RecordsReadMessage, RecordsReadReply, RecordsReadReplicationSupportEntry, RecordsSubscribeDescriptor, RecordsSubscribeMessage, RecordsSubscribeReply, RecordsWriteDescriptor, RecordsWriteTags, RecordsWriteTagValue, RecordsWriteMessage, RecordsWriteSignaturePayload, RecordsDeleteDescriptor, RecordsQueryDescriptor, RecordsReadDescriptor, RecordsSubscribeMessageOptions, RecordsWriteMessageOptions, InternalRecordsWriteMessage, RecordEvent, RecordsWriteTagsFilter } from './types/records-types.js';
 export type { GeneralJws, SignatureEntry } from './types/jws-types.js';
 export { authenticate } from './core/auth.js';
-export { CoreProtocolRegistry } from './core/core-protocol.js';
+export { CoreModuleRegistry } from './core/core-module.js';
 export { EncryptionControl } from './core/encryption-control.js';
 export {
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
@@ -23,14 +23,14 @@ export {
   ENCRYPTION_CONTROL_DELIVERY_SCHEMA_URI,
   ENCRYPTION_CONTROL_PATHS,
   ENCRYPTION_CONTROL_ROOT_PATH,
-  ENCRYPTION_PROTOCOL_URI,
-  ENCRYPTION_PROTOCOL_GRANT_KEY_PATH,
-  ENCRYPTION_PROTOCOL_WRAPPED_GRANT_KEY_PATH,
+  ENCRYPTION_MODULE_URI,
+  ENCRYPTION_MODULE_GRANT_KEY_PATH,
+  ENCRYPTION_MODULE_WRAPPED_GRANT_KEY_PATH,
   PERMISSIONS_REVOCATION_PATH,
   isEncryptionControlPath,
 } from './core/constants.js';
 export type { EncryptionControlPath } from './core/constants.js';
-export type { CoreProtocol, CoreProtocolStores } from './core/core-protocol.js';
+export type { CoreModule, CoreModuleStores } from './core/core-module.js';
 export { AllowAllTenantGate } from './core/tenant-gate.js';
 export type { ActiveTenantCheckResult, TenantGate } from './core/tenant-gate.js';
 export { Cid } from './utils/cid.js';
@@ -42,7 +42,7 @@ export type { DataStore, DataStorePutResult, DataStoreGetResult } from './types/
 export type { ResumableTaskStore, ManagedResumableTask } from './types/resumable-task-store.js';
 export { DataStream } from './utils/data-stream.js';
 export { getGrantKeyDeliveryScopes, grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope, isGrantKeyRecordsScope } from './utils/grant-key-coverage.js';
-export type { GrantKeyEligibleRecordsScope, GrantKeyProtocolPathScope, GrantKeyReadRecordsScope, GrantKeyRecordsScope, GrantKeyWriteRecordsScope } from './utils/grant-key-coverage.js';
+export type { GrantKeyEligibleRecordsScope, GrantKeyModulePathScope, GrantKeyReadRecordsScope, GrantKeyRecordsScope, GrantKeyWriteRecordsScope } from './utils/grant-key-coverage.js';
 export { HdKey, KeyDerivationScheme } from './utils/hd-key.js';
 export type { DerivedPrivateJwk } from './utils/hd-key.js';
 export { Dwn } from './dwn.js';
@@ -59,8 +59,8 @@ export { Encryption, ContentEncryptionAlgorithm, KeyAgreementAlgorithm, ROLE_AUD
 export type {
   DwnEncryption,
   KeyUnwrapPayload,
-  ProtocolPathKeyEncryption,
-  ProtocolPathKeyEncryptionInput,
+  ModulePathKeyEncryption,
+  ModulePathKeyEncryptionInput,
   SealKeyWrap,
   SealKeyWrapInput,
   SealUnwrapInput,
@@ -85,36 +85,37 @@ export type { UnionMessageReply } from './core/message-reply.js';
 export type { MessageStore, MessageStoreCompleteDataResult, MessageStoreLatestStateTransition, MessageStoreOptions, MessageStorePutResult, MessageStoreQueryOptions, RecordLimitOccupancy } from './types/message-store.js';
 export { Replication } from './utils/replication.js';
 export type { MessageInterface } from './types/message-interface.js';
-export { PermissionGrant } from './protocols/permission-grant.js';
-export { PermissionRequest } from './protocols/permission-request.js';
-export { PermissionsProtocol } from './protocols/permissions.js';
-export { EncryptionProtocol, WRAPPED_GRANT_KEY_FORMAT, assertWrappedGrantKeyEnvelope } from './protocols/encryption.js';
-export type { WrappedGrantKeyEnvelope } from './protocols/encryption.js';
-export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './protocols/permissions.js';
-export { PermissionScopeMatcher } from './utils/permission-scope.js';
-export type { ProtocolScope } from './utils/permission-scope.js';
+export { PermissionGrant } from './modules/permission-grant.js';
+export { PermissionRequest } from './modules/permission-request.js';
+export { PermissionsModule } from './modules/permissions.js';
+export { EncryptionModule, WRAPPED_GRANT_KEY_FORMAT, assertWrappedGrantKeyEnvelope } from './modules/encryption.js';
+export type { WrappedGrantKeyEnvelope } from './modules/encryption.js';
+export type { PermissionGrantCreateOptions, PermissionRequestCreateOptions, PermissionRevocationCreateOptions } from './modules/permissions.js';
+export { PermissionScopeMatcher, validatePermissionScope } from './utils/permission-scope.js';
+export { validateModuleDefinitionSchema } from './schema-validator.js';
+export type { ModuleScope } from './utils/permission-scope.js';
 export { PrivateKeySigner } from './utils/private-key-signer.js';
 export type { PrivateKeySignerOptions } from './utils/private-key-signer.js';
 export {
-  Protocols,
-  authoredProtocolDefinitionsEqual,
+  Modules,
+  authoredModuleDefinitionsEqual,
   getRecordsWriteRoleIdentity,
   getRoleAudienceContextId,
   getRoleContextPrefix,
   getRoleRecordIdentity,
   getRuleSetAtPath,
   getTypeName,
-  isCrossProtocolRef,
-  parseCrossProtocolRef,
-  resolveProtocolContextRoles,
-  resolveProtocolRoleContextScope,
-  walkProtocolRuleSets,
-} from './utils/protocols.js';
-export type { CrossProtocolRef, RoleRecordIdentity } from './utils/protocols.js';
-export { ProtocolsConfigure } from './interfaces/protocols-configure.js';
-export type { ProtocolsConfigureOptions } from './interfaces/protocols-configure.js';
-export { ProtocolsQuery } from './interfaces/protocols-query.js';
-export type { ProtocolsQueryOptions } from './interfaces/protocols-query.js';
+  isCrossModuleRef,
+  parseCrossModuleRef,
+  resolveModuleContextRoles,
+  resolveModuleRoleContextScope,
+  walkModuleRuleSets,
+} from './utils/modules.js';
+export type { CrossModuleRef, RoleRecordIdentity } from './utils/modules.js';
+export { ModulesConfigure } from './interfaces/modules-configure.js';
+export type { ModulesConfigureOptions } from './interfaces/modules-configure.js';
+export { ModulesQuery } from './interfaces/modules-query.js';
+export type { ModulesQueryOptions } from './interfaces/modules-query.js';
 export { Records } from './utils/records.js';
 export { RecordsDelete } from './interfaces/records-delete.js';
 export type { RecordsDeleteOptions } from './interfaces/records-delete.js';
@@ -151,6 +152,6 @@ export { DurableEventLog } from './event-stream/durable-event-log.js';
 export type { DurableEventLogConfig, DurableEventLogStore } from './event-stream/durable-event-log.js';
 
 // test library exports
-export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesQueryInput, GenerateMessagesQueryOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateProtocolsConfigureInput, GenerateProtocolsConfigureOutput, GenerateProtocolsQueryInput, GenerateProtocolsQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
+export type { GenerateFromRecordsWriteInput, GenerateFromRecordsWriteOut, GenerateGrantCreateInput, GenerateGrantCreateOutput, GenerateMessagesQueryInput, GenerateMessagesQueryOutput, GenerateMessagesReadInput, GenerateMessagesReadOutput, GenerateMessagesSubscribeInput, GenerateMessagesSubscribeOutput, GenerateModulesConfigureInput, GenerateModulesConfigureOutput, GenerateModulesQueryInput, GenerateModulesQueryOutput, GenerateRecordsCountInput, GenerateRecordsCountOutput, GenerateRecordsDeleteInput, GenerateRecordsDeleteOutput, GenerateRecordsQueryInput, GenerateRecordsQueryOutput, GenerateRecordsSubscribeInput, GenerateRecordsSubscribeOutput, GenerateRecordsWriteInput, GenerateRecordsWriteOutput, Persona } from '../tests/utils/test-data-generator.js';
 export { TestDataGenerator } from '../tests/utils/test-data-generator.js';
 export { Poller } from '../tests/utils/poller.js';

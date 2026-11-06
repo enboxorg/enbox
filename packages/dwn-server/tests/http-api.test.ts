@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DwnServerConfig } from '../src/config.js';
-import type { Dwn, GenericMessage, Persona, ProtocolsConfigureMessage, RecordsQueryReply } from '@enbox/dwn-sdk-js';
+import type { Dwn, GenericMessage, ModulesConfigureMessage, Persona, RecordsQueryReply } from '@enbox/dwn-sdk-js';
 import type { JsonRpcErrorResponse, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
 import { connect } from 'net';
@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import {
   DataStream,
-  ProtocolsConfigure,
+  ModulesConfigure,
   RecordsQuery,
   TestDataGenerator,
   Time,
@@ -100,8 +100,8 @@ describe('http api', function () {
     alice = await TestDataGenerator.generateDidKeyPersona();
     await registrationManager.recordTenantRegistration({ did: alice.did, termsOfServiceHash: registrationManager.getTermsOfServiceHash() });
 
-    // install the default test protocol so RecordsWrite messages are accepted
-    await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+    // install the default test module so RecordsWrite messages are accepted
+    await TestDataGenerator.installDefaultTestModule(dwn, alice);
   });
 
   afterEach(async function () {
@@ -347,7 +347,7 @@ describe('http api', function () {
   });
 
   describe('P0 Scenarios', function () {
-    it('should be able to read and write a protocol record', async function () {
+    it('should be able to read and write a module record', async function () {
       await CommonScenarioValidator.sanityTestDwnReadWrite(baseUrl, alice);
     });
   });
@@ -720,12 +720,12 @@ describe('http api', function () {
     });
   });
 
-  describe('/:did/read/protocols/:protocol', function () {
-    it('returns protocol definition if protocol is published', async function () {
-      // Create and publish a protocol
-      const protocolConfigure = await ProtocolsConfigure.create({
+  describe('/:did/read/modules/:module', function () {
+    it('returns module definition if module is published', async function () {
+      // Create and publish a module
+      const moduleConfigure = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol',
+          module    : 'http://example.com/module',
           published : true,
           types     : {
             foo: {},
@@ -739,7 +739,7 @@ describe('http api', function () {
 
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-        message : protocolConfigure.toJSON(),
+        message : moduleConfigure.toJSON(),
         target  : alice.did,
       });
 
@@ -752,22 +752,22 @@ describe('http api', function () {
       expect(response.status).toBe(200);
 
 
-      // Fetch the protocol definition using the HTTP API
-      const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}`;
-      const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).toBe(200);
+      // Fetch the module definition using the HTTP API
+      const base64urlEncodedModule = Convert.string(moduleConfigure.message.descriptor.definition.module).toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}`;
+      const moduleQueryResponse = await fetch(moduleUrl);
+      expect(moduleQueryResponse.status).toBe(200);
 
       // get the JSON response
-      const protocolConfigureReply = await protocolQueryResponse.json() as ProtocolsConfigureMessage;
-      expect(protocolConfigureReply.descriptor).toEqual(protocolConfigure.message.descriptor);
+      const moduleConfigureReply = await moduleQueryResponse.json() as ModulesConfigureMessage;
+      expect(moduleConfigureReply.descriptor).toEqual(moduleConfigure.message.descriptor);
     });
 
-    it('returns a 404 if protocol is not published', async function () {
-      // Create a not-published protocol
-      const protocolConfigure = await ProtocolsConfigure.create({
+    it('returns a 404 if module is not published', async function () {
+      // Create a not-published module
+      const moduleConfigure = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol',
+          module    : 'http://example.com/module',
           published : false,
           types     : {
             foo: {},
@@ -781,7 +781,7 @@ describe('http api', function () {
 
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-        message : protocolConfigure.toJSON(),
+        message : moduleConfigure.toJSON(),
         target  : alice.did,
       });
 
@@ -794,27 +794,27 @@ describe('http api', function () {
       expect(response.status).toBe(200);
 
 
-      // Fetch the protocol definition using the HTTP API
-      const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}`;
-      const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).toBe(404);
+      // Fetch the module definition using the HTTP API
+      const base64urlEncodedModule = Convert.string(moduleConfigure.message.descriptor.definition.module).toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}`;
+      const moduleQueryResponse = await fetch(moduleUrl);
+      expect(moduleQueryResponse.status).toBe(404);
     });
 
-    it('returns a 400 if protocol is not base64url encoded', async function () {
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/invalid-protocol`;
-      const protocolQueryResponse = await fetch(protocolUrl);
-      expect(protocolQueryResponse.status).toBe(400);
-      expect(await protocolQueryResponse.text()).toBe('Bad Request');
+    it('returns a 400 if module is not base64url encoded', async function () {
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/invalid-module`;
+      const moduleQueryResponse = await fetch(moduleUrl);
+      expect(moduleQueryResponse.status).toBe(400);
+      expect(await moduleQueryResponse.text()).toBe('Bad Request');
     });
   });
 
-  describe('/:did/query/protocols', function () {
-    it('returns protocol definition if protocol is published', async function () {
-      // create two protocol definitions, one published and one not
-      const protocolConfigurePublished = await ProtocolsConfigure.create({
+  describe('/:did/query/modules', function () {
+    it('returns module definition if module is published', async function () {
+      // create two module definitions, one published and one not
+      const moduleConfigurePublished = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol',
+          module    : 'http://example.com/module',
           published : true,
           types     : {
             foo: {},
@@ -828,7 +828,7 @@ describe('http api', function () {
 
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-        message : protocolConfigurePublished.toJSON(),
+        message : moduleConfigurePublished.toJSON(),
         target  : alice.did,
       });
 
@@ -840,9 +840,9 @@ describe('http api', function () {
       });
       expect(response.status).toBe(200);
 
-      const protocolConfigureNotPublished = await ProtocolsConfigure.create({
+      const moduleConfigureNotPublished = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol2',
+          module    : 'http://example.com/module2',
           published : false,
           types     : {
             foo: {},
@@ -856,7 +856,7 @@ describe('http api', function () {
 
       const requestId2 = crypto.randomUUID();
       const dwnRequest2 = createJsonRpcRequest(requestId2, 'dwn.processMessage', {
-        message : protocolConfigureNotPublished.toJSON(),
+        message : moduleConfigureNotPublished.toJSON(),
         target  : alice.did,
       });
 
@@ -869,26 +869,26 @@ describe('http api', function () {
 
       expect(response2.status).toBe(200);
 
-      // now query for a list of protocols
-      const protocolQueryUrl = `${baseUrl}/${alice.did}/query/protocols`;
-      const protocolQueryResponse = await fetch(protocolQueryUrl);
-      expect(protocolQueryResponse.status).toBe(200);
+      // now query for a list of modules
+      const moduleQueryUrl = `${baseUrl}/${alice.did}/query/modules`;
+      const moduleQueryResponse = await fetch(moduleQueryUrl);
+      expect(moduleQueryResponse.status).toBe(200);
 
       // get the JSON response
-      const protocolQueryReply = await protocolQueryResponse.json() as ProtocolsConfigureMessage[];
-      expect(protocolQueryReply).toHaveLength(1);
+      const moduleQueryReply = await moduleQueryResponse.json() as ModulesConfigureMessage[];
+      expect(moduleQueryReply).toHaveLength(1);
 
-      // check that the published protocol is returned
-      expect(protocolQueryReply[0].descriptor).toEqual(protocolConfigurePublished.message.descriptor);
+      // check that the published module is returned
+      expect(moduleQueryReply[0].descriptor).toEqual(moduleConfigurePublished.message.descriptor);
     });
   });
 
-  describe('/:did/read/protocols/:protocol/*', function () {
-    it('returns record for a given protocol and protocolPath that is published', async function () {
-      // Create and publish a protocol
-      const protocolConfigure = await ProtocolsConfigure.create({
+  describe('/:did/read/modules/:module/*', function () {
+    it('returns record for a given module and modulePath that is published', async function () {
+      // Create and publish a module
+      const moduleConfigure = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol',
+          module    : 'http://example.com/module',
           published : true,
           types     : {
             foo: {},
@@ -902,7 +902,7 @@ describe('http api', function () {
 
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-        message : protocolConfigure.toJSON(),
+        message : moduleConfigure.toJSON(),
         target  : alice.did,
       });
 
@@ -923,11 +923,11 @@ describe('http api', function () {
       } = await getFileAsReadStream(filePath);
 
       const { recordsWrite } = await createRecordsWriteMessage(alice, {
-        dataCid      : expectedCid,
-        dataSize     : size,
-        published    : true,
-        protocol     : protocolConfigure.message.descriptor.definition.protocol,
-        protocolPath : 'foo',
+        dataCid    : expectedCid,
+        dataSize   : size,
+        published  : true,
+        module     : moduleConfigure.message.descriptor.definition.module,
+        modulePath : 'foo',
       });
 
       const recordsWriteRequestId = crypto.randomUUID();
@@ -948,9 +948,9 @@ describe('http api', function () {
       expect(responseJson.result.reply.status.code).toBe(202);
 
       // Fetch the record using the HTTP API
-      const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo`;
-      const recordReadResponse = await fetch(protocolUrl);
+      const base64urlEncodedModule = Convert.string(moduleConfigure.message.descriptor.definition.module).toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}/foo`;
+      const recordReadResponse = await fetch(moduleUrl);
       expect(recordReadResponse.status).toBe(200);
 
       // get the data response
@@ -964,24 +964,24 @@ describe('http api', function () {
       expect(entry.recordsWrite.recordId).toBe(recordsWrite.message.recordId);
     });
 
-    it('removes the trailing slash from the protocol path', async function () {
+    it('removes the trailing slash from the module path', async function () {
       const recordsQueryCreateSpy = sinon.spy(RecordsQuery, 'create');
 
-      const base64urlEncodedProtocol = Convert.string('http://example.com/protocol').toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo/`; // trailing slash
-      const recordReadResponse = await fetch(protocolUrl);
+      const base64urlEncodedModule = Convert.string('http://example.com/module').toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}/foo/`; // trailing slash
+      const recordReadResponse = await fetch(moduleUrl);
       expect(recordReadResponse.status).toBe(404);
 
       expect(recordsQueryCreateSpy.calledOnce).toBe(true);
       const recordsQueryFilter = recordsQueryCreateSpy.getCall(0).args[0].filter;
-      expect(recordsQueryFilter.protocolPath).toBe('foo');
+      expect(recordsQueryFilter.modulePath).toBe('foo');
     });
 
-    it('returns a 404 if record for a given protocol and protocolPath is not published', async function () {
-      // Create and publish a protocol
-      const protocolConfigure = await ProtocolsConfigure.create({
+    it('returns a 404 if record for a given module and modulePath is not published', async function () {
+      // Create and publish a module
+      const moduleConfigure = await ModulesConfigure.create({
         definition: {
-          protocol  : 'http://example.com/protocol',
+          module    : 'http://example.com/module',
           published : true,
           types     : {
             foo: {},
@@ -995,7 +995,7 @@ describe('http api', function () {
 
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-        message : protocolConfigure.toJSON(),
+        message : moduleConfigure.toJSON(),
         target  : alice.did,
       });
 
@@ -1016,11 +1016,11 @@ describe('http api', function () {
       } = await getFileAsReadStream(filePath);
 
       const { recordsWrite } = await createRecordsWriteMessage(alice, {
-        dataCid      : expectedCid,
-        dataSize     : size,
-        published    : false, // not published
-        protocol     : protocolConfigure.message.descriptor.definition.protocol,
-        protocolPath : 'foo',
+        dataCid    : expectedCid,
+        dataSize   : size,
+        published  : false, // not published
+        module     : moduleConfigure.message.descriptor.definition.module,
+        modulePath : 'foo',
       });
 
       const recordsWriteRequestId = crypto.randomUUID();
@@ -1041,24 +1041,24 @@ describe('http api', function () {
       expect(responseJson.result.reply.status.code).toBe(202);
 
       // Fetch the record using the HTTP API
-      const base64urlEncodedProtocol = Convert.string(protocolConfigure.message.descriptor.definition.protocol).toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/foo`;
-      const recordReadResponse = await fetch(protocolUrl);
+      const base64urlEncodedModule = Convert.string(moduleConfigure.message.descriptor.definition.module).toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}/foo`;
+      const recordReadResponse = await fetch(moduleUrl);
       expect(recordReadResponse.status).toBe(404);
     });
 
-    it('returns a 400 if protocol path is not provided', async function () {
-      // Fetch a protocol record without providing a protocol path
-      const base64urlEncodedProtocol = Convert.string('http://example.com/protocol').toBase64Url();
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/${base64urlEncodedProtocol}/`; // missing protocol path
-      const recordReadResponse = await fetch(protocolUrl);
+    it('returns a 400 if module path is not provided', async function () {
+      // Fetch a module record without providing a module path
+      const base64urlEncodedModule = Convert.string('http://example.com/module').toBase64Url();
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/${base64urlEncodedModule}/`; // missing module path
+      const recordReadResponse = await fetch(moduleUrl);
       expect(recordReadResponse.status).toBe(400);
-      expect(await recordReadResponse.text()).toBe('protocol path is required');
+      expect(await recordReadResponse.text()).toBe('module path is required');
     });
 
-    it('returns a 400 error if protocol cannot be base64url encoded', async function () {
-      const protocolUrl = `${baseUrl}/${alice.did}/read/protocols/invalid-protocol/foo`;
-      const recordReadResponse = await fetch(protocolUrl);
+    it('returns a 400 error if module cannot be base64url encoded', async function () {
+      const moduleUrl = `${baseUrl}/${alice.did}/read/modules/invalid-module/foo`;
+      const recordReadResponse = await fetch(moduleUrl);
       expect(recordReadResponse.status).toBe(400);
       expect(await recordReadResponse.text()).toBe('Bad Request');
     });

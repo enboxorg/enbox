@@ -1,18 +1,18 @@
 /**
- * A protocol-scoped API returned by {@link Enbox.using}.
+ * A module-scoped API returned by {@link Enbox.using}.
  *
  * `TypedEnbox` is the **primary developer interface** for interacting with
- * protocol-backed records. It auto-injects the protocol URI, protocolPath,
+ * module-backed records. It auto-injects the module URI, modulePath,
  * and schema into every operation, and provides compile-time path
  * autocompletion plus typed application values via runtime codecs.
  *
- * Record-returning methods preserve the protocol payload type on the canonical
+ * Record-returning methods preserve the module payload type on the canonical
  * {@link Record} class so type information flows through reads, queries, and
  * updates without a second runtime wrapper.
  *
  * @example
  * ```ts
- * const threads = enbox.using(ThreadsProtocol);
+ * const threads = enbox.using(ThreadsModule);
  *
  * // Create — path and data type are checked at compile time
  * const record = await threads.records.create('thread', {
@@ -22,7 +22,7 @@
  *
  * const data = await record.value(); // ThreadData — no cast needed
  *
- * // Query — protocol and protocolPath are auto-injected
+ * // Query — module and modulePath are auto-injected
  * const { records } = await threads.records.query('thread');
  * // records is Record<ThreadData>[]
  * ```
@@ -31,7 +31,7 @@
 import type { ContextFollowRecord } from './context-following.js';
 import type { ContextView } from './context-view.js';
 import type { MaterializedMemberContext as MaterializedMemberContextRow } from './materialized-member-context-view.js';
-import type { Protocol } from './protocol.js';
+import type { Module } from './module.js';
 import type {
   AudienceKeyDeliveryOutcome,
   DwnPaginationCursor,
@@ -40,23 +40,23 @@ import type {
   FollowedSyncSource,
   SyncEngine,
 } from '@enbox/agent';
-import type { ContextFollowIntent, ContextInvitationPreview } from './shared-context-protocol.js';
+import type { ContextFollowIntent, ContextInvitationPreview } from './shared-context-module.js';
 import type {
   ContextRolePath,
   ContextRolesAtPath,
   ContextRootPath,
   DirectSingletonChildPaths,
-  ProtocolPaths,
-  ProtocolRolePaths,
-  SingletonProtocolPaths,
-  SquashProtocolPaths,
-  TypedProtocol,
+  ModulePaths,
+  ModuleRolePaths,
+  SingletonModulePaths,
+  SquashModulePaths,
+  TypedModule,
   TypeNameAtPath,
-} from './protocol-types.js';
-import type { DwnApi, ProtocolsConfigureResponse } from './dwn-api.js';
+} from './module-types.js';
+import type { DwnApi, ModulesConfigureResponse } from './dwn-api.js';
 import type { ExpandableRecordView, RecordView } from './record-view.js';
 import type { MaterializedRecord, Record, RecordPatch } from './record.js';
-import type { ProtocolDefinition, ProtocolType, RecordsFilter } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleType, RecordsFilter } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap, RecordCodecValue } from './record-codec.js';
 import type { RecordDeleteParams, RecordUpdateParams } from './record-types.js';
 import type { RecordFilter, RecordQuery } from './record-query.js';
@@ -66,23 +66,23 @@ import { createContextView } from './context-view.js';
 import { createMaterializedMemberContextView } from './materialized-member-context-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
-import { installedProtocolDefinitionsEqual } from './protocol-definition-utils.js';
+import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { mergeRecordPatch } from './record-patch.js';
 import { RecordConflictError } from './record-conflict-error.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import {
-  assertTypedProtocolStructureSupported,
-  collectProtocolPaths,
-  isProtocolRolePath,
-} from './protocol-paths.js';
+  assertTypedModuleStructureSupported,
+  collectModulePaths,
+  isModuleRolePath,
+} from './module-paths.js';
 import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, isValidRecordContextId } from './record-query.js';
 import {
-  authoredProtocolDefinitionsEqual,
+  authoredModuleDefinitionsEqual,
   DateSort,
   getRuleSetAtPath,
   getTypeName,
-  resolveProtocolContextRoles,
-  resolveProtocolRoleContextScope,
+  resolveModuleContextRoles,
+  resolveModuleRoleContextScope,
   Time,
 } from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue, RecordValidationError } from './record-codec.js';
@@ -92,8 +92,8 @@ import {
   CONTEXT_INVITATION_PATH,
   contextFollowCodec,
   contextInvitationCodec,
-  protocolContextKey,
-} from './shared-context-protocol.js';
+  moduleContextKey,
+} from './shared-context-module.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
@@ -121,7 +121,7 @@ function compareCodeUnits(left: string, right: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the TypeScript data type for a given protocol path.
+ * Resolves the TypeScript data type for a given module path.
  *
  * The value is inferred from the runtime codec declared for the type name at
  * the given path.
@@ -143,17 +143,17 @@ type TypedRecordReadResult<T> = {
   tombstonePrune?: boolean;
 };
 
-/** A protocol-bound record with coordinates guaranteed by its typed selection. */
+/** A module-bound record with coordinates guaranteed by its typed selection. */
 export interface TypedRecord<T = unknown> extends Record<T> {
   readonly contextId: string;
-  readonly protocol: string;
-  readonly protocolPath: string;
+  readonly module: string;
+  readonly modulePath: string;
 
-  /** Mutate and return this same protocol-refined handle. */
+  /** Mutate and return this same module-refined handle. */
   update(params: RecordUpdateParams<T>): Promise<this>;
 }
 
-/** A typed protocol record paired with its decoded application value. */
+/** A typed module record paired with its decoded application value. */
 export type TypedMaterializedRecord<T = unknown> = MaterializedRecord<T, TypedRecord<T>>;
 
 /** Update fields available on a record whose context, role, and target are already bound. */
@@ -191,8 +191,8 @@ export type ContextRecord<T = unknown> = Pick<
   | 'value'
 > & {
   readonly contextId: string;
-  readonly protocol: string;
-  readonly protocolPath: string;
+  readonly module: string;
+  readonly modulePath: string;
   readonly squash: boolean;
   delete(params?: ContextRecordDeleteParams): Promise<void>;
   update(params: ContextRecordUpdateParams<T>): Promise<ContextRecord<T>>;
@@ -283,9 +283,9 @@ type TypedRecordsSubscribeArguments<
   : | [listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>]
     | [options: RecordSubscriptionOptions, listener: TypedRecordSubscriptionListener<C, Paths, ContextBound>];
 
-type ProtocolSubscriptionPaths<D extends ProtocolDefinition, Selection> = SelectedSubscriptionPaths<
+type ModuleSubscriptionPaths<D extends ModuleDefinition, Selection> = SelectedSubscriptionPaths<
   Selection,
-  ProtocolPaths<D> & string
+  ModulePaths<D> & string
 >;
 
 type TypedRecordsSubscribe<
@@ -309,26 +309,26 @@ export interface RecordSubscription {
 
 /** Materialization requested from a typed records query or observed view. */
 export type RecordMaterialization<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
 > = true | {
   /** Exact direct-child paths to materialize beside every parent record. */
   children: readonly DirectSingletonChildPaths<D, Path>[];
 };
 
 type SelectedMaterializedChildPaths<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path>,
 > = Materialization extends { children: readonly (infer ChildPath)[] }
   ? Extract<ChildPath, DirectSingletonChildPaths<D, Path>>
   : never;
 
-/** Materialized singleton children exposed for one protocol path. */
+/** Materialized singleton children exposed for one module path. */
 type MaterializedChildren<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Path extends ProtocolPaths<D> & string,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> = true,
   ContextBound extends boolean = false,
 > = {
@@ -336,11 +336,11 @@ type MaterializedChildren<
     as TypeNameAtPath<ChildPath>]: MaterializedRecordHandle<DataForPath<C, ChildPath>, ContextBound> | undefined;
 };
 
-/** Materialized representation of one typed protocol record. */
+/** Materialized representation of one typed module record. */
 type MaterializedRecordForPath<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Path extends ProtocolPaths<D> & string,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> = true,
   ContextBound extends boolean = false,
 > = Materialization extends true
@@ -351,9 +351,9 @@ type MaterializedRecordForPath<
 
 /** Record handle or materialized value selected by a typed query or observed view. */
 export type RecordRepresentation<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Path extends ProtocolPaths<D> & string,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
   ContextBound extends boolean = false,
 > = Materialization extends undefined
@@ -366,13 +366,13 @@ type MaterializedRecordWithChildren<T> = TypedMaterializedRecord<T> & Readonly<{
 
 type MaterializationSource = {
   from?: string;
-  protocolRole?: string;
+  moduleRole?: string;
   within?: string;
 };
 
 type QueryRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
   Query extends RecordQuery<D, Path>,
 > = [Materialization] extends [undefined]
@@ -383,22 +383,22 @@ type QueryRequest<
   };
 
 type TypedQueryRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = QueryRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
 type TypedQueryArguments<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
 > = [Materialization] extends [undefined]
   ? [path: Path, request?: TypedQueryRequest<D, Path, Materialization>]
   : [path: Path, request: TypedQueryRequest<D, Path, Materialization>];
 
 type ObserveRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined,
   Query extends RecordQuery<D, Path>,
 > = Omit<Query, 'pagination'> & {
@@ -411,8 +411,8 @@ type ObserveRequest<
 
 /** Bounded typed records selection accepted by `records.observe()`. */
 export type RecordObserveRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
 > = ObserveRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
@@ -421,8 +421,8 @@ type TypedEnboxOptions = {
   /** Tenant and root scope injected by an owner or member context. */
   context?: {
     contextId: string;
-    protocolPath: string;
-    protocolPaths: ReadonlySet<string>;
+    modulePath: string;
+    modulePaths: ReadonlySet<string>;
   };
 
   /** Session-owned role-delivery projection and retry operations. */
@@ -452,8 +452,8 @@ export type RoleDeliveryState =
   | Readonly<{ state: 'pending'; reason?: string }>
   | Readonly<{ state: 'awaiting-recipient-install' | 'failed'; reason: string }>;
 
-type ParentProtocolPath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
-  ? Tail extends `${string}/${string}` ? `${Head}/${ParentProtocolPath<Tail>}` : Head
+type ParentModulePath<Path extends string> = Path extends `${infer Head}/${infer Tail}`
+  ? Tail extends `${string}/${string}` ? `${Head}/${ParentModulePath<Tail>}` : Head
   : never;
 
 /** One pending, signed offer to follow a shared context. */
@@ -467,7 +467,7 @@ export type ContextInvitation<
   ownerDid: string;
   /** Shared context ID on the owner's tenant. */
   contextId: string;
-  /** Protocol context root whose read rules determine the role preference. */
+  /** Module context root whose read rules determine the role preference. */
   path: Path;
   /** Small, non-sensitive application display metadata. */
   preview: ContextInvitationPreview;
@@ -479,7 +479,7 @@ export type ContextInvitation<
   dismiss(): Promise<void>;
 }>;
 
-/** Pending invitation discovery for one typed shared-context protocol. */
+/** Pending invitation discovery for one typed shared-context module. */
 export type ContextInvitationsApi<
   Context = unknown,
   Path extends string = string,
@@ -490,16 +490,16 @@ export type ContextInvitationsApi<
   >;
 }>;
 
-type ProtocolContextInvitation<D extends ProtocolDefinition, C extends RecordCodecMap> = ContextInvitation<
+type ModuleContextInvitation<D extends ModuleDefinition, C extends RecordCodecMap> = ContextInvitation<
   MemberContext<D, C>,
   ContextRootPath<D>
 >;
 
 /** One application-facing member of an owned context. */
 export type ContextMember<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Role extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  Role extends ModulePaths<D> & string = ModulePaths<D> & string,
 > = Role extends string ? Readonly<{
   data: DataForPath<C, Role>;
   delivery: RoleDeliveryState;
@@ -517,9 +517,9 @@ type ContextMemberSetRequest<
 
 /** Owner operations for the alternative membership roles declared by one context root. */
 export type ContextMembersApi<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Role extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  Role extends ModulePaths<D> & string = ModulePaths<D> & string,
 > = Readonly<{
   get(did: string): Promise<ContextMember<D, C, Role> | undefined>;
   list(): Promise<ContextMember<D, C, Role>[]>;
@@ -529,7 +529,7 @@ export type ContextMembersApi<
    */
   observe(options?: Readonly<{ signal?: AbortSignal }>): Promise<RecordView<ContextMember<D, C, Role>>>;
   remove(did: string): Promise<void>;
-  /** Reconcile protocol-wide delivery, then return this member's current row. */
+  /** Reconcile module-wide delivery, then return this member's current row. */
   retryDelivery(did: string): Promise<ContextMember<D, C, Role> | undefined>;
   /** Replace this recipient's membership assignment within the context's declared role list. */
   set<SelectedRole extends Role>(
@@ -539,9 +539,9 @@ export type ContextMembersApi<
 }>;
 
 type ContextBase<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  Root extends ModulePaths<D> & string = ModulePaths<D> & string,
 > = {
   /** Context ID that bounds every record operation. */
   id: string;
@@ -549,7 +549,7 @@ type ContextBase<
   key: string;
   /** DID whose DWN owns the authoritative context. */
   ownerDid: string;
-  /** Protocol path of this context's root record. */
+  /** Module path of this context's root record. */
   path: Root;
   /** Typed records API with this context's tenant and root scope already bound. */
   records: ContextRecordsApi<D, C, Root>;
@@ -558,15 +558,15 @@ type ContextBase<
 };
 
 type MemberContextForRoot<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
   Role extends ContextRolePath<D>,
-  Root extends ProtocolPaths<D> & string,
+  Root extends ModulePaths<D> & string,
 > = Root extends unknown
   ? Readonly<ContextBase<D, C, Root> & {
     access: 'member';
     /** Role path authorizing access to the context. */
-    role: Role extends string ? ParentProtocolPath<Role> extends Root ? Role : never : never;
+    role: Role extends string ? ParentModulePath<Role> extends Root ? Role : never : never;
     /**
      * Withdraw this exact role record, then save a cross-device forget. Rejects for a retired handle.
      * If saving fails after withdrawal, contexts.forget({ ownerDid, id }) can finish the saved choice.
@@ -584,9 +584,9 @@ type MemberContextForRoot<
 
 /** A context owned by the connected identity, with membership operations when its root declares read roles. */
 export type OwnedContext<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  Root extends ModulePaths<D> & string = ModulePaths<D> & string,
 > = Root extends unknown ? Readonly<
   ContextBase<D, C, Root> & { access: 'owner' } &
   ([ContextRolesAtPath<D, Root>] extends [never] ? {} : {
@@ -598,19 +598,19 @@ export type OwnedContext<
 
 /** A member context authorized through one exact role record. */
 export type MemberContext<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
   Role extends ContextRolePath<D> = ContextRolePath<D>,
 > = MemberContextForRoot<
   D,
   C,
   Role,
-  Extract<ParentProtocolPath<Role>, ProtocolPaths<D> & string>
+  Extract<ParentModulePath<Role>, ModulePaths<D> & string>
 >;
 
-/** One owned or accepted member context in a protocol's local catalog. */
-export type ProtocolContext<
-  D extends ProtocolDefinition = ProtocolDefinition,
+/** One owned or accepted member context in a module's local catalog. */
+export type ModuleContext<
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = OwnedContext<D, C, ContextRootPath<D>> | MemberContext<D, C>;
 
@@ -621,46 +621,46 @@ export type MaterializedMemberContext<
 > = MaterializedMemberContextRow<Context, Root>;
 
 type SelectedMaterializedMemberContext<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Context = Extract<ProtocolContext<D, C>, { access: 'member' }>,
+  Context = Extract<ModuleContext<D, C>, { access: 'member' }>,
 > = Context extends { path: infer Path extends string }
   ? MaterializedMemberContext<Context, ContextMaterializedRecord<DataForPath<C, Path>>>
   : never;
 
-type ContextObserve<D extends ProtocolDefinition, C extends RecordCodecMap> = {
+type ContextObserve<D extends ModuleDefinition, C extends RecordCodecMap> = {
   (options: Readonly<{ access: 'member'; materializeRoot: true; signal?: AbortSignal }>):
   Promise<ContextView<SelectedMaterializedMemberContext<D, C>>>;
-  (options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ProtocolContext<D, C>>>;
+  (options?: Readonly<{ signal?: AbortSignal }>): Promise<ContextView<ModuleContext<D, C>>>;
 };
 
 /** Owner and canonical context ID identifying one saved following choice. */
 export type ContextFollowTarget = Readonly<{ id: string; ownerDid: string }>;
 
-type ContextFollow<D extends ProtocolDefinition, C extends RecordCodecMap> = <Root extends ContextRootPath<D>>(
+type ContextFollow<D extends ModuleDefinition, C extends RecordCodecMap> = <Root extends ContextRootPath<D>>(
   path: Root,
   request: ContextFollowTarget,
 ) => Promise<MemberContext<D, C, ContextRolesAtPath<D, Root>>>;
 
-/** Protocol-scoped owned-context access and accepted member-context lifecycle. */
+/** Module-scoped owned-context access and accepted member-context lifecycle. */
 export type ContextsApi<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = Readonly<{
-  open<Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
+  open<Root extends Exclude<ModulePaths<D> & string, ModuleRolePaths<D>>>(
     path: Root,
     id: string,
   ): Promise<OwnedContext<D, C, Root>>;
-  /** Verify current remote authority and save encrypted recipient-owned following intent. Requires own-protocol write access. */
+  /** Verify current remote authority and save encrypted recipient-owned following intent. Requires own-module write access. */
   follow: ContextFollow<D, C>;
   /**
    * Forget a saved choice, including unavailable contexts, without withdrawing membership.
-   * Requires a shared-context session and own-protocol write access.
+   * Requires a shared-context session and own-module write access.
    * Rejects with TypeError when session sync storage or the managed journal is unavailable.
    */
   forget(request: ContextFollowTarget): Promise<void>;
   /** Restore known choices once, then list contexts. May wait for owner lookups; use observe() for nonblocking UI data. */
-  list(): Promise<ProtocolContext<D, C>[]>;
+  list(): Promise<ModuleContext<D, C>[]>;
   /** Observe usable contexts and savedFollows; read the local journal before readiness and restore remote access in the background. */
   observe: ContextObserve<D, C>;
 } & ([ContextRootPath<D>] extends [never] ? {} : {
@@ -670,15 +670,15 @@ export type ContextsApi<
 /**
  * Options for {@link TypedEnbox} `records.create()`.
  *
- * The `data` field is type-checked against the protocol codec for the given
+ * The `data` field is type-checked against the module codec for the given
  * path.
  *
- * @typeParam C - The protocol's runtime codec map.
- * @typeParam Path - The protocol path string literal.
+ * @typeParam C - The module's runtime codec map.
+ * @typeParam Path - The module path string literal.
  *
  * @example
  * ```ts
- * await proto.records.create('notebook/page', {
+ * await notebooks.records.create('notebook/page', {
  *   data: { title: 'My Page', body: '...' },       // type-checked as PageData
  *   parentContextId: notebook.contextId,             // link to parent
  *   tags: { category: 'draft' },
@@ -699,10 +699,10 @@ type TypedCreateOptions<
    * (via the agent's `sendDwnRequest`, exactly like remote reads) instead of
    * the connected DID's local DWN — the cross-tenant write path. The author
    * stays the connected (grantee) DID, signing as themselves; the owner's
-   * DWN authorizes the write via {@link TypedCreateRequest.protocolRole}
+   * DWN authorizes the write via {@link TypedCreateRequest.moduleRole}
    * (role-invocation, e.g. a `collaborator` `$role` record naming the
    * author as `recipient`) or delegated-grant parameters. Encrypted types
-   * are encrypted to the OWNER's published protocol keys — the agent
+   * are encrypted to the OWNER's published module keys — the agent
    * resolves the owner's remote definition automatically.
    *
    * The returned record captures remote data access so subsequent lazy reads
@@ -720,17 +720,17 @@ type TypedCreateOptions<
    * The context ID of the parent record.
    *
    * Required when creating a child record under a parent in a hierarchical
-   * protocol structure. Use the parent record's {@link Record.contextId | contextId}
+   * module structure. Use the parent record's {@link Record.contextId | contextId}
    * as this value.
    *
    * @example
    * ```ts
-   * const notebook = await proto.records.create('notebook', {
+   * const notebook = await notebooks.records.create('notebook', {
    *   data: { name: 'My Notebook' },
    * });
    *
    * // Create a page under the notebook
-   * await proto.records.create('notebook/page', {
+   * await notebooks.records.create('notebook/page', {
    *   data: { title: 'Page 1' },
    *   parentContextId: notebook.contextId,
    * });
@@ -802,21 +802,21 @@ type TypedCreateOptions<
   recipientRolePublicKey?: DwnPublicKeyJwk;
 
   /**
-   * The protocol role under which to create this record.
+   * The module role under which to create this record.
    *
    * The DWN will verify that the author is authorized to write under
-   * this role per the protocol's `$actions` configuration.
+   * this role per the module's `$actions` configuration.
    */
-  protocolRole?: string;
+  moduleRole?: string;
 
   /**
    * Compact the record's `$squash`-enabled path on write.
    *
    * When `true`, the write carries the `$squash` directive so the DWN
-   * purges older siblings per the protocol's `$squash` configuration
-   * (e.g. compacting a CRDT delta/snapshot history). The protocol path
+   * purges older siblings per the module's `$squash` configuration
+   * (e.g. compacting a CRDT delta/snapshot history). The module path
    * MUST declare `$squash: true` — otherwise the write is **rejected**
-   * with `ProtocolAuthorizationSquashNotEnabled` (not silently ignored).
+   * with `ModuleAuthorizationSquashNotEnabled` (not silently ignored).
    * The low-level `records.write` already supports this; the typed
    * surface forwards it.
    */
@@ -834,32 +834,32 @@ type TypedCreateOptions<
 };
 
 /**
- * Typed create options for one exact protocol path.
+ * Typed create options for one exact module path.
  *
  * Paths declared with `$role: true` require the role holder's DID as
  * `recipient`; all other paths retain the Records API's optional recipient.
- * Definitions widened to `ProtocolDefinition` cannot expose literal role
+ * Definitions widened to `ModuleDefinition` cannot expose literal role
  * paths, so the runtime preflight remains authoritative for dynamic callers.
  *
- * @typeParam D - The protocol's literal definition.
- * @typeParam C - The protocol's runtime codec map.
- * @typeParam Path - The exact protocol path being created.
+ * @typeParam D - The module's literal definition.
+ * @typeParam C - The module's runtime codec map.
+ * @typeParam Path - The exact module path being created.
  */
 export type TypedCreateRequest<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Path extends ProtocolPaths<D> & string,
+  Path extends ModulePaths<D> & string,
 > = TypedCreateOptions<C, Path> & (
-  ProtocolDefinition extends D
+  ModuleDefinition extends D
     ? unknown
-    : [Path] extends [SquashProtocolPaths<D>]
+    : [Path] extends [SquashModulePaths<D>]
       ? unknown
       : { squash?: never }
-) & ([Extract<Path, ProtocolRolePaths<D>>] extends [never]
+) & ([Extract<Path, ModuleRolePaths<D>>] extends [never]
   ? unknown
   : {
     /**
-     * DID receiving this protocol role.
+     * DID receiving this module role.
      *
      * A role assignment is the ordinary `$role` record whose `recipient`
      * names the holder, so typed role-record creates require this field.
@@ -868,7 +868,7 @@ export type TypedCreateRequest<
   });
 
 /**
- * Options for replacing the visible value at a protocol-declared singleton path.
+ * Options for replacing the visible value at a module-declared singleton path.
  *
  * `set()` updates the current `$recordLimit.max: 1` occupant or creates it
  * when the scope is empty. Immutable create-only fields are intentionally not
@@ -898,31 +898,31 @@ export type TypedSetRequest<
  * Advanced options for {@link TypedEnbox} `records.read()`.
  *
  * Pass a record ID directly for a local point read. Use this request shape
- * when additional filters, a remote source, a protocol role, or a context
+ * when additional filters, a remote source, a module role, or a context
  * selector is required.
  *
  * @example
  * ```ts
  * // Read a specific record by ID
- * const record = await proto.records.read('notebook', notebookId);
+ * const record = await notebooks.records.read('notebook', notebookId);
  *
- * // Read a nested record from a remote DWN using a protocol role
- * const remote = await proto.records.read('notebook/entry', {
+ * // Read a nested record from a remote DWN using a module role
+ * const remote = await notebooks.records.read('notebook/entry', {
  *   from: 'did:example:alice',
- *   protocolRole: 'notebook/participant',
+ *   moduleRole: 'notebook/participant',
  *   within: notebook.contextId,
  *   filter: { recordId: entryId },
  * });
  * ```
  */
 export type TypedReadRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Pick<RecordQuery<D, Path>, 'from' | 'protocolRole'> & {
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
+> = Pick<RecordQuery<D, Path>, 'from' | 'moduleRole'> & {
   /**
    * Filter to identify the record to read.
    *
-   * The `protocol`, `protocolPath`, and `schema` fields are auto-injected.
+   * The `module`, `modulePath`, and `schema` fields are auto-injected.
    * Typically you filter by `recordId` to read a specific record.
    */
   filter: RecordFilter<D, Path>;
@@ -936,13 +936,13 @@ export type TypedReadRequest<
  *
  * @example
  * ```ts
- * await proto.records.delete('notebook', {
+ * await notebooks.records.delete('notebook', {
  *   recordId: notebook.id,
  * });
  *
- * await proto.records.delete('notebook/entry', {
+ * await notebooks.records.delete('notebook/entry', {
  *   from: 'did:example:alice',
- *   protocolRole: 'notebook/participant',
+ *   moduleRole: 'notebook/participant',
  *   recordId: entry.id,
  *   within: notebook.contextId,
  * });
@@ -963,8 +963,8 @@ export type TypedDeleteRequest = {
    */
   from?: string;
 
-  /** Protocol role invoked to authorize the delete. */
-  protocolRole?: string;
+  /** Module role invoked to authorize the delete. */
+  moduleRole?: string;
 
   /**
    * The unique `recordId` of the record to delete.
@@ -975,7 +975,7 @@ export type TypedDeleteRequest = {
 
   /**
    * Whether to also delete (prune) every descendant record beneath this
-   * record in the protocol hierarchy.
+   * record in the module hierarchy.
    *
    * Forwarded to the underlying `RecordsDelete` message. When omitted the
    * delete is a plain tombstone that leaves children in place.
@@ -984,80 +984,80 @@ export type TypedDeleteRequest = {
 };
 
 type ContextRecordPaths<
-  D extends ProtocolDefinition,
-  Root extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Root extends ModulePaths<D> & string,
 > = Exclude<
-  Extract<ProtocolPaths<D> & string, Root | `${Root}/${string}`>,
-  ProtocolRolePaths<D>
+  Extract<ModulePaths<D> & string, Root | `${Root}/${string}`>,
+  ModuleRolePaths<D>
 >;
 
 type ContextRecordMaterialization<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
 > = true | {
-  children: readonly Exclude<DirectSingletonChildPaths<D, Path>, ProtocolRolePaths<D>>[];
+  children: readonly Exclude<DirectSingletonChildPaths<D, Path>, ModuleRolePaths<D>>[];
 };
 
 type ContextDescendantPaths<
-  D extends ProtocolDefinition,
-  Root extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Root extends ModulePaths<D> & string,
 > = Root extends string
   ? Exclude<ContextRecordPaths<D, Root>, Root>
   : never;
 
 type ContextCreateRequest<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Path extends ProtocolPaths<D> & string,
+  Path extends ModulePaths<D> & string,
 > = Omit<
   TypedCreateRequest<D, C, Path>,
-  'from' | 'protocolRole' | 'recipientRolePublicKey' | 'store'
+  'from' | 'moduleRole' | 'recipientRolePublicKey' | 'store'
 >;
 
 type ContextRecordQuery<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Omit<RecordQuery<D, Path>, 'from' | 'protocolRole'>;
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
+> = Omit<RecordQuery<D, Path>, 'from' | 'moduleRole'>;
 
 type ContextQueryRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = QueryRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextQueryArguments<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = [Materialization] extends [undefined]
   ? [path: Path, request?: ContextQueryRequest<D, NoInfer<Path>, Materialization>]
   : [path: Path, request: ContextQueryRequest<D, NoInfer<Path>, Materialization>];
 
 type ContextObserveRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
   Materialization extends ContextRecordMaterialization<D, Path> | undefined,
 > = ObserveRequest<D, Path, Materialization, ContextRecordQuery<D, Path>>;
 
 type ContextReadRequest<
-  D extends ProtocolDefinition,
-  Path extends ProtocolPaths<D> & string,
-> = Omit<TypedReadRequest<D, Path>, 'from' | 'protocolRole'>;
+  D extends ModuleDefinition,
+  Path extends ModulePaths<D> & string,
+> = Omit<TypedReadRequest<D, Path>, 'from' | 'moduleRole'>;
 
 type ContextSetRequest<
   C extends RecordCodecMap,
   Path extends string,
 > = Omit<TypedSetRequest<C, Path>, 'within'> & { within?: string };
 
-type ContextDeleteRequest = Omit<TypedDeleteRequest, 'from' | 'protocolRole'>;
+type ContextDeleteRequest = Omit<TypedDeleteRequest, 'from' | 'moduleRole'>;
 
 /** One typed records contract, optionally confined to an application context. */
 type TypedRecordsApi<
-  D extends ProtocolDefinition,
+  D extends ModuleDefinition,
   C extends RecordCodecMap,
-  Paths extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
-  CreatePaths extends ProtocolPaths<D> & string = Paths,
-  SetPaths extends ProtocolPaths<D> & string = SingletonProtocolPaths<D> & Paths & string,
+  Paths extends ModulePaths<D> & string = ModulePaths<D> & string,
+  CreatePaths extends ModulePaths<D> & string = Paths,
+  SetPaths extends ModulePaths<D> & string = SingletonModulePaths<D> & Paths & string,
   ContextBound extends boolean = false,
 > = Readonly<{
   create: <Path extends CreatePaths>(
@@ -1134,26 +1134,26 @@ type TypedRecordsApi<
  * by the context rather than supplied by each call.
  */
 export type ContextRecordsApi<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Root extends ProtocolPaths<D> & string = ProtocolPaths<D> & string,
+  Root extends ModulePaths<D> & string = ModulePaths<D> & string,
 > = TypedRecordsApi<
   D,
   C,
   ContextRecordPaths<D, Root>,
   ContextDescendantPaths<D, Root>,
-  SingletonProtocolPaths<D> & ContextDescendantPaths<D, Root> & string,
+  SingletonModulePaths<D> & ContextDescendantPaths<D, Root> & string,
   true
 >;
 
 /**
  * Thrown/returned by {@link TypedEnbox.verifyInstalled} when a DELEGATE
- * session's wallet-installed protocol definition is stale (or missing, or
+ * session's wallet-installed module definition is stale (or missing, or
  * lacking required `$keyAgreement` keys).
  *
- * A delegate holds no `Protocols.Configure` authority: it can only import
+ * A delegate holds no `Modules.Configure` authority: it can only import
  * the wallet's already-signed configuration, so a drifted definition cannot
- * be repaired from the app side. The wallet must re-install the protocol and
+ * be repaired from the app side. The wallet must re-install the module and
  * re-approve the session — route the user back through the wallet connect /
  * approval flow.
  *
@@ -1161,29 +1161,29 @@ export type ContextRecordsApi<
  * `'owner-can-update'` because a plain `configure()` call repairs it.
  */
 export class WalletReapprovalRequiredError extends Error {
-  /** The protocol URI whose wallet-installed definition is stale or missing. */
-  public readonly protocol: string;
+  /** The module URI whose wallet-installed definition is stale or missing. */
+  public readonly module: string;
 
-  constructor(protocol: string, detail: string) {
+  constructor(module: string, detail: string) {
     super(
-      `WalletReapprovalRequiredError: protocol '${protocol}' ${detail} ` +
-      'A delegate cannot re-configure protocols — the wallet must re-install ' +
-      'the protocol and re-approve the session.',
+      `WalletReapprovalRequiredError: module '${module}' ${detail} ` +
+      'A delegate cannot re-configure modules — the wallet must re-install ' +
+      'the module and re-approve the session.',
     );
     this.name = 'WalletReapprovalRequiredError';
-    this.protocol = protocol;
+    this.module = module;
   }
 }
 
 /**
  * Result of {@link TypedEnbox.verifyInstalled} — a strict, read-only
- * verification of the installed protocol definition against the code's
+ * verification of the installed module definition against the code's
  * definition, including `$keyAgreement` key coverage.
  *
  * `status` semantics:
  * - **`'up-to-date'`** — the installed definition canonically matches the
  *   code definition (runtime encryption blocks stripped before comparison)
- *   and, when the protocol declares encrypted types, every path the
+ *   and, when the module declares encrypted types, every path the
  *   encryption-key injection covers carries a `$keyAgreement.publicKeyJwk`.
  * - **`'owner-can-update'`** — the connected identity owns the tenant and
  *   the installation is missing, drifted, or lacking `$keyAgreement` keys;
@@ -1212,12 +1212,12 @@ export type VerifyInstalledResult = {
   definitionsMatch: boolean;
 
   /**
-   * Protocol paths the encryption-key injection should cover whose
+   * Module paths the encryption-key injection should cover whose
    * `$keyAgreement.publicKeyJwk` is missing from the installed definition.
-   * The empty string denotes the protocol root. Checked only when the
+   * The empty string denotes the module root. Checked only when the
    * definition declares encrypted types (`encryptionRequired: true`) and an
    * installation was found; empty otherwise. `$ref` composition nodes are
-   * exempt — their records are governed by the referenced protocol's keys.
+   * exempt — their records are governed by the referenced module's keys.
    */
   missingKeyAgreementPaths: string[];
 
@@ -1237,18 +1237,18 @@ export type VerifyInstalledResult = {
 // ---------------------------------------------------------------------------
 
 /**
- * A protocol-scoped API that auto-injects `protocol`, `protocolPath`, and
+ * A module-scoped API that auto-injects `module`, `modulePath`, and
  * `schema` into every DWN operation.
  *
  * All record-returning methods preserve the data type `T` on the canonical
  * {@link Record} class so it flows end-to-end — from write through read,
  * query, and update — without manual casts.
  *
- * Obtain an instance via `enbox.using(typedProtocol)`.
+ * Obtain an instance via `enbox.using(typedModule)`.
  *
  * @example
  * ```ts
- * const notes = enbox.using(NotesProtocol);
+ * const notes = enbox.using(NotesModule);
  *
  * const record = await notes.records.create('note', {
  *   data: { title: 'Hello', body: 'Typed data' },
@@ -1264,7 +1264,7 @@ export type VerifyInstalledResult = {
  * ```
  */
 export class TypedEnbox<
-  D extends ProtocolDefinition = ProtocolDefinition,
+  D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > {
   /** @internal */
@@ -1289,38 +1289,38 @@ export class TypedEnbox<
   private readonly _options: TypedEnboxOptions;
 
   /**
-   * @internal Create a new `TypedEnbox` instance. Use `enbox.using(protocol)` instead.
+   * @internal Create a new `TypedEnbox` instance. Use `enbox.using(module)` instead.
    * @param dwn - The underlying DWN API instance.
-   * @param protocol - The typed protocol containing the definition and codecs.
+   * @param module - The typed module containing the definition and codecs.
    * @param options - Optional session-owned lifecycle and sync resources.
    */
-  constructor(dwn: DwnApi, protocol: TypedProtocol<D, C>, options: TypedEnboxOptions = {}) {
-    assertTypedProtocolStructureSupported(protocol.definition.structure);
+  constructor(dwn: DwnApi, module: TypedModule<D, C>, options: TypedEnboxOptions = {}) {
+    assertTypedModuleStructureSupported(module.definition.structure);
     this._dwn = dwn;
-    this._definition = protocol.definition;
-    this._codecs = protocol.codecs;
+    this._definition = module.definition;
+    this._codecs = module.codecs;
     this._options = options;
     this._configured = options.context !== undefined;
-    this._validPaths = collectProtocolPaths(this._definition.structure);
+    this._validPaths = collectModulePaths(this._definition.structure);
     this._hasEncryptedTypes = Object.values(this._definition.types)
-      .some((type: ProtocolType) => type.encryptionRequired === true);
+      .some((type: ModuleType) => type.encryptionRequired === true);
   }
 
   /**
-   * The protocol URI string (e.g. `'https://example.com/threads'`).
+   * The module URI string (e.g. `'https://example.com/threads'`).
    *
-   * This is the globally unique identifier for the protocol and is
+   * This is the globally unique identifier for the module and is
    * auto-injected into every record operation.
    */
-  public get protocol(): string {
-    return this._definition.protocol;
+  public get module(): string {
+    return this._definition.module;
   }
 
   /**
-   * The effective protocol definition object, including Enbox-managed paths.
+   * The effective module definition object, including Enbox-managed paths.
    *
-   * Contains the full `protocol`, `types`, and `structure` that define
-   * the protocol's schema and permission rules.
+   * Contains the full `module`, `types`, and `structure` that define
+   * the module's schema and permission rules.
    */
   public get definition(): D {
     return this._definition;
@@ -1340,52 +1340,52 @@ export class TypedEnbox<
   }
 
   /**
-   * Configures (installs) this protocol on the local DWN.
+   * Configures (installs) this module on the local DWN.
    *
-   * If the protocol is already installed with an identical definition,
-   * this is a no-op and returns the existing protocol with status `200`.
+   * If the module is already installed with an identical definition,
+   * this is a no-op and returns the existing module with status `200`.
    * If the definition has changed (e.g. new types, modified structure),
-   * the protocol is re-configured with the updated definition and returns
+   * the module is re-configured with the updated definition and returns
    * status `202`.
    *
-   * Record operations prepare the protocol automatically. Call this method
+   * Record operations prepare the module automatically. Call this method
    * directly only when the application needs the installation result first.
    *
-   * @returns The DWN response status and the installed protocol object.
+   * @returns The DWN response status and the installed module object.
    *
    * @example
    * ```ts
-   * const proto = enbox.using(NotebookProtocol);
+   * const notebooks = enbox.using(NotebookModule);
    *
-   * const { status, protocol } = await proto.configure();
+   * const { status, module } = await notebooks.configure();
    * console.log(status.code); // 202 (first install) or 200 (already installed)
    * ```
    */
-  public async configure(): Promise<DwnResponseStatus & { protocol?: Protocol }> {
+  public async configure(): Promise<DwnResponseStatus & { module?: Module }> {
     this._assertActive();
     if (this._dwn.isDelegate) {
-      return this._autoConfigureDelegateProtocol();
+      return this._autoConfigureDelegateModule();
     }
 
-    // Query for an existing installation of this protocol.
-    const query = await this._dwn.protocols.query({
-      filter: { protocol: this._definition.protocol },
+    // Query for an existing installation of this module.
+    const query = await this._dwn.modules.query({
+      filter: { module: this._definition.module },
     });
-    requireDwnSuccess('TypedEnbox.configure protocol query', query);
-    const { protocols } = query;
+    requireDwnSuccess('TypedEnbox.configure module query', query);
+    const { modules } = query;
 
     // If already installed with the same definition, return it as-is.
-    if (protocols.length > 0) {
-      const existing = protocols[0];
+    if (modules.length > 0) {
+      const existing = modules[0];
       const encryptionKeysComplete = !this._hasEncryptedTypes
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
-      if (authoredProtocolDefinitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
+      if (authoredModuleDefinitionsEqual(existing.definition, this._definition) && encryptionKeysComplete) {
         this._configured = true;
-        return { status: { code: 200, detail: 'OK' }, protocol: existing };
+        return { status: { code: 200, detail: 'OK' }, module: existing };
       }
     }
 
-    const result = await this._dwn.protocols.configure({
+    const result = await this._dwn.modules.configure({
       definition: this._definition,
     });
 
@@ -1397,16 +1397,16 @@ export class TypedEnbox<
   }
 
   /**
-   * Whether the protocol has been configured (installed) on the local DWN.
+   * Whether the module has been configured (installed) on the local DWN.
    *
    * Returns `true` after explicit configuration or the first record operation
-   * has prepared the protocol automatically.
+   * has prepared the module automatically.
    */
   public get isConfigured(): boolean {
     return this._configured;
   }
 
-  /** Owned and role-authorized member contexts for this protocol. */
+  /** Owned and role-authorized member contexts for this module. */
   public get contexts(): ContextsApi<D, C> {
     if (this._contexts !== undefined) {
       return this._contexts;
@@ -1440,7 +1440,7 @@ export class TypedEnbox<
         throw new TypeError('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
       }
       if (!Object.hasOwn(this._definition.structure, CONTEXT_FOLLOW_PATH)) {
-        throw new TypeError('TypedEnbox.contexts: this protocol does not support saved following choices.');
+        throw new TypeError('TypedEnbox.contexts: this module does not support saved following choices.');
       }
       following ??= new ContextFollowing({
         actorDid   : this._dwn.connectedDid,
@@ -1462,8 +1462,8 @@ export class TypedEnbox<
       return (await this._options.sync.listFollowedSources())
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
-          source.protocol === this._definition.protocol &&
-          contextRoles.has(source.protocolRole)
+          source.module === this._definition.module &&
+          contextRoles.has(source.moduleRole)
         );
     };
 
@@ -1491,20 +1491,20 @@ export class TypedEnbox<
       return bindMemberContext(source);
     };
 
-    const bindOwnedContext = <Root extends ProtocolPaths<D> & string>(
+    const bindOwnedContext = <Root extends ModulePaths<D> & string>(
       normalizedPath: Root,
       id: string,
     ): OwnedContext<D, C, Root> => {
-      const key = protocolContextKey(this._dwn.connectedDid, id);
+      const key = moduleContextKey(this._dwn.connectedDid, id);
       const existing = boundOwners.get(key);
       if (existing !== undefined) {
         return existing as OwnedContext<D, C, Root>;
       }
-      const protocolPaths = new Set(
+      const modulePaths = new Set(
         [...this._validPaths]
           .filter((candidate): boolean =>
             (candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)) &&
-            !isProtocolRolePath(this._definition, candidate)
+            !isModuleRolePath(this._definition, candidate)
           ),
       );
       const dwn = this._dwn.withRecordExecutionContext({
@@ -1514,7 +1514,7 @@ export class TypedEnbox<
       });
       const records = this.bindContextRecords(
         dwn,
-        { contextId: id, protocolPath: normalizedPath, protocolPaths },
+        { contextId: id, modulePath: normalizedPath, modulePaths },
       );
       const roles = this.getContextRoles(normalizedPath);
       const members = roles.length === 0 ? undefined : this.bindContextMembers(dwn, id, roles);
@@ -1544,12 +1544,12 @@ export class TypedEnbox<
       return context;
     };
 
-    const openContext = async <Root extends Exclude<ProtocolPaths<D> & string, ProtocolRolePaths<D>>>(
+    const openContext = async <Root extends Exclude<ModulePaths<D> & string, ModuleRolePaths<D>>>(
       path: Root,
       id: string,
     ): Promise<OwnedContext<D, C, Root>> => {
       const normalizedPath = normalizePath(path) as Root;
-      if (isProtocolRolePath(this._definition, normalizedPath)) {
+      if (isModuleRolePath(this._definition, normalizedPath)) {
         throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
       }
       if (id.split('/').length !== normalizedPath.split('/').length) {
@@ -1561,7 +1561,7 @@ export class TypedEnbox<
     };
 
     const bindMemberContext = (source: FollowedSyncSource): MemberContext<D, C> => {
-      const key = protocolContextKey(source.sourceDid, source.contextId);
+      const key = moduleContextKey(source.sourceDid, source.contextId);
       const existing = boundMembers.get(key);
       if (existing !== undefined && followedSyncSourceActiveEqual(existing.source, source)) {
         return existing.context;
@@ -1574,7 +1574,7 @@ export class TypedEnbox<
     const bindCatalogMembers = (sources: readonly FollowedSyncSource[]): CatalogMemberContext[] => {
       const members = new Map<string, CatalogMemberContext>();
       for (const source of sources) {
-        const key = protocolContextKey(source.sourceDid, source.contextId);
+        const key = moduleContextKey(source.sourceDid, source.contextId);
         if (!members.has(key)) {
           members.set(key, bindMemberContext(source) as unknown as CatalogMemberContext);
         }
@@ -1591,17 +1591,17 @@ export class TypedEnbox<
       let contextIds: string[] = [];
       const segments = path.split('/');
       for (let depth = 1; depth <= segments.length; depth++) {
-        const protocolPath = segments.slice(0, depth).join('/');
+        const modulePath = segments.slice(0, depth).join('/');
         const results = await Promise.all(parentContexts.map(async (within) => {
           const result = await this._dwn.records.query({
-            filter: compileRecordFilter(this._definition, protocolPath, undefined, within),
+            filter: compileRecordFilter(this._definition, modulePath, undefined, within),
           });
           requireDwnSuccess('TypedEnbox.contexts.list', result);
           return result.records;
         }));
         contextIds = results.flat().map((record) => {
           if (record.contextId === undefined) {
-            throw new Error(`TypedEnbox.contexts.list: '${protocolPath}' record is missing its context ID.`);
+            throw new Error(`TypedEnbox.contexts.list: '${modulePath}' record is missing its context ID.`);
           }
           return record.contextId;
         });
@@ -1626,14 +1626,14 @@ export class TypedEnbox<
           contexts.set(member.key, member);
         }
       }
-      return [...contexts.values()].sort(compareProtocolContexts);
+      return [...contexts.values()].sort(compareModuleContexts);
     };
 
-    const listContexts = async (): Promise<ProtocolContext<D, C>[]> => {
+    const listContexts = async (): Promise<ModuleContext<D, C>[]> => {
       if (canUseFollowing) {
         await getFollowing().restore();
       }
-      return await listCatalogContexts() as unknown as ProtocolContext<D, C>[];
+      return await listCatalogContexts() as unknown as ModuleContext<D, C>[];
     };
 
     const openCatalogWakeSubscription = async (
@@ -1646,7 +1646,7 @@ export class TypedEnbox<
         if (
           event.type === 'followed-context:change' &&
           event.actorDid === this._dwn.connectedDid &&
-          event.protocol === this._definition.protocol
+          event.module === this._definition.module
         ) {
           wake();
         }
@@ -1692,7 +1692,7 @@ export class TypedEnbox<
     >>> => createMaterializedMemberContextView<CatalogMemberContext, ContextMaterializedRecord<unknown>>({
       callerSignal    : options.signal,
       getSavedFollows : () => following?.getSavedFollows() ?? [],
-      listContexts    : async () => bindCatalogMembers(await listSources()).sort(compareProtocolContexts),
+      listContexts    : async () => bindCatalogMembers(await listSources()).sort(compareModuleContexts),
       openRootView    : (context, signal) => context.records.observe(context.path, {
         materialize : true,
         pagination  : { limit: 1 },
@@ -1712,10 +1712,10 @@ export class TypedEnbox<
       },
       ...(contextRoots.length > 0 ? {
         invitations: {
-          list: async (options?: { limit?: number }): Promise<ProtocolContextInvitation<D, C>[]> =>
+          list: async (options?: { limit?: number }): Promise<ModuleContextInvitation<D, C>[]> =>
             this.listContextInvitations(options?.limit, followContext),
           observe: async (options?: { limit?: number; signal?: AbortSignal }): Promise<
-            RecordView<ProtocolContextInvitation<D, C>>
+            RecordView<ModuleContextInvitation<D, C>>
           > => this.observeContextInvitations(options?.limit, followContext, options?.signal),
         },
       } : {}),
@@ -1746,7 +1746,7 @@ export class TypedEnbox<
   }
 
   /**
-   * Strictly verifies the installed protocol definition without modifying
+   * Strictly verifies the installed module definition without modifying
    * anything — the read-only counterpart to {@link TypedEnbox.configure}.
    *
    * `verifyInstalled()`:
@@ -1755,7 +1755,7 @@ export class TypedEnbox<
    *    definition with runtime `$encryption`/`$keyAgreement` blocks stripped;
    * 2. when the definition declares encrypted types, verifies a
    *    `$keyAgreement.publicKeyJwk` is present at every path the
-   *    encryption-key injection covers (protocol root and every non-`$ref`
+   *    encryption-key injection covers (module root and every non-`$ref`
    *    structure path);
    * 3. distinguishes WHO can repair a failure: an owner gets
    *    `'owner-can-update'` (call `configure()`), while a delegate whose
@@ -1770,7 +1770,7 @@ export class TypedEnbox<
    * Never changes state: no configure, no import, no cache updates.
    *
    * @returns The structured verification result — see {@link VerifyInstalledResult}.
-   * @throws {@link DwnResponseError} when the protocol query itself fails
+   * @throws {@link DwnResponseError} when the module query itself fails
    *   (e.g. a revoked or expired session grant surfaces as a 401) — a
    *   transport/authorization failure, not a verification outcome.
    */
@@ -1780,23 +1780,23 @@ export class TypedEnbox<
 
     // Owners verify their local installation; delegates verify the
     // wallet-installed definition on the owner tenant — the same source
-    // `_autoConfigureDelegateProtocol` imports from.
-    const query = await this._dwn.protocols.query({
+    // `_autoConfigureDelegateModule` imports from.
+    const query = await this._dwn.modules.query({
       ...(isDelegate ? { from: this._dwn.connectedDid } : {}),
-      filter: { protocol: this._definition.protocol },
+      filter: { module: this._definition.module },
     });
     requireDwnSuccess(
       isDelegate
-        ? 'TypedEnbox.verifyInstalled wallet protocol query; reconnect to refresh delegated grants'
-        : 'TypedEnbox.verifyInstalled local protocol query',
+        ? 'TypedEnbox.verifyInstalled wallet module query; reconnect to refresh delegated grants'
+        : 'TypedEnbox.verifyInstalled local module query',
       query,
     );
-    return this._assessInstalledDefinition(query.protocols[0]?.definition, isDelegate);
+    return this._assessInstalledDefinition(query.modules[0]?.definition, isDelegate);
   }
 
   /** Compares one installed definition with the application definition without changing state. */
   private _assessInstalledDefinition(
-    installedDefinition: ProtocolDefinition | undefined,
+    installedDefinition: ModuleDefinition | undefined,
     isDelegate: boolean,
   ): VerifyInstalledResult {
     if (installedDefinition === undefined) {
@@ -1811,7 +1811,7 @@ export class TypedEnbox<
       });
     }
 
-    const definitionsMatch = authoredProtocolDefinitionsEqual(installedDefinition, this._definition);
+    const definitionsMatch = authoredModuleDefinitionsEqual(installedDefinition, this._definition);
 
     // `$keyAgreement` injection only happens for encrypted installs, so key
     // coverage is only expected when the definition declares encrypted types.
@@ -1856,7 +1856,7 @@ export class TypedEnbox<
     const { isDelegate, installed, definitionsMatch, missingKeyAgreementPaths, detail } = params;
 
     if (isDelegate) {
-      const error = new WalletReapprovalRequiredError(this._definition.protocol, detail);
+      const error = new WalletReapprovalRequiredError(this._definition.module, detail);
       return {
         status : 'wallet-reapproval-required',
         installed,
@@ -1872,40 +1872,40 @@ export class TypedEnbox<
       installed,
       definitionsMatch,
       missingKeyAgreementPaths,
-      reason : `TypedEnbox: protocol '${this._definition.protocol}' ${detail} Call configure() to repair it.`,
+      reason : `TypedEnbox: module '${this._definition.module}' ${detail} Call configure() to repair it.`,
     };
   }
 
   /**
    * Validates that the path is recognized.
-   * Throws a descriptive error if the path is not a valid protocol path.
+   * Throws a descriptive error if the path is not a valid module path.
    */
   private _assertValidPath(path: string): void {
     if (!this._validPaths.has(path)) {
       throw new TypeError(
-        `TypedEnbox: invalid protocol path '${path}'. ` +
+        `TypedEnbox: invalid module path '${path}'. ` +
         `Valid paths are: ${[...this._validPaths].join(', ')}.`,
       );
     }
   }
 
-  /** Resolve the codec assigned to one validated protocol path. */
+  /** Resolve the codec assigned to one validated module path. */
   private resolveCodec(path: string): RecordCodec<unknown> {
     const codec = this._codecs[getTypeName(path)];
     if (codec === undefined) {
-      throw new Error(`TypedEnbox: protocol path '${path}' does not have a record codec.`);
+      throw new Error(`TypedEnbox: module path '${path}' does not have a record codec.`);
     }
     return codec;
   }
 
   /** Resolve one statically known path's application codec. */
-  private getCodec<Path extends ProtocolPaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
+  private getCodec<Path extends ModulePaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
     return this.resolveCodec(path) as RecordCodec<DataForPath<C, Path>>;
   }
 
   /** Bind a path codec to one canonical record returned by the raw DWN API. */
   private bindCodec<
-    Path extends ProtocolPaths<D> & string,
+    Path extends ModulePaths<D> & string,
     Existing = unknown,
   >(
     path : string,
@@ -1920,8 +1920,8 @@ export class TypedEnbox<
     ) as TypedRecord<DataForPath<C, Path>>;
   }
 
-  /** Validate materialization once, before any protocol or Records request starts. */
-  private resolveMaterializedChildPaths<Path extends ProtocolPaths<D> & string>(
+  /** Validate materialization once, before any module or Records request starts. */
+  private resolveMaterializedChildPaths<Path extends ModulePaths<D> & string>(
     parentPath : string,
     materialization : RecordMaterialization<D, Path> | undefined,
     pageLimit : number | undefined,
@@ -1946,7 +1946,7 @@ export class TypedEnbox<
     const childPaths = [...materialization.children];
     if (childPaths.some((childPath) => typeof childPath !== 'string')
       || new Set(childPaths).size !== childPaths.length) {
-      throw new TypeError('Record materialization: children must contain unique protocol paths.');
+      throw new TypeError('Record materialization: children must contain unique module paths.');
     }
 
     const directChildPrefix = `${parentPath}/`;
@@ -1970,7 +1970,7 @@ export class TypedEnbox<
 
   /** Produce the one record representation selected by query and observe. */
   private async representRecords<
-    Path extends ProtocolPaths<D> & string,
+    Path extends ModulePaths<D> & string,
     Materialization extends RecordMaterialization<D, Path> | undefined,
   >(
     path : string,
@@ -1995,7 +1995,7 @@ export class TypedEnbox<
 
   /** Decode one bounded parent page and its explicitly selected singleton children. */
   private async materializeRecords<
-    Path extends ProtocolPaths<D> & string,
+    Path extends ModulePaths<D> & string,
   >(
     parentPath : string,
     records : readonly Record[],
@@ -2038,9 +2038,9 @@ export class TypedEnbox<
       );
       filter.parentId = parentIds;
       const result = await this._dwn.records.query({
-        from         : source.from,
+        from       : source.from,
         filter,
-        protocolRole : source.protocolRole,
+        moduleRole : source.moduleRole,
       });
       requireDwnSuccess('TypedEnbox.records.query child materialization', result);
 
@@ -2082,28 +2082,28 @@ export class TypedEnbox<
 
   /** Bind one raw frame record to its path-discriminated typed change. */
   private recordSubscriptionChange<
-    const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
-  >(record: Record): TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false> {
-    const path = record.protocolPath as ProtocolSubscriptionPaths<D, Selection>;
+    const Selection extends RecordSubscriptionSelection<ModulePaths<D> & string>,
+  >(record: Record): TypedRecordChangeEvent<C, ModuleSubscriptionPaths<D, Selection>, false> {
+    const path = record.modulePath as ModuleSubscriptionPaths<D, Selection>;
     return {
       path,
       type   : record.deleted ? 'delete' : 'write',
-      record : this.bindCodec<ProtocolSubscriptionPaths<D, Selection>>(path, record),
-    } as TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+      record : this.bindCodec<ModuleSubscriptionPaths<D, Selection>>(path, record),
+    } as TypedRecordChangeEvent<C, ModuleSubscriptionPaths<D, Selection>, false>;
   }
 
   /** Open one typed change stream for one path or one non-empty path set. */
   private async subscribeToRecordPaths<
-    const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
+    const Selection extends RecordSubscriptionSelection<ModulePaths<D> & string>,
   >(
     selection: Selection,
-    listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+    listener: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false>,
     signal: AbortSignal | undefined = this._options.signal,
   ): Promise<RecordSubscription> {
     signal?.throwIfAborted();
     const requestedPaths = typeof selection === 'string' ? [selection] : [...selection];
     if (requestedPaths.length === 0) {
-      throw new TypeError('TypedEnbox.records.subscribe: at least one protocol path is required.');
+      throw new TypeError('TypedEnbox.records.subscribe: at least one module path is required.');
     }
     const paths = [...new Set(requestedPaths.map(normalizePath))];
     await whileSignalsActive(
@@ -2118,7 +2118,7 @@ export class TypedEnbox<
     let closeSubscription = (): Promise<void> => Promise.resolve();
     let listenerFailure: { error: unknown } | undefined;
     const deliver = async (
-      event: TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+      event: TypedRecordSubscriptionEvent<C, ModuleSubscriptionPaths<D, Selection>, false>,
     ): Promise<void> => {
       try {
         await listener(event);
@@ -2142,7 +2142,7 @@ export class TypedEnbox<
           event.type === 'followed-context:change' &&
           event.actorDid === this._dwn.connectedDid &&
           event.contextId === contextId &&
-          event.protocol === this.protocol &&
+          event.module === this.module &&
           event.tenantDid === this._dwn.recordTenantDid &&
           followedContextChangeRetiresSource({
             acceptanceId : followedSourceAcceptanceId!,
@@ -2163,7 +2163,7 @@ export class TypedEnbox<
 
     const opening = this._dwn.subscribeRecordFrames({
       paths,
-      protocol: this.protocol,
+      module: this.module,
     }, async (message, record): Promise<void> => {
       if (closed || signal?.aborted === true) {
         return;
@@ -2246,17 +2246,17 @@ export class TypedEnbox<
 
   /** Open live delivery first, page current records, then drain buffered overlap. */
   private async subscribeToInitialRecordPaths<
-    const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>,
+    const Selection extends RecordSubscriptionSelection<ModulePaths<D> & string>,
   >(
     selection: Selection,
     options: InitialRecordSubscriptionOptions,
-    listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+    listener: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false>,
   ): Promise<RecordSubscription> {
     if (this._options.context === undefined) {
       throw new TypeError('TypedEnbox.records.subscribe: initial replay requires a context-bound records surface.');
     }
-    type Change = TypedRecordChangeEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
-    type Event = TypedRecordSubscriptionEvent<C, ProtocolSubscriptionPaths<D, Selection>, false>;
+    type Change = TypedRecordChangeEvent<C, ModuleSubscriptionPaths<D, Selection>, false>;
+    type Event = TypedRecordSubscriptionEvent<C, ModuleSubscriptionPaths<D, Selection>, false>;
     const overflow = new AbortController();
     const signal = combineAbortSignals(this._options.signal, options.signal, overflow.signal)!;
     signal.throwIfAborted();
@@ -2270,7 +2270,7 @@ export class TypedEnbox<
         throw subscriptionError;
       }
     };
-    let receive: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false> = event => {
+    let receive: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false> = event => {
       if (event.type === 'error') {
         subscriptionError ??= event.error;
         return;
@@ -2308,7 +2308,7 @@ export class TypedEnbox<
       assertActive();
       for (const path of paths) {
         let page: RecordPage<Record> | undefined = await whileOpening(() => this.records.query(
-          path as ProtocolPaths<D> & string,
+          path as ModulePaths<D> & string,
           {
             dateSort   : DateSort.CreatedAscending,
             pagination : { limit: INITIAL_SUBSCRIPTION_PAGE_LIMIT },
@@ -2348,7 +2348,7 @@ export class TypedEnbox<
     }
   }
 
-  /** Require the protocol fact that gives `set()` one unambiguous target. */
+  /** Require the module fact that gives `set()` one unambiguous target. */
   private assertSingletonScope(path: string, within: string | undefined): void {
     this._assertValidPath(path);
     if (getRuleSetAtPath(path, this._definition.structure)?.$recordLimit?.max !== 1) {
@@ -2368,8 +2368,8 @@ export class TypedEnbox<
     }
   }
 
-  /** Create one typed record through the protocol-bound DWN API. */
-  private async createRecord<Path extends ProtocolPaths<D> & string>(
+  /** Create one typed record through the module-bound DWN API. */
+  private async createRecord<Path extends ModulePaths<D> & string>(
     path: Path,
     request: TypedCreateOptions<C, Path>,
     dwn: DwnApi = this._dwn,
@@ -2389,8 +2389,8 @@ export class TypedEnbox<
 
     const codec = this.getCodec<Path>(normalizedPath);
     const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats, {
-      protocolPath : normalizedPath,
-      schema       : typeEntry?.schema,
+      modulePath : normalizedPath,
+      schema     : typeEntry?.schema,
     });
     const result = await dwn.records.write({
       data                   : encoded.data,
@@ -2402,11 +2402,11 @@ export class TypedEnbox<
       messageTimestamp       : request.messageTimestamp,
       recipient              : request.recipient,
       recipientRolePublicKey : request.recipientRolePublicKey,
-      protocolRole           : request.protocolRole,
+      moduleRole             : request.moduleRole,
       squash                 : request.squash,
       tags                   : request.tags,
-      protocol               : this._definition.protocol,
-      protocolPath           : normalizedPath,
+      module                 : this._definition.module,
+      modulePath             : normalizedPath,
       ...(typeEntry?.schema === undefined ? {} : { schema: typeEntry.schema }),
       dataFormat             : encoded.dataFormat,
     });
@@ -2446,17 +2446,17 @@ export class TypedEnbox<
   /** Resolve the exact feed and operation paths governed by one contextual role. */
   private resolveMemberContextScope(role: string): {
     allowedPaths: ReadonlySet<string>;
-    protocolPath: ProtocolPaths<D> & string;
+    modulePath: ModulePaths<D> & string;
     readablePaths: [string, ...string[]];
     role: ContextRolePath<D>;
   } {
     const normalizedRole = normalizePath(role);
     this._assertValidPath(normalizedRole);
-    const scope = resolveProtocolRoleContextScope(this._definition, normalizedRole);
+    const scope = resolveModuleRoleContextScope(this._definition, normalizedRole);
 
     return {
       allowedPaths  : scope.allowedPaths,
-      protocolPath  : scope.protocolPath as ProtocolPaths<D> & string,
+      modulePath    : scope.modulePath as ModulePaths<D> & string,
       readablePaths : scope.readablePaths,
       role          : normalizedRole as ContextRolePath<D>,
     };
@@ -2464,14 +2464,14 @@ export class TypedEnbox<
 
   /** Read the shared root policy; paths outside the encrypted context surface have no member roles. */
   private getContextRoles(path: string): readonly string[] {
-    return this._hasEncryptedTypes && this._validPaths.has(path) && !isProtocolRolePath(this._definition, path)
-      ? resolveProtocolContextRoles(this._definition, path) : [];
+    return this._hasEncryptedTypes && this._validPaths.has(path) && !isModuleRolePath(this._definition, path)
+      ? resolveModuleContextRoles(this._definition, path) : [];
   }
 
   /** Read all locally known intent records; absence alone never means a context was forgotten. */
   private async readContextFollows(): Promise<ContextFollowRecord[]> {
-    const page = await this.records.query(CONTEXT_FOLLOW_PATH as ProtocolPaths<D> & string,
-      CONTEXT_FOLLOW_QUERY as RecordQuery<D, ProtocolPaths<D> & string>);
+    const page = await this.records.query(CONTEXT_FOLLOW_PATH as ModulePaths<D> & string,
+      CONTEXT_FOLLOW_QUERY as RecordQuery<D, ModulePaths<D> & string>);
     const rows: ContextFollowRecord[] = [];
     for await (const record of page) {
       const row = await this.readContextFollow(record);
@@ -2485,11 +2485,11 @@ export class TypedEnbox<
   /** Append an encrypted recipient decision using the existing delegated record-write path. */
   private async appendContextFollow(intent: ContextFollowIntent, after?: string): Promise<ContextFollowRecord> {
     const timestamp = after === undefined ? Time.getCurrentTimestamp() : Time.createTimestampAfter(after);
-    const { record } = await this.createRecord(CONTEXT_FOLLOW_PATH as ProtocolPaths<D> & string, {
+    const { record } = await this.createRecord(CONTEXT_FOLLOW_PATH as ModulePaths<D> & string, {
       data             : intent,
       dateCreated      : timestamp,
       messageTimestamp : timestamp,
-    } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>);
+    } as unknown as TypedCreateOptions<C, ModulePaths<D> & string>);
     return { id: record.id, timestamp: record.timestamp, value: intent };
   }
 
@@ -2513,8 +2513,8 @@ export class TypedEnbox<
   /** Skip malformed or foreign rows without treating them as instructions to change authority. */
   private async readContextFollow(record: Record): Promise<ContextFollowRecord | undefined> {
     if (record.creator !== this._dwn.connectedDid
-      || record.protocol !== this._definition.protocol
-      || record.protocolPath !== CONTEXT_FOLLOW_PATH) {
+      || record.module !== this._definition.module
+      || record.modulePath !== CONTEXT_FOLLOW_PATH) {
       return undefined;
     }
     let value: ContextFollowIntent;
@@ -2531,7 +2531,7 @@ export class TypedEnbox<
     return { id: record.id, timestamp: record.timestamp, value };
   }
 
-  /** Write one bounded discovery offer to the recipient's own protocol inbox. */
+  /** Write one bounded discovery offer to the recipient's own module inbox. */
   private async sendContextInvitation(
     recipient : string,
     contextId : string,
@@ -2539,7 +2539,7 @@ export class TypedEnbox<
     preview : ContextInvitationPreview | undefined,
   ): Promise<void> {
     await this.createRecord(
-      CONTEXT_INVITATION_PATH as ProtocolPaths<D> & string,
+      CONTEXT_INVITATION_PATH as ModulePaths<D> & string,
       {
         data: {
           contextId,
@@ -2548,7 +2548,7 @@ export class TypedEnbox<
         },
         from: recipient,
         recipient,
-      } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>,
+      } as unknown as TypedCreateOptions<C, ModulePaths<D> & string>,
     );
   }
 
@@ -2556,7 +2556,7 @@ export class TypedEnbox<
   private async listContextInvitations(
     limit : number | undefined,
     follow : (path: string, request: ContextFollowTarget) => Promise<MemberContext<D, C>>,
-  ): Promise<ProtocolContextInvitation<D, C>[]> {
+  ): Promise<ModuleContextInvitation<D, C>[]> {
     await this._ensureReady(CONTEXT_INVITATION_PATH);
     const result = await this._dwn.records.query(this.contextInvitationQuery(limit));
     requireDwnSuccess('TypedEnbox.contexts.invitations.list', result);
@@ -2568,12 +2568,12 @@ export class TypedEnbox<
     limit : number | undefined,
     follow : (path: string, request: ContextFollowTarget) => Promise<MemberContext<D, C>>,
     signal?: AbortSignal,
-  ): Promise<RecordView<ProtocolContextInvitation<D, C>>> {
+  ): Promise<RecordView<ModuleContextInvitation<D, C>>> {
     await whileSignalsActive(
       () => this._ensureReady(CONTEXT_INVITATION_PATH),
       [signal, this._options.signal],
     );
-    return createRecordView<ProtocolContextInvitation<D, C>>({
+    return createRecordView<ModuleContextInvitation<D, C>>({
       callerSignal       : signal,
       definition         : this._definition,
       dwn                : this._dwn,
@@ -2597,7 +2597,7 @@ export class TypedEnbox<
   private async projectContextInvitations(
     records : Record[],
     follow : (path: string, request: ContextFollowTarget) => Promise<MemberContext<D, C>>,
-  ): Promise<ProtocolContextInvitation<D, C>[]> {
+  ): Promise<ModuleContextInvitation<D, C>[]> {
     type Candidate = {
       contextId: string;
       path: string;
@@ -2634,7 +2634,7 @@ export class TypedEnbox<
 
     return [...candidates.values()]
       .sort((left, right) => compareInvitationRecords(left.selected, right.selected))
-      .map((candidate): ProtocolContextInvitation<D, C> => {
+      .map((candidate): ModuleContextInvitation<D, C> => {
         let consumed = false;
         const dismiss = async (): Promise<void> => {
           if (consumed) {
@@ -2666,7 +2666,7 @@ export class TypedEnbox<
           ownerDid  : candidate.ownerDid,
           preview   : candidate.preview,
           timestamp : candidate.selected.timestamp,
-        }) as ProtocolContextInvitation<D, C>;
+        }) as ModuleContextInvitation<D, C>;
       });
   }
 
@@ -2678,8 +2678,8 @@ export class TypedEnbox<
     preview: ContextInvitationPreview;
   } | undefined> {
     if (record.recipient !== this._dwn.connectedDid
-      || record.protocol !== this._definition.protocol
-      || record.protocolPath !== CONTEXT_INVITATION_PATH) {
+      || record.module !== this._definition.module
+      || record.modulePath !== CONTEXT_INVITATION_PATH) {
       return undefined;
     }
     const ownerDid = record.creator.trim();
@@ -2715,7 +2715,7 @@ export class TypedEnbox<
   /** Delete every duplicate represented by one invitation handle; absence is already dismissed. */
   private async dismissContextInvitationRecords(records: readonly Record[]): Promise<void> {
     await Promise.all(records.map((record): Promise<void> =>
-      this.records.delete(CONTEXT_INVITATION_PATH as ProtocolPaths<D> & string, { recordId: record.id })
+      this.records.delete(CONTEXT_INVITATION_PATH as ModulePaths<D> & string, { recordId: record.id })
     ));
   }
 
@@ -2876,11 +2876,11 @@ export class TypedEnbox<
         let accepted: ActiveMemberRecord;
         let outcome: AudienceKeyDeliveryOutcome | undefined;
         if (current === undefined) {
-          const created = await this.createRecord(role as ProtocolPaths<D> & string, {
+          const created = await this.createRecord(role as ModulePaths<D> & string, {
             data            : request.data,
             parentContextId : contextId,
             recipient,
-          } as unknown as TypedCreateOptions<C, ProtocolPaths<D> & string>, dwn);
+          } as unknown as TypedCreateOptions<C, ModulePaths<D> & string>, dwn);
           accepted = { did: recipient, record: created.record as unknown as Record<unknown>, role };
           outcome = created.audienceKeyDelivery;
         } else {
@@ -2908,10 +2908,10 @@ export class TypedEnbox<
     source: FollowedSyncSource,
     forget: (expected: FollowedSyncSource, withdrawRole?: () => Promise<void>) => Promise<void>,
   ): MemberContext<D, C> {
-    const scope = this.resolveMemberContextScope(source.protocolRole);
-    const replicatedPaths = new Set(source.protocolPaths);
+    const scope = this.resolveMemberContextScope(source.moduleRole);
+    const replicatedPaths = new Set(source.modulePaths);
     const readablePaths = new Set(scope.readablePaths);
-    const protocolPaths = new Set([...scope.allowedPaths].filter(path =>
+    const modulePaths = new Set([...scope.allowedPaths].filter(path =>
       !readablePaths.has(path) || replicatedPaths.has(path)
     ));
 
@@ -2939,7 +2939,7 @@ export class TypedEnbox<
       invalidateReplica          : async (): Promise<void> => {
         await sync.markFollowedSourcePullPending(source);
       },
-      protocolRole   : source.protocolRole,
+      moduleRole     : source.moduleRole,
       remoteEndpoint : source.remoteEndpoint,
       tenantDid      : source.sourceDid,
     });
@@ -2951,10 +2951,10 @@ export class TypedEnbox<
     });
     const withdrawRole = async (): Promise<void> => {
       const result = await membershipDwn.records.delete({
-        contextId    : source.contextId,
-        protocol     : source.protocol,
-        protocolPath : source.protocolRole,
-        recordId     : source.id,
+        contextId  : source.contextId,
+        module     : source.module,
+        modulePath : source.moduleRole,
+        recordId   : source.id,
       });
       if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
         requireDwnSuccess('MemberContext.leave', result);
@@ -2991,14 +2991,14 @@ export class TypedEnbox<
       access   : 'member',
       forget   : (): Promise<void> => retire(),
       id       : source.contextId,
-      key      : protocolContextKey(source.sourceDid, source.contextId),
+      key      : moduleContextKey(source.sourceDid, source.contextId),
       leave    : (): Promise<void> => retire(withdrawRole),
       ownerDid : source.sourceDid,
-      path     : scope.protocolPath,
+      path     : scope.modulePath,
       records  : this.bindContextRecords(dwn, {
-        contextId    : source.contextId,
-        protocolPath : scope.protocolPath,
-        protocolPaths,
+        contextId  : source.contextId,
+        modulePath : scope.modulePath,
+        modulePaths,
       }, signal),
       role         : scope.role,
       rootRecordId : contextRootRecordId(source.contextId),
@@ -3007,9 +3007,9 @@ export class TypedEnbox<
   }
 
   /** Reuse one typed records implementation with tenant and root routing already bound. */
-  private bindContextRecords<Root extends ProtocolPaths<D> & string>(
+  private bindContextRecords<Root extends ModulePaths<D> & string>(
     dwn: DwnApi,
-    context: NonNullable<TypedEnboxOptions['context']> & { protocolPath: Root },
+    context: NonNullable<TypedEnboxOptions['context']> & { modulePath: Root },
     signal: AbortSignal | undefined = this._options.signal,
   ): ContextRecordsApi<D, C, Root> {
     return new TypedEnbox<D, C>(
@@ -3024,13 +3024,13 @@ export class TypedEnbox<
   }
 
   /**
-   * Ensures the protocol is configured before performing record operations.
+   * Ensures the module is configured before performing record operations.
    *
-   * On first call, queries for an existing protocol installation:
+   * On first call, queries for an existing module installation:
    * - If found with an identical definition → marks as configured.
    * - If found with a different definition → marks as configured but warns
    *   that the local definition differs from the installed one.
-   * - If not found → installs the protocol via `protocols.configure()`.
+   * - If not found → installs the module via `modules.configure()`.
    *
    * Concurrent calls are deduplicated via a shared Promise so the network
    * call only happens once.
@@ -3081,11 +3081,11 @@ export class TypedEnbox<
     if (parentContextId !== undefined) {
       return this.resolveContextWithin(path, parentContextId);
     }
-    if (path === context.protocolPath) {
+    if (path === context.modulePath) {
       throw new TypeError('Context-bound records cannot create another context root.');
     }
     const parentPath = path.split('/').slice(0, -1).join('/');
-    if (parentPath !== context.protocolPath) {
+    if (parentPath !== context.modulePath) {
       throw new TypeError(`Context-bound create at '${path}' requires its direct parent context.`);
     }
     return context.contextId;
@@ -3093,7 +3093,7 @@ export class TypedEnbox<
 
   private assertContextPath(path: string): void {
     const context = this._options.context;
-    if (context !== undefined && !context.protocolPaths.has(path)) {
+    if (context !== undefined && !context.modulePaths.has(path)) {
       throw new TypeError(`Context-bound records do not expose path '${path}'.`);
     }
   }
@@ -3103,15 +3103,15 @@ export class TypedEnbox<
    * subsequent calls reuse the same Promise via `_ensureReadyPromise`.
    */
   private async _autoConfigureOnce(): Promise<void> {
-    const query = await this._dwn.protocols.query({
-      filter: { protocol: this._definition.protocol },
+    const query = await this._dwn.modules.query({
+      filter: { module: this._definition.module },
     });
-    requireDwnSuccess('TypedEnbox automatic protocol query', query);
-    const { protocols } = query;
+    requireDwnSuccess('TypedEnbox automatic module query', query);
+    const { modules } = query;
 
-    if (protocols.length > 0) {
-      const existing = protocols[0];
-      const definitionsMatch = authoredProtocolDefinitionsEqual(existing.definition, this._definition);
+    if (modules.length > 0) {
+      const existing = modules[0];
+      const definitionsMatch = authoredModuleDefinitionsEqual(existing.definition, this._definition);
       const encryptionKeysComplete = !this._hasEncryptedTypes
         || collectMissingKeyAgreementPaths(existing.definition).length === 0;
       if (definitionsMatch && encryptionKeysComplete) {
@@ -3122,7 +3122,7 @@ export class TypedEnbox<
       if (!this._dwn.isDelegate && !definitionsMatch) {
         // Installed but definitions differ — allow operations but warn.
         console.warn(
-          `TypedEnbox: installed protocol '${this._definition.protocol}' differs from the provided definition. ` +
+          `TypedEnbox: installed module '${this._definition.module}' differs from the provided definition. ` +
           'Call configure() to update it.',
         );
         this._configured = true;
@@ -3131,65 +3131,65 @@ export class TypedEnbox<
     }
 
     if (this._dwn.isDelegate) {
-      await this._autoConfigureDelegateProtocol();
+      await this._autoConfigureDelegateModule();
       return;
     }
 
     // Not installed locally — configure it now.
-    const result = await this._dwn.protocols.configure({
+    const result = await this._dwn.modules.configure({
       definition: this._definition,
     });
-    requireDwnSuccess('TypedEnbox automatic protocol configure', result);
+    requireDwnSuccess('TypedEnbox automatic module configure', result);
     this._configured = true;
   }
 
   /**
-   * For delegates: fetch the owner's signed ProtocolsConfigure message through
+   * For delegates: fetch the owner's signed ModulesConfigure message through
    * normal routing and import that same wallet-owned message locally.
    *
    * The wallet definition is validated before import, and the active local
    * definition is checked afterward before this instance is marked configured.
    */
-  private async _autoConfigureDelegateProtocol(): Promise<ProtocolsConfigureResponse> {
-    const remote = await this._dwn.protocols.query({
-      filter : { protocol: this._definition.protocol },
+  private async _autoConfigureDelegateModule(): Promise<ModulesConfigureResponse> {
+    const remote = await this._dwn.modules.query({
+      filter : { module: this._definition.module },
       from   : this._dwn.connectedDid,
     });
     requireDwnSuccess(
-      `TypedEnbox delegate wallet protocol query for '${this._definition.protocol}'; reconnect to refresh delegated grants`,
+      `TypedEnbox delegate wallet module query for '${this._definition.module}'; reconnect to refresh delegated grants`,
       remote,
     );
 
-    const remoteProtocols = remote.protocols;
-    const remoteProtocol = remoteProtocols[0];
-    const verification = this._assessInstalledDefinition(remoteProtocol?.definition, true);
+    const remoteModules = remote.modules;
+    const remoteModule = remoteModules[0];
+    const verification = this._assessInstalledDefinition(remoteModule?.definition, true);
     if (verification.error !== undefined) {
       throw verification.error;
     }
-    if (remoteProtocol === undefined) {
-      throw new Error(`TypedEnbox: verified wallet protocol '${this._definition.protocol}' is unavailable.`);
+    if (remoteModule === undefined) {
+      throw new Error(`TypedEnbox: verified wallet module '${this._definition.module}' is unavailable.`);
     }
 
     // The remote message includes the wallet's signature and, for encrypted
-    // protocols, `$keyAgreement` keys injected by the wallet during configure.
+    // modules, `$keyAgreement` keys injected by the wallet during configure.
     // Import that exact message locally so the delegate can validate/encrypt
-    // owner-tenant records without receiving Protocols.Configure permission.
-    const result = await this._dwn.importProtocolConfiguration(remoteProtocol.toJSON());
+    // owner-tenant records without receiving Modules.Configure permission.
+    const result = await this._dwn.importModuleConfiguration(remoteModule.toJSON());
 
     if ((result.status.code < 200 || result.status.code > 299) && result.status.code !== 409) {
       throw new DwnResponseError(
-        `TypedEnbox delegate protocol import for '${this._definition.protocol}'`,
+        `TypedEnbox delegate module import for '${this._definition.module}'`,
         result.status,
       );
     }
 
-    const local = await this._dwn.protocols.query({
-      filter: { protocol: this._definition.protocol },
+    const local = await this._dwn.modules.query({
+      filter: { module: this._definition.module },
     });
-    requireDwnSuccess(`TypedEnbox delegate local protocol query for '${this._definition.protocol}'`, local);
-    if (!installedProtocolDefinitionsEqual(local.protocols[0]?.definition, remoteProtocol.definition)) {
+    requireDwnSuccess(`TypedEnbox delegate local module query for '${this._definition.module}'`, local);
+    if (!installedModuleDefinitionsEqual(local.modules[0]?.definition, remoteModule.definition)) {
       throw new Error(
-        `TypedEnbox: wallet protocol '${this._definition.protocol}' was imported but is not the active local definition.`,
+        `TypedEnbox: wallet module '${this._definition.module}' was imported but is not the active local definition.`,
       );
     }
 
@@ -3198,7 +3198,7 @@ export class TypedEnbox<
   }
 
   /** Read and bind one typed record, optionally from a bound context's authority. */
-  private async readTypedRecord<Path extends ProtocolPaths<D> & string>(
+  private async readTypedRecord<Path extends ModulePaths<D> & string>(
     path: Path,
     request: TypedReadRequest<D, Path>,
     authoritativeContext: boolean,
@@ -3214,7 +3214,7 @@ export class TypedEnbox<
         request.filter,
         within,
       ),
-      protocolRole: request.protocolRole,
+      moduleRole: request.moduleRole,
     };
     const authoritativeResult = authoritativeContext
       ? await this._dwn.readRecordForMutation(readRequest)
@@ -3237,12 +3237,12 @@ export class TypedEnbox<
   }
 
   /**
-   * Protocol-scoped record operations.
+   * Module-scoped record operations.
    *
-   * Every method auto-injects the `protocol`, `protocolPath`, and `schema`
-   * from the protocol definition — you never need to specify them manually.
+   * Every method auto-injects the `module`, `modulePath`, and `schema`
+   * from the module definition — you never need to specify them manually.
    * Path parameters provide **compile-time autocompletion** via
-   * `ProtocolPaths<D>`, and data types are resolved from the protocol codecs.
+   * `ModulePaths<D>`, and data types are resolved from the module codecs.
    *
    * Record-returning methods use canonical {@link Record} instances carrying
    * the resolved data type from the codec map.
@@ -3255,7 +3255,7 @@ export class TypedEnbox<
    * - `count(path, request?)` — Count the same matching population
    * - `read(path, recordId or request)` — Read a single record
    * - `patch(path, recordId, patch)` — Apply a partial update with one conflict retry
-   * - `set(path, request)` — Replace one protocol-declared singleton
+   * - `set(path, request)` — Replace one module-declared singleton
    * - `delete(path, request)` — Delete a record by ID
    */
   public get records(): TypedRecordsApi<D, C> {
@@ -3265,13 +3265,13 @@ export class TypedEnbox<
 
     const cached = {
       /**
-       * Create a new record at the given protocol path.
+       * Create a new record at the given module path.
        *
-       * The `protocol`, `protocolPath`, and `schema` are auto-injected from
-       * the protocol definition. The `data` field is type-checked against
+       * The `module`, `modulePath`, and `schema` are auto-injected from
+       * the module definition. The `data` field is type-checked against
        * the codec for the given path.
        *
-       * @param path - The protocol path (e.g. `'notebook'`, `'notebook/page'`).
+       * @param path - The module path (e.g. `'notebook'`, `'notebook/page'`).
        *   Provides compile-time autocompletion for valid paths.
        * @param request - Create options including the typed `data` payload
        *   and optional fields like `parentContextId`, `tags`, `recipient`.
@@ -3279,24 +3279,24 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * const record = await proto.records.create('notebook', {
+       * const record = await notebooks.records.create('notebook', {
        *   data: { name: 'My Notebook' },
        * });
        *
        * // Create a child page under the notebook's context
-       * const page = await proto.records.create('notebook/page', {
+       * const page = await notebooks.records.create('notebook/page', {
        *   data: { title: 'First Page', body: '' },
        *   parentContextId: record.contextId,
        * });
        * ```
        */
-      create: async <Path extends ProtocolPaths<D> & string>(
+      create: async <Path extends ModulePaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, C, Path>,
       ): Promise<TypedRecord<DataForPath<C, Path>>> => (await this.createRecord(path, request)).record,
 
       /**
-       * Query records at the given protocol path.
+       * Query records at the given module path.
        *
        * Returns matching records as one page of typed records. Call `next()`
        * to continue the same captured query when another page exists. Set
@@ -3306,7 +3306,7 @@ export class TypedEnbox<
        * Materialization is fail-closed: any decode or validation failure
        * rejects the page. Omit it to handle `record.value()` per record.
        *
-       * @param path - The protocol path to query (e.g. `'notebook'`,
+       * @param path - The module path to query (e.g. `'notebook'`,
        *   `'notebook/page'`).
        * @param request - Optional filter, sort, and pagination options.
        *   Omit entirely to return all records at the path.
@@ -3316,10 +3316,10 @@ export class TypedEnbox<
        * @example
        * ```ts
        * // Query all notebooks
-       * const { records } = await proto.records.query('notebook');
+       * const { records } = await notebooks.records.query('notebook');
        *
        * // Query pages under a specific notebook
-       * const { records: pages } = await proto.records.query('notebook/page', {
+       * const { records: pages } = await notebooks.records.query('notebook/page', {
        *   within: notebook.contextId,
        * });
        *
@@ -3328,7 +3328,7 @@ export class TypedEnbox<
        * }
        *
        * // Paginated query
-       * const firstPage = await proto.records.query('notebook', {
+       * const firstPage = await notebooks.records.query('notebook', {
        *   pagination: { limit: 10 },
        *   dateSort: DateSort.CreatedDescending,
        * });
@@ -3336,7 +3336,7 @@ export class TypedEnbox<
        * ```
        */
       query: async <
-        Path extends ProtocolPaths<D> & string,
+        Path extends ModulePaths<D> & string,
         Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
       >(...args: TypedQueryArguments<D, Path, Materialization>): Promise<
         RecordPage<RecordRepresentation<D, C, Path, Materialization>>
@@ -3380,7 +3380,7 @@ export class TypedEnbox<
               result.records,
               materialize,
               childPaths,
-              { from: canonicalQuery.from, protocolRole: canonicalQuery.protocolRole, within },
+              { from: canonicalQuery.from, moduleRole: canonicalQuery.moduleRole, within },
             )],
             next: async (): Promise<RecordPage<
               RecordRepresentation<D, C, Path, Materialization>
@@ -3420,7 +3420,7 @@ export class TypedEnbox<
        * an error state.
        */
       observe: async <
-        Path extends ProtocolPaths<D> & string,
+        Path extends ModulePaths<D> & string,
         Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
       >(
         path: Path,
@@ -3466,7 +3466,7 @@ export class TypedEnbox<
             records,
             materialize as Materialization,
             childPaths,
-            { from: compiled.from, protocolRole: compiled.protocolRole, within },
+            { from: compiled.from, moduleRole: compiled.moduleRole, within },
           ),
           query  : compiled,
           signal : this._options.signal,
@@ -3474,17 +3474,17 @@ export class TypedEnbox<
         });
       },
 
-      subscribe: async <const Selection extends RecordSubscriptionSelection<ProtocolPaths<D> & string>>(
+      subscribe: async <const Selection extends RecordSubscriptionSelection<ModulePaths<D> & string>>(
         selection: Selection,
         ...args:
-          | [listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>]
+          | [listener: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false>]
           | [
             options: RecordSubscriptionOptions,
-            listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+            listener: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false>,
           ]
           | [
             options: InitialRecordSubscriptionOptions,
-            listener: TypedRecordSubscriptionListener<C, ProtocolSubscriptionPaths<D, Selection>, false>,
+            listener: TypedRecordSubscriptionListener<C, ModuleSubscriptionPaths<D, Selection>, false>,
           ]
       ): Promise<RecordSubscription> => {
         if (args.length === 1) {
@@ -3505,7 +3505,7 @@ export class TypedEnbox<
        * `query()`. Pagination and ordering do not change the count; a
        * published-date sort still selects published records only.
        */
-      count: async <Path extends ProtocolPaths<D> & string>(
+      count: async <Path extends ModulePaths<D> & string>(
         path: Path,
         request?: RecordQuery<D, Path>,
       ): Promise<number> => {
@@ -3517,9 +3517,9 @@ export class TypedEnbox<
         });
 
         const result = await this._dwn.records.count({
-          from         : compiled.from,
-          filter       : compiled.filter,
-          protocolRole : compiled.protocolRole,
+          from       : compiled.from,
+          filter     : compiled.filter,
+          moduleRole : compiled.moduleRole,
         });
         requireDwnSuccess('TypedEnbox.records.count', result);
         if (result.count === undefined) {
@@ -3529,13 +3529,13 @@ export class TypedEnbox<
       },
 
       /**
-       * Read a single record at the given protocol path.
+       * Read a single record at the given module path.
        *
        * Unlike `query()`, which returns an array, `read()` returns exactly
        * one record. Pass its record ID directly for a local point read, or use
        * a request object for advanced filters and routing.
        *
-       * @param path - The protocol path to read from.
+       * @param path - The module path to read from.
        * @param recordIdOrRequest - A record ID, or advanced read options. See
        *   {@link TypedReadRequest} for details.
        * @returns The matching typed {@link Record}, or `undefined` when no
@@ -3543,7 +3543,7 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * const record = await proto.records.read('notebook', notebookId);
+       * const record = await notebooks.records.read('notebook', notebookId);
        *
        * if (record === undefined) {
        *   throw new Error('Notebook not found');
@@ -3553,7 +3553,7 @@ export class TypedEnbox<
        * console.log(data.name);
        * ```
        */
-      read: async <Path extends ProtocolPaths<D> & string>(
+      read: async <Path extends ModulePaths<D> & string>(
         path: Path,
         recordIdOrRequest: string | TypedReadRequest<D, Path>,
       ): Promise<TypedRecord<DataForPath<C, Path>> | undefined> => {
@@ -3574,7 +3574,7 @@ export class TypedEnbox<
        * swap. A concurrent write accepted after the read can still be replaced
        * by the DWN's normal last-writer-wins ordering.
        */
-      patch: async <Path extends ProtocolPaths<D> & string>(
+      patch: async <Path extends ModulePaths<D> & string>(
         path: Path,
         recordId: string,
         patch: RecordPatchInput<DataForPath<C, Path>>,
@@ -3609,7 +3609,7 @@ export class TypedEnbox<
       },
 
       /**
-       * Replace the visible value at a protocol-declared singleton path.
+       * Replace the visible value at a module-declared singleton path.
        *
        * The path must declare `$recordLimit.max: 1`. The current visible
        * occupant is updated in place; an empty scope creates its first record.
@@ -3619,7 +3619,7 @@ export class TypedEnbox<
        * the current occupant precedes the create or update. Delegates must
        * have a matching Records.Read grant that covers RecordsQuery.
        */
-      set: async <Path extends SingletonProtocolPaths<D> & string>(
+      set: async <Path extends SingletonModulePaths<D> & string>(
         path: Path,
         request: TypedSetRequest<C, Path>,
       ): Promise<TypedRecord<DataForPath<C, Path>>> => {
@@ -3629,8 +3629,8 @@ export class TypedEnbox<
         if ('from' in request && request.from !== undefined) {
           throw new TypeError('TypedEnbox.records.set: remote targets are not supported.');
         }
-        if ('protocolRole' in request && request.protocolRole !== undefined) {
-          throw new TypeError('TypedEnbox.records.set: protocol roles are not supported.');
+        if ('moduleRole' in request && request.moduleRole !== undefined) {
+          throw new TypeError('TypedEnbox.records.set: module roles are not supported.');
         }
         await this._ensureReady(normalizedPath);
         const query = compileRecordQuery(this._definition, normalizedPath, {
@@ -3665,12 +3665,12 @@ export class TypedEnbox<
       },
 
       /**
-       * Delete a record at the given protocol path.
+       * Delete a record at the given module path.
        *
-       * The path is used for protocol validation and permission scoping,
+       * The path is used for module validation and permission scoping,
        * while the actual record is identified by `recordId`.
        *
-       * @param path - The protocol path (used for permission scoping and
+       * @param path - The module path (used for permission scoping and
        *   path validation).
        * @param request - Delete options. `recordId` is required; `within`
        *   scopes delegated grant resolution and `from` selects a remote DWN.
@@ -3680,12 +3680,12 @@ export class TypedEnbox<
        *
        * @example
        * ```ts
-       * await proto.records.delete('notebook', {
+       * await notebooks.records.delete('notebook', {
        *   recordId: notebook.id,
        * });
        * ```
        */
-      delete: async <Path extends ProtocolPaths<D> & string>(
+      delete: async <Path extends ModulePaths<D> & string>(
         path: Path,
         request: TypedDeleteRequest,
       ): Promise<void> => {
@@ -3698,9 +3698,9 @@ export class TypedEnbox<
         assertValidRecordWithin(normalizedPath, within, false);
         if (this._options.context !== undefined) {
           const { record, tombstonePrune } = await this.readTypedRecord(path, {
-            filter       : { recordId: request.recordId },
-            from         : request.from,
-            protocolRole : request.protocolRole,
+            filter     : { recordId: request.recordId },
+            from       : request.from,
+            moduleRole : request.moduleRole,
             within,
           }, true);
           if (record === undefined) {
@@ -3717,13 +3717,13 @@ export class TypedEnbox<
           }
         }
         const result = await this._dwn.records.delete({
-          contextId    : within,
-          from         : request.from,
-          protocol     : this._definition.protocol,
-          protocolPath : normalizedPath,
-          protocolRole : request.protocolRole,
-          recordId     : request.recordId,
-          prune        : request.prune,
+          contextId  : within,
+          from       : request.from,
+          module     : this._definition.module,
+          modulePath : normalizedPath,
+          moduleRole : request.moduleRole,
+          recordId   : request.recordId,
+          prune      : request.prune,
         });
         if (result.status.code === 404 && this._options.context === undefined) {
           return;
@@ -3802,16 +3802,16 @@ function hasKeyAgreementKey(node: globalThis.Record<string, unknown>): boolean {
 }
 
 /**
- * Collects every protocol path the encryption-key injection should cover
- * whose `$keyAgreement.publicKeyJwk` is MISSING from an installed protocol
+ * Collects every module path the encryption-key injection should cover
+ * whose `$keyAgreement.publicKeyJwk` is MISSING from an installed module
  * definition.
  *
  * Mirrors the injection walk performed at encrypted configure time
- * (`Protocols.deriveAndInjectPublicEncryptionKeys`): the protocol root
+ * (`Modules.deriveAndInjectPublicEncryptionKeys`): the module root
  * (reported as the empty string) and every structure path are covered,
  * and `$`-prefixed keys are skipped.
  */
-function collectMissingKeyAgreementPaths(definition: ProtocolDefinition): string[] {
+function collectMissingKeyAgreementPaths(definition: ModuleDefinition): string[] {
   const missing: string[] = [];
 
   if (!hasKeyAgreementKey(definition as unknown as globalThis.Record<string, unknown>)) {
@@ -3857,7 +3857,7 @@ function normalizePath(path: string): string {
 function normalizeContextFollowTarget(target: ContextFollowTarget, operation: string): ContextFollowTarget {
   const ownerDid = normalizeMemberDid(target.ownerDid, operation);
   if (!isValidRecordContextId(target.id)) {
-    throw new TypeError(`${operation}: id must identify a canonical protocol context.`);
+    throw new TypeError(`${operation}: id must identify a canonical module context.`);
   }
   return { id: target.id, ownerDid };
 }
@@ -3907,7 +3907,7 @@ function contextRootRecordId(contextId: string): string {
   return contextId.slice(contextId.lastIndexOf('/') + 1);
 }
 
-function compareProtocolContexts(
+function compareModuleContexts(
   a: { id: string; ownerDid: string },
   b: { id: string; ownerDid: string },
 ): number {

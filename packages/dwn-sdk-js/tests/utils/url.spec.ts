@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
-import { normalizeProtocolUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../../src/utils/url.js';
+import { normalizeModuleUrl, validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../../src/utils/url.js';
 
 describe('url', () => {
-  describe('validateProtocolUrlNormalized', () => {
+  describe('validateModuleUrlNormalized', () => {
     it('errors when URI is not normalized', () => {
-      expect(() => validateProtocolUrlNormalized('https://example.com')).not.toThrow();
-      expect(() => validateProtocolUrlNormalized('example.com')).toThrow();
-      expect(() => validateProtocolUrlNormalized(':foo:')).toThrow();
+      expect(() => validateModuleUrlNormalized('https://example.com')).not.toThrow();
+      expect(() => validateModuleUrlNormalized('example.com')).toThrow();
+      expect(() => validateModuleUrlNormalized(':foo:')).toThrow();
     });
   });
 
@@ -18,30 +18,30 @@ describe('url', () => {
     });
   });
 
-  describe('normalizeProtocolUrl', () => {
+  describe('normalizeModuleUrl', () => {
     it('returns hostname and path with trailing slash removed', () => {
-      expect(normalizeProtocolUrl('example.com')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('example.com/')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('http://example.com')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('http://example.com/')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('example.com?foo=bar')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('example.com/?foo=bar')).toBe('http://example.com');
-      expect(normalizeProtocolUrl('foo:example?foo=bar')).toBe('foo:example');
+      expect(normalizeModuleUrl('example.com')).toBe('http://example.com');
+      expect(normalizeModuleUrl('example.com/')).toBe('http://example.com');
+      expect(normalizeModuleUrl('http://example.com')).toBe('http://example.com');
+      expect(normalizeModuleUrl('http://example.com/')).toBe('http://example.com');
+      expect(normalizeModuleUrl('example.com?foo=bar')).toBe('http://example.com');
+      expect(normalizeModuleUrl('example.com/?foo=bar')).toBe('http://example.com');
+      expect(normalizeModuleUrl('foo:example?foo=bar')).toBe('foo:example');
 
-      expect(normalizeProtocolUrl('example.com/path')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('example.com/path/')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('http://example.com/path')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('http://example.com/path')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('example.com/path?foo=bar')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('example.com/path/?foo=bar')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('example.com/path#baz')).toBe('http://example.com/path');
-      expect(normalizeProtocolUrl('example.com/path/#baz')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path/')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('http://example.com/path')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('http://example.com/path')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path?foo=bar')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path/?foo=bar')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path#baz')).toBe('http://example.com/path');
+      expect(normalizeModuleUrl('example.com/path/#baz')).toBe('http://example.com/path');
 
-      expect(normalizeProtocolUrl('example')).toBe('http://example');
-      expect(normalizeProtocolUrl('/example/')).toBe('http://example');
+      expect(normalizeModuleUrl('example')).toBe('http://example');
+      expect(normalizeModuleUrl('/example/')).toBe('http://example');
 
-      expect(() => normalizeProtocolUrl('://http')).toThrow(Error);
-      expect(() => normalizeProtocolUrl(':foo:')).toThrow(Error);
+      expect(() => normalizeModuleUrl('://http')).toThrow(Error);
+      expect(() => normalizeModuleUrl(':foo:')).toThrow(Error);
     });
   });
 });

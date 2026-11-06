@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { SyncLinkController } from '../src/sync-link-controller.js';
 
+import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { deferred } from './utils/deferred.js';
@@ -77,12 +78,15 @@ function openSubscription(fixture: EngineFixture): Promise<boolean> {
 describe('SyncEngineLevel — replication generation fencing', () => {
   let db: Level<string, string>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-live-pull-fencing-spec');
+    await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
     sinon.restore();
   });
 
@@ -112,7 +116,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const event = {
       type  : 'event',
       cursor,
-      event : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      event : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
     };
 
     await staleHandler(event);
@@ -270,7 +274,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const roleAuthorization = {
       kind         : 'role' as const,
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/viewer',
+      moduleRole   : 'notebook/viewer',
       roleRecordId : 'role-a',
     };
     fixture.controller.link.authorization = roleAuthorization;
@@ -435,7 +439,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     const message = {
       descriptor: {
-        interface        : 'Protocols',
+        interface        : 'Modules',
         method           : 'Configure',
         messageTimestamp : '2026-08-12T00:00:00.000000Z',
       },
@@ -524,7 +528,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     const message = {
       descriptor: {
-        interface        : 'Protocols',
+        interface        : 'Modules',
         method           : 'Configure',
         messageTimestamp : '2026-08-12T00:00:00.000000Z',
       },
@@ -583,7 +587,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const handledError = await fixture.handlers[0]({
       type              : 'event',
       cursor,
-      event             : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+      event             : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
       isLatestBaseState : true,
     }).then(
       (): undefined => undefined,
@@ -610,7 +614,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 
     const message = {
       descriptor: {
-        interface        : 'Protocols',
+        interface        : 'Modules',
         method           : 'Configure',
         messageTimestamp : '2026-08-12T00:00:00.000000Z',
       },
@@ -680,16 +684,16 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const roleAuthorization = {
       kind         : 'role' as const,
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/viewer',
+      moduleRole   : 'notebook/viewer',
       roleRecordId : 'role-a',
     };
     fixture.controller.link.authorization = roleAuthorization;
     fixture.controller.link.delegateDid = delegateDid;
     fixture.controller.link.scope = {
-      kind          : 'context',
-      protocol      : 'https://example.com/notebooks',
-      contextId     : 'notebook-a',
-      protocolPaths : ['notebook/page'],
+      kind        : 'context',
+      module      : 'https://example.com/notebooks',
+      contextId   : 'notebook-a',
+      modulePaths : ['notebook/page'],
     };
     Object.assign(fixture.target, {
       authorization : roleAuthorization,
@@ -709,11 +713,11 @@ describe('SyncEngineLevel — replication generation fencing', () => {
       messageParams : {
         filters: [{
           interface       : 'Records',
-          protocol        : fixture.controller.link.scope.protocol,
-          protocolPath    : 'notebook/page',
+          module          : fixture.controller.link.scope.module,
+          modulePath      : 'notebook/page',
           contextIdPrefix : 'notebook-a',
         }],
-        protocolRole   : roleAuthorization.protocolRole,
+        moduleRole     : roleAuthorization.moduleRole,
         delegatedGrant : grantA,
       },
     });
@@ -730,16 +734,16 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const roleAuthorization = {
       kind         : 'role' as const,
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/page/editor',
+      moduleRole   : 'notebook/page/editor',
       roleRecordId : 'role-a',
     };
     controller.link.authorization = roleAuthorization;
     controller.link.delegateDid = 'did:example:delegate';
     controller.link.scope = {
-      kind          : 'context',
-      protocol      : 'https://example.com/notebooks',
-      contextId     : 'notebook-a/page-a',
-      protocolPaths : ['notebook/page/delta'],
+      kind        : 'context',
+      module      : 'https://example.com/notebooks',
+      contextId   : 'notebook-a/page-a',
+      modulePaths : ['notebook/page/delta'],
     };
     controller.markReplicationReady();
     controller.markPullCurrent(controller.replicationGeneration);
@@ -751,8 +755,8 @@ describe('SyncEngineLevel — replication generation fencing', () => {
         interface        : 'Records',
         method           : 'Write',
         messageTimestamp : '2026-08-12T00:00:00.000000Z',
-        protocol         : controller.link.scope.protocol,
-        protocolPath     : 'notebook/page/delta',
+        module           : controller.link.scope.module,
+        modulePath       : 'notebook/page/delta',
       },
     };
     const initialWrite = { ...message, recordId: 'delta-initial' };
@@ -814,7 +818,7 @@ describe('SyncEngineLevel — replication generation fencing', () => {
     const roleAuthorization = {
       kind         : 'role' as const,
       actorDid     : 'did:example:member',
-      protocolRole : 'notebook/viewer',
+      moduleRole   : 'notebook/viewer',
       roleRecordId : 'role-a',
     };
     fixture.controller.link.authorization = roleAuthorization;
@@ -836,12 +840,15 @@ describe('SyncEngineLevel — replication generation fencing', () => {
 describe('SyncEngineLevel — transport lifecycle connectivity', () => {
   let db: Level<string, string>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-transport-attachment-spec');
+    await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
+    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
     sinon.restore();
   });
 

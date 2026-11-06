@@ -4,7 +4,7 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { expect } from 'bun:test';
 import { getFileAsReadStream } from './utils.js';
-import { Cid, DwnConstant, Jws, ProtocolsConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { Cid, DwnConstant, Jws, ModulesConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /**
  * Validator of common scenarios.
@@ -17,9 +17,9 @@ export default class CommonScenarioValidator {
     const alice = persona || await TestDataGenerator.generateDidKeyPersona();
     const aliceSigner = Jws.createSigner(alice);
 
-    // install minimal protocol on Alice's DWN
-    const protocolDefinition = {
-      protocol  : 'http://minimal.xyz',
+    // install minimal module on Alice's DWN
+    const moduleDefinition = {
+      module    : 'http://minimal.xyz',
       published : false,
       types     : {
         foo: {}
@@ -29,26 +29,26 @@ export default class CommonScenarioValidator {
       }
     };
 
-    const protocolsConfig = await ProtocolsConfigure.create({
+    const modulesConfig = await ModulesConfigure.create({
       signer     : aliceSigner,
-      definition : protocolDefinition
+      definition : moduleDefinition
     });
 
-    const protocolConfigureRequestId = crypto.randomUUID();
-    const protocolConfigureRequest = createJsonRpcRequest(protocolConfigureRequestId, 'dwn.processMessage', {
+    const moduleConfigureRequestId = crypto.randomUUID();
+    const moduleConfigureRequest = createJsonRpcRequest(moduleConfigureRequestId, 'dwn.processMessage', {
       target  : alice.did,
-      message : protocolsConfig.message,
+      message : modulesConfig.message,
     });
-    const protocolConfigureResponse = await fetch(dwnUrl, {
+    const moduleConfigureResponse = await fetch(dwnUrl, {
       method  : 'POST',
       headers : {
-        'dwn-request': JSON.stringify(protocolConfigureRequest),
+        'dwn-request': JSON.stringify(moduleConfigureRequest),
       }
     });
-    const protocolConfigureResponseBody = await protocolConfigureResponse.json() as JsonRpcSuccessResponse;
+    const moduleConfigureResponseBody = await moduleConfigureResponse.json() as JsonRpcSuccessResponse;
 
-    expect(protocolConfigureResponse.status).toBe(200);
-    expect(protocolConfigureResponseBody.result.reply.status.code).toBe(202);
+    expect(moduleConfigureResponse.status).toBe(200);
+    expect(moduleConfigureResponseBody.result.reply.status.code).toBe(202);
 
     // Alice writing a file larger than max data size allowed to be encoded directly in the DWN Message Store.
     const filePath = './fixtures/test.jpeg';
@@ -60,10 +60,10 @@ export default class CommonScenarioValidator {
     expect(dataSize).toBeGreaterThan(DwnConstant.maxDataSizeAllowedToBeEncoded);
 
     const recordsWrite = await RecordsWrite.create({
-      signer       : aliceSigner,
-      dataFormat   : 'image/jpeg',
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'foo',
+      signer     : aliceSigner,
+      dataFormat : 'image/jpeg',
+      module     : moduleDefinition.module,
+      modulePath : 'foo',
       dataCid,
       dataSize
     });

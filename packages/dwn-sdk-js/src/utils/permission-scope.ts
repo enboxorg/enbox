@@ -1,24 +1,32 @@
+import type { PermissionScope } from '../types/permission-types.js';
+
 import { FilterUtility } from './filter.js';
+import { validateJsonSchema } from '../schema-validator.js';
+
+/** Validates the exact permission-scope wire shape without normalizing or changing the input. */
+export function validatePermissionScope(scope: unknown): asserts scope is PermissionScope {
+  validateJsonSchema('PermissionScope', scope);
+}
 
 /**
- * Minimal protocol-bound scope shape used by permission grant authorization.
+ * Minimal module-bound scope shape used by permission grant authorization.
  *
  * Permission grants and candidate records/filters are projected down to these
  * fields before matching so grant selection and server enforcement use the
  * same rules.
  */
-export type ProtocolScope = {
-  protocol?: string;
-  protocolPath?: string;
+export type ModuleScope = {
+  module?: string;
+  modulePath?: string;
   contextId?: string;
 };
 
 /**
- * Shared matching rules for protocol-scoped permission grants.
+ * Shared matching rules for module-scoped permission grants.
  *
- * Matching fails closed for invalid combinations: `protocolPath` and
- * `contextId` are mutually exclusive, and either field requires `protocol`.
- * `protocol` matches by exact equality. `protocolPath` and `contextId` scopes
+ * Matching fails closed for invalid combinations: `modulePath` and
+ * `contextId` are mutually exclusive, and either field requires `module`.
+ * `module` matches by exact equality. `modulePath` and `contextId` scopes
  * match subtrees: the target value must equal the scoped value or begin with the
  * scoped value followed by `/`.
  */
@@ -26,21 +34,21 @@ export class PermissionScopeMatcher {
   /**
    * Determines whether a candidate target is within a grant scope.
    */
-  public static matches(scope: ProtocolScope, target: ProtocolScope): boolean {
-    if (scope.protocolPath !== undefined && scope.contextId !== undefined) {
+  public static matches(scope: ModuleScope, target: ModuleScope): boolean {
+    if (scope.modulePath !== undefined && scope.contextId !== undefined) {
       return false;
     }
 
-    if ((scope.protocolPath !== undefined || scope.contextId !== undefined) && scope.protocol === undefined) {
+    if ((scope.modulePath !== undefined || scope.contextId !== undefined) && scope.module === undefined) {
       return false;
     }
 
-    if (scope.protocol !== undefined && scope.protocol !== target.protocol) {
+    if (scope.module !== undefined && scope.module !== target.module) {
       return false;
     }
 
-    if (scope.protocolPath !== undefined) {
-      return FilterUtility.matchesSubtree(scope.protocolPath, target.protocolPath);
+    if (scope.modulePath !== undefined) {
+      return FilterUtility.matchesSubtree(scope.modulePath, target.modulePath);
     }
 
     if (scope.contextId !== undefined) {

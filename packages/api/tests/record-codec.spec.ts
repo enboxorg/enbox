@@ -62,15 +62,15 @@ describe('recordCodecs', () => {
     };
 
     const thrown = await encodeRecordValue(codec, input, undefined, {
-      protocolPath : 'notebook/page',
-      recordId     : 'page-1',
-      schema       : 'https://example.com/schemas/page',
+      modulePath : 'notebook/page',
+      recordId   : 'page-1',
+      schema     : 'https://example.com/schemas/page',
     }).catch((error: unknown): unknown => error);
 
     expect(validatedValue).toEqual({ title: 42 });
     expect(thrown).toBeInstanceOf(RecordValidationError);
     const error = thrown as RecordValidationError;
-    expect(error.protocolPath).toBe('notebook/page');
+    expect(error.modulePath).toBe('notebook/page');
     expect(error.recordId).toBe('page-1');
     expect(error.schema).toBe('https://example.com/schemas/page');
     expect(error.failures).toEqual([{

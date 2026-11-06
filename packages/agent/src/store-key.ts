@@ -10,22 +10,22 @@ import { DataStream } from '@enbox/dwn-sdk-js';
 import type { EnboxPlatformAgent } from './types/agent.js';
 
 import { DwnInterface } from './types/dwn.js';
-import { JwkProtocolDefinition } from './store-data-protocols.js';
+import { JwkModuleDefinition } from './store-data-modules.js';
 import { DwnDataStore, InMemoryDataStore } from './store-data.js';
 
 export class DwnKeyStore extends DwnDataStore<Jwk> {
   protected name = 'DwnKeyStore';
 
-  protected _recordProtocolDefinition = JwkProtocolDefinition;
+  protected _recordModuleDefinition = JwkModuleDefinition;
 
   /**
    * Properties to use when writing and querying Private Key records with the DWN store.
    */
   protected _recordProperties = {
-    dataFormat   : 'application/json',
-    protocol     : this._recordProtocolDefinition.protocol,
-    protocolPath : 'privateJwk',
-    schema       : this._recordProtocolDefinition.types.privateJwk.schema,
+    dataFormat : 'application/json',
+    module     : this._recordModuleDefinition.module,
+    modulePath : 'privateJwk',
+    schema     : this._recordModuleDefinition.types.privateJwk.schema,
   };
 
   protected async getStoredObjectId(storedKey: Jwk): Promise<string> {

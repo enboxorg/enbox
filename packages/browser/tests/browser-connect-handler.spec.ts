@@ -48,8 +48,8 @@ describe('BrowserConnectHandler', () => {
       theme            : { appearance: 'dark' },
     };
     const permissionRequests: ConnectPermissionRequest[] = [{
-      protocolDefinition : { protocol: 'https://app.example/notes', published: false, types: {}, structure: {} },
-      permissionScopes   : [{ protocol: 'https://app.example/notes', interface: DwnInterfaceName.Records, method: DwnMethodName.Read }],
+      moduleDefinition : { module: 'https://app.example/notes', published: false, types: {}, structure: {} },
+      permissionScopes : [{ module: 'https://app.example/notes', interface: DwnInterfaceName.Records, method: DwnMethodName.Read }],
     }];
     const delegatePortableDid: PortableDid = {
       uri      : 'did:example:delegate',

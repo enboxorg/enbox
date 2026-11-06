@@ -73,17 +73,17 @@ describe('importFromPortable', () => {
 
     await importFromPortable(
       {
-        userAgent                    : agent,
+        userAgent                  : agent,
         emitter,
         storage,
-        defaultSync                  : '30s',
-        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+        defaultSync                : '30s',
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { portableIdentity: {} as any },
     );
 
     expect(syncRegCalls).toHaveLength(1);
-    expect(syncRegCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+    expect(syncRegCalls[0].options.modules).toEqual(['https://modules.example/profile']);
     expect(syncStartCalls).toHaveLength(1);
     expect(syncStartCalls[0].interval).toBe('30s');
   });
@@ -138,8 +138,8 @@ describe('importFromPortable', () => {
     });
 
     const grantData = JSON.stringify({
-      dateExpires : '2040-01-01T00:00:00Z',
-      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+      dateExpires : '2040-01-01T00:00:00.000000Z',
+      scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
       delegated   : true,
     });
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -149,12 +149,12 @@ describe('importFromPortable', () => {
       syncSetIdentityOptions : async (params) => { syncRegCalls.push(params); },
       processDwnRequest      : async (params: any) => {
         const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
+        if (filter?.modulePath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
             recordId      : 'g1',
             contextId     : 'g1',
             encodedData   : encoded,
-            descriptor    : { interface: 'Records', method: 'Write', protocol: 'https://identity.foundation/dwn/permissions', protocolPath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
+            descriptor    : { interface: 'Records', method: 'Write', module: 'https://identity.foundation/dwn/permissions', modulePath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
             authorization : { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] } },
           }] } };
         }
@@ -169,8 +169,8 @@ describe('importFromPortable', () => {
     );
 
     expect(syncRegCalls).toHaveLength(1);
-    // Should register with the scoped protocol, NOT 'all'.
-    expect(syncRegCalls[0].options.protocols).toEqual(['https://proto.example/chat']);
+    // Should register with the scoped module, NOT 'all'.
+    expect(syncRegCalls[0].options.modules).toEqual(['https://modules.example/chat']);
     expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
   });
 
@@ -238,7 +238,7 @@ describe('importFromPortable', () => {
     expect(registrationRequests).toBe(0);
   });
 
-  test('registers sync with protocols: all for delegate with unscoped Messages.Read grant', async () => {
+  test('registers sync with modules: all for delegate with unscoped Messages.Read grant', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     const syncRegCalls: any[] = [];
@@ -249,7 +249,7 @@ describe('importFromPortable', () => {
     });
 
     const grantData = JSON.stringify({
-      dateExpires : '2040-01-01T00:00:00Z',
+      dateExpires : '2040-01-01T00:00:00.000000Z',
       scope       : { interface: 'Messages', method: 'Read' },
       delegated   : true,
     });
@@ -260,12 +260,12 @@ describe('importFromPortable', () => {
       syncSetIdentityOptions : async (params) => { syncRegCalls.push(params); },
       processDwnRequest      : async (params: any) => {
         const filter = params?.messageParams?.filter;
-        if (filter?.protocolPath === 'grant') {
+        if (filter?.modulePath === 'grant') {
           return { reply: { status  : { code: 200, detail: 'OK' }, entries : [{
             recordId      : 'g-unscoped',
             contextId     : 'g-unscoped',
             encodedData   : encoded,
-            descriptor    : { interface: 'Records', method: 'Write', protocol: 'https://identity.foundation/dwn/permissions', protocolPath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
+            descriptor    : { interface: 'Records', method: 'Write', module: 'https://identity.foundation/dwn/permissions', modulePath: 'grant', recipient: 'did:jwk:delegate', dateCreated: '2025-01-01T00:00:00Z', dataFormat: 'application/json', dataCid: 'bafytest', dataSize: 100 },
             authorization : { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner#sig' })) }] } },
           }] } };
         }
@@ -279,7 +279,7 @@ describe('importFromPortable', () => {
     );
 
     expect(syncRegCalls).toHaveLength(1);
-    expect(syncRegCalls[0].options.protocols).toBe('all');
+    expect(syncRegCalls[0].options.modules).toBe('all');
     expect(syncRegCalls[0].options.delegateDid).toBe('did:jwk:delegate');
   });
 

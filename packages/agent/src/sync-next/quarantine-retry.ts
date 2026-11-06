@@ -141,9 +141,9 @@ async function retryRoleRoot(
   if (authorization.kind !== 'role' || scope.kind !== 'context' || !Records.isRecordsWrite(message)) {
     return { appliedEntries: [], kind: 'pending' };
   }
-  const { protocol, protocolPath } = message.descriptor;
-  if (message.contextId === undefined || protocol !== scope.protocol ||
-      protocolPath === undefined || !scope.protocolPaths.includes(protocolPath)) {
+  const { module, modulePath } = message.descriptor;
+  if (message.contextId === undefined || module !== scope.module ||
+      modulePath === undefined || !scope.modulePaths.includes(modulePath)) {
     return { appliedEntries: [], kind: 'pending' };
   }
 
@@ -154,9 +154,9 @@ async function retryRoleRoot(
     delegateDid    : target.delegateDid,
     dwnUrl         : target.dwnUrl,
     permissionsApi : agent.permissions,
-    protocol,
-    protocolPath,
-    protocolRole   : authorization.protocolRole,
+    module,
+    modulePath,
+    moduleRole     : authorization.moduleRole,
     runRemoteRequest,
     shouldContinue,
     sourceDid      : target.did,

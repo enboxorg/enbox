@@ -179,7 +179,7 @@ export async function vaultConnect(
   ctx.assertActive();
 
   const sync = options.sync ?? ctx.defaultSync;
-  const identitySyncProtocols = options.identitySyncProtocols ?? ctx.defaultIdentitySyncProtocols;
+  const identitySyncModules = options.identitySyncModules ?? ctx.defaultIdentitySyncModules;
   const shouldCreateIdentity = options.createIdentity === true;
 
   const { recoveryPhrase, hasPendingSetup, advertisedVaultEndpoints } = await prepareOwnerVault(ctx, {
@@ -201,7 +201,7 @@ export async function vaultConnect(
       userAgent,
       operationSignal : ctx.operationSignal,
       replacementDwnEndpoints,
-      identitySyncProtocols,
+      identitySyncModules,
       registration    : ctx.registration,
       assertActive    : ctx.assertActive,
       runMutation     : ctx.runMutation,
@@ -253,8 +253,8 @@ export async function vaultConnect(
   return ctx.commitSession( async (): Promise<AgentSession> => {
     if ((identity !== undefined && sync !== 'off') || (!isNewIdentity && delegateDid !== undefined)) {
       // Persisted delegates repair their grant-derived scope even while sync is
-      // off so revoked protocols cannot resume from stale registration later.
-      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncProtocols });
+      // off so revoked modules cannot resume from stale registration later.
+      await registerSyncScopeForIdentity({ userAgent, connectedDid, delegateDid, identitySyncModules });
     }
 
     // Persist session info and build the AgentSession for the manager to publish.

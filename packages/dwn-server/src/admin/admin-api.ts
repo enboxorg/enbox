@@ -226,7 +226,7 @@ export class AdminApi {
       return healthAndStatsResult;
     }
 
-    // --- Tenant management (list / create / detail / suspend / unsuspend / quota / messages / protocols / export) ---
+    // --- Tenant management (list / create / detail / suspend / unsuspend / quota / messages / modules / export) ---
     const tenantResult = this.#matchTenantRoutes(req, url, subPath, method);
     if (tenantResult) {
       return tenantResult;
@@ -351,7 +351,7 @@ export class AdminApi {
 
   /**
    * Matches tenant management routes: list / create / detail / suspend / unsuspend / quota /
-   * messages / protocols / export.
+   * messages / modules / export.
    */
   #matchTenantRoutes(req: Request, url: URL, subPath: string, method: string): Response | Promise<Response> | null {
     // --- Tenant list ---
@@ -412,12 +412,12 @@ export class AdminApi {
       }
     }
 
-    // --- Tenant protocols ---
+    // --- Tenant modules ---
     {
-      const match = /^\/tenants\/([^/]+)\/protocols$/.exec(subPath);
+      const match = /^\/tenants\/([^/]+)\/modules$/.exec(subPath);
       if (match && method === 'GET') {
         const did = decodeURIComponent(match[1]);
-        return this.#handleTenantProtocols(did);
+        return this.#handleTenantModules(did);
       }
     }
 
@@ -602,7 +602,7 @@ export class AdminApi {
       storage: {
         totalMessages  : globalStats.totalMessages,
         totalDataBytes : globalStats.totalDataBytes,
-        totalProtocols : globalStats.totalProtocols,
+        totalModules   : globalStats.totalModules,
       },
       connections: {
         websocket: {
@@ -800,10 +800,10 @@ export class AdminApi {
       storage: {
         messageCount     : stats.messageCount,
         dataStorageBytes : stats.dataStorageBytes,
-        protocolCount    : stats.protocolCount,
+        moduleCount      : stats.moduleCount,
       },
-      protocols : stats.protocols,
-      quota     : {
+      modules : stats.modules,
+      quota   : {
         maxMessages,
         maxStorageBytes,
         source: quotaSource,
@@ -1267,7 +1267,7 @@ export class AdminApi {
 
     const iface = url.searchParams.get('interface') ?? undefined;
     const method = url.searchParams.get('method') ?? undefined;
-    const protocol = url.searchParams.get('protocol') ?? undefined;
+    const module = url.searchParams.get('module') ?? undefined;
     const limit = Math.min(parseIntOrDefault(url.searchParams.get('limit'), 20), 100);
     const cursorParam = url.searchParams.get('cursor');
     const cursor = cursorParam === null ? undefined : parseIntOrDefault(cursorParam, 0);
@@ -1275,7 +1275,7 @@ export class AdminApi {
     const result = await this.#adminStore.getTenantMessages(did, {
       interface: iface,
       method,
-      protocol,
+      module,
       limit,
       cursor,
     });
@@ -1284,9 +1284,9 @@ export class AdminApi {
   }
 
   /**
-   * Returns per-protocol message counts for a tenant.
+   * Returns per-module message counts for a tenant.
    */
-  async #handleTenantProtocols(did: string): Promise<Response> {
+  async #handleTenantModules(did: string): Promise<Response> {
     if (!this.#adminStore) {
       return Response.json(
         { error: 'Admin store unavailable. Requires a SQL storage backend.' },
@@ -1294,8 +1294,8 @@ export class AdminApi {
       );
     }
 
-    const protocols = await this.#adminStore.getTenantProtocolCounts(did);
-    return Response.json({ protocols });
+    const modules = await this.#adminStore.getTenantModuleCounts(did);
+    return Response.json({ modules });
   }
 
   /**

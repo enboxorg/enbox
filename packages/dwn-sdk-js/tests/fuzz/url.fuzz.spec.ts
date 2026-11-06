@@ -3,18 +3,18 @@ import { describe, expect, it } from 'bun:test';
 import fc from 'fast-check';
 
 import { DwnError } from '../../src/core/dwn-error.js';
-import { normalizeProtocolUrl, normalizeSchemaUrl, validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../../src/utils/url.js';
+import { normalizeModuleUrl, normalizeSchemaUrl, validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../../src/utils/url.js';
 
 const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 200;
 
 describe('URL utilities — fuzz', () => {
 
-  describe('normalizeProtocolUrl — crash resistance', () => {
+  describe('normalizeModuleUrl — crash resistance', () => {
     it('should either return a string or throw DwnError on arbitrary input', () => {
       fc.assert(
         fc.property(fc.string({ minLength: 0, maxLength: 300 }), (str) => {
           try {
-            const result = normalizeProtocolUrl(str);
+            const result = normalizeModuleUrl(str);
             expect(typeof result).toBe('string');
           } catch (error) {
             expect(error).toBeInstanceOf(DwnError);
@@ -41,13 +41,13 @@ describe('URL utilities — fuzz', () => {
     });
   });
 
-  describe('normalizeProtocolUrl — idempotency', () => {
+  describe('normalizeModuleUrl — idempotency', () => {
     it('should produce the same result when applied twice to valid URLs', () => {
       fc.assert(
         fc.property(fc.webUrl(), (url) => {
           try {
-            const once = normalizeProtocolUrl(url);
-            const twice = normalizeProtocolUrl(once);
+            const once = normalizeModuleUrl(url);
+            const twice = normalizeModuleUrl(once);
             expect(twice).toBe(once);
           } catch {
             // If normalization throws on the input URL, that's acceptable
@@ -75,18 +75,18 @@ describe('URL utilities — fuzz', () => {
     });
   });
 
-  describe('validateProtocolUrlNormalized — consistency with normalizeProtocolUrl', () => {
-    it('should accept the output of normalizeProtocolUrl', () => {
+  describe('validateModuleUrlNormalized — consistency with normalizeModuleUrl', () => {
+    it('should accept the output of normalizeModuleUrl', () => {
       fc.assert(
         fc.property(fc.webUrl(), (url) => {
           let normalized: string;
           try {
-            normalized = normalizeProtocolUrl(url);
+            normalized = normalizeModuleUrl(url);
           } catch {
             return; // If normalization itself throws, skip this case
           }
           // After normalization, validation should pass
-          expect(() => validateProtocolUrlNormalized(normalized)).not.toThrow();
+          expect(() => validateModuleUrlNormalized(normalized)).not.toThrow();
         }),
         { numRuns }
       );
@@ -111,7 +111,7 @@ describe('URL utilities — fuzz', () => {
     });
   });
 
-  describe('normalizeProtocolUrl — strips query and fragment', () => {
+  describe('normalizeModuleUrl — strips query and fragment', () => {
     it('should remove query strings and fragments from URLs', () => {
       fc.assert(
         fc.property(
@@ -121,7 +121,7 @@ describe('URL utilities — fuzz', () => {
           (baseUrl, query, fragment) => {
             const urlWithExtra = `${baseUrl}?${query}#${fragment}`;
             try {
-              const normalized = normalizeProtocolUrl(urlWithExtra);
+              const normalized = normalizeModuleUrl(urlWithExtra);
               expect(normalized.includes('?')).toBe(false);
               expect(normalized.includes('#')).toBe(false);
             } catch {
@@ -134,12 +134,12 @@ describe('URL utilities — fuzz', () => {
     });
   });
 
-  describe('normalizeProtocolUrl — no trailing slash', () => {
+  describe('normalizeModuleUrl — no trailing slash', () => {
     it('should not end with a trailing slash', () => {
       fc.assert(
         fc.property(fc.webUrl(), (url) => {
           try {
-            const normalized = normalizeProtocolUrl(url);
+            const normalized = normalizeModuleUrl(url);
             expect(normalized.endsWith('/')).toBe(false);
           } catch {
             // If normalization throws, that's acceptable

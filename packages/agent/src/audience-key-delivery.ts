@@ -5,7 +5,7 @@ import { DwnErrorCode } from '@enbox/dwn-sdk-js';
 import type { AudienceKeyDeliveryFailure, AudienceKeyDeliveryOutcome } from './types/dwn.js';
 
 import { PermissionGrantNotFoundError } from './permissions-api.js';
-import { RemoteProtocolDefinitionError } from './dwn-protocol-cache.js';
+import { RemoteModuleDefinitionError } from './dwn-module-cache.js';
 
 const projectedFailureStates = {
   'awaiting-recipient-install' : 'awaiting-recipient-install',
@@ -36,7 +36,7 @@ export class AudienceControlWriteError extends Error {
 export type AudienceKeyDeliveryIntent = Readonly<{
   sourceDid: string;
   roleRecordId: string;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   recipientDid: string;
@@ -63,7 +63,7 @@ export function projectAudienceKeyDeliveryOutcome(
 
 /** Maps typed delivery failures to the retry policy persisted by reconciliation. */
 export function classifyAudienceKeyDeliveryFailure(error: unknown): AudienceKeyDeliveryFailure {
-  if (error instanceof RemoteProtocolDefinitionError) {
+  if (error instanceof RemoteModuleDefinitionError) {
     if (error.failure === 'not-found') {
       return 'awaiting-recipient-install';
     }

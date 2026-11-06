@@ -3,7 +3,7 @@ import type { Jwk } from '@enbox/crypto';
 import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
 import { DwnInterface } from '../src/types/dwn.js';
-import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
+import { JwkModuleDefinition } from '../src/store-data-modules.js';
 import { LocalKeyManager } from '../src/local-key-manager.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -319,24 +319,24 @@ describe('KeyStore', () => {
         expect(await signer.verify({ data, signature })).toBe(true);
       });
 
-      it('installs the JWK protocol with $keyAgreement keys', async () => {
-        // Trigger protocol installation by initializing the store.
+      it('installs the JWK module with $keyAgreement keys', async () => {
+        // Trigger module installation by initializing the store.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
-        // Query the installed protocol.
+        // Query the installed module.
         const { reply } = await testHarness.agent.dwn.processRequest({
           author        : testHarness.agent.agentDid.uri,
           target        : testHarness.agent.agentDid.uri,
-          messageType   : DwnInterface.ProtocolsQuery,
+          messageType   : DwnInterface.ModulesQuery,
           messageParams : {
-            filter: { protocol: JwkProtocolDefinition.protocol }
+            filter: { module: JwkModuleDefinition.module }
           }
         });
 
         expect(reply.status.code).toBe(200);
         expect(reply.entries).toHaveLength(1);
 
-        // Verify $keyAgreement was injected into the protocol definition.
+        // Verify $keyAgreement was injected into the module definition.
         const installedDefinition = reply.entries![0].descriptor.definition;
         const privateJwkRuleSet = installedDefinition.structure.privateJwk;
         expect(installedDefinition).toHaveProperty('$keyAgreement');
@@ -358,10 +358,10 @@ describe('KeyStore', () => {
           messageType   : DwnInterface.RecordsQuery,
           messageParams : {
             filter: {
-              dataFormat   : 'application/json',
-              protocol     : JwkProtocolDefinition.protocol,
-              protocolPath : 'privateJwk',
-              schema       : JwkProtocolDefinition.types.privateJwk.schema,
+              dataFormat : 'application/json',
+              module     : JwkModuleDefinition.module,
+              modulePath : 'privateJwk',
+              schema     : JwkModuleDefinition.types.privateJwk.schema,
             }
           },
         });
@@ -375,7 +375,7 @@ describe('KeyStore', () => {
         expect(rawRecord.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
         expect(rawRecord.encryption!.initializationVector).toBeDefined();
         expect(rawRecord.encryption!.keyEncryption).toHaveLength(1);
-        expect(rawRecord.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+        expect(rawRecord.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
 
         // Read back through the store API — should be decrypted transparently.
         const storedKey = await keyStore.get({ id: keyUri, agent: testHarness.agent });
@@ -439,7 +439,7 @@ describe('KeyStore', () => {
     });
 
     describe('encryption required — Ed25519-only agent DID rejection', () => {
-      // These tests verify that DwnKeyStore (whose protocol definition has
+      // These tests verify that DwnKeyStore (whose module definition has
       // encryptionRequired: true) refuses to operate when the agent DID lacks an
       // X25519 keyAgreement key. No plaintext fallback is allowed.
       let ed25519Harness: PlatformAgentTestHarness;
@@ -486,8 +486,8 @@ describe('KeyStore', () => {
         }
       });
 
-      it('should throw during protocol installation for Ed25519-only agent DID', async () => {
-        // Directly calling initialize() should throw because installProtocol()
+      it('should throw during module installation for Ed25519-only agent DID', async () => {
+        // Directly calling initialize() should throw because installModule()
         // no longer catches encryption key derivation failures.
         try {
           await (ed25519KeyStore as DwnDataStore<Jwk>)['initialize']({ agent: ed25519Harness.agent });
@@ -500,15 +500,15 @@ describe('KeyStore', () => {
       });
     });
 
-    describe('protocol re-initialization', () => {
-      it('should derive $keyAgreement when configuring an encrypted protocol', async () => {
+    describe('module re-initialization', () => {
+      it('should derive $keyAgreement when configuring an encrypted module', async () => {
         const tenantDid = testHarness.agent.agentDid.uri;
 
         const { message, reply } = await testHarness.agent.dwn.processRequest({
           author        : tenantDid,
           target        : tenantDid,
-          messageType   : DwnInterface.ProtocolsConfigure,
-          messageParams : { definition: JwkProtocolDefinition },
+          messageType   : DwnInterface.ModulesConfigure,
+          messageParams : { definition: JwkModuleDefinition },
         });
 
         expect(reply.status.code).toBe(202);
@@ -526,10 +526,10 @@ describe('KeyStore', () => {
         expect(storedKeyBefore).toBeDefined();
         expect(storedKeyBefore!.kty).toBe('OKP');
 
-        // Clear the protocol initialization cache (simulating agent restart).
-        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache']?.clear();
+        // Clear the module initialization cache (simulating agent restart).
+        (keyStore as DwnDataStore<Jwk>)['_moduleInitializedCache']?.clear();
 
-        // Re-initialize — should recognize the existing protocol, not re-install.
+        // Re-initialize — should recognize the existing module, not re-install.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         // The previously written encrypted record should still be readable.
@@ -539,16 +539,16 @@ describe('KeyStore', () => {
         expect(storedKeyAfter!.kid).toBe(storedKeyBefore!.kid);
       });
 
-      it('should re-query protocol after the initialization cache expires', async () => {
+      it('should re-query module after the initialization cache expires', async () => {
         const { TtlCache } = await import('@enbox/common');
 
-        // First call installs the protocol and caches initialization.
+        // First call installs the module and caches initialization.
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
         const tenantDid = testHarness.agent.agentDid.uri;
         const shortInitCache = new TtlCache<string, boolean>({ ttl: 1, max: 100 });
         shortInitCache.set(tenantDid, true);
-        (keyStore as DwnDataStore<Jwk>)['_protocolInitializedCache'] = shortInitCache;
+        (keyStore as DwnDataStore<Jwk>)['_moduleInitializedCache'] = shortInitCache;
 
         // Let the cache expire, then verify initialization checks the DWN again.
         await new Promise<void>(resolve => setTimeout(resolve, 10));
@@ -558,10 +558,10 @@ describe('KeyStore', () => {
 
         await (keyStore as DwnDataStore<Jwk>)['initialize']({ agent: testHarness.agent });
 
-        const protocolsQueryCall = processRequestSpy.mock.calls.find(
-          (args: any[]) => args[0]?.messageType === DwnInterface.ProtocolsQuery
+        const modulesQueryCall = processRequestSpy.mock.calls.find(
+          (args: any[]) => args[0]?.messageType === DwnInterface.ModulesQuery
         );
-        expect(protocolsQueryCall).toBeDefined();
+        expect(modulesQueryCall).toBeDefined();
 
         processRequestSpy.mockRestore();
       });

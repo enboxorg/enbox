@@ -67,7 +67,7 @@ describe('recordCodecs.fileEnvelope', () => {
     expect(await bytesOf(decoded.blob)).toEqual(new Uint8Array([0, 1, 255]));
   });
 
-  it('supports an optional local content limit and calculates protocol size bounds', () => {
+  it('supports an optional local content limit and calculates module size bounds', () => {
     for (const options of [
       undefined,
       { formatId: 'short' },

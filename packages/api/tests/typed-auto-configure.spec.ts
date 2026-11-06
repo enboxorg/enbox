@@ -1,27 +1,27 @@
 import type { DwnApi } from '../src/dwn-api.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
-const PROTOCOL_URI = 'https://example.com/protocols/auto-configure';
+const MODULE_URI = 'https://example.com/modules/auto-configure';
 
 const definition = {
-  protocol  : PROTOCOL_URI,
+  module    : MODULE_URI,
   published : true,
   types     : {
-    note: { schema: `${PROTOCOL_URI}/schemas/note`, dataFormats: ['application/json'] },
+    note: { schema: `${MODULE_URI}/schemas/note`, dataFormats: ['application/json'] },
   },
   structure: {
     note: { $actions: [{ who: 'anyone', can: ['create', 'read'] }] },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const protocol = defineProtocol(definition, { note: recordCodecs.json<unknown>() });
+const module = defineModule(definition, { note: recordCodecs.json<unknown>() });
 
 type FakeStatus = { code: number; detail: string };
 
@@ -33,15 +33,15 @@ function createOwnerDwn(configureStatuses: FakeStatus[]): {
   const dwn = {
     connectedDid : 'did:example:owner',
     isDelegate   : false,
-    protocols    : {
+    modules      : {
       configure: async (): Promise<unknown> => {
         const status = configureStatuses[configureCount] ?? { code: 202, detail: 'Accepted' };
         configureCount += 1;
         return { status };
       },
       query: async (): Promise<unknown> => ({
-        status    : { code: 200, detail: 'OK' },
-        protocols : [],
+        status  : { code: 200, detail: 'OK' },
+        modules : [],
       }),
     },
     records: {
@@ -63,31 +63,31 @@ function createTransientDelegateDwn(): {
   let imports = 0;
   let localQueries = 0;
   let remoteQueries = 0;
-  const walletProtocol = {
+  const walletModule = {
     definition,
     toJSON: (): Record<string, never> => ({}),
   };
   const dwn = {
-    connectedDid                : 'did:example:owner',
-    isDelegate                  : true,
-    importProtocolConfiguration : async (): Promise<unknown> => {
+    connectedDid              : 'did:example:owner',
+    isDelegate                : true,
+    importModuleConfiguration : async (): Promise<unknown> => {
       imported = true;
       imports += 1;
       return { status: { code: 202, detail: 'Accepted' } };
     },
-    protocols: {
+    modules: {
       query: async (request: { from?: string }): Promise<unknown> => {
         if (request.from !== undefined) {
           remoteQueries += 1;
           return remoteQueries === 1
-            ? { status: { code: 503, detail: 'Service Unavailable' }, protocols: [] }
-            : { status: { code: 200, detail: 'OK' }, protocols: [walletProtocol] };
+            ? { status: { code: 503, detail: 'Service Unavailable' }, modules: [] }
+            : { status: { code: 200, detail: 'OK' }, modules: [walletModule] };
         }
 
         localQueries += 1;
         return {
-          status    : { code: 200, detail: 'OK' },
-          protocols : imported ? [{ definition }] : [],
+          status  : { code: 200, detail: 'OK' },
+          modules : imported ? [{ definition }] : [],
         };
       },
     },
@@ -109,10 +109,10 @@ function createTransientDelegateDwn(): {
   };
 }
 
-describe('TypedEnbox automatic protocol configuration', () => {
+describe('TypedEnbox automatic module configuration', () => {
   it('should reject a non-successful owner configure response with the typed DWN error', async () => {
     const fake = createOwnerDwn([{ code: 500, detail: 'Internal Server Error' }]);
-    const typed = new TypedEnbox(fake.dwn, protocol);
+    const typed = new TypedEnbox(fake.dwn, module);
 
     await expect(typed.records.query('note')).rejects.toMatchObject({
       name   : DwnResponseError.name,
@@ -127,7 +127,7 @@ describe('TypedEnbox automatic protocol configuration', () => {
       { code: 500, detail: 'Internal Server Error' },
       { code: 202, detail: 'Accepted' },
     ]);
-    const typed = new TypedEnbox(fake.dwn, protocol);
+    const typed = new TypedEnbox(fake.dwn, module);
 
     await expect(typed.records.query('note')).rejects.toBeInstanceOf(DwnResponseError);
 
@@ -139,7 +139,7 @@ describe('TypedEnbox automatic protocol configuration', () => {
 
   it('should share a delegate attempt and retry after a transient wallet query failure', async () => {
     const fake = createTransientDelegateDwn();
-    const typed = new TypedEnbox(fake.dwn, protocol);
+    const typed = new TypedEnbox(fake.dwn, module);
 
     const results = await Promise.allSettled([
       typed.records.query('note'),

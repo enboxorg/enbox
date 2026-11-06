@@ -1,5 +1,5 @@
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, ProtocolRuleSet, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ModulesConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import type { AudienceKeyDeliveryOutcome } from '../src/types/dwn.js';
 import type { AudienceKeyDeliveryState } from '../src/audience-key-delivery.js';
@@ -24,7 +24,7 @@ import {
 import { createImportedDelegateDid } from './utils/delegate-did.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
-import { RemoteProtocolDefinitionError } from '../src/dwn-protocol-cache.js';
+import { RemoteModuleDefinitionError } from '../src/dwn-module-cache.js';
 import { scanActiveAudienceKeyDeliveryIntents } from '../src/audience-key-delivery-reconciliation.js';
 import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -34,11 +34,11 @@ const testDwnUrls: string[] = [testDwnUrl];
 
 const ROLE_PATH = 'thread/participant';
 
-// Fresh protocol URI per test so audience/delivery records never bleed between tests.
-function chatProtocolDefinition(): ProtocolDefinition {
+// Fresh module URI per test so audience/delivery records never bleed between tests.
+function chatModuleDefinition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : `https://protocol.test/delivery-primitives/${crypto.randomUUID()}`,
+    module    : `https://module.test/delivery-primitives/${crypto.randomUUID()}`,
     types     : {
       thread      : { schema: 'https://schemas.test/thread', dataFormats: ['application/json'] },
       participant : { schema: 'https://schemas.test/participant', dataFormats: ['application/json'] },
@@ -57,27 +57,27 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  async function installProtocol(tenantDid: string, definition: ProtocolDefinition): Promise<ProtocolDefinition> {
+  async function installModule(tenantDid: string, definition: ModuleDefinition): Promise<ModuleDefinition> {
     const { message, reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition },
     });
     expect(reply.status.code).toBe(202);
-    return (message as ProtocolsConfigureMessage).descriptor.definition;
+    return (message as ModulesConfigureMessage).descriptor.definition;
   }
 
-  async function writeThread(definition: ProtocolDefinition): Promise<string> {
+  async function writeThread(definition: ModuleDefinition): Promise<string> {
     const { reply, message } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/json',
-        protocol     : definition.protocol,
-        protocolPath : 'thread',
-        schema       : definition.types.thread.schema,
+        dataFormat : 'application/json',
+        module     : definition.module,
+        modulePath : 'thread',
+        schema     : definition.types.thread.schema,
       },
       dataStream: new Blob([JSON.stringify({ title: 'thread' })]),
     });
@@ -86,7 +86,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
   }
 
   async function writeRoleRecord(
-    definition: ProtocolDefinition,
+    definition: ModuleDefinition,
     threadContextId: string,
     recipientDid: string,
   ): Promise<{ roleContextId: string; roleRecordId: string; delivery?: AudienceKeyDeliveryOutcome }> {
@@ -97,8 +97,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       messageParams : {
         dataFormat      : 'application/json',
         parentContextId : threadContextId,
-        protocol        : definition.protocol,
-        protocolPath    : ROLE_PATH,
+        module          : definition.module,
+        modulePath      : ROLE_PATH,
         recipient       : recipientDid,
         schema          : definition.types.participant.schema,
       },
@@ -112,16 +112,16 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     };
   }
 
-  async function countDeliveries(definition: ProtocolDefinition, recipientDid: string): Promise<number> {
+  async function countDeliveries(definition: ModuleDefinition, recipientDid: string): Promise<number> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : definition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          recipient    : recipientDid,
+          module     : definition.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : recipientDid,
         },
       },
     });
@@ -129,17 +129,17 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     return reply.entries?.length ?? 0;
   }
 
-  async function queryAudienceKeyIds(definition: ProtocolDefinition, contextId: string): Promise<string[]> {
+  async function queryAudienceKeyIds(definition: ModuleDefinition, contextId: string): Promise<string[]> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : definition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol : definition.protocol,
+          module     : definition.module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module   : definition.module,
             rolePath : ROLE_PATH,
             contextId,
           },
@@ -153,12 +153,12 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     });
   }
 
-  async function readRolePublicKey(tenantDid: string, protocolUri: string): Promise<PublicKeyJwk> {
+  async function readRolePublicKey(tenantDid: string, moduleUri: string): Promise<PublicKeyJwk> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: protocolUri } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: moduleUri } },
     });
     const definition = reply.entries![0].descriptor.definition;
     return getRuleSetAtPath(ROLE_PATH, definition.structure)!.$keyAgreement!.publicKeyJwk as PublicKeyJwk;
@@ -196,27 +196,27 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
   describe('audience-key delivery reconciliation', () => {
     it('rebuilds active role intent and removes it after the role is deleted', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Reconciled', testDwnUrls });
-      const installedChat = await installProtocol(alice.did.uri, chat);
-      await installProtocol(bob.did.uri, chat);
+      const installedChat = await installModule(alice.did.uri, chat);
+      await installModule(bob.did.uri, chat);
       const threadContextId = await writeThread(chat);
       const { roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
       await testHarness.audienceKeyDeliveryStore.clear();
 
-      const reconcile = async (): Promise<AudienceKeyDeliveryState[]> => testHarness.audienceKeyDeliveryStore.reconcileProtocol({
-        protocol  : chat.protocol,
+      const reconcile = async (): Promise<AudienceKeyDeliveryState[]> => testHarness.audienceKeyDeliveryStore.reconcileModule({
+        module    : chat.module,
         sourceDid : alice.did.uri,
         scan      : () => scanActiveAudienceKeyDeliveryIntents({
-          agent              : testHarness.agent,
-          protocolDefinition : installedChat,
-          sourceDid          : alice.did.uri,
+          agent            : testHarness.agent,
+          moduleDefinition : installedChat,
+          sourceDid        : alice.did.uri,
         }),
       });
 
       expect(await reconcile()).toEqual([{
         contextId    : threadContextId,
-        protocol     : chat.protocol,
+        module       : chat.module,
         recipientDid : bob.did.uri,
         rolePath     : ROLE_PATH,
         roleRecordId,
@@ -237,20 +237,20 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
   describe('automatic audience-key delivery', () => {
     it('uses only owned replication links to establish delivery-feed currentness', async () => {
-      const protocol = 'https://protocol.test/delivery-currentness';
-      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ protocols: [protocol] });
+      const module = 'https://module.test/delivery-currentness';
+      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ modules: [module] });
       const getLinks = sinon.stub(testHarness.agent.sync, 'getReplicationLinks');
       getLinks.onFirstCall().resolves([{
         tenantDid      : alice.did.uri,
         remoteEndpoint : testDwnUrls[0],
-        scope          : { kind: 'protocolSet', protocols: [protocol] },
+        scope          : { kind: 'moduleSet', modules: [module] },
         status         : 'live',
         connectivity   : 'online',
         isPullCurrent  : true,
       }, {
         tenantDid        : alice.did.uri,
         remoteEndpoint   : testDwnUrls[0],
-        scope            : { kind: 'context', protocol, contextId: 'sibling', protocolPaths: ['thread'] },
+        scope            : { kind: 'context', module, contextId: 'sibling', modulePaths: ['thread'] },
         status           : 'paused',
         connectivity     : 'offline',
         followedSourceId : 'sibling-role',
@@ -259,7 +259,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       getLinks.onSecondCall().resolves([{
         tenantDid        : alice.did.uri,
         remoteEndpoint   : testDwnUrls[0],
-        scope            : { kind: 'context', protocol, contextId: 'shared', protocolPaths: ['thread'] },
+        scope            : { kind: 'context', module, contextId: 'shared', modulePaths: ['thread'] },
         status           : 'live',
         connectivity     : 'online',
         followedSourceId : 'shared-role',
@@ -268,25 +268,25 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
         alice.did.uri,
-        protocol,
+        module,
       )).resolves.toBeUndefined();
       await expect((testHarness.agent.dwn as any).assertAudienceKeyDeliveryFeedCurrent(
         alice.did.uri,
-        protocol,
+        module,
       )).rejects.toThrow('waiting for the local replica to become current');
     });
 
     it('reconciles from the installed definition instead of treating authored wake paths as authority', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       chat.types.retired = { dataFormats: ['application/json'] };
-      (chat.structure.thread as ProtocolRuleSet).retired = { $role: true };
-      await installProtocol(alice.did.uri, chat);
-      const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileProtocol');
+      (chat.structure.thread as ModuleRuleSet).retired = { $role: true };
+      await installModule(alice.did.uri, chat);
+      const reconcile = sinon.spy(testHarness.audienceKeyDeliveryStore, 'reconcileModule');
 
       const retry = await (testHarness.agent.dwn as any).runAudienceKeyDeliveryPass({
-        protocol : chat.protocol,
-        signal   : new AbortController().signal,
-        target   : alice.did.uri,
+        module : chat.module,
+        signal : new AbortController().signal,
+        target : alice.did.uri,
       }, true);
 
       expect(retry).toBe(false);
@@ -294,9 +294,9 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('waits for a current replica, repairs after recipient install, and removes deleted roles', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Automatic Repair', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
       const threadContextId = await writeThread(chat);
       const { delivery, roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
       expect(delivery).toMatchObject({ delivered: false, failure: 'awaiting-recipient-install' });
@@ -305,11 +305,11 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           .toMatchObject({ state: 'awaiting-recipient-install' });
       });
 
-      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ protocols: [chat.protocol] });
+      sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves({ modules: [chat.module] });
       const link = {
         tenantDid      : alice.did.uri,
         remoteEndpoint : testDwnUrls[0],
-        scope          : { kind: 'protocolSet' as const, protocols: [chat.protocol] as [string] },
+        scope          : { kind: 'moduleSet' as const, modules: [chat.module] as [string] },
         status         : 'live' as const,
       };
       let connectivity: 'offline' | 'online' = 'offline';
@@ -322,14 +322,14 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         type           : 'pull:currentness-change',
         tenantDid      : alice.did.uri,
         remoteEndpoint : testDwnUrls[0],
-        protocol       : chat.protocol,
+        module         : chat.module,
         from           : false,
         to             : true,
       } as const;
 
       const session = new AbortController();
-      testHarness.agent.dwn.registerAudienceKeyDeliveryProtocol({
-        protocol  : chat.protocol,
+      testHarness.agent.dwn.registerAudienceKeyDeliveryModule({
+        module    : chat.module,
         rolePaths : [ROLE_PATH],
         signal    : session.signal,
         target    : alice.did.uri,
@@ -358,7 +358,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
         .toMatchObject({ state: 'awaiting-recipient-install' });
 
-      await installProtocol(bob.did.uri, chat);
+      await installModule(bob.did.uri, chat);
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(await testHarness.audienceKeyDeliveryStore.get(alice.did.uri, roleRecordId))
           .toMatchObject({ state: 'delivered' });
@@ -378,33 +378,33 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('reads persisted state and explicitly retries dormant work through the session coordinator', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Explicit Repair', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
       const threadContextId = await writeThread(chat);
       const roleKey = sinon.stub(testHarness.agent.dwn as any, 'getRecipientRolePublicKey')
-        .rejects(new RemoteProtocolDefinitionError('recipient protocol not installed', 'not-found'));
+        .rejects(new RemoteModuleDefinitionError('recipient module not installed', 'not-found'));
       const { roleRecordId } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
       const session = new AbortController();
-      testHarness.agent.dwn.registerAudienceKeyDeliveryProtocol({
-        protocol  : chat.protocol,
+      testHarness.agent.dwn.registerAudienceKeyDeliveryModule({
+        module    : chat.module,
         rolePaths : [ROLE_PATH],
         signal    : session.signal,
         target    : alice.did.uri,
       });
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(await testHarness.agent.dwn.getAudienceKeyDeliveryState({
-          protocol : chat.protocol,
+          module : chat.module,
           roleRecordId,
-          signal   : session.signal,
-          target   : alice.did.uri,
+          signal : session.signal,
+          target : alice.did.uri,
         })).toMatchObject({ state: 'awaiting-recipient-install' });
       });
       await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
-        protocol : chat.protocol,
+        module : chat.module,
         roleRecordId,
-        signal   : new AbortController().signal,
-        target   : alice.did.uri,
+        signal : new AbortController().signal,
+        target : alice.did.uri,
       })).rejects.toThrow('no audience-key delivery coordinator');
 
       await Poller.pollUntilSuccessOrTimeout(async () => { expect(roleKey.callCount).toBeGreaterThan(1); });
@@ -417,41 +417,41 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       roleKey.resolves(await randomX25519PublicKey());
 
       expect(await testHarness.agent.dwn.getAudienceKeyDeliveryState({
-        protocol : chat.protocol,
+        module : chat.module,
         roleRecordId,
-        signal   : session.signal,
-        target   : alice.did.uri,
+        signal : session.signal,
+        target : alice.did.uri,
       })).toMatchObject({ state: 'failed' });
       const deliveryWake = sinon.spy();
       const unsubscribe = testHarness.agent.dwn.subscribeAudienceKeyDeliveryChanges({
         listener : deliveryWake,
-        protocol : chat.protocol,
+        module   : chat.module,
         target   : alice.did.uri,
       });
       expect(await testHarness.agent.dwn.retryAudienceKeyDeliveryState({
-        protocol : chat.protocol,
+        module : chat.module,
         roleRecordId,
-        signal   : session.signal,
-        target   : alice.did.uri,
+        signal : session.signal,
+        target : alice.did.uri,
       })).toMatchObject({ state: 'delivered' });
       expect(deliveryWake.calledOnce).toBe(true);
       unsubscribe();
       session.abort();
       await expect(testHarness.agent.dwn.getAudienceKeyDeliveryState({
-        protocol : chat.protocol,
+        module : chat.module,
         roleRecordId,
-        signal   : session.signal,
-        target   : alice.did.uri,
+        signal : session.signal,
+        target : alice.did.uri,
       })).rejects.toThrow();
     }, 30000);
   });
 
   describe('reprovisionAudienceKeyDelivery()', () => {
     it('returns alreadyDelivered without writing a duplicate when the current key is already delivered', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob AlreadyDelivered', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
-      await installProtocol(bob.did.uri, chat);
+      await installModule(alice.did.uri, chat);
+      await installModule(bob.did.uri, chat);
 
       const threadContextId = await writeThread(chat);
       const { roleContextId, delivery } = await writeRoleRecord(chat, threadContextId, bob.did.uri);
@@ -460,7 +460,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId    : roleContextId,
-        protocol     : chat.protocol,
+        module       : chat.module,
         recipientDid : bob.did.uri,
         rolePath     : ROLE_PATH,
         target       : alice.did.uri,
@@ -472,9 +472,9 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('repairs a delivery wrapped to the wrong recipient key instead of reporting alreadyDelivered', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Poisoned', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
 
       const roleKeyStub = stubUnresolvableRecipientKey();
       const threadContextId = await writeThread(chat);
@@ -489,7 +489,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         agent        : testHarness.agent,
         contextId    : threadContextId,
         keyId        : audienceKeyId,
-        protocol     : chat.protocol,
+        module       : chat.module,
         recipientDid : alice.did.uri,
         rolePath     : ROLE_PATH,
         sourceDid    : alice.did.uri,
@@ -501,7 +501,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
           contextId   : threadContextId,
           keyId       : audienceKeyId,
           keyMaterial : audienceKey!.keyMaterial,
-          protocol    : chat.protocol,
+          module      : chat.module,
           rolePath    : ROLE_PATH,
         },
         authorDid              : alice.did.uri,
@@ -514,11 +514,11 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       // Re-provision with Bob's REAL role-path key: the poisoned delivery must not
       // read as alreadyDelivered — a fresh, correctly-wrapped delivery is written.
-      await installProtocol(bob.did.uri, chat);
-      const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.protocol);
+      await installModule(bob.did.uri, chat);
+      const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.module);
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId              : roleContextId,
-        protocol               : chat.protocol,
+        module                 : chat.module,
         recipientDid           : bob.did.uri,
         recipientRolePublicKey : bobRoleKey,
         rolePath               : ROLE_PATH,
@@ -537,8 +537,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         messageParams : {
           dataFormat      : 'text/plain',
           parentContextId : threadContextId,
-          protocol        : chat.protocol,
-          protocolPath    : 'thread/chat',
+          module          : chat.module,
+          modulePath      : 'thread/chat',
           schema          : chat.types.chat.schema,
         },
         dataStream: new Blob([chatText]),
@@ -549,8 +549,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsRead,
         messageParams : {
-          filter       : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
-          protocolRole : ROLE_PATH,
+          filter     : { recordId: (chatWrite.message as RecordsWriteMessage).recordId },
+          moduleRole : ROLE_PATH,
         },
       });
       expect(read.reply.status.code).toBe(200);
@@ -565,9 +565,9 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('reports a best-effort failure when the recipient key cannot be resolved and none is supplied', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Unresolvable', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
       const threadContextId = await writeThread(chat);
       await writeRoleRecord(chat, threadContextId, bob.did.uri);
 
@@ -576,7 +576,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const roleKeyStub = stubUnresolvableRecipientKey();
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId    : threadContextId,
-        protocol     : chat.protocol,
+        module       : chat.module,
         recipientDid : bob.did.uri,
         rolePath     : ROLE_PATH,
         target       : alice.did.uri,
@@ -588,16 +588,16 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(!outcome.delivered && outcome.reason).toMatch(/unresolvable in test/i);
     }, 30000);
 
-    it('reports when the recipient has not installed the protocol', async () => {
+    it('reports when the recipient has not installed the module', async () => {
       const dwnApi = testHarness.agent.dwn as any;
-      sinon.stub(dwnApi, 'getProtocolDefinition').resolves(undefined);
-      sinon.stub(dwnApi, 'fetchRemoteProtocolDefinition').rejects(
-        new RemoteProtocolDefinitionError('protocol not installed', 'not-found'),
+      sinon.stub(dwnApi, 'getModuleDefinition').resolves(undefined);
+      sinon.stub(dwnApi, 'fetchRemoteModuleDefinition').rejects(
+        new RemoteModuleDefinitionError('module not installed', 'not-found'),
       );
 
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId    : 'thread-context',
-        protocol     : 'https://protocol.example/chat',
+        module       : 'https://module.example/chat',
         recipientDid : 'did:example:recipient',
         rolePath     : ROLE_PATH,
         target       : alice.did.uri,
@@ -606,15 +606,15 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       expect(outcome).toEqual({
         delivered    : false,
         failure      : 'awaiting-recipient-install',
-        reason       : 'protocol not installed',
+        reason       : 'module not installed',
         recipientDid : 'did:example:recipient',
       });
     });
 
     it('coalesces concurrent re-provision calls into a single delivery write', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Concurrent', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
 
       const roleKeyStub = stubUnresolvableRecipientKey();
       const threadContextId = await writeThread(chat);
@@ -624,7 +624,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
 
       const request = {
         contextId              : roleContextId,
-        protocol               : chat.protocol,
+        module                 : chat.module,
         recipientDid           : bob.did.uri,
         recipientRolePublicKey : await randomX25519PublicKey(),
         rolePath               : ROLE_PATH,
@@ -672,7 +672,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const request = {
         contextId  : 'delegated-flight-context',
         granteeDid : delegateDid,
-        protocol   : `https://protocol.test/delegated-flight/${crypto.randomUUID()}`,
+        module     : `https://module.test/delegated-flight/${crypto.randomUUID()}`,
         recipientDid,
         recipientRolePublicKey,
         rolePath   : ROLE_PATH,
@@ -695,9 +695,9 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('resolves a delegate write grant and repairs delivery', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Delegate Repair', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
 
       const roleKeyStub = stubUnresolvableRecipientKey();
       const threadContextId = await writeThread(chat);
@@ -706,8 +706,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       roleKeyStub.restore();
       expect(await countDeliveries(chat, bob.did.uri)).toBe(0);
 
-      await installProtocol(bob.did.uri, chat);
-      const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.protocol);
+      await installModule(bob.did.uri, chat);
+      const bobRoleKey = await readRolePublicKey(bob.did.uri, chat.module);
 
       const { delegateDid, delegateX25519PrivateKey } = await createImportedDelegateDid(testHarness);
       const writeGrant = await testHarness.agent.permissions.createGrant({
@@ -716,10 +716,10 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         delegated   : true,
         grantedTo   : delegateDid,
         scope       : {
-          interface    : DwnInterfaceName.Records,
-          method       : DwnMethodName.Write,
-          protocol     : chat.protocol,
-          protocolPath : ROLE_PATH,
+          interface  : DwnInterfaceName.Records,
+          method     : DwnMethodName.Write,
+          module     : chat.module,
+          modulePath : ROLE_PATH,
         },
         store: true,
       });
@@ -746,7 +746,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId              : roleContextId,
         granteeDid             : delegateDid,
-        protocol               : chat.protocol,
+        module                 : chat.module,
         recipientDid           : bob.did.uri,
         recipientRolePublicKey : bobRoleKey,
         rolePath               : ROLE_PATH,
@@ -762,16 +762,16 @@ describe('AgentDwnApi audience key delivery primitives', () => {
         delegate     : true,
         delegateDid,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : chat.protocol,
-        protocolPath : ROLE_PATH,
+        module       : chat.module,
+        modulePath   : ROLE_PATH,
       });
       expect(await countDeliveries(chat, bob.did.uri)).toBe(1);
     }, 30000);
 
     it('reports the DWN rejection when the recipient holds no active role record', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const bob = await testHarness.createIdentity({ name: 'Bob Roleless', testDwnUrls });
-      await installProtocol(alice.did.uri, chat);
+      await installModule(alice.did.uri, chat);
       const threadContextId = await writeThread(chat);
 
       // No $role record exists for Bob. The DWN rejects the delivery write itself;
@@ -779,7 +779,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       // live role query.
       const outcome = await testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId              : threadContextId,
-        protocol               : chat.protocol,
+        module                 : chat.module,
         recipientDid           : bob.did.uri,
         recipientRolePublicKey : await randomX25519PublicKey(),
         rolePath               : ROLE_PATH,
@@ -793,7 +793,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('resolves delegated authorization on every repair attempt', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
       const delegate = await testHarness.agent.identity.create({
         didMethod : 'jwk',
         metadata  : { name: 'Coverage-less Delegate' },
@@ -803,8 +803,8 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const request = {
         contextId              : 'thread-context',
         granteeDid             : delegate.did.uri,
-        protocol               : chat.protocol,
-        protocolRole           : ROLE_PATH,
+        module                 : chat.module,
+        moduleRole             : ROLE_PATH,
         recipientDid           : 'did:example:recipient',
         recipientRolePublicKey : await randomX25519PublicKey(),
         rolePath               : ROLE_PATH,
@@ -821,11 +821,11 @@ describe('AgentDwnApi audience key delivery primitives', () => {
     }, 30000);
 
     it('throws on caller misuse instead of reporting a failed outcome', async () => {
-      const chat = chatProtocolDefinition();
+      const chat = chatModuleDefinition();
 
       // A nested role path with no contextId cannot address an audience tuple.
       await expect(testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
-        protocol     : chat.protocol,
+        module       : chat.module,
         recipientDid : alice.did.uri,
         rolePath     : ROLE_PATH,
         target       : alice.did.uri,
@@ -836,7 +836,7 @@ describe('AgentDwnApi audience key delivery primitives', () => {
       const ed25519Key = { crv: 'Ed25519', kty: 'OKP', x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo' } as unknown as PublicKeyJwk;
       await expect(testHarness.agent.dwn.reprovisionAudienceKeyDelivery({
         contextId              : 'some-thread-context',
-        protocol               : chat.protocol,
+        module                 : chat.module,
         recipientDid           : alice.did.uri,
         recipientRolePublicKey : ed25519Key,
         rolePath               : ROLE_PATH,

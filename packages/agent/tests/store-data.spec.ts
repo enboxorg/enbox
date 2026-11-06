@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { PortableDid } from '@enbox/dids';
-import type { ProtocolDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsDeleteMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { DwnErrorCode } from '@enbox/dwn-sdk-js';
@@ -19,8 +19,8 @@ import { DwnDataStore, DwnDataStoreReadError, InMemoryDataStore } from '../src/s
 class DwnTestStore extends DwnDataStore<PortableDid> {
   protected name = 'DwnTestStore';
 
-  protected _recordProtocolDefinition: ProtocolDefinition = {
-    protocol  : 'http://example.org/protocols/web5/test-data',
+  protected _recordModuleDefinition: ModuleDefinition = {
+    module    : 'http://example.org/modules/web5/test-data',
     published : false,
     types     : {
       foo: {
@@ -37,10 +37,10 @@ class DwnTestStore extends DwnDataStore<PortableDid> {
    * Properties to use when writing and querying Test records with the DWN store.
    */
   protected _recordProperties = {
-    protocol     : this._recordProtocolDefinition.protocol,
-    protocolPath : 'foo',
-    dataFormat   : 'application/json',
-    schema       : this._recordProtocolDefinition.types.foo.schema
+    module     : this._recordModuleDefinition.module,
+    modulePath : 'foo',
+    dataFormat : 'application/json',
+    schema     : this._recordModuleDefinition.types.foo.schema
   };
 
   protected getStoredObjectId(storedObject: PortableDid): string {
@@ -355,7 +355,7 @@ describe('AgentDataStore', () => {
         it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
-          // since we are writing directly to the dwn we first initialize the storage protocol
+          // since we are writing directly to the dwn we first initialize the storage module
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
           // Store the DID in the DWN.
@@ -364,10 +364,10 @@ describe('AgentDataStore', () => {
             target        : testHarness.agent.agentDid.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              dataFormat   : 'application/json',
-              protocol     : 'http://example.org/protocols/web5/test-data',
-              protocolPath : 'foo',
-              schema       : 'https://example.org/schemas/web5/foo',
+              dataFormat : 'application/json',
+              module     : 'http://example.org/modules/web5/test-data',
+              modulePath : 'foo',
+              schema     : 'https://example.org/schemas/web5/foo',
             },
             dataStream: new Blob([didBytes], { type: 'application/json' })
           });
@@ -509,7 +509,7 @@ describe('AgentDataStore', () => {
 
         // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
         it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if the DWN write request fails', async () => {
-          // since we are writing directly to the dwn we first initialize the storage protocol
+          // since we are writing directly to the dwn we first initialize the storage module
           await (testStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
           // Fail only the write; the preceding record lookup must succeed.
@@ -545,35 +545,35 @@ describe('AgentDataStore', () => {
           }
         });
 
-        // Skip this test for InMemoryTestStore, as checking for protocol installation is not
+        // Skip this test for InMemoryTestStore, as checking for module installation is not
         // relevant given that the store is in-memory.
-        it.skipIf(TestStore.name === 'InMemoryTestStore')('checks that protocol is installed only once', async () => {
-          // Scenario: The storage protocol should only need to be installed once
-          // any operations after the first should not attempt to re-install the protocol.
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('checks that module is installed only once', async () => {
+          // Scenario: The storage module should only need to be installed once
+          // any operations after the first should not attempt to re-install the module.
 
-          // spy on the installProtocol method
-          const installProtocolSpy = spyOn(testStore as any, 'installProtocol');
+          // spy on the installModule method
+          const installModuleSpy = spyOn(testStore as any, 'installModule');
 
           // create and set did1
           const bearerDid1 = await DidJwk.create();
           const portableDid1 = { uri: bearerDid1.uri, document: bearerDid1.document, metadata: bearerDid1.metadata };
           await testStore.set({ id: portableDid1.uri, data: portableDid1, agent: testHarness.agent });
-          expect(installProtocolSpy).toHaveBeenCalledTimes(1);
+          expect(installModuleSpy).toHaveBeenCalledTimes(1);
 
           // create and set did2
           const bearerDid2 = await DidJwk.create();
           const portableDid2 = { uri: bearerDid2.uri, document: bearerDid2.document, metadata: bearerDid2.metadata };
           await testStore.set({ id: portableDid2.uri, data: portableDid2, agent: testHarness.agent });
-          expect(installProtocolSpy).toHaveBeenCalledTimes(1); // still only called once
+          expect(installModuleSpy).toHaveBeenCalledTimes(1); // still only called once
 
           // even after clearing cache
-          (testStore as DwnDataStore<PortableDid>)['_protocolInitializedCache']?.clear();
+          (testStore as DwnDataStore<PortableDid>)['_moduleInitializedCache']?.clear();
 
           // create and set did3
           const bearerDid3 = await DidJwk.create();
           const portableDid3 = { uri: bearerDid3.uri, document: bearerDid3.document, metadata: bearerDid3.metadata };
           await testStore.set({ id: portableDid3.uri, data: portableDid3, agent: testHarness.agent });
-          expect(installProtocolSpy).toHaveBeenCalledTimes(1); // still only called once
+          expect(installModuleSpy).toHaveBeenCalledTimes(1); // still only called once
 
           // all 3 dids should be in the store
           const storedDids = await testStore.list({ agent: testHarness.agent });
@@ -582,7 +582,7 @@ describe('AgentDataStore', () => {
         });
 
         // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during query for protocol installation', async () => {
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during query for module installation', async () => {
           // stub `processRequest` to return a code other than 200
           spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
@@ -602,12 +602,12 @@ describe('AgentDataStore', () => {
             await testStore.set({ id: portableDid.uri, data: portableDid, agent: testHarness.agent });
             throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).toContain('Failed to query for protocols');
+            expect(error.message).toContain('Failed to query for modules');
           }
         });
 
         // Skip this test for InMemoryTestStore, as it is only relevant for the DWN store.
-        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during protocol installation', async () => {
+        it.skipIf(TestStore.name === 'InMemoryTestStore')('throws an error if dwn failed during module installation', async () => {
           // stub `processRequest` to return a code other than 200
           spyOn(testHarness.agent.dwn, 'processRequest').mockResolvedValue({
             messageCid : 'test-cid',
@@ -623,11 +623,11 @@ describe('AgentDataStore', () => {
           try {
             const tenantDid = await getDataStoreTenant({ agent: testHarness.agent });
 
-            // The DWN will return a 500 error when attempting to install the protocol
-            await (testStore as DwnDataStore<PortableDid>)['installProtocol'](tenantDid, testHarness.agent);
+            // The DWN will return a 500 error when attempting to install the module
+            await (testStore as DwnDataStore<PortableDid>)['installModule'](tenantDid, testHarness.agent);
             throw new Error('Expected an error to be thrown');
           } catch (error: any) {
-            expect(error.message).toContain('Failed to install protocol: 500 - Internal Server Error');
+            expect(error.message).toContain('Failed to install module: 500 - Internal Server Error');
           }
         });
 

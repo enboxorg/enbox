@@ -50,16 +50,16 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
  */
 const DEFAULT_COMPOUND_INDEXES: CompoundIndexDefinition[] = [
   {
-    // Covers: RecordsQuery with protocol + protocolPath, sorted by messageTimestamp
-    // Example: "all chat messages in protocol X, path 'chat/message', sorted by time"
-    name         : 'protocol-protocolPath-messageTimestamp',
-    properties   : ['protocol', 'protocolPath'],
+    // Covers: RecordsQuery with module + modulePath, sorted by messageTimestamp
+    // Example: "all chat messages in module X, path 'chat/message', sorted by time"
+    name         : 'module-modulePath-messageTimestamp',
+    properties   : ['module', 'modulePath'],
     sortProperty : 'messageTimestamp',
   },
   {
-    // Covers: RecordsQuery with protocol + protocolPath, sorted by dateCreated
-    name         : 'protocol-protocolPath-dateCreated',
-    properties   : ['protocol', 'protocolPath'],
+    // Covers: RecordsQuery with module + modulePath, sorted by dateCreated
+    name         : 'module-modulePath-dateCreated',
+    properties   : ['module', 'modulePath'],
     sortProperty : 'dateCreated',
   },
   {
@@ -76,12 +76,12 @@ const DEFAULT_COMPOUND_INDEXES: CompoundIndexDefinition[] = [
     sortProperty : 'dateCreated',
   },
   {
-    // Covers: RecordsQuery with protocol + contextId, sorted by messageTimestamp
-    // Example: "all messages in a specific protocol context (conversation), sorted by time"
+    // Covers: RecordsQuery with module + contextId, sorted by messageTimestamp
+    // Example: "all messages in a specific module context (conversation), sorted by time"
     // NOTE: contextId is often a prefix/range filter. Compound indexes only support equality.
     // This index is useful when contextId is an exact match (e.g., root-level context queries).
-    name         : 'protocol-contextId-messageTimestamp',
-    properties   : ['protocol', 'contextId'],
+    name         : 'module-contextId-messageTimestamp',
+    properties   : ['module', 'contextId'],
     sortProperty : 'messageTimestamp',
   },
 ];
@@ -99,6 +99,8 @@ const HEADS_PARTITION = 'heads';
 const META_PARTITION = 'meta';
 
 const EPOCH_KEY = 'epoch';
+const FORMAT_KEY = 'format';
+const STORE_FORMAT = 'enbox-modules-v1';
 const RECORD_LIMIT_RAW_PAGE_SIZE = 128;
 const RECORD_LIMIT_GROUP_CACHE_SIZE = 128;
 const CURRENT_PARTITIONS = new Set([
@@ -213,8 +215,12 @@ export class MessageStoreLevel implements MessageStore {
   async open(): Promise<void> {
     const partitions = await this.partitions();
     await partitions.root.open();
-    await this.assertNoPreSubstrateLayout(partitions);
-    await this.getEpoch();
+    const lockName = `enbox:dwn-message-store-initialize:${JSON.stringify(this.config.location!)}`;
+    await runWithCrossContextLock(lockName, async (): Promise<void> => {
+      await this.assertNoPreSubstrateLayout(partitions);
+      await this.assertModuleFormat(partitions);
+      await this.getEpoch();
+    });
   }
 
   async close(): Promise<void> {
@@ -311,7 +317,10 @@ export class MessageStoreLevel implements MessageStore {
     }
 
     const freshEpoch = crypto.randomUUID();
-    await partitions.meta.put(EPOCH_KEY, freshEpoch);
+    await partitions.meta.batch([
+      { type: 'put', key: FORMAT_KEY, value: STORE_FORMAT },
+      { type: 'put', key: EPOCH_KEY, value: freshEpoch },
+    ]);
     return freshEpoch;
   }
 
@@ -563,8 +572,8 @@ export class MessageStoreLevel implements MessageStore {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : recordLimit.protocol,
-      protocolPath      : recordLimit.protocolPath,
+      module            : recordLimit.module,
+      modulePath        : recordLimit.modulePath,
     };
     if (recordLimit.contextId !== undefined) {
       filter.contextId = { subtree: recordLimit.contextId };
@@ -1203,6 +1212,25 @@ export class MessageStoreLevel implements MessageStore {
   private async getHead(partitions: StorePartitions, tenant: string): Promise<bigint> {
     const headString = await partitions.heads.get(tenant);
     return headString === undefined ? 0n : BigInt(headString);
+  }
+
+  /** Unmarked nonempty stores contain the removed wire format and require an explicit reset. */
+  private async assertModuleFormat(partitions: StorePartitions): Promise<void> {
+    const format = await partitions.meta.get(FORMAT_KEY);
+    if (format === STORE_FORMAT) {
+      return;
+    }
+
+    const incompatible = (): DwnError => new DwnError(
+      DwnErrorCode.MessageStoreIncompatibleFormat,
+      `message store location ${this.config.location} uses an incompatible format; reinitialize the store before opening it`
+    );
+    if (format !== undefined) {
+      throw incompatible();
+    }
+    if (!await partitions.root.isEmpty()) {
+      throw incompatible();
+    }
   }
 
   private async assertNoPreSubstrateLayout(partitions: StorePartitions): Promise<void> {

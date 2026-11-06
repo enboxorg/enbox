@@ -3,7 +3,7 @@ import type { EventLog } from '../../src/types/subscriptions.js';
 import type { Pagination } from '../../src/types/message-types.js';
 import type { PaginationCursor } from '../../src/types/query-types.js';
 import type {
-  DataStore, MessageStore, ProtocolDefinition, RecordsCountReply, RecordsQueryReply, RecordsReadReply,
+  DataStore, MessageStore, ModuleDefinition, RecordsCountReply, RecordsQueryReply, RecordsReadReply,
   RecordsSubscribeReply, RecordsWriteMessage, ResumableTaskStore
 } from '../../src/index.js';
 import type { GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
@@ -15,8 +15,8 @@ import { Dwn } from '../../src/dwn.js';
 import { DwnConstant } from '../../src/core/dwn-constant.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
+import { ModulesConfigure } from '../../src/interfaces/modules-configure.js';
 import { Poller } from '../utils/poller.js';
-import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
 import { RecordsRead } from '../../src/interfaces/records-read.js';
 import { sleep } from '@enbox/common';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -60,25 +60,25 @@ export function testRecordsRecordLimit(): void {
       await dwn.close();
     });
 
-    async function installProtocol(input: {
+    async function installModule(input: {
       author: Persona;
-      definition: ProtocolDefinition;
+      definition: ModuleDefinition;
       targetDwn?: Dwn;
     }): Promise<void> {
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-        author             : input.author,
-        protocolDefinition : input.definition,
-        messageTimestamp   : '2024-01-01T00:00:00.000000Z',
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+        author           : input.author,
+        moduleDefinition : input.definition,
+        messageTimestamp : '2024-01-01T00:00:00.000000Z',
       });
 
-      const reply = await (input.targetDwn ?? dwn).processMessage(input.author.did, protocolConfig.message);
+      const reply = await (input.targetDwn ?? dwn).processMessage(input.author.did, moduleConfig.message);
       expect(reply.status.code).toBe(202);
     }
 
-    async function writeProtocolRecord(input: {
+    async function writeModuleRecord(input: {
       author: Persona;
-      protocol: string;
-      protocolPath: string;
+      module: string;
+      modulePath: string;
       dateCreated: string;
       parentContextId?: string;
       published?: boolean;
@@ -87,8 +87,8 @@ export function testRecordsRecordLimit(): void {
       const record = await TestDataGenerator.generateRecordsWrite({
         author           : input.author,
         recipient        : input.author.did,
-        protocol         : input.protocol,
-        protocolPath     : input.protocolPath,
+        module           : input.module,
+        modulePath       : input.modulePath,
         parentContextId  : input.parentContextId,
         published        : input.published,
         dateCreated      : input.dateCreated,
@@ -100,10 +100,10 @@ export function testRecordsRecordLimit(): void {
       return record;
     }
 
-    async function queryProtocolRecordIds(input: {
+    async function queryModuleRecordIds(input: {
       author: Persona;
-      protocol: string;
-      protocolPath: string;
+      module: string;
+      modulePath: string;
       contextId?: string;
       parentId?: string | string[];
       dateSort?: DateSort;
@@ -113,8 +113,8 @@ export function testRecordsRecordLimit(): void {
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : input.author,
         filter : {
-          protocol     : input.protocol,
-          protocolPath : input.protocolPath,
+          module     : input.module,
+          modulePath : input.modulePath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
           ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
@@ -131,10 +131,10 @@ export function testRecordsRecordLimit(): void {
       };
     }
 
-    async function countProtocolRecords(input: {
+    async function countModuleRecords(input: {
       author: Persona;
-      protocol: string;
-      protocolPath: string;
+      module: string;
+      modulePath: string;
       contextId?: string;
       parentId?: string | string[];
       targetDwn?: Dwn;
@@ -142,8 +142,8 @@ export function testRecordsRecordLimit(): void {
       const recordsCount = await TestDataGenerator.generateRecordsCount({
         author : input.author,
         filter : {
-          protocol     : input.protocol,
-          protocolPath : input.protocolPath,
+          module     : input.module,
+          modulePath : input.modulePath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
           ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
@@ -169,8 +169,8 @@ export function testRecordsRecordLimit(): void {
 
     async function subscribeSnapshotRecordIds(input: {
       author: Persona;
-      protocol: string;
-      protocolPath: string;
+      module: string;
+      modulePath: string;
       contextId?: string;
       parentId?: string | string[];
       pagination?: Pagination;
@@ -179,8 +179,8 @@ export function testRecordsRecordLimit(): void {
       const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
         author : input.author,
         filter : {
-          protocol     : input.protocol,
-          protocolPath : input.protocolPath,
+          module     : input.module,
+          modulePath : input.modulePath,
           ...(input.contextId === undefined ? {} : { contextId: input.contextId }),
           ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
         },
@@ -211,12 +211,12 @@ export function testRecordsRecordLimit(): void {
       }
     }
 
-    describe('ProtocolsConfigure validation', () => {
+    describe('ModulesConfigure validation', () => {
       it('should allow $recordLimit with a valid max', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { message: {} },
           structure : {
@@ -226,20 +226,20 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition).toBeDefined();
-        expect(protocolsConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 5 });
+        expect(modulesConfigure.message.descriptor.definition).toBeDefined();
+        expect(modulesConfigure.message.descriptor.definition.structure.message.$recordLimit).toEqual({ max: 5 });
       });
 
       it('should allow $recordLimit with max of 1', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { profile: {} },
           structure : {
@@ -249,19 +249,19 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        expect(protocolsConfigure.message.descriptor.definition.structure.profile.$recordLimit).toEqual({ max: 1 });
+        expect(modulesConfigure.message.descriptor.definition.structure.profile.$recordLimit).toEqual({ max: 1 });
       });
 
       it('should reject $recordLimit above the supported max', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { message: {} },
           structure : {
@@ -271,19 +271,19 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const promise = ProtocolsConfigure.create({
+        const promise = ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        await expect(promise).rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidRecordLimit);
+        await expect(promise).rejects.toThrow(DwnErrorCode.ModulesConfigureInvalidRecordLimit);
       });
 
       it('should reject $recordLimit with max less than 1', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { message: {} },
           structure : {
@@ -293,7 +293,7 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const promise = ProtocolsConfigure.create({
+        const promise = ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
@@ -304,8 +304,8 @@ export function testRecordsRecordLimit(): void {
       it('should reject $recordLimit with non-integer max', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { message: {} },
           structure : {
@@ -315,7 +315,7 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const promise = ProtocolsConfigure.create({
+        const promise = ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
@@ -326,8 +326,8 @@ export function testRecordsRecordLimit(): void {
       it('should reject the removed $recordLimit strategy property', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : { message: {} },
           structure : {
@@ -337,7 +337,7 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const promise = ProtocolsConfigure.create({
+        const promise = ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
@@ -345,11 +345,11 @@ export function testRecordsRecordLimit(): void {
         await expect(promise).rejects.toThrow('SchemaValidator');
       });
 
-      it('should allow $recordLimit on nested protocol paths', async () => {
+      it('should allow $recordLimit on nested module paths', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const definition: ProtocolDefinition = {
-          protocol  : 'http://example.com/record-limit',
+        const definition: ModuleDefinition = {
+          module    : 'http://example.com/record-limit',
           published : true,
           types     : {
             room    : {},
@@ -364,12 +364,12 @@ export function testRecordsRecordLimit(): void {
           }
         };
 
-        const protocolsConfigure = await ProtocolsConfigure.create({
+        const modulesConfigure = await ModulesConfigure.create({
           signer: Jws.createSigner(alice),
           definition,
         });
 
-        const roomRuleSet = protocolsConfigure.message.descriptor.definition.structure.room as any;
+        const roomRuleSet = modulesConfigure.message.descriptor.definition.structure.room as any;
         expect(roomRuleSet.message.$recordLimit).toEqual({ max: 100 });
       });
     });
@@ -378,8 +378,8 @@ export function testRecordsRecordLimit(): void {
       it('should admit candidates and project Query, Read, and Count to top-ranked occupants', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : { blob: {} },
           structure : {
@@ -388,38 +388,38 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const record1 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'blob',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const record1 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'blob',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
         const duplicateReply = await dwn.processMessage(alice.did, record1.message, {
           dataStream: DataStream.fromBytes(record1.dataBytes!),
         });
         expect(duplicateReply.status.code).toBe(409);
 
-        const record2 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'blob',
-          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        const record2 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'blob',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
         });
-        const record3 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'blob',
-          dateCreated  : '2025-01-03T00:00:00.000000Z',
+        const record3 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'blob',
+          dateCreated : '2025-01-03T00:00:00.000000Z',
         });
 
-        expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'blob' })).recordIds).toEqual([
+        expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'blob' })).recordIds).toEqual([
           record1.message.recordId,
           record2.message.recordId,
         ]);
-        expect(await countProtocolRecords({ author: alice, protocol, protocolPath: 'blob' })).toBe(2);
+        expect(await countModuleRecords({ author: alice, module, modulePath: 'blob' })).toBe(2);
 
         const visibleRead = await readRecord({ author: alice, recordId: record1.message.recordId });
         expect(visibleRead.status.code).toBe(200);
@@ -432,8 +432,8 @@ export function testRecordsRecordLimit(): void {
       it('should promote the next candidate at read time when the current occupant is deleted', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : { profile: {} },
           structure : {
@@ -442,23 +442,23 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const record1 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'profile',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const record1 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'profile',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
-        const record2 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'profile',
-          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        const record2 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'profile',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
         });
 
-        expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'profile' })).recordIds).toEqual([
+        expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'profile' })).recordIds).toEqual([
           record1.message.recordId,
         ]);
 
@@ -469,7 +469,7 @@ export function testRecordsRecordLimit(): void {
         const deleteReply = await dwn.processMessage(alice.did, deleteRecord.message);
         expect(deleteReply.status.code).toBe(202);
 
-        expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'profile' })).recordIds).toEqual([
+        expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'profile' })).recordIds).toEqual([
           record2.message.recordId,
         ]);
         expect((await readRecord({ author: alice, recordId: record2.message.recordId })).status.code).toBe(200);
@@ -478,8 +478,8 @@ export function testRecordsRecordLimit(): void {
       it('should project occupancy independently per exact parent context and reject broad cross-context queries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : {
             room    : {},
@@ -493,131 +493,131 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const room1 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'room',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const room1 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'room',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
-        const room2 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'room',
-          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        const room2 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'room',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
         });
 
         const room1Messages = [
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room1.message.contextId,
             dateCreated     : '2025-02-01T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room1.message.contextId,
             dateCreated     : '2025-02-02T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room1.message.contextId,
             dateCreated     : '2025-02-03T00:00:00.000000Z',
           }),
         ];
         const room2Messages = [
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room2.message.contextId,
             dateCreated     : '2025-03-01T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room2.message.contextId,
             dateCreated     : '2025-03-02T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'room/message',
+            module,
+            modulePath      : 'room/message',
             parentContextId : room2.message.contextId,
             dateCreated     : '2025-03-03T00:00:00.000000Z',
           }),
         ];
 
-        expect((await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room1.message.contextId,
+        expect((await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room1.message.contextId,
         })).recordIds).toEqual([
           room1Messages[0].message.recordId,
           room1Messages[1].message.recordId,
         ]);
-        expect((await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room2.message.contextId,
+        expect((await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room2.message.contextId,
         })).recordIds).toEqual([
           room2Messages[0].message.recordId,
           room2Messages[1].message.recordId,
         ]);
 
-        expect((await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room1Messages[0].message.contextId,
+        expect((await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room1Messages[0].message.contextId,
         })).recordIds).toEqual([room1Messages[0].message.recordId]);
-        expect(await countProtocolRecords({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room1Messages[0].message.contextId,
+        expect(await countModuleRecords({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room1Messages[0].message.contextId,
         })).toBe(1);
 
-        expect((await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room1Messages[2].message.contextId,
+        expect((await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room1Messages[2].message.contextId,
         })).recordIds).toEqual([]);
-        expect(await countProtocolRecords({
-          author       : alice,
-          protocol,
-          protocolPath : 'room/message',
-          contextId    : room1Messages[2].message.contextId,
+        expect(await countModuleRecords({
+          author     : alice,
+          module,
+          modulePath : 'room/message',
+          contextId  : room1Messages[2].message.contextId,
         })).toBe(0);
 
         const broadQuery = await TestDataGenerator.generateRecordsQuery({
           author : alice,
           filter : {
-            protocol,
-            protocolPath: 'room/message',
+            module,
+            modulePath: 'room/message',
           },
         });
         const broadReply = await dwn.processMessage(alice.did, broadQuery.message) as RecordsQueryReply;
         expect(broadReply.status.code).toBe(400);
-        expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+        expect(broadReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedModulePathContextIdInvalid);
       });
 
       it('should project selected direct-parent groups independently in one request', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : {
             room  : {},
@@ -631,46 +631,46 @@ export function testRecordsRecordLimit(): void {
             },
           },
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const room1 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'room',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const room1 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'room',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
-        const room2 = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'room',
-          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        const room2 = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'room',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
         });
-        const room1Title = await writeProtocolRecord({
+        const room1Title = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : roomTitlePath,
+          module,
+          modulePath      : roomTitlePath,
           parentContextId : room1.message.contextId,
           dateCreated     : '2025-02-01T00:00:00.000000Z',
         });
-        const room2Title = await writeProtocolRecord({
+        const room2Title = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : roomTitlePath,
+          module,
+          modulePath      : roomTitlePath,
           parentContextId : room2.message.contextId,
           dateCreated     : '2025-02-02T00:00:00.000000Z',
         });
-        await writeProtocolRecord({
+        await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : roomTitlePath,
+          module,
+          modulePath      : roomTitlePath,
           parentContextId : room1.message.contextId,
           dateCreated     : '2025-02-03T00:00:00.000000Z',
         });
-        await writeProtocolRecord({
+        await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : roomTitlePath,
+          module,
+          modulePath      : roomTitlePath,
           parentContextId : room2.message.contextId,
           dateCreated     : '2025-02-04T00:00:00.000000Z',
         });
@@ -678,22 +678,22 @@ export function testRecordsRecordLimit(): void {
         const parentIds = [room1.message.recordId, room2.message.recordId];
         const expectedRecordIds = [room1Title.message.recordId, room2Title.message.recordId];
         const queryInput = {
-          author       : alice,
-          protocol,
-          protocolPath : roomTitlePath,
-          parentId     : parentIds,
+          author     : alice,
+          module,
+          modulePath : roomTitlePath,
+          parentId   : parentIds,
         };
 
-        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
-        expect(await countProtocolRecords(queryInput)).toBe(expectedRecordIds.length);
+        expect((await queryModuleRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
+        expect(await countModuleRecords(queryInput)).toBe(expectedRecordIds.length);
         expect(await subscribeSnapshotRecordIds(queryInput)).toEqual(expectedRecordIds);
         expect(await subscribeSnapshotRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : roomTitlePath,
-          pagination   : { limit: 2 },
+          author     : alice,
+          module,
+          modulePath : roomTitlePath,
+          pagination : { limit: 2 },
         })).toEqual(expectedRecordIds);
-        expect((await queryProtocolRecordIds({
+        expect((await queryModuleRecordIds({
           ...queryInput,
           parentId: room2.message.recordId,
         })).recordIds).toEqual([room2Title.message.recordId]);
@@ -702,17 +702,17 @@ export function testRecordsRecordLimit(): void {
           ...queryInput,
           contextId: room1.message.contextId,
         };
-        expect((await queryProtocolRecordIds(scopedInput)).recordIds).toEqual([room1Title.message.recordId]);
-        expect(await countProtocolRecords(scopedInput)).toBe(1);
+        expect((await queryModuleRecordIds(scopedInput)).recordIds).toEqual([room1Title.message.recordId]);
+        expect(await countModuleRecords(scopedInput)).toBe(1);
         expect(await subscribeSnapshotRecordIds(scopedInput)).toEqual([room1Title.message.recordId]);
       });
 
       it('should reject empty and duplicate parentId arrays', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const filter = {
-          protocol     : 'http://record-limit-parent-filter.xyz',
-          protocolPath : roomTitlePath,
-          parentId     : [] as string[],
+          module     : 'http://record-limit-parent-filter.xyz',
+          modulePath : roomTitlePath,
+          parentId   : [] as string[],
         };
 
         await expect(TestDataGenerator.generateRecordsQuery({ author: alice, filter })).rejects.toThrow('SchemaValidatorFailure');
@@ -734,8 +734,8 @@ export function testRecordsRecordLimit(): void {
 
       it('should project ancestor queries independently across parent contexts', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : {
             channel   : {},
@@ -752,26 +752,26 @@ export function testRecordsRecordLimit(): void {
             },
           },
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const community = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'community',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const community = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'community',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
-        const channel1 = await writeProtocolRecord({
+        const channel1 = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : 'community/channel',
+          module,
+          modulePath      : 'community/channel',
           parentContextId : community.message.contextId,
           dateCreated     : '2025-01-02T00:00:00.000000Z',
         });
-        const channel2 = await writeProtocolRecord({
+        const channel2 = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : 'community/channel',
+          module,
+          modulePath      : 'community/channel',
           parentContextId : community.message.contextId,
           dateCreated     : '2025-01-03T00:00:00.000000Z',
         });
@@ -781,50 +781,50 @@ export function testRecordsRecordLimit(): void {
         // that projection happens per direct parent before global ordering.
         // Channel 2 arrives newest-first to prove occupancy ignores arrival order.
         const channel1Messages = [
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
+            module,
+            modulePath      : 'community/channel/message',
             parentContextId : channel1.message.contextId,
             dateCreated     : '2025-02-01T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
+            module,
+            modulePath      : 'community/channel/message',
             parentContextId : channel1.message.contextId,
             published       : true,
             dateCreated     : '2025-02-04T00:00:00.000000Z',
           }),
-          await writeProtocolRecord({
+          await writeModuleRecord({
             author          : alice,
-            protocol,
-            protocolPath    : 'community/channel/message',
+            module,
+            modulePath      : 'community/channel/message',
             parentContextId : channel1.message.contextId,
             published       : true,
             dateCreated     : '2025-02-06T00:00:00.000000Z',
           }),
         ];
-        const channel2Tie1 = await writeProtocolRecord({
+        const channel2Tie1 = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : 'community/channel/message',
+          module,
+          modulePath      : 'community/channel/message',
           parentContextId : channel2.message.contextId,
           published       : true,
           dateCreated     : '2025-02-03T00:00:00.000000Z',
         });
-        const channel2Tie2 = await writeProtocolRecord({
+        const channel2Tie2 = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : 'community/channel/message',
+          module,
+          modulePath      : 'community/channel/message',
           parentContextId : channel2.message.contextId,
           published       : true,
           dateCreated     : '2025-02-03T00:00:00.000000Z',
         });
-        const channel2Oldest = await writeProtocolRecord({
+        const channel2Oldest = await writeModuleRecord({
           author          : alice,
-          protocol,
-          protocolPath    : 'community/channel/message',
+          module,
+          modulePath      : 'community/channel/message',
           parentContextId : channel2.message.contextId,
           published       : true,
           dateCreated     : '2025-02-02T00:00:00.000000Z',
@@ -840,32 +840,32 @@ export function testRecordsRecordLimit(): void {
           channel1Messages[1].message.recordId,
         ];
         const queryInput = {
-          author       : alice,
-          protocol,
-          protocolPath : 'community/channel/message',
-          contextId    : community.message.contextId,
+          author     : alice,
+          module,
+          modulePath : 'community/channel/message',
+          contextId  : community.message.contextId,
         };
 
-        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
-        expect((await queryProtocolRecordIds({
+        expect((await queryModuleRecordIds(queryInput)).recordIds).toEqual(expectedRecordIds);
+        expect((await queryModuleRecordIds({
           ...queryInput,
           dateSort: DateSort.CreatedDescending,
         })).recordIds).toEqual([...expectedRecordIds].reverse());
-        expect(await countProtocolRecords(queryInput)).toBe(expectedRecordIds.length);
+        expect(await countModuleRecords(queryInput)).toBe(expectedRecordIds.length);
         expect(await subscribeSnapshotRecordIds(queryInput)).toEqual(expectedRecordIds);
 
-        const page1 = await queryProtocolRecordIds({ ...queryInput, pagination: { limit: 2 } });
+        const page1 = await queryModuleRecordIds({ ...queryInput, pagination: { limit: 2 } });
         expect(page1.recordIds).toEqual(expectedRecordIds.slice(0, 2));
         expect(page1.cursor).toBeDefined();
 
-        const page2 = await queryProtocolRecordIds({
+        const page2 = await queryModuleRecordIds({
           ...queryInput,
           pagination: { limit: 2, cursor: page1.cursor! },
         });
         expect(page2.recordIds).toEqual(expectedRecordIds.slice(2));
         expect(page2.cursor).toBeUndefined();
 
-        const descendingPage1 = await queryProtocolRecordIds({
+        const descendingPage1 = await queryModuleRecordIds({
           ...queryInput,
           dateSort   : DateSort.CreatedDescending,
           pagination : { limit: 2 },
@@ -873,7 +873,7 @@ export function testRecordsRecordLimit(): void {
         expect(descendingPage1.recordIds).toEqual([...expectedRecordIds].reverse().slice(0, 2));
         expect(descendingPage1.cursor).toBeDefined();
 
-        const descendingPage2 = await queryProtocolRecordIds({
+        const descendingPage2 = await queryModuleRecordIds({
           ...queryInput,
           dateSort   : DateSort.CreatedDescending,
           pagination : { limit: 2, cursor: descendingPage1.cursor! },
@@ -885,10 +885,10 @@ export function testRecordsRecordLimit(): void {
         // first channel-1 occupant still consumes a slot, so the later
         // published over-limit candidate must remain hidden anonymously.
         const publishedFilter = {
-          contextId    : community.message.contextId,
-          protocol,
-          protocolPath : 'community/channel/message',
-          published    : true,
+          contextId  : community.message.contextId,
+          module,
+          modulePath : 'community/channel/message',
+          published  : true,
         };
         const anonymousQuery = await TestDataGenerator.generateRecordsQuery({
           anonymous : true,
@@ -915,9 +915,9 @@ export function testRecordsRecordLimit(): void {
           author : alice,
           cursor : cursorBeforeMessages!,
           filter : {
-            contextId    : community.message.contextId,
-            protocol,
-            protocolPath : 'community/channel/message',
+            contextId  : community.message.contextId,
+            module,
+            modulePath : 'community/channel/message',
           },
         });
         const cursorSubscribeReply = await dwn.processMessage(alice.did, cursorSubscribe.message, {
@@ -947,12 +947,12 @@ export function testRecordsRecordLimit(): void {
           channel1Messages[1].message.recordId,
           channel1Messages[2].message.recordId,
         ];
-        expect((await queryProtocolRecordIds(queryInput)).recordIds).toEqual(expectedAfterPromotion);
-        expect((await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'community/channel/message',
-          contextId    : channel2.message.contextId,
+        expect((await queryModuleRecordIds(queryInput)).recordIds).toEqual(expectedAfterPromotion);
+        expect((await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'community/channel/message',
+          contextId  : channel2.message.contextId,
         })).recordIds).toEqual([
           channel2Messages[0].message.recordId,
           channel2BoundaryOccupant.message.recordId,
@@ -962,8 +962,8 @@ export function testRecordsRecordLimit(): void {
       it('should paginate over the projected occupant set for max:N scopes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : { item: {} },
           structure : {
@@ -972,24 +972,24 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
         const records: GenerateRecordsWriteOutput[] = [];
         for (let i = 1; i <= 5; i++) {
-          records.push(await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'item',
-            dateCreated  : `2025-01-0${i}T00:00:00.000000Z`,
+          records.push(await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'item',
+            dateCreated : `2025-01-0${i}T00:00:00.000000Z`,
           }));
         }
 
-        const page1 = await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'item',
-          pagination   : { limit: 2 },
+        const page1 = await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'item',
+          pagination : { limit: 2 },
         });
         expect(page1.recordIds).toEqual([
           records[0].message.recordId,
@@ -997,11 +997,11 @@ export function testRecordsRecordLimit(): void {
         ]);
         expect(page1.cursor).toBeDefined();
 
-        const page2 = await queryProtocolRecordIds({
-          author       : alice,
-          protocol,
-          protocolPath : 'item',
-          pagination   : { limit: 2, cursor: page1.cursor! },
+        const page2 = await queryModuleRecordIds({
+          author     : alice,
+          module,
+          modulePath : 'item',
+          pagination : { limit: 2, cursor: page1.cursor! },
         });
         expect(page2.recordIds).toEqual([records[2].message.recordId]);
         expect(page2.cursor).toBeUndefined();
@@ -1010,8 +1010,8 @@ export function testRecordsRecordLimit(): void {
       it('should project RecordsSubscribe snapshots and suppress hidden live writes', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : { status: {} },
           structure : {
@@ -1020,23 +1020,23 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const visibleRecord = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'status',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const visibleRecord = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'status',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
-        const hiddenRecord = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'status',
-          dateCreated  : '2025-01-02T00:00:00.000000Z',
+        const hiddenRecord = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'status',
+          dateCreated : '2025-01-02T00:00:00.000000Z',
         });
 
-        expect(await subscribeSnapshotRecordIds({ author: alice, protocol, protocolPath: 'status' })).toEqual([
+        expect(await subscribeSnapshotRecordIds({ author: alice, module, modulePath: 'status' })).toEqual([
           visibleRecord.message.recordId,
         ]);
 
@@ -1044,8 +1044,8 @@ export function testRecordsRecordLimit(): void {
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
           filter : {
-            protocol,
-            protocolPath: 'status',
+            module,
+            modulePath: 'status',
           },
         });
         const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message, {
@@ -1060,11 +1060,11 @@ export function testRecordsRecordLimit(): void {
         }) as RecordsSubscribeReply;
         expect(subscribeReply.status.code).toBe(200);
 
-        const laterHiddenRecord = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'status',
-          dateCreated  : '2025-01-03T00:00:00.000000Z',
+        const laterHiddenRecord = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'status',
+          dateCreated : '2025-01-03T00:00:00.000000Z',
         });
         expect(hiddenRecord.message.recordId).not.toBe(laterHiddenRecord.message.recordId);
         await sleep(100);
@@ -1096,8 +1096,8 @@ export function testRecordsRecordLimit(): void {
         });
 
         try {
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : `http://record-limit-offline-${testId}.xyz`,
+          const moduleDefinition: ModuleDefinition = {
+            module    : `http://record-limit-offline-${testId}.xyz`,
             published : true,
             types     : {
               note    : {},
@@ -1112,44 +1112,44 @@ export function testRecordsRecordLimit(): void {
               }
             }
           };
-          const protocol = protocolDefinition.protocol;
-          await installProtocol({ author: alice, definition: protocolDefinition, targetDwn: replicaA });
-          await installProtocol({ author: alice, definition: protocolDefinition, targetDwn: replicaB });
+          const module = moduleDefinition.module;
+          await installModule({ author: alice, definition: moduleDefinition, targetDwn: replicaA });
+          await installModule({ author: alice, definition: moduleDefinition, targetDwn: replicaB });
 
-          const profileA = await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'profile',
-            dateCreated  : '2025-01-01T00:00:00.000000Z',
-            targetDwn    : replicaA,
+          const profileA = await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'profile',
+            dateCreated : '2025-01-01T00:00:00.000000Z',
+            targetDwn   : replicaA,
           });
-          const profileB = await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'profile',
-            dateCreated  : '2025-01-02T00:00:00.000000Z',
-            targetDwn    : replicaB,
+          const profileB = await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'profile',
+            dateCreated : '2025-01-02T00:00:00.000000Z',
+            targetDwn   : replicaB,
           });
-          const noteA1 = await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'note',
-            dateCreated  : '2025-02-01T00:00:00.000000Z',
-            targetDwn    : replicaA,
+          const noteA1 = await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'note',
+            dateCreated : '2025-02-01T00:00:00.000000Z',
+            targetDwn   : replicaA,
           });
-          const noteB = await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'note',
-            dateCreated  : '2025-02-02T00:00:00.000000Z',
-            targetDwn    : replicaB,
+          const noteB = await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'note',
+            dateCreated : '2025-02-02T00:00:00.000000Z',
+            targetDwn   : replicaB,
           });
-          const noteA2 = await writeProtocolRecord({
-            author       : alice,
-            protocol,
-            protocolPath : 'note',
-            dateCreated  : '2025-02-03T00:00:00.000000Z',
-            targetDwn    : replicaA,
+          const noteA2 = await writeModuleRecord({
+            author      : alice,
+            module,
+            modulePath  : 'note',
+            dateCreated : '2025-02-03T00:00:00.000000Z',
+            targetDwn   : replicaA,
           });
 
           await applyReplicatedWrite({ targetDwn: replicaA, tenant: alice.did, record: profileB });
@@ -1163,10 +1163,10 @@ export function testRecordsRecordLimit(): void {
             noteA1.message.recordId,
             noteB.message.recordId,
           ];
-          expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'profile', targetDwn: replicaA })).recordIds).toEqual(expectedProfileIds);
-          expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'profile', targetDwn: replicaB })).recordIds).toEqual(expectedProfileIds);
-          expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'note', targetDwn: replicaA })).recordIds).toEqual(expectedNoteIds);
-          expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'note', targetDwn: replicaB })).recordIds).toEqual(expectedNoteIds);
+          expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'profile', targetDwn: replicaA })).recordIds).toEqual(expectedProfileIds);
+          expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'profile', targetDwn: replicaB })).recordIds).toEqual(expectedProfileIds);
+          expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'note', targetDwn: replicaA })).recordIds).toEqual(expectedNoteIds);
+          expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'note', targetDwn: replicaB })).recordIds).toEqual(expectedNoteIds);
         } finally {
           await replicaAStore.clear();
           await replicaADataStore.clear();
@@ -1182,8 +1182,8 @@ export function testRecordsRecordLimit(): void {
       it('should not count updates toward the record limit', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition: ProtocolDefinition = {
-          protocol  : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
+        const moduleDefinition: ModuleDefinition = {
+          module    : `http://record-limit-${TestDataGenerator.randomString(12)}.xyz`,
           published : true,
           types     : { blob: {} },
           structure : {
@@ -1192,14 +1192,14 @@ export function testRecordsRecordLimit(): void {
             }
           }
         };
-        const protocol = protocolDefinition.protocol;
-        await installProtocol({ author: alice, definition: protocolDefinition });
+        const module = moduleDefinition.module;
+        await installModule({ author: alice, definition: moduleDefinition });
 
-        const record = await writeProtocolRecord({
-          author       : alice,
-          protocol,
-          protocolPath : 'blob',
-          dateCreated  : '2025-01-01T00:00:00.000000Z',
+        const record = await writeModuleRecord({
+          author      : alice,
+          module,
+          modulePath  : 'blob',
+          dateCreated : '2025-01-01T00:00:00.000000Z',
         });
         const updatedRecord = await TestDataGenerator.generateFromRecordsWrite({
           author        : alice,
@@ -1208,7 +1208,7 @@ export function testRecordsRecordLimit(): void {
 
         const updateReply = await dwn.processMessage(alice.did, updatedRecord.message, { dataStream: updatedRecord.dataStream });
         expect(updateReply.status.code).toBe(202);
-        expect((await queryProtocolRecordIds({ author: alice, protocol, protocolPath: 'blob' })).recordIds).toEqual([
+        expect((await queryModuleRecordIds({ author: alice, module, modulePath: 'blob' })).recordIds).toEqual([
           record.message.recordId,
         ]);
       });

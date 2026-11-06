@@ -23,7 +23,7 @@ type PermissionsStub = {
 const connectedDid = 'did:example:alice';
 const delegateDid = 'did:example:delegate';
 const remoteDid = 'did:example:remote';
-const protocol = 'https://example.com/protocol';
+const module = 'https://example.com/module';
 function createAgentStub(): AgentStub {
   return {
     processDwnRequest : sinon.stub(),
@@ -84,7 +84,7 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions);
 
     const response = await dwn.records.count({
-      filter: { protocol, protocolPath: 'note' },
+      filter: { module, modulePath: 'note' },
     });
 
     expect(response).toEqual({ status: { code: 200, detail: 'OK' }, count: 3 });
@@ -94,7 +94,7 @@ describe('DwnApi record requests', () => {
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsCount>;
     expect(request).toEqual({
       author        : connectedDid,
-      messageParams : { filter: { protocol, protocolPath: 'note' } },
+      messageParams : { filter: { module, modulePath: 'note' } },
       messageType   : DwnInterface.RecordsCount,
       target        : connectedDid,
     });
@@ -106,7 +106,7 @@ describe('DwnApi record requests', () => {
 
     const response = await dwn.records.count({
       from   : remoteDid,
-      filter : { protocol },
+      filter : { module },
     });
 
     expect(response.count).toBe(2);
@@ -116,7 +116,7 @@ describe('DwnApi record requests', () => {
     const request = agent.sendDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsCount>;
     expect(request).toEqual({
       author        : connectedDid,
-      messageParams : { filter: { protocol } },
+      messageParams : { filter: { module } },
       messageType   : DwnInterface.RecordsCount,
       target        : remoteDid,
     });
@@ -129,25 +129,25 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.count({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter: { module, modulePath: 'note', contextId: 'root/note' },
     });
 
     expect(response.count).toBe(4);
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'note',
-      contextId    : 'root/note',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsCount,
+      module,
+      modulePath  : 'note',
+      contextId   : 'root/note',
+      delegate    : true,
+      messageType : DwnInterface.RecordsCount,
     })).toBe(true);
 
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsCount>;
     expect(request.author).toBe(connectedDid);
     expect(request.granteeDid).toBe(delegateDid);
     expect(request.messageParams).toEqual({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter: { module, modulePath: 'note', contextId: 'root/note' },
       delegatedGrant,
     });
   });
@@ -159,18 +159,18 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.query({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter: { module, modulePath: 'note', contextId: 'root/note' },
     });
 
     expect(response.status.code).toBe(200);
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'note',
-      contextId    : 'root/note',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsQuery,
+      module,
+      modulePath  : 'note',
+      contextId   : 'root/note',
+      delegate    : true,
+      messageType : DwnInterface.RecordsQuery,
     })).toBe(true);
   });
 
@@ -181,23 +181,23 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.read({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter: { module, modulePath: 'note', contextId: 'root/note' },
     });
 
     expect(response.status.code).toBe(404);
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'note',
-      contextId    : 'root/note',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsRead,
+      module,
+      modulePath  : 'note',
+      contextId   : 'root/note',
+      delegate    : true,
+      messageType : DwnInterface.RecordsRead,
     })).toBe(true);
 
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsRead>;
     expect(request.messageParams).toEqual({
-      filter: { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter: { module, modulePath: 'note', contextId: 'root/note' },
       delegatedGrant,
     });
   });
@@ -209,7 +209,7 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.subscribe({
-      filter              : { protocol, protocolPath: 'note', contextId: 'root/note' },
+      filter              : { module, modulePath: 'note', contextId: 'root/note' },
       subscriptionHandler : (): void => {},
     });
 
@@ -218,11 +218,11 @@ describe('DwnApi record requests', () => {
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'note',
-      contextId    : 'root/note',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsSubscribe,
+      module,
+      modulePath  : 'note',
+      contextId   : 'root/note',
+      delegate    : true,
+      messageType : DwnInterface.RecordsSubscribe,
     })).toBe(true);
   });
 
@@ -234,8 +234,8 @@ describe('DwnApi record requests', () => {
 
     const response = await dwn.records.write({
       data            : 'hello',
-      protocol,
-      protocolPath    : 'thread/note',
+      module,
+      modulePath      : 'thread/note',
       parentContextId : 'thread-context',
       recordId        : 'note-id',
     });
@@ -244,11 +244,11 @@ describe('DwnApi record requests', () => {
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'thread/note',
-      contextId    : 'thread-context/note-id',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsWrite,
+      module,
+      modulePath  : 'thread/note',
+      contextId   : 'thread-context/note-id',
+      delegate    : true,
+      messageType : DwnInterface.RecordsWrite,
     })).toBe(true);
 
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsWrite>;
@@ -256,8 +256,8 @@ describe('DwnApi record requests', () => {
       dataFormat      : 'text/plain',
       delegatedGrant,
       parentContextId : 'thread-context',
-      protocol,
-      protocolPath    : 'thread/note',
+      module,
+      modulePath      : 'thread/note',
       recordId        : 'note-id',
     });
   });
@@ -270,19 +270,19 @@ describe('DwnApi record requests', () => {
 
     await dwn.records.write({
       data            : 'hello',
-      protocol,
-      protocolPath    : 'thread/note',
+      module,
+      modulePath      : 'thread/note',
       parentContextId : 'thread-context',
     });
 
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'thread/note',
-      contextId    : 'thread-context',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsWrite,
+      module,
+      modulePath  : 'thread/note',
+      contextId   : 'thread-context',
+      delegate    : true,
+      messageType : DwnInterface.RecordsWrite,
     })).toBe(true);
   });
 
@@ -293,21 +293,21 @@ describe('DwnApi record requests', () => {
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
     const response = await dwn.records.delete({
-      recordId     : 'record-id',
-      protocol,
-      protocolPath : 'thread/note',
-      contextId    : 'thread-context/note-context',
+      recordId   : 'record-id',
+      module,
+      modulePath : 'thread/note',
+      contextId  : 'thread-context/note-context',
     });
 
     expect(response.status.code).toBe(404);
     expect(permissions.getPermissionForRequest.calledOnceWithExactly({
       connectedDid,
       delegateDid,
-      protocol,
-      protocolPath : 'thread/note',
-      contextId    : 'thread-context/note-context',
-      delegate     : true,
-      messageType  : DwnInterface.RecordsDelete,
+      module,
+      modulePath  : 'thread/note',
+      contextId   : 'thread-context/note-context',
+      delegate    : true,
+      messageType : DwnInterface.RecordsDelete,
     })).toBe(true);
 
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsDelete>;
@@ -317,25 +317,25 @@ describe('DwnApi record requests', () => {
   it('should author as the delegate when no delegated grant is available', async () => {
     permissions.getPermissionForRequest.rejects(new PermissionGrantNotFoundError({
       messageType: DwnInterface.RecordsCount,
-      protocol,
+      module,
     }));
     agent.processDwnRequest.resolves(createCountResponse({ code: 200, detail: 'OK' }, 1));
     const dwn = createDwnApi(agent, permissions, { delegateDid });
 
-    const response = await dwn.records.count({ filter: { protocol } });
+    const response = await dwn.records.count({ filter: { module } });
 
     expect(response.count).toBe(1);
     const request = agent.processDwnRequest.firstCall.args[0] as ProcessDwnRequest<DwnInterface.RecordsCount>;
     expect(request.author).toBe(delegateDid);
     expect(request.granteeDid).toBeUndefined();
-    expect(request.messageParams).toEqual({ filter: { protocol } });
+    expect(request.messageParams).toEqual({ filter: { module } });
   });
 
   it('should preserve zero for a successful empty count', async () => {
     agent.processDwnRequest.resolves(createCountResponse({ code: 200, detail: 'OK' }, 0));
     const dwn = createDwnApi(agent, permissions);
 
-    const response = await dwn.records.count({ filter: { protocol } });
+    const response = await dwn.records.count({ filter: { module } });
 
     expect(response.status.code).toBe(200);
     expect(response.count).toBe(0);
@@ -345,7 +345,7 @@ describe('DwnApi record requests', () => {
     agent.processDwnRequest.resolves(createCountResponse({ code: 401, detail: 'Unauthorized' }));
     const dwn = createDwnApi(agent, permissions);
 
-    const response = await dwn.records.count({ filter: { protocol } });
+    const response = await dwn.records.count({ filter: { module } });
 
     expect(response.status).toEqual({ code: 401, detail: 'Unauthorized' });
     expect(response.count).toBeUndefined();

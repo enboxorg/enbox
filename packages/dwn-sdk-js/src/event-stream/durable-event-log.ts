@@ -453,7 +453,7 @@ export class DurableEventLog implements EventLog {
       seq               : entry.seq,
       messageCid        : entry.messageCid,
       isLatestBaseState : DurableEventLog.isLatestBaseState(entry),
-      protocol          : DurableEventLog.getProtocol(entry),
+      module            : DurableEventLog.getModule(entry),
     };
 
     if (entry.encodedData !== undefined) {
@@ -571,9 +571,9 @@ export class DurableEventLog implements EventLog {
     return entry.indexes.isLatestBaseState === true || entry.indexes.isLatestBaseState === 'true';
   }
 
-  private static getProtocol(entry: EventLogEntry): string | undefined {
-    const protocol = entry.indexes.protocol;
-    return typeof protocol === 'string' ? protocol : undefined;
+  private static getModule(entry: EventLogEntry): string | undefined {
+    const module = entry.indexes.module;
+    return typeof module === 'string' ? module : undefined;
   }
 
   private static detachEntryEncodedData(entries: EventLogEntry[]): EventLogEntry[] {

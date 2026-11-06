@@ -43,7 +43,7 @@ export function testMessageStore(): void {
         await messageStore.put(alice.did, message, { messageTimestamp });
 
         // Second put of the exact same message — should be a no-op.
-        // This can happen when sync or protocol.send() re-delivers a
+        // This can happen when sync or module.send() re-delivers a
         // message the DWN already has (race between CID check and insert).
         await messageStore.put(alice.did, message, { messageTimestamp });
 
@@ -503,10 +503,10 @@ export function testMessageStore(): void {
           expect(secondPage.cursor).toBeUndefined();
         });
 
-        it('should include astral Unicode descendants in protocol-path subtree ranges', async () => {
+        it('should include astral Unicode descendants in module-path subtree ranges', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const subtree = 'root';
-          const protocolPaths = [
+          const modulePaths = [
             subtree,
             `${subtree}/child`,
             `${subtree}/😀`,
@@ -515,16 +515,16 @@ export function testMessageStore(): void {
           ];
           const expectedCids: string[] = [];
 
-          for (const [index, protocolPath] of protocolPaths.entries()) {
+          for (const [index, modulePath] of modulePaths.entries()) {
             const messageTimestamp = `2026-07-22T00:00:0${index}.000000Z`;
             const { message } = await TestDataGenerator.generateRecordsWrite({ messageTimestamp });
-            await messageStore.put(alice.did, message, { messageTimestamp, protocolPath });
+            await messageStore.put(alice.did, message, { messageTimestamp, modulePath });
             if (index < 3) {
               expectedCids.push(await Message.getCid(message));
             }
           }
 
-          const filter = [{ protocolPath: { subtree } }];
+          const filter = [{ modulePath: { subtree } }];
           const result = await messageStore.query(
             alice.did,
             filter,

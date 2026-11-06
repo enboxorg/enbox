@@ -15,7 +15,7 @@ const DELEGATE_DID = 'did:dht:delegate';
 const RECORDS_WRITE_SCOPE: PermissionScope = {
   interface : 'Records',
   method    : 'Write',
-  protocol  : 'https://example.com/notes',
+  module    : 'https://example.com/notes',
 };
 
 function createGrantEntry(params: {
@@ -69,7 +69,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       DELEGATE_DID,
       {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : 'https://example.com/notes',
+        module      : 'https://example.com/notes',
       },
       [expired, future, active],
     );
@@ -96,7 +96,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       DELEGATE_DID,
       {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : 'https://example.com/notes',
+        module      : 'https://example.com/notes',
       },
       [shorter, refreshed],
     );
@@ -126,14 +126,14 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     await clock.tickAsync(2000);
     const second = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
 
     expect(first.grant.id).toBe('expiring');
@@ -162,14 +162,14 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     const delegatedMatch = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       delegate     : true,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
 
     expect(permissiveMatch.grant.id).toBe('direct');
@@ -199,14 +199,14 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       contextId    : 'conversation-a',
     });
     const second = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       contextId    : 'conversation-b',
     });
 
@@ -239,14 +239,14 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       contextId    : 'conversation-a',
     });
     const added = await permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       contextId    : 'conversation-b',
     });
 
@@ -273,13 +273,13 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     const second = permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     resolveFetch([grant]);
 
@@ -315,13 +315,13 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     const freshLookup = permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       forceRefresh : true,
     });
     resolveCachedFetch([stale]);
@@ -332,7 +332,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     })).grant.id).toBe('fresh');
     expect(fetchGrants.callCount).toBe(2);
     clock.restore();
@@ -358,7 +358,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
     await permissions.clear();
     resolveFetch([grant]);
@@ -368,7 +368,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     });
 
     expect(lookupAfterClear.grant.id).toBe('grant-after-clear');
@@ -396,7 +396,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     })).grant.id).toBe('revoked-grant');
 
     await permissions.createRevocation({ author: OWNER_DID, grant: grant.grant, store: true });
@@ -405,7 +405,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
     expect(fetchGrants.callCount).toBe(2);
     clock.restore();
@@ -467,7 +467,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     } as const;
 
     await expect(permissions.getPermissionForRequest(request)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
@@ -493,7 +493,7 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     } as const;
 
     await expect(permissions.getPermissionForRequest(request)).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
@@ -514,14 +514,14 @@ describe('AgentPermissionsApi refresh grant selection', () => {
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
     })).rejects.toBeInstanceOf(PermissionGrantNotFoundError);
 
     await expect(permissions.getPermissionForRequest({
       connectedDid : OWNER_DID,
       delegateDid  : DELEGATE_DID,
       messageType  : DwnInterface.RecordsWrite,
-      protocol     : 'https://example.com/notes',
+      module       : 'https://example.com/notes',
       forceRefresh : true,
     })).rejects.toThrow('grant store unavailable');
   });

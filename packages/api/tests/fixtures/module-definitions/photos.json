@@ -1,0 +1,87 @@
+{
+  "module": "http://photo-module.xyz",
+  "published": true,
+  "types": {
+    "album": {
+      "schema": "http://photo-module.xyz/schema/album",
+      "dataFormats": ["text/plain"]
+    },
+    "photo": {
+      "schema": "http://photo-module.xyz/schema/photo",
+      "dataFormats": ["text/plain"]
+    },
+    "friend": {
+      "schema": "http://photo-module.xyz/schema/friend",
+      "dataFormats": ["text/plain"]
+    },
+    "participant": {
+      "schema": "http://photo-module.xyz/schema/participant",
+      "dataFormats": ["text/plain"]
+    },
+    "updater": {
+      "schema": "http://photo-module.xyz/schema/updater",
+      "dataFormats": ["text/plain"]
+    }
+  },
+  "structure": {
+    "friend": {
+      "$role": true
+    },
+    "album": {
+      "$actions": [
+        {
+          "role": "friend",
+          "can": [
+            "create", "update"
+          ]
+        }
+      ],
+      "participant": {
+        "$role": true,
+        "$actions": [
+          {
+            "who": "author",
+            "of": "album",
+            "can": [
+              "create", "update"
+            ]
+          }
+        ]
+      },
+      "updater": {
+        "$role": true,
+        "$actions": [
+          {
+            "role": "album/participant",
+            "can": [
+              "create", "update"
+            ]
+          }
+        ]
+      },
+      "photo": {
+        "$actions": [
+          {
+            "role": "album/participant",
+            "can": [
+              "create", "update"
+            ]
+          },
+          {
+            "role": "album/updater",
+            "can": [
+              "co-update"
+            ]
+          },
+          {
+            "who": "author",
+            "of": "album",
+            "can": [
+              "create", "update"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

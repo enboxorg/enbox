@@ -431,7 +431,7 @@ export class LocalKeyManager implements AgentKeyManager {
 
     return Encryption.unwrapKey(leafPrivateKeyJwk as PrivateKeyJwk, {
       algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
-      derivationScheme : KeyDerivationScheme.ProtocolPath,
+      derivationScheme : KeyDerivationScheme.ModulePath,
       encryptedKey     : Encoder.bytesToBase64Url(encryptedKey),
       ephemeralPublicKey,
       keyId,

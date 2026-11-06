@@ -1,9 +1,9 @@
 import type { SinonStub } from 'sinon';
 
-import type { GenericMessage, ProgressToken, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ModuleDefinition, ProgressToken } from '@enbox/dwn-sdk-js';
 import type {
   SyncScopeClosureValidatorOperations,
-  SyncScopeProtocolHistoryPage,
+  SyncScopeModuleHistoryPage,
 } from '../src/sync-scope-closure-validator.js';
 
 import sinon from 'sinon';
@@ -13,9 +13,9 @@ import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
 
-const commentsProtocol = 'https://example.com/comments';
-const profilesProtocol = 'https://example.com/profiles';
-const threadsProtocol = 'https://example.com/threads';
+const commentsModule = 'https://example.com/comments';
+const profilesModule = 'https://example.com/profiles';
+const threadsModule = 'https://example.com/threads';
 
 type SyncScopeClosureOperationStubs = {
   [Method in keyof SyncScopeClosureValidatorOperations]: SinonStub;
@@ -35,41 +35,44 @@ describe('SyncScopeClosureValidator', () => {
     const { operations, validator } = createHarness();
 
     expect(() => validator.validateOptions(undefined as never)).toThrow(
-      'SyncScopeClosureValidator: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.'
+      'SyncScopeClosureValidator: options.modules is required — pass \'all\' for a full replica or a non-empty module list.'
     );
-    expect(() => validator.validateOptions({ protocols: 'invalid' } as never)).toThrow(
-      'SyncScopeClosureValidator: protocols must be \'all\' or a non-empty string array.'
+    expect(() => validator.validateOptions({ modules: 'invalid' } as never)).toThrow(
+      'SyncScopeClosureValidator: modules must be \'all\' or a non-empty string array.'
     );
-    expect(() => validator.validateOptions({ protocols: [] })).toThrow(
-      'SyncScopeClosureValidator: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.'
+    expect(() => validator.validateOptions({ modules: [] })).toThrow(
+      'SyncScopeClosureValidator: modules must be \'all\' or a non-empty array of module URIs. An empty array is ambiguous.'
     );
-    expect(() => validator.validateOptions({ protocols: 'all' })).not.toThrow();
-    expect(() => validator.validateOptions({ protocols: [commentsProtocol] })).not.toThrow();
+    expect(() => validator.validateOptions({ modules: 'all' })).not.toThrow();
+    expect(() => validator.validateOptions({ modules: [commentsModule] })).not.toThrow();
+    expect(() => validator.validateOptions({ protocols: [commentsModule] } as never)).toThrow('options.modules is required');
+    expect(() => validator.validateOptions({ modules: 'all', protocols: [commentsModule] } as never))
+      .toThrow('unrecognized sync identity option');
 
-    await validator.validateClosure('did:example:alice', { protocols: 'all' });
+    await validator.validateClosure('did:example:alice', { modules: 'all' });
 
     expect(operations.resolvePermissionGrantIds.called).toBe(false);
-    expect(operations.queryProtocolHistory.called).toBe(false);
+    expect(operations.queryModuleHistory.called).toBe(false);
   });
 
-  it('walks paged retained history and scans each requested closure protocol once', async () => {
+  it('walks paged retained history and scans each requested closure module once', async () => {
     const { operations, validator } = createHarness();
     const commentsCursor = cursor('1');
-    operations.queryProtocolHistory.callsFake(async (query) => {
-      if (query.protocol === commentsProtocol && query.cursor === undefined) {
+    operations.queryModuleHistory.callsFake(async (query) => {
+      if (query.module === commentsModule && query.cursor === undefined) {
         return historyPage({
           cursor  : commentsCursor,
           drained : false,
           entries : [
             historyEntry(unrelatedMessage()),
-            historyEntry(protocolMessage({})),
+            historyEntry(moduleMessage({})),
           ],
         });
       }
-      if (query.protocol === commentsProtocol) {
+      if (query.module === commentsModule) {
         return historyPage({
           drained : true,
-          entries : [historyEntry(protocolMessage(composedProtocolDefinition()))],
+          entries : [historyEntry(moduleMessage(composedModuleDefinition()))],
         });
       }
       return historyPage({ drained: true });
@@ -77,89 +80,91 @@ describe('SyncScopeClosureValidator', () => {
 
     await validator.validateClosure('did:example:alice', {
       delegateDid : 'did:example:delegate',
-      protocols   : [commentsProtocol, profilesProtocol, threadsProtocol],
+      modules     : [commentsModule, profilesModule, threadsModule],
     });
 
-    expect(operations.queryProtocolHistory.callCount).toBe(4);
-    expect(operations.queryProtocolHistory.firstCall.args[0]).toMatchObject({
+    expect(operations.queryModuleHistory.callCount).toBe(4);
+    expect(operations.queryModuleHistory.firstCall.args[0]).toMatchObject({
       cursor             : undefined,
       delegateDid        : 'did:example:delegate',
       did                : 'did:example:alice',
       limit              : 500,
       permissionGrantIds : ['grant-1'],
-      protocol           : commentsProtocol,
+      module             : commentsModule,
     });
-    expect(operations.queryProtocolHistory.secondCall.args[0]).toMatchObject({
-      cursor   : commentsCursor,
-      protocol : commentsProtocol,
+    expect(operations.queryModuleHistory.secondCall.args[0]).toMatchObject({
+      cursor : commentsCursor,
+      module : commentsModule,
     });
-    expect(operations.queryProtocolHistory.thirdCall.args[0]).toMatchObject({
-      cursor   : undefined,
-      protocol : profilesProtocol,
+    expect(operations.queryModuleHistory.thirdCall.args[0]).toMatchObject({
+      cursor : undefined,
+      module : profilesModule,
     });
-    expect(operations.queryProtocolHistory.getCall(3).args[0]).toMatchObject({
-      cursor   : undefined,
-      protocol : threadsProtocol,
+    expect(operations.queryModuleHistory.getCall(3).args[0]).toMatchObject({
+      cursor : undefined,
+      module : threadsModule,
     });
     expect(operations.resolvePermissionGrantIds.callCount).toBe(3);
   });
 
   it('reports missing delegated grants and split dependencies with deterministic details', async () => {
     const { operations, validator } = createHarness();
-    operations.resolvePermissionGrantIds.callsFake(async (query) => query.protocol === commentsProtocol
+    operations.resolvePermissionGrantIds.callsFake(async (query) => query.module === commentsModule
       ? { kind: 'granted', permissionGrantIds: ['comments-grant'] }
       : { kind: 'missing' });
-    operations.queryProtocolHistory.resolves(historyPage({
+    operations.queryModuleHistory.resolves(historyPage({
       drained : true,
-      entries : [historyEntry(protocolMessage(composedProtocolDefinition()))],
+      entries : [historyEntry(moduleMessage(composedModuleDefinition()))],
     }));
 
     await expect(validator.validateClosure('did:example:alice', {
       delegateDid : 'did:example:delegate',
-      protocols   : [commentsProtocol],
+      modules     : [commentsModule],
     })).rejects.toThrow(
       'SyncScopeClosureValidator: sync scope closure validation failed for did:example:alice: ' +
-      `delegate did:example:delegate lacks Messages.Read grants for closure protocols: ${profilesProtocol}, ${threadsProtocol}; ` +
-      `scope splits cross-protocol dependencies: ${commentsProtocol} -> ${profilesProtocol}, ` +
-      `${commentsProtocol} -> ${threadsProtocol}; ` +
-      `uses protocols outside the sync scope: ${profilesProtocol}, ${threadsProtocol}`
+      `delegate did:example:delegate lacks Messages.Read grants for closure modules: ${profilesModule}, ${threadsModule}; ` +
+      `scope splits cross-module dependencies: ${commentsModule} -> ${profilesModule}, ` +
+      `${commentsModule} -> ${threadsModule}; ` +
+      `uses modules outside the sync scope: ${profilesModule}, ${threadsModule}`
     );
 
-    expect(operations.queryProtocolHistory.calledOnce).toBe(true);
+    expect(operations.queryModuleHistory.calledOnce).toBe(true);
     expect(operations.resolvePermissionGrantIds.callCount).toBe(3);
   });
 
-  it('preserves protocol-history status failures', async () => {
+  it('preserves module-history status failures', async () => {
     const { operations, validator } = createHarness();
-    operations.queryProtocolHistory.resolves(historyPage({
+    operations.queryModuleHistory.resolves(historyPage({
       drained : true,
       status  : { code: 503, detail: 'temporarily unavailable' },
     }));
 
     await expect(validator.validateClosure('did:example:alice', {
-      protocols: [commentsProtocol],
+      modules: [commentsModule, profilesModule],
     })).rejects.toThrow(
-      `SyncScopeClosureValidator: local protocol history query failed for did:example:alice / ${commentsProtocol}: ` +
+      `SyncScopeClosureValidator: local module history query failed for did:example:alice / ${commentsModule}: ` +
       '503 temporarily unavailable'
     );
     expect(operations.resolvePermissionGrantIds.called).toBe(false);
+    // A failed retained-history scan must stop before querying the next module.
+    expect(operations.queryModuleHistory.calledOnce).toBe(true);
   });
 
-  it('rejects an undrained protocol-history page without a cursor', async () => {
+  it('rejects an undrained module-history page without a cursor', async () => {
     const { operations, validator } = createHarness();
-    operations.queryProtocolHistory.resolves(historyPage({ drained: false }));
+    operations.queryModuleHistory.resolves(historyPage({ drained: false }));
 
     await expect(validator.validateClosure('did:example:alice', {
-      protocols: [commentsProtocol],
+      modules: [commentsModule],
     })).rejects.toThrow(
-      `SyncScopeClosureValidator: local protocol history query returned no cursor before drain for did:example:alice / ${commentsProtocol}`
+      `SyncScopeClosureValidator: local module history query returned no cursor before drain for did:example:alice / ${commentsModule}`
     );
   });
 });
 
 function createHarness(): SyncScopeClosureValidatorHarness {
   const operations = {
-    queryProtocolHistory      : sinon.stub().resolves(historyPage({ drained: true })),
+    queryModuleHistory        : sinon.stub().resolves(historyPage({ drained: true })),
     resolvePermissionGrantIds : sinon.stub().resolves({ kind: 'granted', permissionGrantIds: ['grant-1'] }),
   } satisfies SyncScopeClosureValidatorOperations;
   return {
@@ -177,28 +182,28 @@ function cursor(position: string): ProgressToken {
 }
 
 function historyPage(
-  overrides: Partial<SyncScopeProtocolHistoryPage>,
-): SyncScopeProtocolHistoryPage {
+  overrides: Partial<SyncScopeModuleHistoryPage>,
+): SyncScopeModuleHistoryPage {
   return {
     status: { code: 200, detail: 'OK' },
     ...overrides,
   };
 }
 
-function historyEntry(message: GenericMessage): NonNullable<SyncScopeProtocolHistoryPage['entries']>[number] {
+function historyEntry(message: GenericMessage): NonNullable<SyncScopeModuleHistoryPage['entries']>[number] {
   return {
     isLatestBaseState : true,
     message,
-    messageCid        : 'protocol-cid',
+    messageCid        : 'module-cid',
     seq               : '1',
   };
 }
 
-function protocolMessage(definition: unknown): GenericMessage {
+function moduleMessage(definition: unknown): GenericMessage {
   return {
     descriptor: {
       definition,
-      interface        : DwnInterfaceName.Protocols,
+      interface        : DwnInterfaceName.Modules,
       messageTimestamp : '2026-01-01T00:00:00.000Z',
       method           : DwnMethodName.Configure,
     },
@@ -215,9 +220,9 @@ function unrelatedMessage(): GenericMessage {
   } as GenericMessage;
 }
 
-function composedProtocolDefinition(): ProtocolDefinition {
+function composedModuleDefinition(): ModuleDefinition {
   return {
-    protocol  : commentsProtocol,
+    module    : commentsModule,
     published : true,
     structure : {
       profile: {
@@ -230,16 +235,16 @@ function composedProtocolDefinition(): ProtocolDefinition {
     types: {
       profile: {
         dataFormats : ['application/json'],
-        schema      : `${commentsProtocol}/profile`,
+        schema      : `${commentsModule}/profile`,
       },
       thread: {
         dataFormats : ['application/json'],
-        schema      : `${commentsProtocol}/thread`,
+        schema      : `${commentsModule}/thread`,
       },
     },
     uses: {
-      threads  : threadsProtocol,
-      profiles : profilesProtocol,
+      threads  : threadsModule,
+      profiles : profilesModule,
     },
   };
 }

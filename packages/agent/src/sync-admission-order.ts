@@ -1,4 +1,4 @@
-import type { GenericMessage, GenericSignaturePayload, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, GenericSignaturePayload, ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { getInvokedPermissionGrantIds } from './sync-permission-grants.js';
 import {
@@ -6,14 +6,14 @@ import {
   DwnMethodName,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
-  EncryptionProtocol,
+  EncryptionModule,
   getRoleAudienceContextId,
   getRoleRecordIdentity,
-  isCrossProtocolRef,
+  isCrossModuleRef,
   Jws,
   Message,
-  parseCrossProtocolRef,
-  PermissionsProtocol,
+  parseCrossModuleRef,
+  PermissionsModule,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
 
@@ -24,18 +24,18 @@ type DescriptorWithRecordId = GenericMessage['descriptor'] & {
 type RecordsDescriptor = GenericMessage['descriptor'] & {
   dateCreated?: string;
   parentId?: string;
-  protocol?: string;
-  protocolPath?: string;
+  module?: string;
+  modulePath?: string;
   recipient?: string;
   tags?: Record<string, unknown>;
 };
 
-type ProtocolsConfigureDescriptor = GenericMessage['descriptor'] & {
-  definition?: Partial<ProtocolDefinition>;
+type ModulesConfigureDescriptor = GenericMessage['descriptor'] & {
+  definition?: Partial<ModuleDefinition>;
 };
 
 type SourceAudienceTags = {
-  protocol: string;
+  module: string;
   contextId: string;
   rolePath: string;
   keyId: string;
@@ -43,8 +43,8 @@ type SourceAudienceTags = {
 
 type DependencyIndexes<T> = {
   byIndex: Map<number, T>;
-  protocolConfigureIndex: Map<string, number>;
-  protocolDefinitionsByProtocol: Map<string, Partial<ProtocolDefinition>>;
+  moduleConfigureIndex: Map<string, number>;
+  moduleDefinitionsByModule: Map<string, Partial<ModuleDefinition>>;
   initialWriteIndex: Map<string, number>;
   grantIndex: Map<string, number>;
   roleIndex: Map<string, number>;
@@ -77,33 +77,33 @@ function isRecordsDeleteDescriptor(descriptor: GenericMessage['descriptor']): de
   return descriptor.interface === DwnInterfaceName.Records && descriptor.method === DwnMethodName.Delete;
 }
 
-function isProtocolsConfigureDescriptor(
+function isModulesConfigureDescriptor(
   descriptor: GenericMessage['descriptor']
-): descriptor is ProtocolsConfigureDescriptor {
-  return descriptor.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure;
+): descriptor is ModulesConfigureDescriptor {
+  return descriptor.interface === DwnInterfaceName.Modules && descriptor.method === DwnMethodName.Configure;
 }
 
 function getRecordId(message: GenericMessage): string | undefined {
   return (message as GenericMessage & { recordId?: string }).recordId;
 }
 
-function getProtocolDefinition(message: GenericMessage): Partial<ProtocolDefinition> | undefined {
+function getModuleDefinition(message: GenericMessage): Partial<ModuleDefinition> | undefined {
   const { descriptor } = message;
-  return isProtocolsConfigureDescriptor(descriptor) ? descriptor.definition : undefined;
+  return isModulesConfigureDescriptor(descriptor) ? descriptor.definition : undefined;
 }
 
-function getConfiguredProtocol(message: GenericMessage): string | undefined {
-  const protocol = getProtocolDefinition(message)?.protocol;
-  return typeof protocol === 'string' ? protocol : undefined;
+function getConfiguredModuleUri(message: GenericMessage): string | undefined {
+  const module = getModuleDefinition(message)?.module;
+  return typeof module === 'string' ? module : undefined;
 }
 
-function getComposedProtocolDependencies(message: GenericMessage): string[] {
-  const uses = getProtocolDefinition(message)?.uses;
+function getComposedModuleDependencies(message: GenericMessage): string[] {
+  const uses = getModuleDefinition(message)?.uses;
   if (!uses) {
     return [];
   }
 
-  return Object.values(uses).filter((protocol): protocol is string => typeof protocol === 'string');
+  return Object.values(uses).filter((module): module is string => typeof module === 'string');
 }
 
 /**
@@ -123,11 +123,11 @@ function getContextId(message: GenericMessage): string | undefined {
   return (message as GenericMessage & { contextId?: string }).contextId;
 }
 
-export function getRoleKey(protocol: string, protocolPath: string, recipient: string, contextPrefix?: string): string {
+export function getRoleKey(module: string, modulePath: string, recipient: string, contextPrefix?: string): string {
   return getRoleRecordIdentity({
     contextId: contextPrefix,
-    protocol,
-    protocolPath,
+    module,
+    modulePath,
     recipient,
   }).key;
 }
@@ -138,16 +138,16 @@ function getRoleRecordKey(message: GenericMessage): string | undefined {
     return undefined;
   }
 
-  const { protocol, protocolPath, recipient } = descriptor;
-  if (protocol === undefined || protocolPath === undefined || recipient === undefined) {
+  const { module, modulePath, recipient } = descriptor;
+  if (module === undefined || modulePath === undefined || recipient === undefined) {
     return undefined;
   }
 
-  return getRoleKey(protocol, protocolPath, recipient, getContextId(message));
+  return getRoleKey(module, modulePath, recipient, getContextId(message));
 }
 
 function getSourceAudienceKeyFromTags(tags: SourceAudienceTags): string {
-  return `${tags.protocol}|${tags.rolePath}|${tags.contextId}|${tags.keyId}`;
+  return `${tags.module}|${tags.rolePath}|${tags.contextId}|${tags.keyId}`;
 }
 
 function getSourceAudienceKey(message: GenericMessage): string | undefined {
@@ -167,15 +167,15 @@ function getSourceDeliveryRoleKey(message: GenericMessage): string | undefined {
     return undefined;
   }
 
-  return getRoleKey(tags.protocol, tags.rolePath, recipient, tags.contextId);
+  return getRoleKey(tags.module, tags.rolePath, recipient, tags.contextId);
 }
 
 function getSourceEncryptionControlTags(
   message: GenericMessage,
-  protocolPath: string,
+  modulePath: string,
 ): SourceAudienceTags | undefined {
   const { descriptor } = message;
-  if (!isRecordsWriteDescriptor(descriptor) || descriptor.protocolPath !== protocolPath) {
+  if (!isRecordsWriteDescriptor(descriptor) || descriptor.modulePath !== modulePath) {
     return undefined;
   }
 
@@ -184,9 +184,9 @@ function getSourceEncryptionControlTags(
     return undefined;
   }
 
-  const { protocol, contextId, rolePath, keyId } = tags;
+  const { module, contextId, rolePath, keyId } = tags;
   if (
-    typeof protocol !== 'string' ||
+    typeof module !== 'string' ||
     typeof contextId !== 'string' ||
     typeof rolePath !== 'string' ||
     typeof keyId !== 'string'
@@ -194,7 +194,7 @@ function getSourceEncryptionControlTags(
     return undefined;
   }
 
-  return { protocol, contextId, rolePath, keyId };
+  return { module, contextId, rolePath, keyId };
 }
 
 function getStringTag(message: GenericMessage, tag: string): string | undefined {
@@ -225,37 +225,37 @@ function getSignaturePayload(message: GenericMessage): GenericSignaturePayload |
 
 function getInvokedRoleKey(
   message: GenericMessage,
-  protocolDefinitionsByProtocol: Map<string, Partial<ProtocolDefinition>>,
+  moduleDefinitionsByModule: Map<string, Partial<ModuleDefinition>>,
 ): string | undefined {
   const { descriptor } = message;
-  if (!isRecordsDescriptor(descriptor) || descriptor.protocol === undefined) {
+  if (!isRecordsDescriptor(descriptor) || descriptor.module === undefined) {
     return undefined;
   }
 
-  const baseProtocol = descriptor.protocol;
+  const baseModule = descriptor.module;
   const contextId = getContextId(message);
-  const protocolRole = getSignaturePayload(message)?.protocolRole;
+  const moduleRole = getSignaturePayload(message)?.moduleRole;
   const recipient = Message.getAuthor(message);
-  if (typeof protocolRole !== 'string' || recipient === undefined) {
+  if (typeof moduleRole !== 'string' || recipient === undefined) {
     return undefined;
   }
 
-  let roleProtocol = baseProtocol;
-  let roleProtocolPath = protocolRole;
-  if (isCrossProtocolRef(protocolRole)) {
-    const parsed = parseCrossProtocolRef(protocolRole);
-    const referencedProtocol = parsed === undefined
+  let roleModule = baseModule;
+  let roleModulePath = moduleRole;
+  if (isCrossModuleRef(moduleRole)) {
+    const parsed = parseCrossModuleRef(moduleRole);
+    const referencedModule = parsed === undefined
       ? undefined
-      : protocolDefinitionsByProtocol.get(baseProtocol)?.uses?.[parsed.alias];
-    if (parsed === undefined || referencedProtocol === undefined) {
+      : moduleDefinitionsByModule.get(baseModule)?.uses?.[parsed.alias];
+    if (parsed === undefined || referencedModule === undefined) {
       return undefined;
     }
 
-    roleProtocol = referencedProtocol;
-    roleProtocolPath = parsed.protocolPath;
+    roleModule = referencedModule;
+    roleModulePath = parsed.modulePath;
   }
 
-  return getRoleKey(roleProtocol, roleProtocolPath, recipient, contextId);
+  return getRoleKey(roleModule, roleModulePath, recipient, contextId);
 }
 
 function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] {
@@ -272,7 +272,7 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
   for (const entry of keyEncryption) {
     if (
       entry.derivationScheme !== ROLE_AUDIENCE_DERIVATION_SCHEME ||
-      typeof entry.protocol !== 'string' ||
+      typeof entry.module !== 'string' ||
       typeof entry.rolePath !== 'string' ||
       typeof entry.keyId !== 'string'
     ) {
@@ -285,7 +285,7 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
     }
 
     keys.push(getSourceAudienceKeyFromTags({
-      protocol : entry.protocol,
+      module   : entry.module,
       rolePath : entry.rolePath,
       contextId,
       keyId    : entry.keyId,
@@ -301,8 +301,8 @@ function getSourceAudienceKeysFromEncryption(message: GenericMessage): string[] 
  *
  * Dependencies — one bullet per edge kind added by
  * {@link addDependencyEdgesForMessage}; keep the two in step:
- * - ProtocolsConfigure must come before any RecordsWrite using that protocol
- * - Composed ProtocolsConfigure must come after ProtocolsConfigure messages for protocols in `uses`
+ * - ModulesConfigure must come before any RecordsWrite using that module
+ * - Composed ModulesConfigure must come after ModulesConfigure messages for modules in `uses`
  * - Parent record must come before child record (via parentId)
  * - Initial write must come before update writes (same recordId, not initial)
  * - Initial write must come before a RecordsDelete for the same recordId
@@ -329,35 +329,35 @@ function topologicallySortMessages<T extends { message: GenericMessage }>(messag
 
 function buildDependencyIndexes<T extends { message: GenericMessage }>(messages: T[]): DependencyIndexes<T> {
   const indexes: DependencyIndexes<T> = {
-    byIndex                       : new Map(),
-    protocolConfigureIndex        : new Map(),
-    protocolDefinitionsByProtocol : new Map(),
-    initialWriteIndex             : new Map(),
-    grantIndex                    : new Map(),
-    roleIndex                     : new Map(),
-    sourceAudienceIndex           : new Map(),
+    byIndex                   : new Map(),
+    moduleConfigureIndex      : new Map(),
+    moduleDefinitionsByModule : new Map(),
+    initialWriteIndex         : new Map(),
+    grantIndex                : new Map(),
+    roleIndex                 : new Map(),
+    sourceAudienceIndex       : new Map(),
   };
 
   for (let i = 0; i < messages.length; i++) {
     const entry = messages[i];
     indexes.byIndex.set(i, entry);
-    indexProtocolConfigure(entry.message, i, indexes);
+    indexModuleConfigure(entry.message, i, indexes);
     indexRecordsWrite(entry.message, i, indexes);
   }
 
   return indexes;
 }
 
-function indexProtocolConfigure<T>(message: GenericMessage, index: number, indexes: DependencyIndexes<T>): void {
-  const protocolUrl = getConfiguredProtocol(message);
-  if (protocolUrl === undefined) {
+function indexModuleConfigure<T>(message: GenericMessage, index: number, indexes: DependencyIndexes<T>): void {
+  const moduleUri = getConfiguredModuleUri(message);
+  if (moduleUri === undefined) {
     return;
   }
 
-  const protocolDefinition = getProtocolDefinition(message);
-  indexes.protocolConfigureIndex.set(protocolUrl, index);
-  if (protocolDefinition !== undefined) {
-    indexes.protocolDefinitionsByProtocol.set(protocolUrl, protocolDefinition);
+  const moduleDefinition = getModuleDefinition(message);
+  indexes.moduleConfigureIndex.set(moduleUri, index);
+  if (moduleDefinition !== undefined) {
+    indexes.moduleDefinitionsByModule.set(moduleUri, moduleDefinition);
   }
 }
 
@@ -375,7 +375,7 @@ function indexRecordsWrite<T>(message: GenericMessage, index: number, indexes: D
   if (isInitialWrite(message)) {
     indexes.initialWriteIndex.set(recordId, index);
   }
-  if (desc.protocol === PermissionsProtocol.uri && desc.protocolPath === PermissionsProtocol.grantPath) {
+  if (desc.module === PermissionsModule.uri && desc.modulePath === PermissionsModule.grantPath) {
     indexes.grantIndex.set(recordId, index);
   }
 
@@ -435,49 +435,49 @@ function addDependencyEdgesForMessage<T>(
   addEdge: AddDependencyEdge,
 ): void {
   const desc = message.descriptor;
-  addComposedProtocolEdges(index, message, desc, indexes, addEdge);
-  addRecordProtocolEdge(index, desc, indexes, addEdge);
+  addComposedModuleEdges(index, message, desc, indexes, addEdge);
+  addRecordModuleEdge(index, desc, indexes, addEdge);
   addParentRecordEdge(index, desc, indexes, addEdge);
   addInitialWriteEdge(index, message, desc, indexes, addEdge);
   addDeleteEdge(index, desc, indexes, addEdge);
   addPermissionGrantEdges(index, message, indexes, addEdge);
-  addEncryptionProtocolEdges(index, message, indexes, addEdge);
+  addEncryptionModuleEdges(index, message, indexes, addEdge);
   addSourceAudienceEdges(index, message, indexes, addEdge);
   addRoleEdge(index, message, indexes, addEdge);
 }
 
-function addComposedProtocolEdges<T>(
+function addComposedModuleEdges<T>(
   index: number,
   message: GenericMessage,
   desc: GenericMessage['descriptor'],
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
-  if (!isProtocolsConfigureDescriptor(desc)) {
+  if (!isModulesConfigureDescriptor(desc)) {
     return;
   }
 
-  for (const protocol of getComposedProtocolDependencies(message)) {
-    const protocolIndex = indexes.protocolConfigureIndex.get(protocol);
-    if (protocolIndex !== undefined) {
-      addEdge(protocolIndex, index);
+  for (const module of getComposedModuleDependencies(message)) {
+    const moduleIndex = indexes.moduleConfigureIndex.get(module);
+    if (moduleIndex !== undefined) {
+      addEdge(moduleIndex, index);
     }
   }
 }
 
-function addRecordProtocolEdge<T>(
+function addRecordModuleEdge<T>(
   index: number,
   desc: GenericMessage['descriptor'],
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
-  if (!isRecordsDescriptor(desc) || desc.protocol === undefined) {
+  if (!isRecordsDescriptor(desc) || desc.module === undefined) {
     return;
   }
 
-  const protocolIndex = indexes.protocolConfigureIndex.get(desc.protocol);
-  if (protocolIndex !== undefined) {
-    addEdge(protocolIndex, index);
+  const moduleIndex = indexes.moduleConfigureIndex.get(desc.module);
+  if (moduleIndex !== undefined) {
+    addEdge(moduleIndex, index);
   }
 }
 
@@ -545,19 +545,19 @@ function addPermissionGrantEdges<T>(
   }
 }
 
-function addEncryptionProtocolEdges<T>(
+function addEncryptionModuleEdges<T>(
   index: number,
   message: GenericMessage,
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
   const desc = message.descriptor;
-  if (!isRecordsWriteDescriptor(desc) || desc.protocol !== EncryptionProtocol.uri) {
+  if (!isRecordsWriteDescriptor(desc) || desc.module !== EncryptionModule.uri) {
     return;
   }
 
-  if (desc.protocolPath === EncryptionProtocol.grantKeyPath ||
-      desc.protocolPath === EncryptionProtocol.wrappedGrantKeyPath) {
+  if (desc.modulePath === EncryptionModule.grantKeyPath ||
+      desc.modulePath === EncryptionModule.wrappedGrantKeyPath) {
     const grantId = getStringTag(message, 'grantId');
     const grantIndex = grantId === undefined ? undefined : indexes.grantIndex.get(grantId);
     if (grantIndex !== undefined) {
@@ -572,7 +572,7 @@ function addRoleEdge<T>(
   indexes: DependencyIndexes<T>,
   addEdge: AddDependencyEdge,
 ): void {
-  const roleKey = getInvokedRoleKey(message, indexes.protocolDefinitionsByProtocol);
+  const roleKey = getInvokedRoleKey(message, indexes.moduleDefinitionsByModule);
   const roleIndex = roleKey === undefined ? undefined : indexes.roleIndex.get(roleKey);
   if (roleIndex !== undefined) {
     addEdge(roleIndex, index);

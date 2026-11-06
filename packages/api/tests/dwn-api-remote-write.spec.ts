@@ -1,6 +1,6 @@
 import type { BearerDid } from '@enbox/dids';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
-import type { DwnMessage, DwnProtocolDefinition } from '@enbox/agent';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+import type { DwnMessage, DwnModuleDefinition } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -12,9 +12,9 @@ import { DwnConstant, Jws } from '@enbox/dwn-sdk-js';
 import { createPermissionGrants, DwnInterface, EnboxUserAgent, getRecordAuthor } from '@enbox/agent';
 import { processConnectedGrants, WalletConnect } from '@enbox/auth';
 
-import photosProtocolDefinition from './fixtures/protocol-definitions/photos.json' with { type: 'json' };
+import photosModuleDefinition from './fixtures/module-definitions/photos.json' with { type: 'json' };
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
@@ -22,7 +22,7 @@ import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { publishProtocol, publishRecord } from './utils/test-dwn-operations.js';
+import { publishModule, publishRecord } from './utils/test-dwn-operations.js';
 
 const testDwnUrls: string[] = [testDwnUrl];
 
@@ -41,7 +41,7 @@ describe('cross-tenant writes (#973)', () => {
   let dwnAlice: DwnApi;
   let dwnBob: DwnApi;
   let testHarness: PlatformAgentTestHarness;
-  let protocolDefinition: DwnProtocolDefinition;
+  let moduleDefinition: DwnModuleDefinition;
 
   beforeAll(async () => {
     testHarness = await PlatformAgentTestHarness.setup({
@@ -72,11 +72,11 @@ describe('cross-tenant writes (#973)', () => {
     await testHarness.agent.permissions.clear();
     testHarness.dwnStores.clear();
 
-    // Give the protocol a random URI per test so remote-tenant state from one
+    // Give the module a random URI per test so remote-tenant state from one
     // test never leaks into the next (the shared dev DWN server persists).
-    protocolDefinition = {
-      ...photosProtocolDefinition,
-      protocol: `http://photo-protocol.xyz/${TestDataGenerator.randomString(15)}`,
+    moduleDefinition = {
+      ...photosModuleDefinition,
+      module: `http://photo-module.xyz/${TestDataGenerator.randomString(15)}`,
     };
   });
 
@@ -89,13 +89,13 @@ describe('cross-tenant writes (#973)', () => {
     await testHarness.closeStorage();
   });
 
-  /** Installs the protocol for Alice locally and on her remote DWN. */
-  async function installProtocolForAlice(): Promise<void> {
-    const { status, protocol } = await dwnAlice.protocols.configure({ definition: protocolDefinition });
+  /** Installs the module for Alice locally and on her remote DWN. */
+  async function installModuleForAlice(): Promise<void> {
+    const { status, module } = await dwnAlice.modules.configure({ definition: moduleDefinition });
     expect(status.code).toBe(202);
-    const { status: sendStatus } = await publishProtocol(
+    const { status: sendStatus } = await publishModule(
       testHarness.agent,
-      protocol!,
+      module!,
       aliceDid.uri,
       aliceDid.uri,
     );
@@ -105,12 +105,12 @@ describe('cross-tenant writes (#973)', () => {
   /** Writes a `friend` $role record for Bob on Alice's tenant and sends it to her remote DWN. */
   async function grantBobFriendRole(): Promise<void> {
     const { status, record } = await dwnAlice.records.write({
-      data         : 'friend role for bob',
-      recipient    : bobDid.uri,
-      protocol     : protocolDefinition.protocol,
-      protocolPath : 'friend',
-      schema       : protocolDefinition.types.friend.schema,
-      dataFormat   : 'text/plain',
+      data       : 'friend role for bob',
+      recipient  : bobDid.uri,
+      module     : moduleDefinition.module,
+      modulePath : 'friend',
+      schema     : moduleDefinition.types.friend.schema,
+      dataFormat : 'text/plain',
     });
     expect(status.code).toBe(202);
     await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
@@ -118,7 +118,7 @@ describe('cross-tenant writes (#973)', () => {
 
   describe('records.write with from', () => {
     it('should accept a role-authorized cross-tenant write', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
       await grantBobFriendRole();
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
@@ -126,14 +126,14 @@ describe('cross-tenant writes (#973)', () => {
 
       // Bob writes an album INTO Alice's remote DWN under his `friend` role.
       const { status, record, audienceKeyDelivery } = await dwnBob.records.write({
-        data         : 'bob writes into alice dwn',
-        from         : aliceDid.uri,
-        recipient    : aliceDid.uri,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'album',
-        protocolRole : 'friend',
-        schema       : protocolDefinition.types.album.schema,
-        dataFormat   : 'text/plain',
+        data       : 'bob writes into alice dwn',
+        from       : aliceDid.uri,
+        recipient  : aliceDid.uri,
+        module     : moduleDefinition.module,
+        modulePath : 'album',
+        moduleRole : 'friend',
+        schema     : moduleDefinition.types.album.schema,
+        dataFormat : 'text/plain',
       });
 
       expect(status.code).toBe(202);
@@ -151,7 +151,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(audienceKeyDelivery).toBeUndefined();
 
       // The invoked role is retained for follow-up operations.
-      expect(record!.protocolRole).toBe('friend');
+      expect(record!.moduleRole).toBe('friend');
       expect(record!.author).toBe(bobDid.uri);
 
       // The record actually landed on Alice's remote DWN with data intact.
@@ -164,16 +164,16 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should surface the rejection of a non-role, non-grant cross-tenant write', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
       // No friend role for Bob this time.
 
       const { status, record } = await dwnBob.records.write({
-        data         : 'unauthorized write',
-        from         : aliceDid.uri,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'album',
-        schema       : protocolDefinition.types.album.schema,
-        dataFormat   : 'text/plain',
+        data       : 'unauthorized write',
+        from       : aliceDid.uri,
+        module     : moduleDefinition.module,
+        modulePath : 'album',
+        schema     : moduleDefinition.types.album.schema,
+        dataFormat : 'text/plain',
       });
 
       // The owner's DWN rejects the write; the status surfaces, not swallowed.
@@ -182,16 +182,16 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should keep the from-less write on the local processing path (regression)', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
       const { status, record } = await dwnAlice.records.write({
-        data         : 'local write',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'album',
-        schema       : protocolDefinition.types.album.schema,
-        dataFormat   : 'text/plain',
+        data       : 'local write',
+        module     : moduleDefinition.module,
+        modulePath : 'album',
+        schema     : moduleDefinition.types.album.schema,
+        dataFormat : 'text/plain',
       });
 
       expect(status.code).toBe(202);
@@ -200,7 +200,7 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should reject recipientRolePublicKey on the remote path (agent throws, surfaced)', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
       await grantBobFriendRole();
 
       // A structurally valid X25519 public JWK — the agent must reject it
@@ -215,10 +215,10 @@ describe('cross-tenant writes (#973)', () => {
         data                   : 'role record with supplied key',
         from                   : aliceDid.uri,
         recipient              : aliceDid.uri,
-        protocol               : protocolDefinition.protocol,
-        protocolPath           : 'album',
-        protocolRole           : 'friend',
-        schema                 : protocolDefinition.types.album.schema,
+        module                 : moduleDefinition.module,
+        modulePath             : 'album',
+        moduleRole             : 'friend',
+        schema                 : moduleDefinition.types.album.schema,
         dataFormat             : 'text/plain',
         recipientRolePublicKey : x25519PublicKey,
       })).rejects.toThrow('recipientRolePublicKey is not supported on sendRequest');
@@ -227,14 +227,14 @@ describe('cross-tenant writes (#973)', () => {
 
   describe('typed records.create with from', () => {
     it('should role-write into the owner tenant through the typed surface and wrap the result', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
       await grantBobFriendRole();
 
       // The photos fixture types carry dataFormats: ['text/plain'], so the
       // typed payload for `album` is a plain string.
       const typedBob = new TypedEnbox(
         dwnBob,
-        defineProtocol(protocolDefinition as ProtocolDefinition, {
+        defineModule(moduleDefinition as ModuleDefinition, {
           album       : recordCodecs.text(),
           friend      : recordCodecs.text(),
           participant : recordCodecs.text(),
@@ -245,13 +245,13 @@ describe('cross-tenant writes (#973)', () => {
 
       const sendSpy = sinon.spy(testHarness.agent, 'sendDwnRequest');
 
-      // Typed create auto-configures the protocol on Bob's LOCAL tenant, then
+      // Typed create auto-configures the module on Bob's LOCAL tenant, then
       // dispatches the record write to Alice's REMOTE tenant.
       const record = await typedBob.records.create('album', {
-        data         : 'bob types into alice dwn',
-        from         : aliceDid.uri,
-        recipient    : aliceDid.uri,
-        protocolRole : 'friend',
+        data       : 'bob types into alice dwn',
+        from       : aliceDid.uri,
+        recipient  : aliceDid.uri,
+        moduleRole : 'friend',
       });
 
       // The record WRITE went remote; the auto-configure stayed local.
@@ -260,7 +260,7 @@ describe('cross-tenant writes (#973)', () => {
       expect(remoteWrites[0].args[0].target).toBe(aliceDid.uri);
 
       // The typed API returns the canonical record with its invoked role intact.
-      expect(record.protocolRole).toBe('friend');
+      expect(record.moduleRole).toBe('friend');
 
       // The record landed on Alice's remote DWN with the typed payload.
       const readResult = await dwnAlice.records.read({
@@ -274,20 +274,20 @@ describe('cross-tenant writes (#973)', () => {
 
   describe('Record.update with from', () => {
     it('should dispatch a role-authorized cross-tenant update remotely', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
       await grantBobFriendRole();
 
       // Bob creates the album cross-tenant, then co-updates it cross-tenant
-      // under the same role (photos protocol: friend can create + update).
+      // under the same role (photos module: friend can create + update).
       const { status: createStatus, record } = await dwnBob.records.write({
-        data         : 'v1',
-        from         : aliceDid.uri,
-        recipient    : aliceDid.uri,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'album',
-        protocolRole : 'friend',
-        schema       : protocolDefinition.types.album.schema,
-        dataFormat   : 'text/plain',
+        data       : 'v1',
+        from       : aliceDid.uri,
+        recipient  : aliceDid.uri,
+        module     : moduleDefinition.module,
+        modulePath : 'album',
+        moduleRole : 'friend',
+        schema     : moduleDefinition.types.album.schema,
+        dataFormat : 'text/plain',
       });
       expect(createStatus.code).toBe(202);
 
@@ -314,16 +314,16 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should update locally when a remotely read record is updated without from (regression)', async () => {
-      await installProtocolForAlice();
+      await installModuleForAlice();
 
       // Alice writes locally, sends to her remote, then reads it back FROM the
       // remote — producing a record with remote data access.
       const { status: writeStatus, record } = await dwnAlice.records.write({
-        data         : 'local v1',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'album',
-        schema       : protocolDefinition.types.album.schema,
-        dataFormat   : 'text/plain',
+        data       : 'local v1',
+        module     : moduleDefinition.module,
+        modulePath : 'album',
+        schema     : moduleDefinition.types.album.schema,
+        dataFormat : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
       await publishRecord(testHarness.agent, record!, aliceDid.uri, aliceDid.uri);
@@ -348,13 +348,13 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should re-derive the author and re-home data access on both references after a co-update', async () => {
-      // A co-update-friendly protocol: anyone may create/read/update/co-update.
-      const coUpdateProtocol: DwnProtocolDefinition = {
+      // A co-update-friendly module: anyone may create/read/update/co-update.
+      const coUpdateModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://co-update-protocol.xyz/${TestDataGenerator.randomString(15)}`,
+        module    : `http://co-update-module.xyz/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
-            schema      : 'http://co-update-protocol.xyz/schema/note',
+            schema      : 'http://co-update-module.xyz/schema/note',
             dataFormats : ['text/plain'],
           },
         },
@@ -364,16 +364,16 @@ describe('cross-tenant writes (#973)', () => {
           },
         },
       };
-      const { status: aliceConfig, protocol } = await dwnAlice.protocols.configure({ definition: coUpdateProtocol });
+      const { status: aliceConfig, module } = await dwnAlice.modules.configure({ definition: coUpdateModule });
       expect(aliceConfig.code).toBe(202);
-      const { status: aliceProtocolSend } = await publishProtocol(
+      const { status: aliceModuleSend } = await publishModule(
         testHarness.agent,
-        protocol!,
+        module!,
         aliceDid.uri,
         aliceDid.uri,
       );
-      expect(aliceProtocolSend.code).toBe(202);
-      const { status: bobConfig } = await dwnBob.protocols.configure({ definition: coUpdateProtocol });
+      expect(aliceModuleSend.code).toBe(202);
+      const { status: bobConfig } = await dwnBob.modules.configure({ definition: coUpdateModule });
       expect(bobConfig.code).toBe(202);
 
       // Data too large to inline in query results, so later reads are LAZY —
@@ -382,11 +382,11 @@ describe('cross-tenant writes (#973)', () => {
 
       // Alice authors the note and sends it to her remote DWN.
       const { status: writeStatus, record: alicesRecord } = await dwnAlice.records.write({
-        data         : largeData,
-        protocol     : coUpdateProtocol.protocol,
-        protocolPath : 'note',
-        schema       : coUpdateProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        data       : largeData,
+        module     : coUpdateModule.module,
+        modulePath : 'note',
+        schema     : coUpdateModule.types.note.schema,
+        dataFormat : 'text/plain',
       });
       expect(writeStatus.code).toBe(202);
       await publishRecord(testHarness.agent, alicesRecord!, aliceDid.uri, aliceDid.uri);
@@ -462,12 +462,12 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     async function createDelegatedEnbox(
-      definition: DwnProtocolDefinition,
+      definition: DwnModuleDefinition,
       permissions: Array<'delete' | 'read' | 'write'>,
     ): Promise<{ delegateDid: string; enbox: Enbox }> {
       const delegatedBearerDid = await testHarness.agent.did.create({ store: false, method: 'jwk' });
       const delegatePortableDid = await delegatedBearerDid.export();
-      const grantRequest = WalletConnect.createPermissionRequestForProtocol({ definition, permissions });
+      const grantRequest = WalletConnect.createPermissionRequestForModule({ definition, permissions });
       const grants = await createPermissionGrants(
         aliceDid.uri, delegatedBearerDid.uri, testHarness.agent, grantRequest.permissionScopes,
       );
@@ -499,13 +499,13 @@ describe('cross-tenant writes (#973)', () => {
     }
 
     it('should dispatch a delegated-grant write to the owner\'s remote DWN', async () => {
-      // Alice installs a simple notes protocol locally and on her remote DWN.
-      const notesProtocol: DwnProtocolDefinition = {
+      // Alice installs a simple notes module locally and on her remote DWN.
+      const notesModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://notes-protocol.xyz/protocol/${TestDataGenerator.randomString(15)}`,
+        module    : `http://notes-module.xyz/module/${TestDataGenerator.randomString(15)}`,
         types     : {
           note: {
-            schema      : 'https://notes-protocol.xyz/schema/note',
+            schema      : 'https://notes-module.xyz/schema/note',
             dataFormats : ['text/plain'],
           },
         },
@@ -513,19 +513,19 @@ describe('cross-tenant writes (#973)', () => {
           note: {},
         },
       };
-      const { status: configStatus, protocol } = await dwnAlice.protocols.configure({ definition: notesProtocol });
+      const { status: configStatus, module } = await dwnAlice.modules.configure({ definition: notesModule });
       expect(configStatus.code).toBe(202);
-      const { status: protocolSendStatus } = await publishProtocol(
+      const { status: moduleSendStatus } = await publishModule(
         testHarness.agent,
-        protocol!,
+        module!,
         aliceDid.uri,
         aliceDid.uri,
       );
-      expect(protocolSendStatus.code).toBe(202);
+      expect(moduleSendStatus.code).toBe(202);
 
-      // Alice grants a device did:jwk delegated write/read for the protocol;
+      // Alice grants a device did:jwk delegated write/read for the module;
       // the DELEGATE agent (separate harness, no Alice keys) imports it.
-      const { delegateDid, enbox } = await createDelegatedEnbox(notesProtocol, ['write', 'read']);
+      const { delegateDid, enbox } = await createDelegatedEnbox(notesModule, ['write', 'read']);
 
       const sendSpy = sinon.spy(delegateHarness.agent, 'sendDwnRequest');
 
@@ -533,12 +533,12 @@ describe('cross-tenant writes (#973)', () => {
       // grant path must keep working through the `from` dispatch branch.
       // (Uses the new public `enbox.dwn` accessor rather than a private cast.)
       const { status, record } = await enbox.dwn.records.write({
-        data         : 'delegated remote note',
-        from         : aliceDid.uri,
-        protocol     : notesProtocol.protocol,
-        protocolPath : 'note',
-        schema       : notesProtocol.types.note.schema,
-        dataFormat   : 'text/plain',
+        data       : 'delegated remote note',
+        from       : aliceDid.uri,
+        module     : notesModule.module,
+        modulePath : 'note',
+        schema     : notesModule.types.note.schema,
+        dataFormat : 'text/plain',
       });
 
       expect(status.code).toBe(202);
@@ -566,9 +566,9 @@ describe('cross-tenant writes (#973)', () => {
     });
 
     it('should enforce and retain a nested role for typed remote reads and deletes', async () => {
-      const roleProtocol: DwnProtocolDefinition = {
+      const roleModule: DwnModuleDefinition = {
         published : true,
-        protocol  : `http://role-access.xyz/protocol/${TestDataGenerator.randomString(15)}`,
+        module    : `http://role-access.xyz/module/${TestDataGenerator.randomString(15)}`,
         types     : {
           thread: {
             schema      : 'https://role-access.xyz/schema/thread',
@@ -602,11 +602,11 @@ describe('cross-tenant writes (#973)', () => {
       };
 
       for (const ownerDwn of [dwnAlice, dwnBob]) {
-        const { status, protocol } = await ownerDwn.protocols.configure({ definition: roleProtocol });
+        const { status, module } = await ownerDwn.modules.configure({ definition: roleModule });
         expect(status.code).toBe(202);
-        const { status: sendStatus } = await publishProtocol(
+        const { status: sendStatus } = await publishModule(
           testHarness.agent,
-          protocol!,
+          module!,
           ownerDwn.connectedDid,
           ownerDwn.connectedDid,
         );
@@ -614,11 +614,11 @@ describe('cross-tenant writes (#973)', () => {
       }
 
       const { status: threadStatus, record: thread } = await dwnBob.records.write({
-        data         : 'thread',
-        protocol     : roleProtocol.protocol,
-        protocolPath : 'thread',
-        schema       : roleProtocol.types.thread.schema,
-        dataFormat   : 'text/plain',
+        data       : 'thread',
+        module     : roleModule.module,
+        modulePath : 'thread',
+        schema     : roleModule.types.thread.schema,
+        dataFormat : 'text/plain',
       });
       expect(threadStatus.code).toBe(202);
       await publishRecord(testHarness.agent, thread!, bobDid.uri, bobDid.uri);
@@ -627,9 +627,9 @@ describe('cross-tenant writes (#973)', () => {
         data            : 'participant',
         parentContextId : thread!.contextId,
         recipient       : aliceDid.uri,
-        protocol        : roleProtocol.protocol,
-        protocolPath    : 'thread/participant',
-        schema          : roleProtocol.types.participant.schema,
+        module          : roleModule.module,
+        modulePath      : 'thread/participant',
+        schema          : roleModule.types.participant.schema,
         dataFormat      : 'text/plain',
       });
       expect(participantStatus.code).toBe(202);
@@ -639,18 +639,18 @@ describe('cross-tenant writes (#973)', () => {
       const { status: sessionStatus, record: session } = await dwnBob.records.write({
         data            : sessionData,
         parentContextId : thread!.contextId,
-        protocol        : roleProtocol.protocol,
-        protocolPath    : 'thread/session',
-        schema          : roleProtocol.types.session.schema,
+        module          : roleModule.module,
+        modulePath      : 'thread/session',
+        schema          : roleModule.types.session.schema,
         dataFormat      : 'text/plain',
       });
       expect(sessionStatus.code).toBe(202);
       await publishRecord(testHarness.agent, session!, bobDid.uri, bobDid.uri);
 
-      const { enbox } = await createDelegatedEnbox(roleProtocol, ['read', 'delete']);
+      const { enbox } = await createDelegatedEnbox(roleModule, ['read', 'delete']);
       const typed = new TypedEnbox(
         enbox.dwn,
-        defineProtocol(roleProtocol, {
+        defineModule(roleModule, {
           thread      : recordCodecs.text(),
           participant : recordCodecs.text(),
           auditor     : recordCodecs.text(),
@@ -666,15 +666,15 @@ describe('cross-tenant writes (#973)', () => {
       await expect(typed.records.read('thread/session', readRequest)).rejects.toBeInstanceOf(DwnResponseError);
       await expect(typed.records.read('thread/session', {
         ...readRequest,
-        protocolRole: 'thread/auditor',
+        moduleRole: 'thread/auditor',
       })).rejects.toBeInstanceOf(DwnResponseError);
 
       const sendSpy = sinon.spy(delegateHarness.agent, 'sendDwnRequest');
       const remoteRecord = await typed.records.read('thread/session', {
         ...readRequest,
-        protocolRole: 'thread/participant',
+        moduleRole: 'thread/participant',
       });
-      expect(remoteRecord?.protocolRole).toBe('thread/participant');
+      expect(remoteRecord?.moduleRole).toBe('thread/participant');
       expect(await remoteRecord!.value()).toBe(sessionData);
       expect(await remoteRecord!.value()).toBe(sessionData);
 
@@ -684,7 +684,7 @@ describe('cross-tenant writes (#973)', () => {
       );
       expect(roleReads).toHaveLength(2);
       expect(roleReads.every((call) =>
-        call.args[0].messageParams.protocolRole === 'thread/participant'
+        call.args[0].messageParams.moduleRole === 'thread/participant'
       )).toBe(true);
 
       const deleteRequest = {
@@ -695,7 +695,7 @@ describe('cross-tenant writes (#973)', () => {
       await expect(typed.records.delete('thread/session', deleteRequest)).rejects.toBeInstanceOf(DwnResponseError);
       await expect(typed.records.delete('thread/session', {
         ...deleteRequest,
-        protocolRole: 'thread/auditor',
+        moduleRole: 'thread/auditor',
       })).rejects.toBeInstanceOf(DwnResponseError);
 
       const retained = await dwnBob.records.read({
@@ -706,7 +706,7 @@ describe('cross-tenant writes (#973)', () => {
 
       await typed.records.delete('thread/session', {
         ...deleteRequest,
-        protocolRole: 'thread/participant',
+        moduleRole: 'thread/participant',
       });
 
       const deleted = await dwnBob.records.read({

@@ -30,7 +30,7 @@
     "permissionGrantId": {
       "type": "string"
     },
-    "protocolRole": {
+    "moduleRole": {
       "type": "string"
     }
   }

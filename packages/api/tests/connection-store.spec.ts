@@ -2,7 +2,7 @@ import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { DwnEndpointResolution } from '@enbox/dids';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { AuthState, ConnectionStatus } from '@enbox/auth';
 import type {
   RemoteSyncStatus,
@@ -25,25 +25,25 @@ import type { ConnectionSnapshot, ConnectionStore, ConnectionStoreOptions } from
 
 import { createConnectionStore as createApiConnectionStore } from '../src/connection-store.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { Enbox } from '../src/enbox.js';
-import { ProtocolReadinessError } from '../src/protocol-readiness.js';
-import { ServiceConfigProtocol } from '../src/service-config-protocol.js';
+import { ModuleReadinessError } from '../src/module-readiness.js';
+import { ServiceConfigModule } from '../src/service-config-module.js';
 import { WalletReapprovalRequiredError } from '../src/typed-enbox.js';
 
 const OWNER_DID = 'did:dht:store-owner';
 const DELEGATE_DID = 'did:jwk:store-delegate';
 
 const ApplicationDefinition = {
-  protocol  : 'https://example.com/connection-store/application',
+  module    : 'https://example.com/connection-store/application',
   published : true,
   types     : {},
   structure : {},
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const ApplicationProtocol = defineProtocol(ApplicationDefinition, {});
+const ApplicationModule = defineModule(ApplicationDefinition, {});
 const APPLICATION = defineApplicationManifest({
-  protocols: [{ protocol: ApplicationProtocol, permissions: ['read'] }],
+  modules: [{ module: ApplicationModule, permissions: ['read'] }],
 } as const);
 const APPLICATION_REQUESTS = [{ definition: ApplicationDefinition, permissions: ['read'] }];
 
@@ -57,33 +57,33 @@ function createStore(options: TestConnectionStoreOptions = {}): ConnectionStore 
 }
 
 const WriteOnlyDefinition = {
-  protocol  : 'https://example.com/connection-store/write-only',
+  module    : 'https://example.com/connection-store/write-only',
   published : true,
   types     : {},
   structure : {},
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const WriteOnlyProtocol = defineProtocol(WriteOnlyDefinition, {});
+const WriteOnlyModule = defineModule(WriteOnlyDefinition, {});
 const DEFAULT_READ_APPLICATION = defineApplicationManifest({
-  protocols: [ApplicationProtocol],
+  modules: [ApplicationModule],
 } as const);
 const MIXED_APPLICATION = defineApplicationManifest({
-  protocols: [
-    { protocol: ApplicationProtocol, permissions: ['read'] },
-    { protocol: WriteOnlyProtocol, permissions: ['write'] },
+  modules: [
+    { module: ApplicationModule, permissions: ['read'] },
+    { module: WriteOnlyModule, permissions: ['write'] },
   ],
 } as const);
 const WRITE_ONLY_APPLICATION = defineApplicationManifest({
-  protocols: [{ protocol: WriteOnlyProtocol, permissions: ['write'] }],
+  modules: [{ module: WriteOnlyModule, permissions: ['write'] }],
 } as const);
 
 const COVERED_REGISTRATION: SyncIdentityOptions = {
   delegateDid : DELEGATE_DID,
-  protocols   : [ApplicationDefinition.protocol],
+  modules     : [ApplicationDefinition.module],
 };
 const UNCOVERED_REGISTRATION: SyncIdentityOptions = {
   delegateDid : DELEGATE_DID,
-  protocols   : ['https://example.com/other'],
+  modules     : ['https://example.com/other'],
 };
 
 const ACTIVE_STATUS: ConnectionStatus = {
@@ -136,7 +136,7 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     links            : [],
     listenerCount    : (): number => listeners.size,
     optionUpdates    : [],
-    options          : { protocols: 'all' },
+    options          : { modules: 'all' },
     remotes          : [],
     readLinks        : async (): Promise<ReplicationLinkSnapshot[]> => state.links,
     settledLinkReads : 0,
@@ -203,10 +203,10 @@ function serviceConfigNotice(author: string = OWNER_DID): SyncEvent {
     remoteEndpoint : 'https://dwn.example',
     messageCid     : 'service-config-notice',
     descriptor     : {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : ServiceConfigProtocol.definition.protocol,
-      protocolPath : 'serviceConfig',
+      interface  : 'Records',
+      method     : 'Write',
+      module     : ServiceConfigModule.definition.module,
+      modulePath : 'serviceConfig',
       author,
     },
   };
@@ -298,7 +298,7 @@ describe('createConnectionStore()', () => {
     sinon.stub(Enbox, 'fromSession').callsFake((session): Enbox => {
       const enbox = fromSession(session);
       readinessEnboxes?.push(enbox);
-      enbox.protocols = { ensureReady };
+      enbox.modules = { ensureReady };
       return enbox;
     });
     await testHarness.clearStorage();
@@ -308,7 +308,7 @@ describe('createConnectionStore()', () => {
     sinon.stub(testHarness.agent.sync, 'getIdentityOptions').resolves(COVERED_REGISTRATION);
     sinon.stub(testHarness.agent.sync, 'refreshIdentityRouting').resolves();
     getIdentitySyncStatus = sinon.stub(testHarness.agent.sync, 'getIdentitySyncStatus')
-      .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, protocols: 'all' }));
+      .resolves(identitySyncStatus({ delegateDid: DELEGATE_DID, modules: 'all' }));
   });
 
   afterEach(() => {
@@ -365,7 +365,7 @@ describe('createConnectionStore()', () => {
     });
   }
 
-  function stubProtocolReadiness(enboxes: Enbox[] = []): sinon.SinonStub {
+  function stubModuleReadiness(enboxes: Enbox[] = []): sinon.SinonStub {
     readinessEnboxes = enboxes;
     return ensureReady;
   }
@@ -388,7 +388,7 @@ describe('createConnectionStore()', () => {
       session: AgentSession;
       store: ReturnType<typeof createStore>;
     } {
-    const ensureReady = stubProtocolReadiness(enboxes);
+    const ensureReady = stubModuleReadiness(enboxes);
     const session = createSession({ agent: agentWithSync(engine.sync), delegateDid: DELEGATE_DID, signal });
     const auth = createFakeAuth();
     auth.connect.callsFake(async (): Promise<AgentSession> => {
@@ -580,7 +580,7 @@ describe('createConnectionStore()', () => {
 
       expect(store.getSnapshot().sync).toEqual({ state: 'caught-up', connectivity: 'unknown', remotes: [] });
 
-      engine.options = { protocols: 'all' };
+      engine.options = { modules: 'all' };
       emitRegistrationChange(engine, engine.options);
       await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
     });
@@ -884,10 +884,10 @@ describe('createConnectionStore()', () => {
     });
 
     it('should map replacement readiness failure suppressed during a remote retry', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       ensureReady.onSecondCall().rejects(new Error('replacement not ready'));
       const engine = createSyncStatusEngine();
-      engine.options = { delegateDid: DELEGATE_DID, protocols: 'all' };
+      engine.options = { delegateDid: DELEGATE_DID, modules: 'all' };
       const lifetime = new AbortController();
       let resolveRetry!: () => void;
       const retryRemoteNow = sinon.stub(engine.sync, 'retryRemoteNow').returns(
@@ -1038,14 +1038,14 @@ describe('createConnectionStore()', () => {
       expect(store.getSnapshot().remoteDwn).toEqual(readyDwn());
       expect(Object.isFrozen(store.getSnapshot().remoteDwn)).toBe(true);
       expect(Object.isFrozen((store.getSnapshot().remoteDwn as { endpoints: string[] }).endpoints)).toBe(true);
-      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
+      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { modules: 'all' } }]);
 
       engine.optionUpdates.length = 0;
       getDwnEndpointStatus.resolves(readyDwn('https://new-dwn.example'));
       const changed = await store.refreshDwnEndpoints();
 
       expect(changed.remoteDwn).toEqual(readyDwn('https://new-dwn.example'));
-      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { protocols: 'all' } }]);
+      expect(engine.optionUpdates).toEqual([{ did: OWNER_DID, options: { modules: 'all' } }]);
 
       const stable = store.getSnapshot();
       await store.refreshDwnEndpoints();
@@ -1291,15 +1291,15 @@ describe('createConnectionStore()', () => {
 
   describe('application lifecycle', () => {
     it('should reject an empty application manifest', () => {
-      const application = defineApplicationManifest({ protocols: [] });
+      const application = defineApplicationManifest({ modules: [] });
 
       expect(() => createStore({ application })).toThrow(
-        'createConnectionStore requires at least one application protocol'
+        'createConnectionStore requires at least one application module'
       );
     });
 
     it('should project the registered manifest through delegated connect, refresh, and opted-in auto-refresh', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       const fake = createFakeAuth();
       const session = createSession({ delegateDid: DELEGATE_DID });
       fake.connect.callsFake(async (): Promise<AgentSession> => {
@@ -1314,9 +1314,9 @@ describe('createConnectionStore()', () => {
 
       await store.connect();
 
-      expect(fake.connect.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(fake.connect.firstCall.args[0]).toEqual({ modules: APPLICATION_REQUESTS });
       expect(fake.startConnectionMonitor.firstCall.args[0].autoRefresh).toEqual({
-        protocols: APPLICATION_REQUESTS,
+        modules: APPLICATION_REQUESTS,
       });
       expect(ensureReady.firstCall.args[0]).toEqual({ application: APPLICATION, publish: false });
 
@@ -1328,14 +1328,14 @@ describe('createConnectionStore()', () => {
 
       await store.refresh();
 
-      expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(fake.refresh.firstCall.args[0]).toEqual({ modules: APPLICATION_REQUESTS });
       expect(ensureReady.callCount).toBe(2);
     });
 
     describe('delegated manifest sync coverage', () => {
       it.each([
         [
-          'require a registration for a manifest protocol whose permissions are omitted',
+          'require a registration for a manifest module whose permissions are omitted',
           DEFAULT_READ_APPLICATION,
           undefined,
           false,
@@ -1343,17 +1343,17 @@ describe('createConnectionStore()', () => {
         [
           'reject an otherwise complete registration owned by a different delegate',
           APPLICATION,
-          { delegateDid: 'did:jwk:another-delegate', protocols: 'all' },
+          { delegateDid: 'did:jwk:another-delegate', modules: 'all' },
           false,
         ],
         [
-          'require explicit read scope when a write-only protocol is covered instead',
+          'require explicit read scope when a write-only module is covered instead',
           MIXED_APPLICATION,
-          { delegateDid: DELEGATE_DID, protocols: [WriteOnlyDefinition.protocol] },
+          { delegateDid: DELEGATE_DID, modules: [WriteOnlyDefinition.module] },
           false,
         ],
         [
-          'not require sync coverage for a mixed manifest\'s write-only protocol',
+          'not require sync coverage for a mixed manifest\'s write-only module',
           MIXED_APPLICATION,
           COVERED_REGISTRATION,
           true,
@@ -1387,7 +1387,7 @@ describe('createConnectionStore()', () => {
 
       it('should bypass the coverage gate for owner sessions and write-only manifests', async () => {
         getIdentitySyncStatus.rejects(new Error('sync status unavailable'));
-        const ensureReady = stubProtocolReadiness();
+        const ensureReady = stubModuleReadiness();
         const ownerAuth = createFakeAuth();
         const ownerSession = createSession();
         ownerAuth.connectVault.callsFake(async (): Promise<AgentSession> => {
@@ -1418,7 +1418,7 @@ describe('createConnectionStore()', () => {
 
       it('should connect with valid coverage before surfacing an initial sync-status failure', async () => {
         const engine = createSyncStatusEngine();
-        engine.options = { delegateDid: DELEGATE_DID, protocols: 'all' };
+        engine.options = { delegateDid: DELEGATE_DID, modules: 'all' };
         let rejectStatus!: (error: Error) => void;
         const statusRead = new Promise<ReplicationLinkSnapshot[]>((_resolve, reject) => { rejectStatus = reject; });
         engine.readLinks = (): Promise<ReplicationLinkSnapshot[]> => statusRead;
@@ -1484,10 +1484,10 @@ describe('createConnectionStore()', () => {
           auth.session = refreshedSession;
           return refreshedSession;
         });
-        const readinessError = new ProtocolReadinessError({
-          cause     : new Error('local protocol store unavailable'),
+        const readinessError = new ModuleReadinessError({
+          cause     : new Error('local module store unavailable'),
           operation : 'install',
-          protocol  : ApplicationDefinition.protocol,
+          module    : ApplicationDefinition.module,
           targetDid : OWNER_DID,
         });
         ensureReady.rejects(readinessError);
@@ -1579,7 +1579,7 @@ describe('createConnectionStore()', () => {
         expect(snapshot.phase).toBe('connected');
         expect(snapshot.session).toBe(session);
         expect(auth.connect.calledOnce).toBe(true);
-        expect(auth.refresh.calledOnceWithExactly({ protocols: APPLICATION_REQUESTS })).toBe(true);
+        expect(auth.refresh.calledOnceWithExactly({ modules: APPLICATION_REQUESTS })).toBe(true);
       });
 
       it('should repair an expired retained session when connect is retried', async () => {
@@ -1602,7 +1602,7 @@ describe('createConnectionStore()', () => {
         expect(snapshot.session).toBe(session);
         expect(snapshot.walletReapprovalRequired).toBeUndefined();
         expect(auth.connect.calledOnce).toBe(true);
-        expect(auth.refresh.calledOnceWithExactly({ protocols: APPLICATION_REQUESTS })).toBe(true);
+        expect(auth.refresh.calledOnceWithExactly({ modules: APPLICATION_REQUESTS })).toBe(true);
       });
 
       it('should not restart the monitor after live coverage drops during initial remote refresh', async () => {
@@ -1809,10 +1809,10 @@ describe('createConnectionStore()', () => {
           });
           return COVERED_REGISTRATION;
         });
-        const readinessError = new ProtocolReadinessError({
-          cause     : new Error('local protocol store unavailable'),
+        const readinessError = new ModuleReadinessError({
+          cause     : new Error('local module store unavailable'),
           operation : 'install',
-          protocol  : ApplicationDefinition.protocol,
+          module    : ApplicationDefinition.module,
           targetDid : OWNER_DID,
         });
         let rejectReadiness!: (error: Error) => void;
@@ -1911,7 +1911,7 @@ describe('createConnectionStore()', () => {
       if (connected.phase !== 'connected') {
         throw connected.error ?? new Error('Expected a connected owner session.');
       }
-      expect((await connected.enbox.using(ApplicationProtocol).verifyInstalled()).status).toBe('up-to-date');
+      expect((await connected.enbox.using(ApplicationModule).verifyInstalled()).status).toBe('up-to-date');
       await localStore.dispose();
 
       const hostedAuth = createFakeAuth();
@@ -1928,13 +1928,13 @@ describe('createConnectionStore()', () => {
       const failed = await hostedStore.connectVault();
 
       expect(failed.phase).toBe('error');
-      expect(failed.error).toBeInstanceOf(ProtocolReadinessError);
+      expect(failed.error).toBeInstanceOf(ModuleReadinessError);
       expect(failed.error).toMatchObject({ operation: 'publish' });
       expect(failed.session).toBeUndefined();
     });
 
     it('should keep a restored session private until application readiness completes', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       let resolveReadiness!: () => void;
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -1965,7 +1965,7 @@ describe('createConnectionStore()', () => {
 
     it('should close an unpublished readiness facade immediately on dispose', async () => {
       const enboxes: Enbox[] = [];
-      const ensureReady = stubProtocolReadiness(enboxes);
+      const ensureReady = stubModuleReadiness(enboxes);
       let resolveReadiness!: () => void;
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -1992,7 +1992,7 @@ describe('createConnectionStore()', () => {
 
     it('should let the latest external session supersede a hung readiness candidate', async () => {
       const enboxes: Enbox[] = [];
-      const ensureReady = stubProtocolReadiness(enboxes);
+      const ensureReady = stubModuleReadiness(enboxes);
       let resolveFirstReadiness!: () => void;
       ensureReady.onFirstCall().returns(new Promise<void>((resolve) => { resolveFirstReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -2020,7 +2020,7 @@ describe('createConnectionStore()', () => {
 
     it('should ready a replacement session instead of failing on the superseded candidate', async () => {
       const enboxes: Enbox[] = [];
-      const ensureReady = stubProtocolReadiness(enboxes);
+      const ensureReady = stubModuleReadiness(enboxes);
       let rejectReadiness!: (error: Error) => void;
       ensureReady.onFirstCall().returns(new Promise<void>((_resolve, reject) => { rejectReadiness = reject; }));
       const fake = createFakeAuth();
@@ -2048,11 +2048,11 @@ describe('createConnectionStore()', () => {
 
     it('should fail closed, stop the old monitor, and retain a retryable session when readiness fails', async () => {
       const enboxes: Enbox[] = [];
-      const ensureReady = stubProtocolReadiness(enboxes);
-      const readinessError = new ProtocolReadinessError({
+      const ensureReady = stubModuleReadiness(enboxes);
+      const readinessError = new ModuleReadinessError({
         cause     : new Error('hosted DWN unavailable'),
         operation : 'install',
-        protocol  : ApplicationDefinition.protocol,
+        module    : ApplicationDefinition.module,
         targetDid : OWNER_DID,
       });
       ensureReady.onSecondCall().rejects(readinessError);
@@ -2092,7 +2092,7 @@ describe('createConnectionStore()', () => {
     });
 
     it('should hide an aborted previous session while an external replacement is readied', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       let resolveReadiness!: () => void;
       ensureReady.onSecondCall().returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -2121,7 +2121,7 @@ describe('createConnectionStore()', () => {
     });
 
     it('should not publish a candidate whose lifetime ends during readiness', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       let resolveReadiness!: () => void;
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -2146,11 +2146,11 @@ describe('createConnectionStore()', () => {
     });
 
     it('should surface wallet reapproval without exposing the rejected delegate session', async () => {
-      const ensureReady = stubProtocolReadiness();
-      ensureReady.rejects(new ProtocolReadinessError({
-        cause     : new WalletReapprovalRequiredError(ApplicationDefinition.protocol, 'is stale.'),
+      const ensureReady = stubModuleReadiness();
+      ensureReady.rejects(new ModuleReadinessError({
+        cause     : new WalletReapprovalRequiredError(ApplicationDefinition.module, 'is stale.'),
         operation : 'install',
-        protocol  : ApplicationDefinition.protocol,
+        module    : ApplicationDefinition.module,
         targetDid : OWNER_DID,
       }));
       const fake = createFakeAuth();
@@ -2195,7 +2195,7 @@ describe('createConnectionStore()', () => {
       expect(snapshot.enbox).toBeInstanceOf(Enbox);
       expect(snapshot.connection?.state).toBe('active');
       expect(snapshot.walletReapprovalRequired).toBeUndefined();
-      expect(fake.connect.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(fake.connect.firstCall.args[0]).toEqual({ modules: APPLICATION_REQUESTS });
       expect(fake.startConnectionMonitor.calledOnce).toBe(true);
     });
 
@@ -2371,7 +2371,7 @@ describe('createConnectionStore()', () => {
       expect(snapshot.session?.identity?.name).toBe('Refreshed identity');
       expect(snapshot.walletReapprovalRequired).toBeUndefined();
       expect(snapshot.connection?.state).toBe('active');
-      expect(fake.refresh.firstCall.args[0]).toEqual({ protocols: APPLICATION_REQUESTS });
+      expect(fake.refresh.firstCall.args[0]).toEqual({ modules: APPLICATION_REQUESTS });
     });
   });
 
@@ -2653,7 +2653,7 @@ describe('createConnectionStore()', () => {
     });
 
     it('should not publish a session when disconnect supersedes application readiness', async () => {
-      const ensureReady = stubProtocolReadiness();
+      const ensureReady = stubModuleReadiness();
       let resolveReadiness!: () => void;
       ensureReady.returns(new Promise<void>((resolve) => { resolveReadiness = resolve; }));
       const fake = createFakeAuth();
@@ -2772,14 +2772,14 @@ describe('createConnectionStore()', () => {
 
       expect(create.calledOnce).toBe(true);
       expect(create.firstCall.args[0]).toEqual({
-        password              : 'pw',
-        sync                  : 'off',
-        identitySyncProtocols : [ApplicationDefinition.protocol],
+        password            : 'pw',
+        sync                : 'off',
+        identitySyncModules : [ApplicationDefinition.module],
       });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
     });
 
-    it.each(['connectVault', 'initialize'] as const)('should default owned %s sync to every manifest protocol', async (action) => {
+    it.each(['connectVault', 'initialize'] as const)('should default owned %s sync to every manifest module', async (action) => {
       const fake = createFakeAuth();
       const session = createSession();
       const nativeAction = action === 'initialize' ? fake.restoreSession : fake.connectVault;
@@ -2794,22 +2794,22 @@ describe('createConnectionStore()', () => {
 
       expect(snapshot.phase).toBe('connected');
       expect(create.firstCall.args[0]).toEqual({
-        sync                  : 'off',
-        identitySyncProtocols : [ApplicationDefinition.protocol, WriteOnlyDefinition.protocol],
+        sync                : 'off',
+        identitySyncModules : [ApplicationDefinition.module, WriteOnlyDefinition.module],
       });
       expect(nativeAction.calledOnce).toBe(true);
     });
 
     it('should retain explicit owner scope defaults for restoration', async () => {
       const create = sinon.stub(AuthManager, 'create');
-      for (const scope of ['all', ['https://example.com/additional']] satisfies NonNullable<ConnectionStoreOptions['identitySyncProtocols']>[]) {
+      for (const scope of ['all', ['https://example.com/additional']] satisfies NonNullable<ConnectionStoreOptions['identitySyncModules']>[]) {
         const fake = createFakeAuth();
         create.resolves(asAuth(fake));
-        const store = createStore({ identitySyncProtocols: scope });
+        const store = createStore({ identitySyncModules: scope });
 
         await store.initialize();
 
-        expect(create.lastCall.args[0].identitySyncProtocols).toBe(scope);
+        expect(create.lastCall.args[0].identitySyncModules).toBe(scope);
         expect(fake.restoreSession.calledOnce).toBe(true);
         await store.dispose();
       }
@@ -2819,11 +2819,11 @@ describe('createConnectionStore()', () => {
       const fake = createFakeAuth();
       const create = sinon.stub(AuthManager, 'create').resolves(asAuth(fake));
       const store = createStore();
-      const options = { createIdentity: true, identitySyncProtocols: 'all' as const, sync: 'off' as const };
+      const options = { createIdentity: true, identitySyncModules: 'all' as const, sync: 'off' as const };
 
       await store.connectVault(options);
 
-      expect(create.firstCall.args[0].identitySyncProtocols).toEqual([ApplicationDefinition.protocol]);
+      expect(create.firstCall.args[0].identitySyncModules).toEqual([ApplicationDefinition.module]);
       expect(fake.connectVault.firstCall.args[0]).toBe(options);
     });
 

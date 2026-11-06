@@ -14,7 +14,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     sinon.restore();
   });
 
-  it('wakes registered protocols for startup and matching sync events until the session ends', async () => {
+  it('wakes registered modules for startup and matching sync events until the session ends', async () => {
     const controller = new AbortController();
     const sync = syncEvents();
     const run = sinon.stub();
@@ -25,7 +25,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     run.onCall(5).returns(releaseFinalRun.promise);
     run.resolves(false);
     const coordinator = new AudienceKeyDeliveryCoordinator({
-      protocol  : 'https://example.com/chat',
+      module    : 'https://example.com/chat',
       rolePaths : new Set(['thread/participant']),
       run,
       signal    : controller.signal,
@@ -38,7 +38,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     expect(run.firstCall.args[0]).toBe(true);
 
     sync.emit(pullCurrentEvent({ tenantDid: 'did:example:other' }));
-    sync.emit(pullCurrentEvent({ protocol: 'https://example.com/other' }));
+    sync.emit(pullCurrentEvent({ module: 'https://example.com/other' }));
     sync.emit(deliveryEvent('thread/message'));
     sync.emit({ type: 'identity:registration-change', tenantDid: 'did:example:other' });
     await coordinator.whenIdle();
@@ -47,13 +47,13 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     sync.emit({
       type      : 'identity:registration-change',
       tenantDid : 'did:example:alice',
-      options   : { protocols: ['https://example.com/other'] },
+      options   : { modules: ['https://example.com/other'] },
     });
     await coordinator.whenIdle();
     expect(run.callCount).toBe(2);
     expect(run.secondCall.args[0]).toBe(true);
 
-    sync.emit(pullCurrentEvent({ protocol: 'https://example.com/chat' }));
+    sync.emit(pullCurrentEvent({ module: 'https://example.com/chat' }));
     await coordinator.whenIdle();
     expect(run.callCount).toBe(3);
     expect(run.thirdCall.args[0]).toBe(true);
@@ -64,7 +64,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     expect(run.getCall(3).args[0]).toBe(true);
 
     sync.emit(deliveryEvent('thread/message'));
-    sync.emit(pullCurrentEvent({ protocol: 'https://example.com/chat' }));
+    sync.emit(pullCurrentEvent({ module: 'https://example.com/chat' }));
     await coordinator.whenIdle();
     expect(run.callCount).toBe(4);
 
@@ -79,7 +79,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     expect(run.lastCall.args[0]).toBe(true);
 
     controller.abort();
-    sync.emit(pullCurrentEvent({ protocol: 'https://example.com/chat' }));
+    sync.emit(pullCurrentEvent({ module: 'https://example.com/chat' }));
     releaseFinalRun.resolve(false);
     await coordinator.whenIdle();
     expect(run.callCount).toBe(6);
@@ -97,7 +97,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     });
     run.resolves(false);
     const coordinator = new AudienceKeyDeliveryCoordinator({
-      protocol    : 'https://example.com/chat',
+      module      : 'https://example.com/chat',
       retryDelays : [],
       rolePaths   : new Set(['thread/participant']),
       run,
@@ -127,7 +127,7 @@ describe('AudienceKeyDeliveryCoordinator', () => {
     const clock = sinon.useFakeTimers();
     const run = sinon.stub().resolves(true);
     const coordinator = new AudienceKeyDeliveryCoordinator({
-      protocol    : 'https://example.com/chat',
+      module      : 'https://example.com/chat',
       retryDelays : [0, 0],
       rolePaths   : new Set(['thread/participant']),
       run,
@@ -189,7 +189,7 @@ function connectivityEvent(): SyncEvent {
     type           : 'link:connectivity-change',
     tenantDid      : 'did:example:alice',
     remoteEndpoint : 'https://dwn.example.com',
-    protocol       : 'https://example.com/chat',
+    module         : 'https://example.com/chat',
     from           : 'offline',
     to             : 'online',
   };
@@ -200,13 +200,13 @@ function statusLiveEvent(): SyncEvent {
     type           : 'link:status-change',
     tenantDid      : 'did:example:alice',
     remoteEndpoint : 'https://dwn.example.com',
-    protocol       : 'https://example.com/chat',
+    module         : 'https://example.com/chat',
     from           : 'initializing',
     to             : 'live',
   };
 }
 
-function deliveryEvent(protocolPath: string): SyncEvent {
+function deliveryEvent(modulePath: string): SyncEvent {
   return {
     type           : 'delivery:applied',
     tenantDid      : 'did:example:alice',
@@ -215,8 +215,8 @@ function deliveryEvent(protocolPath: string): SyncEvent {
     descriptor     : {
       interface : 'Records',
       method    : 'Write',
-      protocol  : 'https://example.com/chat',
-      protocolPath,
+      module    : 'https://example.com/chat',
+      modulePath,
     },
   };
 }

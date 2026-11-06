@@ -65,7 +65,7 @@ function quarantineInput(
   return {
     entry: {
       isLatestBaseState : true,
-      message           : { descriptor: { interface: 'Protocols', method: 'Configure' } } as never,
+      message           : { descriptor: { interface: 'Modules', method: 'Configure' } } as never,
       messageCid        : receipt.messageCid,
       seq               : receipt.source.position,
       ...overrides,
@@ -168,7 +168,7 @@ describe('SyncNextProgressStore', () => {
       },
       {
         detail : 'quarantine entry exceeds 1048576 bytes',
-        input  : quarantineInput(receipt, { protocol: 'x'.repeat(1024 * 1024) }),
+        input  : quarantineInput(receipt, { module: 'x'.repeat(1024 * 1024) }),
       },
     ];
 
@@ -446,7 +446,7 @@ describe('SyncNextProgressStore', () => {
         quarantine : [quarantineInput({
           messageCid : 'pull-cid',
           source     : token(1, 'pull', 'pull-cid'),
-        }, { protocol: create.remoteEndpoint })],
+        }, { module: create.remoteEndpoint })],
         settled: [],
       });
     }
@@ -484,7 +484,7 @@ describe('SyncNextProgressStore', () => {
         quarantine : [quarantineInput({
           messageCid : 'shared-cid',
           source     : token(1, 'pull', 'shared-cid'),
-        }, { protocol: create.remoteEndpoint })],
+        }, { module: create.remoteEndpoint })],
         settled: [],
       });
     }
@@ -562,7 +562,7 @@ describe('SyncNextProgressStore', () => {
     await original.commitPullPage(link, {
       checkpoint   : token(1, 'pull', 'pull-cid'),
       pageReceipts : [pullReceipt],
-      quarantine   : [quarantineInput(pullReceipt, { protocol: 'https://example.com/notes' })],
+      quarantine   : [quarantineInput(pullReceipt, { module: 'https://example.com/notes' })],
       settled      : [],
     });
     await originalDb.close();
@@ -577,7 +577,7 @@ describe('SyncNextProgressStore', () => {
       expect(await reopened.getQuarantineForLink(identity(create))).toMatchObject([{
         entry: {
           messageCid : 'pull-cid',
-          protocol   : 'https://example.com/notes',
+          module     : 'https://example.com/notes',
           seq        : '1',
         },
         messageCid: 'pull-cid',
@@ -671,7 +671,7 @@ describe('SyncNextProgressStore', () => {
     const firstReceipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const laterReceipt = { messageCid: 'cid-2', source: token(2, 'pull', 'cid-2') };
     const firstInput = quarantineInput(firstReceipt);
-    const laterInput = quarantineInput(laterReceipt, { protocol: '📝'.repeat(20) });
+    const laterInput = quarantineInput(laterReceipt, { module: '📝'.repeat(20) });
     const limited = new SyncNextProgressStore(db, 'sync-next-progress-store-spec', {
       maxQuarantineBytesPerTenant : JSON.stringify(laterInput.entry).length,
       maxQuarantinePerTenant      : 1,
@@ -741,7 +741,7 @@ describe('SyncNextProgressStore', () => {
     const original = await store.getOrCreateLink(create);
     expect(await store.getOrCreateLink(create)).toEqual(original);
     await expect(store.getOrCreateLink(linkCreate({
-      scope: { kind: 'protocolSet', protocols: ['https://example.com/protocol'] },
+      scope: { kind: 'moduleSet', modules: ['https://example.com/module'] },
     }))).rejects.toThrow('different durable definition');
 
     await commitPull(store, create, {
@@ -762,14 +762,14 @@ describe('SyncNextProgressStore', () => {
       authorization: {
         kind         : 'role',
         actorDid     : 'did:example:actor',
-        protocolRole : 'friend',
+        moduleRole   : 'friend',
         roleRecordId : 'role-record',
       },
       scope: {
-        kind          : 'context',
-        protocol      : 'https://example.com/protocol',
-        contextId     : 'context',
-        protocolPaths : ['thread/message'],
+        kind        : 'context',
+        module      : 'https://example.com/module',
+        contextId   : 'context',
+        modulePaths : ['thread/message'],
       },
     });
     const original = await store.getOrCreateLink(create);
@@ -778,15 +778,15 @@ describe('SyncNextProgressStore', () => {
       ...create,
       authorization: {
         roleRecordId : 'role-record',
-        protocolRole : 'friend',
+        moduleRole   : 'friend',
         actorDid     : 'did:example:actor',
         kind         : 'role',
       },
       scope: {
-        protocolPaths : ['thread/message'],
-        contextId     : 'context',
-        protocol      : 'https://example.com/protocol',
-        kind          : 'context',
+        modulePaths : ['thread/message'],
+        contextId   : 'context',
+        module      : 'https://example.com/module',
+        kind        : 'context',
       },
     })).toEqual(original);
   });
@@ -1049,7 +1049,7 @@ describe('SyncNextProgressStore', () => {
     const second = await limited.getOrCreateLink(linkCreate({
       projectionId   : 'other-projection',
       remoteEndpoint : 'https://second.example.com',
-      scope          : { kind: 'protocolSet', protocols: ['https://example.com/other'] },
+      scope          : { kind: 'moduleSet', modules: ['https://example.com/other'] },
     }));
     const commit = (link: typeof first, messageCid: string): Promise<boolean> => {
       const receipt = { messageCid, source: token(1, 'pull', messageCid) };

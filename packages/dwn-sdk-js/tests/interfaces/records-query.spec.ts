@@ -1,4 +1,4 @@
-import dexProtocolDefinition from '../vectors/protocol-definitions/dex.json' with { type: 'json' };
+import dexModuleDefinition from '../vectors/module-definitions/dex.json' with { type: 'json' };
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { Time } from '../../src/utils/time.js';
@@ -64,7 +64,7 @@ describe('RecordsQuery', () => {
       expect(recordsQuery.message.descriptor.permissionGrantId).toEqual(grantId);
     });
 
-    it('should auto-normalize protocol URL', async () => {
+    it('should auto-normalize module URL', async () => {
       const alice = await TestDataGenerator.generatePersona();
 
       const options = {
@@ -72,14 +72,14 @@ describe('RecordsQuery', () => {
         data       : TestDataGenerator.randomBytes(10),
         dataFormat : 'application/json',
         signer     : Jws.createSigner(alice),
-        filter     : { protocol: 'example.com/' },
-        definition : dexProtocolDefinition
+        filter     : { module: 'example.com/' },
+        definition : dexModuleDefinition
       };
       const recordsQuery = await RecordsQuery.create(options);
 
       const message = recordsQuery.message;
 
-      expect(message.descriptor.filter!.protocol).toBe('http://example.com');
+      expect(message.descriptor.filter!.module).toBe('http://example.com');
     });
 
     it('should auto-normalize schema URL', async () => {
@@ -91,7 +91,7 @@ describe('RecordsQuery', () => {
         dataFormat : 'application/json',
         signer     : Jws.createSigner(alice),
         filter     : { schema: 'example.com/' },
-        definition : dexProtocolDefinition
+        definition : dexModuleDefinition
       };
       const recordsQuery = await RecordsQuery.create(options);
 

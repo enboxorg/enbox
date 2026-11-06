@@ -20,7 +20,7 @@ should let a connection store compose auth and the API facade:
 ```ts
 import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
 
-const application = defineApplicationManifest({ protocols: [AppProtocol] } as const);
+const application = defineApplicationManifest({ modules: [AppModule] } as const);
 const store = createConnectionStore({ application, password: userPassword });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
@@ -97,7 +97,7 @@ integrations and internally by connection stores. It first tries to restore a
 previous session. If restore does not produce a session, it chooses a flow from
 the supplied options:
 
-- `protocols` or `connectHandler`: use a handler-based connect flow.
+- `modules` or `connectHandler`: use a handler-based connect flow.
 - `password`, `createIdentity`, or local vault options: use the vault flow.
 
 Use `restoreFromPhrase()` for explicit BIP-39 recovery.
@@ -108,7 +108,7 @@ const auth = await AuthManager.create({
 });
 
 const session = await auth.connect({
-  protocols: [NotesProtocol],
+  modules: [NotesModule],
 });
 ```
 
@@ -159,7 +159,7 @@ const session = await auth.walletConnect({
   displayName     : 'Notes',
   connectServerUrl: 'https://enbox-dwn.fly.dev/connect',
   permissionRequests: [
-    { protocolDefinition: NotesProtocol.definition },
+    { moduleDefinition: NotesModule.definition },
   ],
   onWalletUriReady: renderQrCode,
   validatePin     : promptForPin,
@@ -184,16 +184,16 @@ if (session === undefined) {
 ## Sync Scoping
 
 Auth does not silently request a full-DWN replica. Product apps should pass the
-protocols they own:
+modules they own:
 
 ```ts
 const auth = await AuthManager.create({
-  identitySyncProtocols: [NotesProtocol.definition.protocol],
+  identitySyncModules: [NotesModule.definition.module],
 });
 ```
 
-Use `identitySyncProtocols: 'all'` only for wallet-style products that
-intentionally sync every protocol for an identity.
+Use `identitySyncModules: 'all'` only for wallet-style products that
+intentionally sync every module for an identity.
 
 `sync` controls scheduling:
 

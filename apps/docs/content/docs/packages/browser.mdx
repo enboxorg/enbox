@@ -23,10 +23,10 @@ exports, lower-level imports, and persistent storage.
 | Export | Description |
 |---|---|
 | `Enbox` | High-level application API from `@enbox/api` |
-| `defineStore()` | Named protocol resources and domain commands shared by UI and headless consumers |
+| `defineStore()` | Named module resources and domain commands shared by UI and headless consumers |
 | `createApplication()` | Derives the feature manifest and owns the browser connection, feature instances, and resource cleanup |
 | `createConnectionStore()` | Application connection lifecycle and observable snapshots |
-| `defineProtocol()` | Typed protocol definition helper |
+| `defineModule()` | Typed module definition helper |
 | `recordCodecs` | JSON, text, bytes, Blob, and private-file envelope codecs |
 | `AuthManager` | Lower-level auth/session lifecycle |
 | `BrowserConnectHandler` | Browser wallet connect handler |

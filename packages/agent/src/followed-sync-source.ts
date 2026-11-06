@@ -12,12 +12,12 @@ export type FollowedSyncSource = {
   remoteEndpoint: string;
   /** Member DID authorized by the role record. */
   actorDid: string;
-  protocol: string;
+  module: string;
   contextId: string;
   /** Role proven active when this context was accepted. */
-  protocolRole: string;
-  /** Exact role-readable paths derived from the accepted hosted protocol definition. */
-  protocolPaths: [string, ...string[]];
+  moduleRole: string;
+  /** Exact role-readable paths derived from the accepted hosted module definition. */
+  modulePaths: [string, ...string[]];
   /** Candidate role paths in declared preference order for this context. */
   roles: [string, ...string[]];
 };
@@ -25,7 +25,7 @@ export type FollowedSyncSource = {
 /** Foreign context details supplied before its active role record is resolved. */
 export type FollowedSyncSourceInput = Pick<
   FollowedSyncSource,
-  'actorDid' | 'contextId' | 'protocol' | 'sourceDid'
+  'actorDid' | 'contextId' | 'module' | 'sourceDid'
 > & {
   /** Role candidates tried in declared preference order during this explicit follow. */
   roles: [string, ...string[]];
@@ -55,7 +55,7 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
   for (const [field, value] of Object.entries({
     actorDid  : source.actorDid,
     contextId : source.contextId,
-    protocol  : source.protocol,
+    module    : source.module,
     sourceDid : source.sourceDid,
   })) {
     if (typeof value !== 'string' || value.length === 0) {
@@ -71,21 +71,21 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
   if (new Set(roles).size !== roles.length) {
     throw new TypeError('FollowedSyncSource: \'roles\' must not contain duplicate roles.');
   }
-  const contextRoot = resolveFollowedSyncRoleRoot(source.contextId, roles[0]).protocolPath;
-  if (roles.some(role => resolveFollowedSyncRoleRoot(source.contextId, role).protocolPath !== contextRoot)) {
+  const contextRoot = resolveFollowedSyncRoleRoot(source.contextId, roles[0]).modulePath;
+  if (roles.some(role => resolveFollowedSyncRoleRoot(source.contextId, role).modulePath !== contextRoot)) {
     throw new TypeError('FollowedSyncSource: every role must authorize the same context root.');
   }
 
   return {
     actorDid  : source.actorDid,
     contextId : source.contextId,
-    protocol  : source.protocol,
+    module    : source.module,
     roles,
     sourceDid : source.sourceDid,
   };
 }
 
-/** Validates a source and canonicalizes its exact protocol-path set. */
+/** Validates a source and canonicalizes its exact module-path set. */
 export function normalizeFollowedSyncSource(source: FollowedSyncSource): FollowedSyncSource {
   if (typeof source.acceptanceId !== 'string' || source.acceptanceId.length === 0) {
     throw new TypeError('FollowedSyncSource: \'acceptanceId\' must be a non-empty string.');
@@ -97,30 +97,30 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
   const details = normalizeFollowedSyncSourceInput({
     actorDid  : source.actorDid,
     contextId : source.contextId,
-    protocol  : source.protocol,
+    module    : source.module,
     roles     : source.roles,
     sourceDid : source.sourceDid,
   });
-  const protocolRole = normalizeFollowedSyncRole(source.protocolRole);
-  if (!details.roles.includes(protocolRole)) {
+  const moduleRole = normalizeFollowedSyncRole(source.moduleRole);
+  if (!details.roles.includes(moduleRole)) {
     throw new TypeError('FollowedSyncSource: the active role must belong to \'roles\'.');
   }
   if (typeof source.remoteEndpoint !== 'string' || source.remoteEndpoint.length === 0) {
     throw new TypeError('FollowedSyncSource: \'remoteEndpoint\' must be a non-empty string.');
   }
-  const protocolPaths = normalizeProtocolPaths(source.protocolPaths);
-  const { protocolPath } = resolveFollowedSyncRoleRoot(source.contextId, protocolRole);
-  if (!protocolPaths.includes(protocolPath)) {
+  const modulePaths = normalizeModulePaths(source.modulePaths);
+  const { modulePath } = resolveFollowedSyncRoleRoot(source.contextId, moduleRole);
+  if (!modulePaths.includes(modulePath)) {
     throw new TypeError(
-      `FollowedSyncSource: role '${protocolRole}' does not authorize its context root '${protocolPath}'.`,
+      `FollowedSyncSource: role '${moduleRole}' does not authorize its context root '${modulePath}'.`,
     );
   }
   return {
     acceptanceId   : source.acceptanceId,
     id             : source.id,
     ...details,
-    protocolPaths,
-    protocolRole,
+    modulePaths,
+    moduleRole,
     remoteEndpoint : source.remoteEndpoint,
   };
 }
@@ -131,10 +131,10 @@ export function followedSyncSourceAuthorityEqual(a: FollowedSyncSource, b: Follo
     a.sourceDid === b.sourceDid &&
     a.remoteEndpoint === b.remoteEndpoint &&
     a.actorDid === b.actorDid &&
-    a.protocol === b.protocol &&
+    a.module === b.module &&
     a.contextId === b.contextId &&
-    a.protocolRole === b.protocolRole &&
-    sameStrings(a.protocolPaths, b.protocolPaths) &&
+    a.moduleRole === b.moduleRole &&
+    sameStrings(a.modulePaths, b.modulePaths) &&
     sameStrings(a.roles, b.roles);
 }
 
@@ -147,7 +147,7 @@ export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: Followed
 export function resolveFollowedSyncRoleRoot(
   contextId: string,
   role: string,
-): { protocolPath: string } {
+): { modulePath: string } {
   const roleSegments = role.split('/');
   const contextSegments = contextId.split('/');
   if (
@@ -159,25 +159,25 @@ export function resolveFollowedSyncRoleRoot(
     throw new TypeError('FollowedSyncSource: followed contexts require a nested role and its exact parent context ID.');
   }
 
-  const protocolPath = roleSegments.slice(0, -1).join('/');
-  return { protocolPath };
+  const modulePath = roleSegments.slice(0, -1).join('/');
+  return { modulePath };
 }
 
 function normalizeFollowedSyncRole(role: string): string {
   if (typeof role !== 'string' || role.length === 0) {
-    throw new TypeError('FollowedSyncSource: \'protocolRole\' must be a non-empty string.');
+    throw new TypeError('FollowedSyncSource: \'moduleRole\' must be a non-empty string.');
   }
   return role;
 }
 
-function normalizeProtocolPaths(protocolPaths: readonly string[]): [string, ...string[]] {
-  if (!Array.isArray(protocolPaths)) {
-    throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain at least one path.');
+function normalizeModulePaths(modulePaths: readonly string[]): [string, ...string[]] {
+  if (!Array.isArray(modulePaths)) {
+    throw new TypeError('FollowedSyncSource: \'modulePaths\' must contain at least one path.');
   }
 
-  const normalized = [...new Set(protocolPaths)].sort(lexicographicalCompare);
+  const normalized = [...new Set(modulePaths)].sort(lexicographicalCompare);
   if (normalized.length === 0 || normalized.some(path => typeof path !== 'string' || path.length === 0)) {
-    throw new TypeError('FollowedSyncSource: \'protocolPaths\' must contain non-empty paths.');
+    throw new TypeError('FollowedSyncSource: \'modulePaths\' must contain non-empty paths.');
   }
   return normalized as [string, ...string[]];
 }

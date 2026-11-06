@@ -388,7 +388,7 @@ describe('projectReplicationLinks', () => {
       authorization: {
         kind         : 'role',
         actorDid     : 'did:example:member',
-        protocolRole : 'notebook/viewer',
+        moduleRole   : 'notebook/viewer',
         roleRecordId : 'role-a',
       },
     });
@@ -405,7 +405,7 @@ describe('projectReplicationLinks', () => {
       authorization: {
         kind         : 'role',
         actorDid     : 'did:example:member',
-        protocolRole : 'notebook/viewer',
+        moduleRole   : 'notebook/viewer',
         roleRecordId : 'role-a',
       },
     });

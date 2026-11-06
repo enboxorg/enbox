@@ -37,12 +37,13 @@ import ProgressToken from '../json-schemas/interface-methods/progress-token.json
 import PermissionGrantData from '../json-schemas/permissions/permission-grant-data.json' with { type: 'json' };
 import PermissionRequestData from '../json-schemas/permissions/permission-request-data.json' with { type: 'json' };
 import PermissionRevocationData from '../json-schemas/permissions/permission-revocation-data.json' with { type: 'json' };
+import PermissionScope from '../json-schemas/permissions/permission-scope.json' with { type: 'json' };
 import PermissionsDefinitions from '../json-schemas/permissions/permissions-definitions.json' with { type: 'json' };
 import PermissionsScopes from '../json-schemas/permissions/scopes.json' with { type: 'json' };
-import ProtocolDefinition from '../json-schemas/interface-methods/protocol-definition.json' with { type: 'json' };
-import ProtocolRuleSet from '../json-schemas/interface-methods/protocol-rule-set.json' with { type: 'json' };
-import ProtocolsConfigure from '../json-schemas/interface-methods/protocols-configure.json' with { type: 'json' };
-import ProtocolsQuery from '../json-schemas/interface-methods/protocols-query.json' with { type: 'json' };
+import ModuleDefinition from '../json-schemas/interface-methods/module-definition.json' with { type: 'json' };
+import ModuleRuleSet from '../json-schemas/interface-methods/module-rule-set.json' with { type: 'json' };
+import ModulesConfigure from '../json-schemas/interface-methods/modules-configure.json' with { type: 'json' };
+import ModulesQuery from '../json-schemas/interface-methods/modules-query.json' with { type: 'json' };
 import PublicJwk from '../json-schemas/jwk/public-jwk.json' with { type: 'json' };
 import RecordsCount from '../json-schemas/interface-methods/records-count.json' with { type: 'json' };
 import RecordsDelete from '../json-schemas/interface-methods/records-delete.json' with { type: 'json' };
@@ -83,12 +84,13 @@ const schemas = {
   PermissionGrantData,
   PermissionRequestData,
   PermissionRevocationData,
+  PermissionScope,
   PermissionsDefinitions,
   PermissionsScopes,
-  ProtocolDefinition,
-  ProtocolRuleSet,
-  ProtocolsConfigure,
-  ProtocolsQuery,
+  ModuleDefinition,
+  ModuleRuleSet,
+  ModulesConfigure,
+  ModulesQuery,
   RecordsRead,
   RecordsFilter,
   PublicJwk,

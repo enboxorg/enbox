@@ -3,17 +3,17 @@ import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionMessage } from '../../src/types/subscriptions.js';
 
-import emailProtocolDefinition from '../vectors/protocol-definitions/email.json' with { type: 'json' };
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
+import emailModuleDefinition from '../vectors/module-definitions/email.json' with { type: 'json' };
+import messageModuleDefinition from '../vectors/module-definitions/message.json' with { type: 'json' };
 import sinon from 'sinon';
-import threadRoleProtocolDefinition from '../vectors/protocol-definitions/thread-role.json' with { type: 'json' };
+import threadRoleModuleDefinition from '../vectors/module-definitions/thread-role.json' with { type: 'json' };
 
 import { base64url } from 'multiformats/bases/base64';
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
-import { PermissionGrant } from '../../src/protocols/permission-grant.js';
+import { PermissionGrant } from '../../src/modules/permission-grant.js';
 import { Poller } from '../utils/poller.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -22,7 +22,7 @@ import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, Encoder, Message, PermissionsProtocol, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe } from '../../src/index.js';
+import { DwnInterfaceName, DwnMethodName, Encoder, Message, PermissionsModule, RecordsDelete, RecordsQuery, RecordsRead, RecordsSubscribe } from '../../src/index.js';
 
 
 export function testAuthorDelegatedGrant(): void {
@@ -61,124 +61,124 @@ export function testAuthorDelegatedGrant(): void {
       await dwn.close();
     });
 
-    describe('ProtocolsConfigure', () => {
-      it('should allow author-delegated grant to configure protocols', async () => {
+    describe('ModulesConfigure', () => {
+      it('should allow author-delegated grant to configure modules', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Alice grants Bob ability to configure any protocol, bob will use it to configure the email protocol
+        // Alice grants Bob ability to configure any module, bob will use it to configure the email module
         const scope: PermissionScope = {
-          interface : DwnInterfaceName.Protocols,
+          interface : DwnInterfaceName.Modules,
           method    : DwnMethodName.Configure,
         };
 
-        const grantToBob = await PermissionsProtocol.createGrant({
+        const grantToBob = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow Bob to configure the email protocol',
+          description : 'Allow Bob to configure the email module',
           grantedTo   : bob.did,
           scope,
           signer      : Jws.createSigner(alice)
         });
 
-        // Bob attempts to configure a protocol
-        const protocolConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          delegatedGrant     : grantToBob.dataEncodedMessage,
-          author             : bob,
-          protocolDefinition : emailProtocolDefinition,
+        // Bob attempts to configure a module
+        const moduleConfigure = await TestDataGenerator.generateModulesConfigure({
+          delegatedGrant   : grantToBob.dataEncodedMessage,
+          author           : bob,
+          moduleDefinition : emailModuleDefinition,
         });
 
-        // Bob should be able to configure a protocol on behalf of alice
-        const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).toBe(202);
+        // Bob should be able to configure a module on behalf of alice
+        const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfigure.message);
+        expect(moduleConfigureReply.status.code).toBe(202);
 
-        // verify the protocol configure message was processed
-        const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
+        // verify the module configure message was processed
+        const modulesQuery = await TestDataGenerator.generateModulesQuery({
           author : alice,
-          filter : { protocol: emailProtocolDefinition.protocol }
+          filter : { module: emailModuleDefinition.module }
         });
 
-        const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
+        const { status, entries } = await dwn.processMessage(alice.did, modulesQuery.message);
         expect(status.code).toBe(200);
         expect(entries).toHaveLength(1);
 
-        const fetchedProtocolConfigure = entries![0];
-        expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
+        const fetchedModuleConfigure = entries![0];
+        expect(fetchedModuleConfigure.descriptor.definition).toEqual(emailModuleDefinition);
 
         // author should be alice
-        const author = Message.getAuthor(fetchedProtocolConfigure);
+        const author = Message.getAuthor(fetchedModuleConfigure);
         expect(author).toBe(alice.did);
 
-        const signer = Message.getSigner(fetchedProtocolConfigure);
+        const signer = Message.getSigner(fetchedModuleConfigure);
         expect(signer).toBe(bob.did);
       });
 
-      it('should allow author-delegated grant to configure a specific protocol', async () => {
+      it('should allow author-delegated grant to configure a specific module', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // Alice grants Bob to configure the email protocol
+        // Alice grants Bob to configure the email module
         const scope: PermissionScope = {
-          interface : DwnInterfaceName.Protocols,
+          interface : DwnInterfaceName.Modules,
           method    : DwnMethodName.Configure,
-          protocol  : emailProtocolDefinition.protocol,
+          module    : emailModuleDefinition.module,
         };
 
-        const grantToBob = await PermissionsProtocol.createGrant({
+        const grantToBob = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow Bob to configure the email protocol',
+          description : 'Allow Bob to configure the email module',
           grantedTo   : bob.did,
           scope,
           signer      : Jws.createSigner(alice)
         });
 
-        // Bob attempts to configure a protocol
-        const protocolConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          delegatedGrant     : grantToBob.dataEncodedMessage,
-          author             : bob,
-          protocolDefinition : emailProtocolDefinition,
+        // Bob attempts to configure a module
+        const moduleConfigure = await TestDataGenerator.generateModulesConfigure({
+          delegatedGrant   : grantToBob.dataEncodedMessage,
+          author           : bob,
+          moduleDefinition : emailModuleDefinition,
         });
 
-        // Bob should be able to configure a protocol on behalf of alice
-        const protocolConfigureReply = await dwn.processMessage(alice.did, protocolConfigure.message);
-        expect(protocolConfigureReply.status.code).toBe(202);
+        // Bob should be able to configure a module on behalf of alice
+        const moduleConfigureReply = await dwn.processMessage(alice.did, moduleConfigure.message);
+        expect(moduleConfigureReply.status.code).toBe(202);
 
-        // verify the protocol configure message was processed
-        const protocolsQuery = await TestDataGenerator.generateProtocolsQuery({
+        // verify the module configure message was processed
+        const modulesQuery = await TestDataGenerator.generateModulesQuery({
           author : alice,
-          filter : { protocol: emailProtocolDefinition.protocol }
+          filter : { module: emailModuleDefinition.module }
         });
 
-        const { status, entries } = await dwn.processMessage(alice.did, protocolsQuery.message);
+        const { status, entries } = await dwn.processMessage(alice.did, modulesQuery.message);
         expect(status.code).toBe(200);
         expect(entries).toHaveLength(1);
 
-        const fetchedProtocolConfigure = entries![0];
-        expect(fetchedProtocolConfigure.descriptor.definition).toEqual(emailProtocolDefinition);
+        const fetchedModuleConfigure = entries![0];
+        expect(fetchedModuleConfigure.descriptor.definition).toEqual(emailModuleDefinition);
 
         // author should be alice
-        const author = Message.getAuthor(fetchedProtocolConfigure);
+        const author = Message.getAuthor(fetchedModuleConfigure);
         expect(author).toBe(alice.did);
 
-        const signer = Message.getSigner(fetchedProtocolConfigure);
+        const signer = Message.getSigner(fetchedModuleConfigure);
         expect(signer).toBe(bob.did);
 
-        // verify that bob cannot configure a different protocol
-        const otherProtocolDefinition = {
-          ...emailProtocolDefinition,
-          protocol: 'https://example.com/protocol/otherProtocol'
+        // verify that bob cannot configure a different module
+        const otherModuleDefinition = {
+          ...emailModuleDefinition,
+          module: 'https://example.com/module/otherModule'
         };
 
-        const otherProtocolConfigure = await TestDataGenerator.generateProtocolsConfigure({
-          delegatedGrant     : grantToBob.dataEncodedMessage,
-          author             : bob,
-          protocolDefinition : otherProtocolDefinition,
+        const otherModuleConfigure = await TestDataGenerator.generateModulesConfigure({
+          delegatedGrant   : grantToBob.dataEncodedMessage,
+          author           : bob,
+          moduleDefinition : otherModuleDefinition,
         });
 
-        const otherProtocolConfigureReply = await dwn.processMessage(alice.did, otherProtocolConfigure.message);
-        expect(otherProtocolConfigureReply.status.code).toBe(401);
-        expect(otherProtocolConfigureReply.status.detail).toContain(DwnErrorCode.ProtocolsGrantAuthorizationScopeProtocolMismatch);
+        const otherModuleConfigureReply = await dwn.processMessage(alice.did, otherModuleConfigure.message);
+        expect(otherModuleConfigureReply.status.code).toBe(401);
+        expect(otherModuleConfigureReply.status.detail).toContain(DwnErrorCode.ModulesGrantAuthorizationScopeModuleMismatch);
       });
     });
 
@@ -187,16 +187,16 @@ export function testAuthorDelegatedGrant(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
 
-        // Alice grants Bob to write as her for the chat protocol
+        // Alice grants Bob to write as her for the chat module
         const scope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'chat'
+          module    : 'chat'
         };
-        const grantToBob = await PermissionsProtocol.createGrant({
+        const grantToBob = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow Bob to write as me in chat protocol',
+          description : 'Allow Bob to write as me in chat module',
           grantedTo   : bob.did,
           scope,
           signer      : Jws.createSigner(alice)
@@ -206,8 +206,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
-          protocol       : 'http://test-protocol.xyz',
-          protocolPath   : 'testRecord',
+          module         : 'http://test-module.xyz',
+          modulePath     : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
@@ -222,16 +222,16 @@ export function testAuthorDelegatedGrant(): void {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();
 
-        // Alice grants Bob to write as her for the chat protocol
+        // Alice grants Bob to write as her for the chat module
         const scope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'chat'
+          module    : 'chat'
         };
-        const grantToBob = await PermissionsProtocol.createGrant({
+        const grantToBob = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow Bob to write as me in chat protocol',
+          description : 'Allow Bob to write as me in chat module',
           grantedTo   : bob.did,
           scope,
           signer      : Jws.createSigner(alice)
@@ -242,8 +242,8 @@ export function testAuthorDelegatedGrant(): void {
         const recordsWrite = await RecordsWrite.create({
           signer         : Jws.createSigner(bob),
           delegatedGrant : grantToBob.dataEncodedMessage,
-          protocol       : 'http://test-protocol.xyz',
-          protocolPath   : 'testRecord',
+          module         : 'http://test-module.xyz',
+          modulePath     : 'testRecord',
           dataFormat     : 'application/octet-stream',
           data           : TestDataGenerator.randomBytes(10),
         });
@@ -269,24 +269,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      // Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // Alice creates a delegated grant for device X and device Y
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -294,7 +294,7 @@ export function testAuthorDelegatedGrant(): void {
         signer      : Jws.createSigner(alice)
       });
 
-      const deviceYGrant = await PermissionsProtocol.createGrant({
+      const deviceYGrant = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceY.did,
@@ -308,10 +308,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -321,7 +321,7 @@ export function testAuthorDelegatedGrant(): void {
       // verify the message by device X got written to Bob's DWN, AND Alice is the logical author
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -362,10 +362,10 @@ export function testAuthorDelegatedGrant(): void {
       const writeByCarolAsAlice = await RecordsWrite.create({
         signer         : Jws.createSigner(carol),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : messageByCarolAsAlice
       });
 
@@ -375,7 +375,7 @@ export function testAuthorDelegatedGrant(): void {
       expect(carolWriteReply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantGrantedToAndOwnerSignatureMismatch);
     });
 
-    it('should independently enforce target protocol roles for author-delegated reads and queries', async () => {
+    it('should independently enforce target module roles for author-delegated reads and queries', async () => {
       // scenario:
       // 1. Alice creates read and query delegated grants for device X,
       // 2. Bob starts a chat thread with Alice on his DWN
@@ -386,21 +386,21 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      // Bob has the chat protocol installed
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocol = threadRoleProtocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the chat module installed
+      const moduleDefinition = threadRoleModuleDefinition;
+      const module = threadRoleModuleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -409,8 +409,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : alice.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('Alice is my friend'),
       });
@@ -420,35 +420,35 @@ export function testAuthorDelegatedGrant(): void {
       // Bob writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
       expect(chatRecordReply.status.code).toBe(202);
 
       // Alice creates a delegated read grant for device X to perform read-like operations as Alice.
-      const queryGrantForDeviceX = await PermissionsProtocol.createGrant({
+      const queryGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
 
       // Alice creates a delegated read grant for device X to act as Alice.
-      const readGrantForDeviceX = await PermissionsProtocol.createGrant({
+      const readGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -456,7 +456,7 @@ export function testAuthorDelegatedGrant(): void {
       // sanity verify Bob himself is able to query for the chat thread from Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -464,12 +464,12 @@ export function testAuthorDelegatedGrant(): void {
 
       // sanity verify Alice herself is able to query for the chat message from Bob's DWN
       const recordsQueryByAlice = await RecordsQuery.create({
-        signer       : Jws.createSigner(alice),
-        protocolRole : 'thread/participant',
-        filter       : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+        signer     : Jws.createSigner(alice),
+        moduleRole : 'thread/participant',
+        filter     : {
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const aliceRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByAlice.message);
@@ -480,11 +480,11 @@ export function testAuthorDelegatedGrant(): void {
       const recordsQueryByDeviceX = await RecordsQuery.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : queryGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const deviceXRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
@@ -492,7 +492,7 @@ export function testAuthorDelegatedGrant(): void {
       expect(deviceXRecordsQueryReply.entries).toHaveLength(1);
 
       // The author-to-device delegation does not grant Alice access to Bob's data.
-      // Verify that Bob's protocol still independently authorizes Alice.
+      // Verify that Bob's module still independently authorizes Alice.
       const recordsReadByDeviceXWithoutRole = await RecordsRead.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
@@ -506,20 +506,20 @@ export function testAuthorDelegatedGrant(): void {
       const recordsReadByDeviceXWithWrongRole = await RecordsRead.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'globalAdmin',
+        moduleRole     : 'globalAdmin',
         filter         : {
           recordId: chatRecord.message.recordId
         }
       });
       const deviceXRecordsReadWithWrongRoleReply = await dwn.processMessage(bob.did, recordsReadByDeviceXWithWrongRole.message);
       expect(deviceXRecordsReadWithWrongRoleReply.status.code).toBe(401);
-      expect(deviceXRecordsReadWithWrongRoleReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(deviceXRecordsReadWithWrongRoleReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
 
       // Device X can read only when Alice invokes the role Bob assigned to her.
       const recordsReadByDeviceX = await RecordsRead.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
           recordId: chatRecord.message.recordId
         }
@@ -532,11 +532,11 @@ export function testAuthorDelegatedGrant(): void {
       const recordsQueryByCarol = await RecordsQuery.create({
         signer         : Jws.createSigner(carol),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const recordsQueryByCarolReply = await dwn.processMessage(bob.did, recordsQueryByCarol.message);
@@ -547,7 +547,7 @@ export function testAuthorDelegatedGrant(): void {
       const recordsReadByCarol = await RecordsRead.create({
         signer         : Jws.createSigner(carol),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
           recordId: chatRecord.message.recordId
         }
@@ -562,19 +562,19 @@ export function testAuthorDelegatedGrant(): void {
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocol = threadRoleProtocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      const moduleDefinition = threadRoleModuleDefinition;
+      const module = threadRoleModuleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -582,8 +582,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : alice.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('Alice is my friend'),
       });
@@ -592,21 +592,21 @@ export function testAuthorDelegatedGrant(): void {
 
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
       expect(chatRecordReply.status.code).toBe(202);
 
-      const contextScopedReadGrant = await PermissionsProtocol.createGrant({
+      const contextScopedReadGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol,
+          module,
           contextId : threadRecord.message.contextId,
         },
         signer: Jws.createSigner(alice)
@@ -615,11 +615,11 @@ export function testAuthorDelegatedGrant(): void {
       const matchingQuery = await RecordsQuery.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const matchingQueryReply = await dwn.processMessage(bob.did, matchingQuery.message);
@@ -630,30 +630,30 @@ export function testAuthorDelegatedGrant(): void {
       const mismatchingQuery = await RecordsQuery.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : mismatchingContextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : mismatchingContextId,
+          modulePath : 'thread/chat'
         }
       });
       const mismatchingQueryReply = await dwn.processMessage(bob.did, mismatchingQuery.message);
       expect(mismatchingQueryReply.status.code).toBe(401);
-      expect(mismatchingQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(mismatchingQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch);
 
       const mismatchingSubscribe = await RecordsSubscribe.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : mismatchingContextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : mismatchingContextId,
+          modulePath : 'thread/chat'
         }
       });
       const mismatchingSubscribeReply = await dwn.processMessage(bob.did, mismatchingSubscribe.message);
       expect(mismatchingSubscribeReply.status.code).toBe(401);
-      expect(mismatchingSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(mismatchingSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch);
 
       const subscriptionChatRecords:Set<string> = new Set();
       const captureChatRecords = async (msg: SubscriptionMessage): Promise<void> => {
@@ -666,11 +666,11 @@ export function testAuthorDelegatedGrant(): void {
       const matchingSubscribe = await RecordsSubscribe.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : contextScopedReadGrant.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const matchingSubscribeReply = await dwn.processMessage(bob.did, matchingSubscribe.message, {
@@ -680,8 +680,8 @@ export function testAuthorDelegatedGrant(): void {
 
       const subscribedChatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const subscribedChatRecordReply = await dwn.processMessage(
@@ -700,7 +700,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should only allow correct entity invoking an author-delegated grant to subscribe', async () => {
       // scenario:
-      // 1. Bob installs a chat protocol and creates a thread, adding Alice as a participant.
+      // 1. Bob installs a chat module and creates a thread, adding Alice as a participant.
       // 2. Alice a creates subscribe delegated grant for device X,
       // 3. Carol should not be able to subscribe to the chat using deviceX's delegated grant.
       // 4. deviceX creates a subscription to receive events using the delegated grant.
@@ -715,21 +715,21 @@ export function testAuthorDelegatedGrant(): void {
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
 
-      // Bob has the chat protocol installed
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocol = threadRoleProtocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the chat module installed
+      const moduleDefinition = threadRoleModuleDefinition;
+      const module = threadRoleModuleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -738,8 +738,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : alice.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('Alice is my friend'),
       });
@@ -747,14 +747,14 @@ export function testAuthorDelegatedGrant(): void {
       expect(participantRoleReply.status.code).toBe(202);
 
       // Alice creates a delegated read grant for device X to subscribe as Alice.
-      const subscribeGrantForDeviceX = await PermissionsProtocol.createGrant({
+      const subscribeGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -775,12 +775,12 @@ export function testAuthorDelegatedGrant(): void {
 
       // control: verify that device X cannot subscribe to the chat thread without the delegated grant
       const recordsSubscribeByDeviceXWithoutGrant = await RecordsSubscribe.create({
-        signer       : Jws.createSigner(deviceX),
-        protocolRole : 'thread/participant',
-        filter       : {
-          contextId    : threadRecord.message.contextId,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread/chat'
+        signer     : Jws.createSigner(deviceX),
+        moduleRole : 'thread/participant',
+        filter     : {
+          contextId  : threadRecord.message.contextId,
+          module     : moduleDefinition.module,
+          modulePath : 'thread/chat'
         }
       });
       const recordsSubscribeByDeviceXWithoutGrantReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceXWithoutGrant.message);
@@ -790,11 +790,11 @@ export function testAuthorDelegatedGrant(): void {
       const recordsSubscribeByCarol = await RecordsSubscribe.create({
         signer         : Jws.createSigner(carol),
         delegatedGrant : subscribeGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          contextId    : threadRecord.message.contextId,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread/chat'
+          contextId  : threadRecord.message.contextId,
+          module     : moduleDefinition.module,
+          modulePath : 'thread/chat'
         }
       });
       const recordsSubscribeByCarolReply = await dwn.processMessage(bob.did, recordsSubscribeByCarol.message);
@@ -805,11 +805,11 @@ export function testAuthorDelegatedGrant(): void {
       const recordsSubscribeByDeviceX = await RecordsSubscribe.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : subscribeGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          contextId    : threadRecord.message.contextId,
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'thread/chat'
+          contextId  : threadRecord.message.contextId,
+          module     : moduleDefinition.module,
+          modulePath : 'thread/chat'
         }
       });
       const recordsSubscribeByDeviceXReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceX.message, {
@@ -820,8 +820,8 @@ export function testAuthorDelegatedGrant(): void {
       // Bob writes chat messages in the thread
       const chatRecord1 = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecord1Reply = await dwn.processMessage(bob.did, chatRecord1.message, { dataStream: chatRecord1.dataStream });
@@ -829,8 +829,8 @@ export function testAuthorDelegatedGrant(): void {
 
       const chatRecord2 = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecord2Reply = await dwn.processMessage(bob.did, chatRecord2.message, { dataStream: chatRecord2.dataStream });
@@ -846,7 +846,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should only allow correct entity invoking an author-delegated grant to delete', async () => {
       // scenario:
-      // 1. Bob installs the chat protocol on his DWN and makes Alice an admin
+      // 1. Bob installs the chat module on his DWN and makes Alice an admin
       // 2. Bob starts a chat thread with Carol on his DWN
       // 3. Alice creates a delegated grant for Device X to act as her
       // 4. Carol should not be able to delete a chat message as Alice using Device X's delegated grant
@@ -856,32 +856,32 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      // Bob has the chat protocol installed
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocol = threadRoleProtocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the chat module installed
+      const moduleDefinition = threadRoleModuleDefinition;
+      const module = threadRoleModuleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Bob adds Alice as an admin
       const globalAdminRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        recipient    : alice.did,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'globalAdmin',
-        data         : new TextEncoder().encode('I trust Alice to manage my chat thread'),
+        author     : bob,
+        recipient  : alice.did,
+        module     : moduleDefinition.module,
+        modulePath : 'globalAdmin',
+        data       : new TextEncoder().encode('I trust Alice to manage my chat thread'),
       });
       const globalAdminRecordReply = await dwn.processMessage(bob.did, globalAdminRecord.message, { dataStream: globalAdminRecord.dataStream });
       expect(globalAdminRecordReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -890,8 +890,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : carol.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
@@ -900,9 +900,9 @@ export function testAuthorDelegatedGrant(): void {
       // Carol writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : carol,
-        protocolRole    : 'thread/participant',
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        moduleRole      : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('A rude message'),
       });
@@ -910,14 +910,14 @@ export function testAuthorDelegatedGrant(): void {
       expect(chatRecordReply.status.code).toBe(202);
 
       // Alice creates a delegated delete grant for device X to act as Alice.
-      const deleteGrantForDeviceX = await PermissionsProtocol.createGrant({
+      const deleteGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -926,7 +926,7 @@ export function testAuthorDelegatedGrant(): void {
       const recordsDeleteByCarol = await RecordsDelete.create({
         signer         : Jws.createSigner(carol),
         delegatedGrant : deleteGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         recordId       : chatRecord.message.recordId
       });
       const carolRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByCarol.message);
@@ -936,8 +936,8 @@ export function testAuthorDelegatedGrant(): void {
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
         filter : {
-          protocolPath : 'thread/chat',
-          contextId    : threadRecord.message.contextId
+          modulePath : 'thread/chat',
+          contextId  : threadRecord.message.contextId
         }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
@@ -948,7 +948,7 @@ export function testAuthorDelegatedGrant(): void {
       const recordsDeleteByDeviceX = await RecordsDelete.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deleteGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'globalAdmin',
+        moduleRole     : 'globalAdmin',
         recordId       : chatRecord.message.recordId
       });
       const deviceXRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByDeviceX.message);
@@ -962,7 +962,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke write', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates a non-delegated grant for device X
       // 3. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using the non-delegated grant
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
@@ -970,24 +970,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a non-delegated grant for device X
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         // delegated   : true, // intentionally commented out to show that this is not a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1001,10 +1001,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -1015,7 +1015,7 @@ export function testAuthorDelegatedGrant(): void {
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -1024,7 +1024,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke read', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice writes a message to Bob's DWN
       // 3. Alice creates a non-delegated read grant for device X
       // 4. Verify that device X cannot read the message from Bob's DWN as Alice using the non-delegated grant
@@ -1032,36 +1032,36 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice writes a message to Bob's DWN
       const messageByAlice = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol,
-        protocolPath : 'message',
-        schema       : protocolDefinition.types.message.schema,
-        dataFormat   : protocolDefinition.types.message.dataFormats[0],
+        author     : alice,
+        module,
+        modulePath : 'message',
+        schema     : moduleDefinition.types.message.schema,
+        dataFormat : moduleDefinition.types.message.dataFormats[0],
       });
       const aliceWriteReply = await dwn.processMessage(bob.did, messageByAlice.message, { dataStream: messageByAlice.dataStream });
       expect(aliceWriteReply.status.code).toBe(202);
 
       // 3. Alice creates a non-delegated read grant for device X
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         // delegated   : true, // intentionally commented out to show that this is not a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -1082,32 +1082,32 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke query', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates a non-delegated read grant for device X
       // 3. Verify that device X cannot query Bob's DWN as Alice using the non-delegated grant
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a non-delegated query grant for device X
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         // delegated   : true, // intentionally commented out to show that this is not a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -1117,8 +1117,8 @@ export function testAuthorDelegatedGrant(): void {
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
         filter         : {
-          protocol,
-          protocolPath: 'message'
+          module,
+          modulePath: 'message'
         }
       });
 
@@ -1129,7 +1129,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should not allow entity using a non-delegated grant as an author-delegated grant to invoke delete', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice writes a message to Bob's DWN
       // 3. Alice creates a non-delegated delete grant for device X
       // 4. Verify that device X cannot delete the message from Bob's DWN as Alice using the non-delegated grant
@@ -1138,36 +1138,36 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice writes a message to Bob's DWN
       const messageByAlice = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol,
-        protocolPath : 'message',
-        schema       : protocolDefinition.types.message.schema,
-        dataFormat   : protocolDefinition.types.message.dataFormats[0],
+        author     : alice,
+        module,
+        modulePath : 'message',
+        schema     : moduleDefinition.types.message.schema,
+        dataFormat : moduleDefinition.types.message.dataFormats[0],
       });
       const aliceWriteReply = await dwn.processMessage(bob.did, messageByAlice.message, { dataStream: messageByAlice.dataStream });
       expect(aliceWriteReply.status.code).toBe(202);
 
       // 3. Alice creates a non-delegated delete grant for device X
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         // delegated   : true, // intentionally commented out to show that this is not a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
-          protocol
+          module
         },
         signer: Jws.createSigner(alice)
       });
@@ -1186,31 +1186,31 @@ export function testAuthorDelegatedGrant(): void {
       // 5. Sanity verify the message still exists in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
       expect(bobRecordsQueryReply.entries).toHaveLength(1);
     });
 
-    it('should fail if author-delegated grant has a mismatching protocol scope - write', async () => {
+    it('should fail if author-delegated grant has a mismatching module scope - write', async () => {
       // scenario:
-      // 1. Alice creates a delegated grant for device X to act as her for a protocol that is NOT email protocol
-      // 2. Bob has email protocol configured for his DWN that allows anyone to write an email to him
+      // 1. Alice creates a delegated grant for device X to act as her for a module that is NOT email module
+      // 2. Bob has email module configured for his DWN that allows anyone to write an email to him
       // 3. Device X attempts to use the delegated grant to write an email to Bob as Alice
       // 4. Bob's DWN should reject Device X's message
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice creates a delegated grant for device X to act as her for a protocol that is NOT email protocol
+      // 1. Alice creates a delegated grant for device X to act as her for a module that is NOT email module
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : 'random-protocol'
+        module    : 'random-module'
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1218,15 +1218,15 @@ export function testAuthorDelegatedGrant(): void {
         signer      : Jws.createSigner(alice)
       });
 
-      // 2. Bob has email protocol configured for his DWN that allows anyone to write an email to him
-      const protocolDefinition = emailProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 2. Bob has email module configured for his DWN that allows anyone to write an email to him
+      const moduleDefinition = emailModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 3. Device X attempts to use the delegated grant to write an email to Bob as Alice
       const deviceXData = new TextEncoder().encode('message from device X');
@@ -1234,22 +1234,22 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'email', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.email.schema,
-        dataFormat     : protocolDefinition.types.email.dataFormats[0],
+        module,
+        modulePath     : 'email', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.email.schema,
+        dataFormat     : moduleDefinition.types.email.dataFormats[0],
         data           : deviceXData
       });
 
       const deviceXWriteReply = await dwn.processMessage(bob.did, messageByDeviceX.message, { dataStream: deviceXDataStream });
       expect(deviceXWriteReply.status.code).toBe(401);
-      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(deviceXWriteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch);
     });
 
-    it('should fail if author-delegated grant has a mismatching protocol scope - query, subscribe & read', async () => {
+    it('should fail if author-delegated grant has a mismatching module scope - query, subscribe & read', async () => {
       // scenario:
       // 1. Bob starts a chat thread with Alice on his DWN
-      // 2. Alice creates a delegated grant for device X to act as her for a protocol that is NOT chat protocol
+      // 2. Alice creates a delegated grant for device X to act as her for a module that is NOT chat module
       // 3. Device X attempts to use the delegated grant to read, query and subscribe to the chat thread and gets rejected by Bob's DWN
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
@@ -1258,21 +1258,21 @@ export function testAuthorDelegatedGrant(): void {
 
       // 1. Bob starts a chat thread with Alice on his DWN
 
-      // Bob has the chat protocol installed
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocol = threadRoleProtocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the chat module installed
+      const moduleDefinition = threadRoleModuleDefinition;
+      const module = threadRoleModuleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -1281,8 +1281,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : alice.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('Alice is my friend'),
       });
@@ -1292,51 +1292,51 @@ export function testAuthorDelegatedGrant(): void {
       // Bob writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
       expect(chatRecordReply.status.code).toBe(202);
 
 
-      // 2. Alice creates a delegated grant for device X to act as her for a protocol that is NOT chat protocol
+      // 2. Alice creates a delegated grant for device X to act as her for a module that is NOT chat module
 
-      // Alice creates a delegated read grant for device X to query as Alice but not for chat protocol
-      const queryGrantForDeviceX = await PermissionsProtocol.createGrant({
+      // Alice creates a delegated read grant for device X to query as Alice but not for chat module
+      const queryGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'some-other-protocol'
+          module    : 'some-other-module'
         },
         signer: Jws.createSigner(alice)
       });
 
-      // Alice creates a delegated read grant for device X to act as Alice but not for chat protocol
-      const readGrantForDeviceX = await PermissionsProtocol.createGrant({
+      // Alice creates a delegated read grant for device X to act as Alice but not for chat module
+      const readGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'some-other-protocol'
+          module    : 'some-other-module'
         },
         signer: Jws.createSigner(alice)
       });
 
-      // Alice creates a delegated read grant for device X to subscribe as Alice but not for chat protocol
-      const subscribeGrantForDeviceX = await PermissionsProtocol.createGrant({
+      // Alice creates a delegated read grant for device X to subscribe as Alice but not for chat module
+      const subscribeGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'some-other-protocol'
+          module    : 'some-other-module'
         },
         signer: Jws.createSigner(alice)
       });
@@ -1348,82 +1348,82 @@ export function testAuthorDelegatedGrant(): void {
       const recordsQueryByDeviceX = await RecordsQuery.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : queryGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const deviceXRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByDeviceX.message);
       expect(deviceXRecordsQueryReply.status.code).toBe(401);
-      expect(deviceXRecordsQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(deviceXRecordsQueryReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch);
 
       // verify device X reading for the chat message from Bob's DWN fails
       const recordsReadByDeviceX = await RecordsRead.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : readGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
           recordId: chatRecord.message.recordId
         }
       });
       const deviceXReadReply = await dwn.processMessage(bob.did, recordsReadByDeviceX.message);
       expect(deviceXReadReply.status.code).toBe(401);
-      expect(deviceXReadReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(deviceXReadReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch);
 
       // verify device X subscribing to the chat message from Bob's DWN fails
       const recordsSubscribeByDeviceX = await RecordsSubscribe.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : subscribeGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
         filter         : {
-          protocol,
-          contextId    : threadRecord.message.contextId,
-          protocolPath : 'thread/chat'
+          module,
+          contextId  : threadRecord.message.contextId,
+          modulePath : 'thread/chat'
         }
       });
       const deviceXRecordsSubscribeReply = await dwn.processMessage(bob.did, recordsSubscribeByDeviceX.message);
       expect(deviceXRecordsSubscribeReply.status.code).toBe(401);
-      expect(deviceXRecordsSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeProtocolScopeMismatch);
+      expect(deviceXRecordsSubscribeReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationQueryOrSubscribeModuleScopeMismatch);
     });
 
-    it('should fail if author-delegated grant has a mismatching protocol scope - delete', async () => {
+    it('should fail if author-delegated grant has a mismatching module scope - delete', async () => {
       // scenario:
-      // 1. Bob installs the chat protocol on his DWN and makes Alice an admin
+      // 1. Bob installs the chat module on his DWN and makes Alice an admin
       // 2. Bob starts a chat thread with Carol on his DWN
-      // 3. Alice creates a delegated delete grant for Device X to act as her for a protocol that is NOT chat protocol
+      // 3. Alice creates a delegated delete grant for Device X to act as her for a module that is NOT chat module
       // 4. Device X should NOT be able to delete a chat message as Alice
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const carol = await TestDataGenerator.generateDidKeyPersona();
 
-      // Bob has the chat protocol installed
-      const protocolDefinition = threadRoleProtocolDefinition;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // Bob has the chat module installed
+      const moduleDefinition = threadRoleModuleDefinition;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // Bob adds Alice as an admin
       const globalAdminRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        recipient    : alice.did,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'globalAdmin',
-        data         : new TextEncoder().encode('I trust Alice to manage my chat thread'),
+        author     : bob,
+        recipient  : alice.did,
+        module     : moduleDefinition.module,
+        modulePath : 'globalAdmin',
+        data       : new TextEncoder().encode('I trust Alice to manage my chat thread'),
       });
       const globalAdminRecordReply = await dwn.processMessage(bob.did, globalAdminRecord.message, { dataStream: globalAdminRecord.dataStream });
       expect(globalAdminRecordReply.status.code).toBe(202);
 
       // Bob starts a chat thread
       const threadRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : bob,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'thread',
+        author     : bob,
+        module     : moduleDefinition.module,
+        modulePath : 'thread',
       });
       const threadRoleReply = await dwn.processMessage(bob.did, threadRecord.message, { dataStream: threadRecord.dataStream });
       expect(threadRoleReply.status.code).toBe(202);
@@ -1432,8 +1432,8 @@ export function testAuthorDelegatedGrant(): void {
       const participantRoleRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : carol.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadRecord.message.contextId
       });
       const participantRoleReply = await dwn.processMessage(bob.did, participantRoleRecord.message, { dataStream: participantRoleRecord.dataStream });
@@ -1442,24 +1442,24 @@ export function testAuthorDelegatedGrant(): void {
       // Carol writes a chat message in the thread
       const chatRecord = await TestDataGenerator.generateRecordsWrite({
         author          : carol,
-        protocolRole    : 'thread/participant',
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'thread/chat',
+        moduleRole      : 'thread/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadRecord.message.contextId,
         data            : new TextEncoder().encode('A rude message'),
       });
       const chatRecordReply = await dwn.processMessage(bob.did, chatRecord.message, { dataStream: chatRecord.dataStream });
       expect(chatRecordReply.status.code).toBe(202);
 
-      // Alice creates a delegated delete grant for Device X to act as her for a protocol that is NOT chat protocol
-      const delegatedGrantForDeviceX = await PermissionsProtocol.createGrant({
+      // Alice creates a delegated delete grant for Device X to act as her for a module that is NOT chat module
+      const delegatedGrantForDeviceX = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
-          protocol  : 'some-protocol-that-is-not-chat'
+          module    : 'some-module-that-is-not-chat'
         },
         signer: Jws.createSigner(alice)
       });
@@ -1468,19 +1468,19 @@ export function testAuthorDelegatedGrant(): void {
       const recordsDeleteByDeviceX = await RecordsDelete.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : delegatedGrantForDeviceX.dataEncodedMessage,
-        protocolRole   : 'globalAdmin',
+        moduleRole     : 'globalAdmin',
         recordId       : chatRecord.message.recordId
       });
       const deviceXRecordsDeleteReply = await dwn.processMessage(bob.did, recordsDeleteByDeviceX.message);
       expect(deviceXRecordsDeleteReply.status.code).toBe(401);
-      expect(deviceXRecordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteProtocolScopeMismatch);
+      expect(deviceXRecordsDeleteReply.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationDeleteModuleScopeMismatch);
 
       // sanity verify the chat message is still in Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
         filter : {
-          protocolPath : 'thread/chat',
-          contextId    : threadRecord.message.contextId
+          modulePath : 'thread/chat',
+          contextId  : threadRecord.message.contextId
         }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
@@ -1490,7 +1490,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should fail if presented with an author-delegated grant with invalid grantor signature - write', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates a delegated grant for device X to write as Alice, but with invalid signature
       // 3. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using the delegated grant with invalid grantor signature
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
@@ -1498,24 +1498,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice, but with invalid signature
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1532,10 +1532,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrantMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -1546,7 +1546,7 @@ export function testAuthorDelegatedGrant(): void {
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -1555,7 +1555,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should fail if the CID of the author-delegated grant and the grant ID in the payload of the message signature is mismatching - write', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates two delegated grants for device X to write as Alice
       // 3. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using a mismatching delegated grant ID
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
@@ -1563,24 +1563,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates two delegated grants for device X to write as Alice
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1590,7 +1590,7 @@ export function testAuthorDelegatedGrant(): void {
 
       await Time.minimalSleep();
 
-      const deviceXGrant2 = await PermissionsProtocol.createGrant({
+      const deviceXGrant2 = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1604,10 +1604,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -1620,7 +1620,7 @@ export function testAuthorDelegatedGrant(): void {
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -1629,7 +1629,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should fail if author-delegated grant is revoked - write', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates a delegated grant for device X to write as Alice
       // 3. Alice revokes the grant
       // 4. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using a revoked delegated grant
@@ -1638,24 +1638,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : deviceX.did,
@@ -1671,7 +1671,7 @@ export function testAuthorDelegatedGrant(): void {
       expect(permissionGrantWriteReply.status.code).toBe(202);
 
       // 3. Alice revokes the grant
-      const permissionRevoke = await PermissionsProtocol.createRevocation({
+      const permissionRevoke = await PermissionsModule.createRevocation({
         signer : Jws.createSigner(alice),
         grant  : PermissionGrant.parse(deviceXGrant.dataEncodedMessage),
       });
@@ -1685,10 +1685,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -1699,7 +1699,7 @@ export function testAuthorDelegatedGrant(): void {
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);
@@ -1708,7 +1708,7 @@ export function testAuthorDelegatedGrant(): void {
 
     it('should fail if author-delegated grant is expired - write', async () => {
       // scenario:
-      // 1. Bob has the message protocol installed
+      // 1. Bob has the message module installed
       // 2. Alice creates a delegated grant for device X to write as Alice, but make it expired
       // 3. Verify that device X cannot write a `RecordsWrite` message to Bob's DWN as Alice using an expired delegated grant
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
@@ -1716,24 +1716,24 @@ export function testAuthorDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const deviceX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Bob has the message protocol installed
-      const protocolDefinition = messageProtocolDefinition;
-      const protocol = protocolDefinition.protocol;
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Bob has the message module installed
+      const moduleDefinition = messageModuleDefinition;
+      const module = moduleDefinition.module;
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: bob,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolConfigureReply = await dwn.processMessage(bob.did, protocolsConfig.message);
-      expect(protocolConfigureReply.status.code).toBe(202);
+      const moduleConfigureReply = await dwn.processMessage(bob.did, modulesConfig.message);
+      expect(moduleConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for device X to write as Alice, but make it expired
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const deviceXGrant = await PermissionsProtocol.createGrant({
+      const deviceXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.getCurrentTimestamp(), // intentionally set to current time to make it expired immediately
         grantedTo   : deviceX.did,
@@ -1747,10 +1747,10 @@ export function testAuthorDelegatedGrant(): void {
       const messageByDeviceX = await RecordsWrite.create({
         signer         : Jws.createSigner(deviceX),
         delegatedGrant : deviceXGrant.dataEncodedMessage,
-        protocol,
-        protocolPath   : 'message', // this comes from `types` in protocol definition
-        schema         : protocolDefinition.types.message.schema,
-        dataFormat     : protocolDefinition.types.message.dataFormats[0],
+        module,
+        modulePath     : 'message', // this comes from `types` in module definition
+        schema         : moduleDefinition.types.message.schema,
+        dataFormat     : moduleDefinition.types.message.dataFormats[0],
         data           : deviceXData
       });
 
@@ -1761,7 +1761,7 @@ export function testAuthorDelegatedGrant(): void {
       // 4. Sanity verify the message by device X did not get written to Bob's DWN
       const recordsQueryByBob = await TestDataGenerator.generateRecordsQuery({
         author : bob,
-        filter : { protocol }
+        filter : { module }
       });
       const bobRecordsQueryReply = await dwn.processMessage(bob.did, recordsQueryByBob.message);
       expect(bobRecordsQueryReply.status.code).toBe(200);

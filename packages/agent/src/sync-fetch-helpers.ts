@@ -1,4 +1,4 @@
-import type { DependencyRef, GenericMessage, ProtocolsConfigureMessage } from '@enbox/dwn-sdk-js';
+import type { DependencyRef, GenericMessage, ModulesConfigureMessage } from '@enbox/dwn-sdk-js';
 
 import { DwnInterfaceName, DwnMethodName, Message, Records } from '@enbox/dwn-sdk-js';
 
@@ -30,27 +30,27 @@ export function recordsWriteRequiresData(message: GenericMessage): boolean {
   return isRecordsWrite && hasData;
 }
 
-/** Type guard for a `ProtocolsConfigure` message. */
-function isProtocolsConfigureMessage(message: GenericMessage): message is ProtocolsConfigureMessage {
-  return message.descriptor.interface === DwnInterfaceName.Protocols &&
+/** Type guard for a `ModulesConfigure` message. */
+function isModulesConfigureMessage(message: GenericMessage): message is ModulesConfigureMessage {
+  return message.descriptor.interface === DwnInterfaceName.Modules &&
     message.descriptor.method === DwnMethodName.Configure &&
     (message.descriptor as { definition?: unknown }).definition !== undefined;
 }
 
-/** Predicate matching a tenant's own configuration of a given protocol. */
-export function isTenantProtocolConfig(tenantDid: string, protocol: string): (message: GenericMessage) => message is ProtocolsConfigureMessage {
-  return (message: GenericMessage): message is ProtocolsConfigureMessage => {
-    if (!isProtocolsConfigureMessage(message)) {
+/** Predicate matching a tenant's own configuration of a given module. */
+export function isTenantModuleConfig(tenantDid: string, module: string): (message: GenericMessage) => message is ModulesConfigureMessage {
+  return (message: GenericMessage): message is ModulesConfigureMessage => {
+    if (!isModulesConfigureMessage(message)) {
       return false;
     }
 
-    return message.descriptor.definition.protocol === protocol && Message.getAuthor(message) === tenantDid;
+    return message.descriptor.definition.module === module && Message.getAuthor(message) === tenantDid;
   };
 }
 
-/** Returns the newest protocol configuration by message timestamp. */
-export function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): ProtocolsConfigureMessage | undefined {
-  let newest: ProtocolsConfigureMessage | undefined;
+/** Returns the newest module configuration by message timestamp. */
+export function newestModuleConfig(configs: ModulesConfigureMessage[]): ModulesConfigureMessage | undefined {
+  let newest: ModulesConfigureMessage | undefined;
   for (const config of configs) {
     if (newest === undefined || config.descriptor.messageTimestamp > newest.descriptor.messageTimestamp) {
       newest = config;
@@ -59,24 +59,24 @@ export function newestProtocolConfig(configs: ProtocolsConfigureMessage[]): Prot
   return newest;
 }
 
-/** Predicate matching the exact source-protocol encryption control record named by a dependency ref. */
+/** Predicate matching the exact source-module encryption control record named by a dependency ref. */
 export function matchesEncryptionControlDependency(
   message: GenericMessage | undefined,
   ref: Extract<DependencyRef, { type: 'EncryptionControl' }>,
 ): boolean {
   return matchesRecordsDependency(message, {
-    protocol     : ref.protocol,
-    protocolPath : ref.protocolPath,
-    recipient    : ref.recipient,
-    tags         : ref.tags,
+    module     : ref.module,
+    modulePath : ref.modulePath,
+    recipient  : ref.recipient,
+    tags       : ref.tags,
   });
 }
 
 function matchesRecordsDependency(
   message: GenericMessage | undefined,
   ref: {
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient?: string;
     tags?: Record<string, string | number>;
   },
@@ -86,7 +86,7 @@ function matchesRecordsDependency(
   }
 
   const descriptor = message.descriptor as Record<string, unknown>;
-  if (descriptor.protocol !== ref.protocol || descriptor.protocolPath !== ref.protocolPath) {
+  if (descriptor.module !== ref.module || descriptor.modulePath !== ref.modulePath) {
     return false;
   }
 

@@ -1,5 +1,5 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { ProtocolDefinition, RecordsWriteMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage, SubscriptionMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import sinon from 'sinon';
@@ -47,11 +47,11 @@ describe('AgentDwnApi — raw subscription data', () => {
     await testHarness.closeStorage();
   });
 
-  /** Installs an encrypted notes protocol under a unique URI. */
-  async function installEncryptedProtocol(): Promise<string> {
-    const definition: ProtocolDefinition = {
+  /** Installs an encrypted notes module under a unique URI. */
+  async function installEncryptedModule(): Promise<string> {
+    const definition: ModuleDefinition = {
       published : true,
-      protocol  : `https://protocol.xyz/encrypted-notes-${TestDataGenerator.randomString(15)}`,
+      module    : `https://module.xyz/encrypted-notes-${TestDataGenerator.randomString(15)}`,
       types     : {
         note: {
           schema             : 'https://schemas.xyz/note',
@@ -65,23 +65,23 @@ describe('AgentDwnApi — raw subscription data', () => {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       messageParams : { definition },
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       target        : alice.did.uri,
     });
     expect(reply.status.code).toBe(202);
-    return definition.protocol;
+    return definition.module;
   }
 
   /** Writes one encrypted note and returns its RecordsWrite message. */
-  async function writeEncryptedNote(protocol: string, plaintext: string): Promise<RecordsWriteMessage> {
+  async function writeEncryptedNote(module: string, plaintext: string): Promise<RecordsWriteMessage> {
     const { message, reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       dataStream    : new Blob([Convert.string(plaintext).toUint8Array()]),
       messageParams : {
-        dataFormat   : 'text/plain',
-        protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
       },
       messageType : DwnInterface.RecordsWrite,
       target      : alice.did.uri,
@@ -102,13 +102,13 @@ describe('AgentDwnApi — raw subscription data', () => {
   }
 
   it('should return ciphertext in snapshots and events until data is explicitly consumed', async () => {
-    const protocol = await installEncryptedProtocol();
-    await writeEncryptedNote(protocol, 'snapshot secret');
+    const module = await installEncryptedModule();
+    await writeEncryptedNote(module, 'snapshot secret');
 
     const received: SubscriptionMessage[] = [];
     const { reply } = await testHarness.agent.dwn.processRequest({
       author              : alice.did.uri,
-      messageParams       : { filter: { protocol } },
+      messageParams       : { filter: { module } },
       messageType         : DwnInterface.RecordsSubscribe,
       subscriptionHandler : (message: SubscriptionMessage): void => { received.push(message); },
       target              : alice.did.uri,
@@ -121,7 +121,7 @@ describe('AgentDwnApi — raw subscription data', () => {
     expect(Convert.uint8Array(Encoder.base64UrlToBytes(snapshot.encodedData!)).toString()).not.toBe('snapshot secret');
     expect(await decryptInlineData(snapshot as RecordsWriteMessage, snapshot.encodedData!)).toBe('snapshot secret');
 
-    const eventWrite = await writeEncryptedNote(protocol, 'event secret');
+    const eventWrite = await writeEncryptedNote(module, 'event secret');
     await Poller.pollUntilSuccessOrTimeout(async () => {
       expect(received.length).toBeGreaterThanOrEqual(1);
     });
@@ -150,7 +150,7 @@ describe('AgentDwnApi — raw subscription data', () => {
     const handler = (message: SubscriptionMessage): void => { received.push(message); };
     const { reply } = await testHarness.agent.dwn.sendRequest({
       author              : alice.did.uri,
-      messageParams       : { filter: { protocol: 'https://protocol.xyz/raw-subscription' } },
+      messageParams       : { filter: { module: 'https://module.xyz/raw-subscription' } },
       messageType         : DwnInterface.RecordsSubscribe,
       subscriptionHandler : handler,
       target              : alice.did.uri,

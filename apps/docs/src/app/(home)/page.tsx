@@ -292,13 +292,13 @@ export default function HomePage() {
 {`import {
   createConnectionStore,
   defineApplicationManifest,
-  defineProtocol,
+  defineModule,
   recordCodecs,
 } from '@enbox/api';
 
-// Define a typed protocol
+// Define a typed module
 const NotesDefinition = {
-  protocol:  'https://example.com/notes',
+  module:  'https://example.com/notes',
   published: true,
   types: {
     note: {
@@ -309,12 +309,12 @@ const NotesDefinition = {
   structure: { note: {} },
 } as const;
 
-const Notes = defineProtocol(NotesDefinition, {
+const Notes = defineModule(NotesDefinition, {
   note: recordCodecs.json<{ title: string; body: string }>(),
 });
 
-// Connect and use the protocol
-const application = defineApplicationManifest({ protocols: [Notes] } as const);
+// Connect and use the module
+const application = defineApplicationManifest({ modules: [Notes] } as const);
 const store = createConnectionStore({ application });
 let snapshot = await store.initialize();
 if (snapshot.phase === 'disconnected') {
@@ -372,12 +372,12 @@ await store.dispose();`}
               description="Data stored in Decentralised Web Nodes. Users choose where their data lives. Sync across devices automatically."
             />
             <FeatureCard
-              title="Type-Safe Protocols"
-              description="Define DWN protocols with TypeScript types. Compile-time checks for paths, schemas, and record data."
+              title="Type-Safe Modules"
+              description="Define DWN modules with TypeScript types. Compile-time checks for paths, schemas, and record data."
             />
             <FeatureCard
               title="End-to-End Encryption"
-              description="Records encrypted with ECDH key agreement and AES-256-GCM content encryption. Per-protocol encryption policies."
+              description="Records encrypted with ECDH key agreement and AES-256-GCM content encryption. Per-module encryption policies."
             />
             <FeatureCard
               title="Offline-First Sync"

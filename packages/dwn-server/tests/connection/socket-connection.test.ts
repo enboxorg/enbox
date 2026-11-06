@@ -1,7 +1,7 @@
 import type { JsonRpcSubscription } from '@enbox/dwn-clients';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from '../../src/http-api.js';
-import type { Dwn, EventSubscription, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { Dwn, EventSubscription, ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import log from 'loglevel';
 import sinon from 'sinon';
@@ -11,7 +11,7 @@ import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { getTestDwn } from '../test-dwn.js';
 import { SocketConnection } from '../../src/connection/socket-connection.js';
 import { createGate, openSocket } from './socket-test-utils.js';
-import { executeUnlessAborted, ProtocolsConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { executeUnlessAborted, ModulesConfigure, RecordsSubscribe, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /** Creates a minimal mock of Bun's ServerWebSocket for unit testing. */
 function createMockSocket(): ServerWebSocket<WsData> {
@@ -307,16 +307,16 @@ describe('SocketConnection', () => {
     const store = liveDwn.storage.messageStore;
     const eventLog = liveDwn.storage.eventLog!;
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    const protocol = 'https://example.com/socket-subscription-lifetime';
-    const definition: ProtocolDefinition = {
-      protocol,
+    const module = 'https://example.com/socket-subscription-lifetime';
+    const definition: ModuleDefinition = {
+      module,
       published : true,
       types     : { note: { dataFormats: ['application/json'] } },
       structure : { note: { $recordLimit: { max: 1 } } },
     };
-    const configure = await ProtocolsConfigure.create({ definition, signer: alice.signer });
+    const configure = await ModulesConfigure.create({ definition, signer: alice.signer });
     expect((await liveDwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
-    const first = await TestDataGenerator.generateRecordsWrite({ author: alice, protocol, protocolPath: 'note', dataFormat: 'application/json' });
+    const first = await TestDataGenerator.generateRecordsWrite({ author: alice, module, modulePath: 'note', dataFormat: 'application/json' });
     expect((await liveDwn.processMessage(alice.did, first.message, { dataStream: first.dataStream })).status.code).toBe(202);
     const second = await TestDataGenerator.generateFromRecordsWrite({ author: alice, existingWrite: first.recordsWrite });
     expect((await liveDwn.processMessage(alice.did, second.message, { dataStream: second.dataStream })).status.code).toBe(202);
@@ -349,7 +349,7 @@ describe('SocketConnection', () => {
     const socket = await openSocket(liveDwn);
     const { client, connection } = socket;
     try {
-      const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { protocol }, cursor });
+      const subscribe = await RecordsSubscribe.create({ signer: alice.signer, filter: { module }, cursor });
       client.send(JSON.stringify({
         jsonrpc      : '2.0',
         id           : 'request',

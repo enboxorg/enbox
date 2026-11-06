@@ -1,6 +1,6 @@
 import type { ServerInfo } from '../src/server-info-types.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage, ResubscribeFactory } from '../src/dwn-rpc-types.js';
-import type { GenericMessage, Persona, ProgressToken, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, ModuleDefinition, Persona, ProgressToken, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -10,14 +10,14 @@ import { RateLimitError } from '../src/rate-limit-error.js';
 import { WebSocketDwnRpcClient } from '../src/web-socket-clients.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createJsonRpcErrorResponse, createJsonRpcRequest, JsonRpcErrorCodes } from '../src/json-rpc.js';
-import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, Message, MessagesRead, ProtocolsConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DwnErrorCode, DwnInterfaceName, DwnMethodName, Encoder, Jws, Message, MessagesRead, ModulesConfigure, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DwnRpcError, SocketUnavailableError, SubscriptionHandlerTerminalError } from '../src/dwn-rpc-error.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
  */
-const defaultTestProtocolDefinition: ProtocolDefinition = {
-  protocol  : 'http://test-protocol.xyz',
+const defaultTestModuleDefinition: ModuleDefinition = {
+  module    : 'http://test-module.xyz',
   published : false,
   types     : {
     testRecord: {}
@@ -46,19 +46,19 @@ function connectionKeyForDwnUrl(dwnUrl: string): string {
   return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
 }
 
-/** Installs the default test protocol on the remote DWN for the given persona. */
-async function installDefaultTestProtocolViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
-  const protocolsConfigure = await ProtocolsConfigure.create({
-    definition : defaultTestProtocolDefinition,
+/** Installs the default test module on the remote DWN for the given persona. */
+async function installDefaultTestModuleViaHttp(httpClient: HttpDwnRpcClient, dwnUrl: string, persona: Persona): Promise<void> {
+  const modulesConfigure = await ModulesConfigure.create({
+    definition : defaultTestModuleDefinition,
     signer     : Jws.createSigner(persona),
   });
   const reply = await httpClient.sendDwnRequest({
     dwnUrl,
     targetDid : persona.did,
-    message   : protocolsConfigure.message,
+    message   : modulesConfigure.message,
   });
   if (reply.status.code !== 202) {
-    throw new Error(`Failed to install default test protocol: ${reply.status.code} ${reply.status.detail}`);
+    throw new Error(`Failed to install default test module: ${reply.status.code} ${reply.status.detail}`);
   }
 }
 
@@ -155,8 +155,8 @@ describe('WebSocketDwnRpcClient', () => {
       expect(response.entries).toHaveLength(0);
     });
 
-    it('only supports WebSocket and Secure WebSocket protocols', async () => {
-      // deliberately set 'http' as the protocol
+    it('only supports WebSocket and Secure WebSocket modules', async () => {
+      // deliberately set 'http' as the module
       const dwnUrl = new URL(testDwnUrl);
       dwnUrl.protocol = 'http:';
       const httpDwnUrl = dwnUrl.toString();
@@ -241,13 +241,13 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('surfaces machine-readable errorCode on a rejected message', async () => {
-      // install the default test protocol and write a protocol record for alice via http
+      // install the default test module and write a module record for alice via http
       // (RecordsWrite is http-only by design; the socket transport carries the rejection reply)
-      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+      await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : defaultTestProtocolDefinition.protocol,
-        protocolPath : 'testRecord',
+        author     : alice,
+        module     : defaultTestModuleDefinition.module,
+        modulePath : 'testRecord',
       });
       const writeResponse = await httpClient.sendDwnRequest({
         dwnUrl    : testDwnUrl,
@@ -276,8 +276,8 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('responds to a RecordsRead message', async () => {
-      // install the default test protocol so the DWN accepts the record
-      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+      // install the default test module so the DWN accepts the record
+      await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
 
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -316,8 +316,8 @@ describe('WebSocketDwnRpcClient', () => {
     });
 
     it('subscribes to updates to a record', async () => {
-      // install the default test protocol so the DWN accepts the record
-      await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+      // install the default test module so the DWN accepts the record
+      await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
 
       // create an initial record, we will subscribe to updates of this record
       const { message: writeMessage, dataBytes, recordsWrite } = await TestDataGenerator.generateRecordsWrite({
@@ -648,7 +648,7 @@ describe('WebSocketDwnRpcClient', () => {
           request: async (request: any): Promise<any> => ({
             jsonrpc : '2.0',
             id      : request.id,
-            result  : { result: { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: 'parent-without-protocol' }] } },
+            result  : { result: { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: 'parent-without-module' }] } },
           }),
         };
         const connectionKey = connectionKeyForDwnUrl(socketDwnUrl);
@@ -942,8 +942,8 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       it('should track lastCursor from subscription events', async () => {
-        // install the default test protocol so the DWN accepts the record
-        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+        // install the default test module so the DWN accepts the record
+        await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
 
         // create a subscription
         const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
@@ -1251,8 +1251,8 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       it('should send rpc.ack when cursor events arrive', async () => {
-        // install the default test protocol so the DWN accepts the record
-        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+        // install the default test module so the DWN accepts the record
+        await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
 
         const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,
@@ -1564,8 +1564,8 @@ describe('WebSocketDwnRpcClient', () => {
       });
 
       it('should notify subscription handlers of disconnection on close', async () => {
-        // install the default test protocol
-        await installDefaultTestProtocolViaHttp(httpClient, testDwnUrl, alice);
+        // install the default test module
+        await installDefaultTestModuleViaHttp(httpClient, testDwnUrl, alice);
 
         const { message: subscribeMessage } = await TestDataGenerator.generateRecordsSubscribe({
           author : alice,

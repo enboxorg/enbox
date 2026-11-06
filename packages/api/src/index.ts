@@ -1,7 +1,7 @@
 /**
  * Enbox SDK — high-level API for Decentralized Web Nodes and DIDs.
  *
- * The SDK provides protocol-scoped access to DWN records with compile-time
+ * The SDK provides module-scoped access to DWN records with compile-time
  * type safety and DID management.
  *
  * Common authentication and identity setup is available through the
@@ -29,18 +29,18 @@ export type {
   CreateApplicationOptions,
 } from './store/application.js';
 export { defineStore } from './store/definition.js';
-export type { DefineStoreOptions, StoreContext, StoreDefinition, StoreDefinitions, StoreInstance, StoreProtocols } from './store/definition.js';
-export type { ProtocolStore, StoreCollection, StoreCollectionFamily, StoreCollectionOptions } from './store/protocol-store.js';
+export type { DefineStoreOptions, StoreContext, StoreDefinition, StoreDefinitions, StoreInstance, StoreModules } from './store/definition.js';
+export type { ModuleStore, StoreCollection, StoreCollectionFamily, StoreCollectionOptions } from './store/module-store.js';
 export type { StoreCommand, StoreCommandState } from './store/command.js';
 export type { StoreCollectionState } from './store/observed-store.js';
 export type { ObservationFactory, ObservedStore, ObservedStoreState } from './store/observed-store.js';
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
-export { protocolContextKey } from './shared-context-protocol.js';
-export type { ContextInvitationPreview } from './shared-context-protocol.js';
+export { moduleContextKey } from './shared-context-module.js';
+export type { ContextInvitationPreview } from './shared-context-module.js';
 export type { ContextView, ContextViewState, SavedContextFollow } from './context-view.js';
-export { defineProtocol } from './define-protocol.js';
+export { defineModule } from './define-module.js';
 export * from './did-api.js';
 export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
 export * from './dwn-reader-api.js';
@@ -51,26 +51,26 @@ export type {
   FileEnvelopeCodecOptions,
   FileEnvelopeData,
 } from './file-envelope-codec.js';
-export * from './protocol.js';
+export * from './module.js';
 export type { ObservableStore } from './observable-store.js';
-export { ProtocolReadinessError } from './protocol-readiness.js';
-export type { EnsureProtocolsReadyOptions, ProtocolReadinessApi } from './protocol-readiness.js';
+export { ModuleReadinessError } from './module-readiness.js';
+export type { EnsureModulesReadyOptions, ModuleReadinessApi } from './module-readiness.js';
 export type {
   ContextRolePath,
   ContextRolesAtPath,
   ContextRootPath,
   DataFormatAtPath,
-  ProtocolPaths,
-  ProtocolPathTypeNames,
-  ProtocolRecordCodecs,
-  ProtocolRolePaths,
+  ModulePaths,
+  ModulePathTypeNames,
+  ModuleRecordCodecs,
+  ModuleRolePaths,
   RuleSetPaths,
-  SquashProtocolPaths,
+  SquashModulePaths,
   TagKeys,
   TagsAtPath,
-  TypedProtocol,
+  TypedModule,
   TypeNameAtPath,
-} from './protocol-types.js';
+} from './module-types.js';
 export * from './read-only-record.js';
 export {
   RecordValidationError,
@@ -87,7 +87,7 @@ export type { RecordFilter, RecordQuery } from './record-query.js';
 export { RecordConflictError } from './record-conflict-error.js';
 export type { ExpandableRecordView, RecordView, RecordViewState } from './record-view.js';
 export * from './record.js';
-export * from './service-config-protocol.js';
+export * from './service-config-module.js';
 export * from './typed-enbox.js';
 export {
   AudienceDecryptError,

@@ -101,7 +101,7 @@ function deadLetter(overrides: Partial<DeadLetterEntry> = {}): DeadLetterEntry {
     errorDetail    : 'terminal failure',
     failedAt       : '2026-01-01T00:00:00.000Z',
     messageCid     : 'shared-cid',
-    protocol       : 'https://protocol.example',
+    module         : 'https://module.example',
     remoteEndpoint : 'https://a.example',
     tenantDid      : 'did:example:alice',
     ...overrides,

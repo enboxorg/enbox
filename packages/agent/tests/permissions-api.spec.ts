@@ -8,7 +8,7 @@ import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { AgentPermissionsApi, PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { DwnInterface, DwnPermissionGrant, type PermissionGrantEntry } from '../src/index.js';
-import { DwnInterfaceName, DwnMethodName, PermissionsProtocol, Time } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, PermissionsModule, Time } from '@enbox/dwn-sdk-js';
 
 
 describe('AgentPermissionsApi', () => {
@@ -132,12 +132,12 @@ describe('AgentPermissionsApi', () => {
     });
 
     it('invalidates a cached catalog when a grant is stored locally', async () => {
-      const protocol = 'http://example.com/permission-cache-invalidation';
+      const module = 'http://example.com/permission-cache-invalidation';
       const request = {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol,
+        module,
       } as const;
 
       await expect(testHarness.agent.permissions.getPermissionForRequest(request))
@@ -146,7 +146,7 @@ describe('AgentPermissionsApi', () => {
       const storedGrant = await storeGrantAsBob({
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol,
+        module,
       });
       const fetchedGrant = await testHarness.agent.permissions.getPermissionForRequest(request);
 
@@ -154,11 +154,11 @@ describe('AgentPermissionsApi', () => {
     });
 
     it('uses Records.Read grants for read-like record requests', async () => {
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
       const readGrant = await storeGrantAsBob({
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Read,
-        protocol
+        module
       });
 
       for (const messageType of [
@@ -171,25 +171,25 @@ describe('AgentPermissionsApi', () => {
           connectedDid : aliceDid.uri,
           delegateDid  : bobDid.uri,
           messageType,
-          protocol
+          module
         });
         expect(fetchedGrant.message.recordId).toBe(readGrant.message.recordId);
       }
     });
 
     it('rejects malformed Records.Query permission grants at storage', async () => {
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
 
       await expect(storeGrantAsBob({
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Query as any,
-        protocol
+        module
       })).rejects.toThrow('PermissionsApi: Failed to create grant');
     });
 
     it('caches and returns the permission grant', async () => {
       // create a RecordsWrite grant from alice to bob
-      const protocolUri = 'http://example.com/protocol';
+      const moduleUri = 'http://example.com/module';
       const recordsWriteGrant = await testHarness.agent.permissions.createGrant({
         store       : true,
         author      : aliceDid.uri,
@@ -198,7 +198,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : protocolUri
+          module    : moduleUri
         }
       });
       expect(recordsWriteGrant).toBeDefined();
@@ -223,7 +223,7 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocolUri,
+        module       : moduleUri,
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
@@ -234,7 +234,7 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocolUri,
+        module       : moduleUri,
       });
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
@@ -244,7 +244,7 @@ describe('AgentPermissionsApi', () => {
 
     it('should cache the results of an explicit fresh fetch', async () => {
       // create a RecordsWrite grant from alice to bob
-      const protocolUri = 'http://example.com/protocol';
+      const moduleUri = 'http://example.com/module';
       const recordsWriteGrant = await testHarness.agent.permissions.createGrant({
         store       : true,
         author      : aliceDid.uri,
@@ -253,7 +253,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : protocolUri
+          module    : moduleUri
         }
       });
       expect(recordsWriteGrant).toBeDefined();
@@ -278,7 +278,7 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocolUri,
+        module       : moduleUri,
         forceRefresh : true
       });
       expect(fetchedGrant.message.recordId).toBe(recordsWriteGrant.message.recordId);
@@ -290,7 +290,7 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocolUri,
+        module       : moduleUri,
       });
       expect(fetchedGrant2.message.recordId).toBe(recordsWriteGrant.message.recordId);
 
@@ -302,7 +302,7 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocolUri,
+        module       : moduleUri,
         forceRefresh : true
       });
       expect(fetchedGrant3.message.recordId).toBe(recordsWriteGrant.message.recordId);
@@ -310,7 +310,7 @@ describe('AgentPermissionsApi', () => {
       expect(fetchGrantSpy.mock.calls).toHaveLength(2);
     });
 
-    it('matches distinct protocolPath scopes from one cached grant catalog', async () => {
+    it('matches distinct modulePath scopes from one cached grant catalog', async () => {
       const storeGrantForDelegate = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
         const grant = await testHarness.agent.permissions.createGrant({
           store       : true,
@@ -335,16 +335,16 @@ describe('AgentPermissionsApi', () => {
       };
 
       const firstGrant = await storeGrantForDelegate({
-        interface    : DwnInterfaceName.Messages,
-        method       : DwnMethodName.Read,
-        protocol     : 'http://example.com/a',
-        protocolPath : 'b~c'
+        interface  : DwnInterfaceName.Messages,
+        method     : DwnMethodName.Read,
+        module     : 'http://example.com/a',
+        modulePath : 'b~c'
       });
       const secondGrant = await storeGrantForDelegate({
-        interface    : DwnInterfaceName.Messages,
-        method       : DwnMethodName.Read,
-        protocol     : 'http://example.com/a~b',
-        protocolPath : 'c'
+        interface  : DwnInterfaceName.Messages,
+        method     : DwnMethodName.Read,
+        module     : 'http://example.com/a~b',
+        modulePath : 'c'
       });
 
       const fetchGrantSpy = spyOn(testHarness.agent.permissions, 'fetchGrants');
@@ -353,8 +353,8 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.MessagesRead,
-        protocol     : 'http://example.com/a',
-        protocolPath : 'b~c',
+        module       : 'http://example.com/a',
+        modulePath   : 'b~c',
         forceRefresh : true
       });
       expect(firstFetched.message.recordId).toBe(firstGrant.message.recordId);
@@ -364,8 +364,8 @@ describe('AgentPermissionsApi', () => {
         connectedDid : aliceDid.uri,
         delegateDid  : bobDid.uri,
         messageType  : DwnInterface.MessagesRead,
-        protocol     : 'http://example.com/a~b',
-        protocolPath : 'c',
+        module       : 'http://example.com/a~b',
+        modulePath   : 'c',
       });
       expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
@@ -402,7 +402,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/remote-revocation-test'
+          module    : 'http://example.com/remote-revocation-test'
         }
       });
       const readGrant = await testHarness.agent.permissions.createGrant({
@@ -413,7 +413,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'http://example.com/remote-revocation-test'
+          module    : 'http://example.com/remote-revocation-test'
         }
       });
 
@@ -422,7 +422,7 @@ describe('AgentPermissionsApi', () => {
           ? request.messageParams.filter as Record<string, unknown>
           : {};
 
-        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === PermissionsProtocol.grantPath) {
+        if (request.messageType === DwnInterface.RecordsQuery && filter.modulePath === PermissionsModule.grantPath) {
           return {
             messageCid : '',
             reply      : { entries: [writeGrant.message, readGrant.message], status: { code: 200, detail: 'OK' } }
@@ -441,7 +441,7 @@ describe('AgentPermissionsApi', () => {
       const grants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/remote-revocation-test',
+        module       : 'http://example.com/remote-revocation-test',
         remote       : true,
         checkRevoked : true,
       });
@@ -451,7 +451,7 @@ describe('AgentPermissionsApi', () => {
 
       const revocationFilters = sendDwnRequestStub.mock.calls
         .map(([request]) => ('messageParams' in request ? request.messageParams.filter as Record<string, unknown> : {}))
-        .filter(filter => filter.protocolPath === PermissionsProtocol.revocationPath);
+        .filter(filter => filter.modulePath === PermissionsModule.revocationPath);
       expect(revocationFilters).toHaveLength(2);
       expect(revocationFilters.some(filter => filter.parentId === writeGrant.message.recordId)).toBe(true);
       expect(revocationFilters.some(filter => filter.parentId === readGrant.message.recordId)).toBe(true);
@@ -459,9 +459,9 @@ describe('AgentPermissionsApi', () => {
       expect(revocationFilters.every(filter => !Array.isArray(filter.parentId))).toBe(true);
     });
 
-    it('filter by protocol', async () => {
+    it('filter by module', async () => {
       // create a grant for permission-1
-      const protocol1Grant = await testHarness.agent.permissions.createGrant({
+      const module1Grant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDid.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
@@ -469,12 +469,12 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol-1'
+          module    : 'http://example.com/module-1'
         }
       });
 
       // create a grant for permission-2
-      const protocol2Grant = await testHarness.agent.permissions.createGrant({
+      const module2Grant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDid.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
@@ -482,26 +482,26 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol-2'
+          module    : 'http://example.com/module-2'
         }
       });
 
       // fetch permission grants
-      const protocol1Grants = await testHarness.agent.permissions.fetchGrants({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/protocol-1'
+      const module1Grants = await testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/module-1'
       });
-      expect(protocol1Grants).toHaveLength(1);
-      expect(protocol1Grants[0].grant.id).toBe(protocol1Grant.grant.id);
+      expect(module1Grants).toHaveLength(1);
+      expect(module1Grants[0].grant.id).toBe(module1Grant.grant.id);
 
-      const protocol2Grants = await testHarness.agent.permissions.fetchGrants({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/protocol-2'
+      const module2Grants = await testHarness.agent.permissions.fetchGrants({
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/module-2'
       });
-      expect(protocol2Grants).toHaveLength(1);
-      expect(protocol2Grants[0].grant.id).toBe(protocol2Grant.grant.id);
+      expect(module2Grants).toHaveLength(1);
+      expect(module2Grants[0].grant.id).toBe(module2Grant.grant.id);
     });
 
     it('throws if the query returns anything other than 200', async () => {
@@ -529,7 +529,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/revocation-test'
+          module    : 'http://example.com/revocation-test'
         }
       });
 
@@ -541,15 +541,15 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'http://example.com/revocation-test'
+          module    : 'http://example.com/revocation-test'
         }
       });
 
       // both grants should be returned before revocation
       let grants = await testHarness.agent.permissions.fetchGrants({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/revocation-test',
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/revocation-test',
       });
       expect(grants).toHaveLength(2);
 
@@ -564,7 +564,7 @@ describe('AgentPermissionsApi', () => {
       grants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/revocation-test',
+        module       : 'http://example.com/revocation-test',
         checkRevoked : true,
       });
       expect(grants).toHaveLength(1);
@@ -581,7 +581,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/revocation-test-2'
+          module    : 'http://example.com/revocation-test-2'
         }
       });
 
@@ -594,9 +594,9 @@ describe('AgentPermissionsApi', () => {
 
       // without checkRevoked, the revoked grant should still be returned.
       let grants = await testHarness.agent.permissions.fetchGrants({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/revocation-test-2',
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/revocation-test-2',
       });
       expect(grants).toHaveLength(1);
       expect(grants[0].grant.id).toBe(grant.grant.id);
@@ -605,7 +605,7 @@ describe('AgentPermissionsApi', () => {
       grants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/revocation-test-2',
+        module       : 'http://example.com/revocation-test-2',
         checkRevoked : false,
       });
       expect(grants).toHaveLength(1);
@@ -621,7 +621,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/revocation-roundtrip-test'
+          module    : 'http://example.com/revocation-roundtrip-test'
         }
       });
       const readGrant = await testHarness.agent.permissions.createGrant({
@@ -632,7 +632,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol  : 'http://example.com/revocation-roundtrip-test'
+          module    : 'http://example.com/revocation-roundtrip-test'
         }
       });
       await testHarness.agent.permissions.createRevocation({
@@ -647,7 +647,7 @@ describe('AgentPermissionsApi', () => {
       const grants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/revocation-roundtrip-test',
+        module       : 'http://example.com/revocation-roundtrip-test',
         checkRevoked : true,
       });
 
@@ -663,14 +663,14 @@ describe('AgentPermissionsApi', () => {
         readGrant.message.recordId,
         writeGrant.message.recordId,
       ].sort());
-      expect(revocationFilters.every(filter => filter.protocol === PermissionsProtocol.uri)).toBe(true);
-      expect(revocationFilters.every(filter => filter.protocolPath === PermissionsProtocol.revocationPath)).toBe(true);
+      expect(revocationFilters.every(filter => filter.module === PermissionsModule.uri)).toBe(true);
+      expect(revocationFilters.every(filter => filter.modulePath === PermissionsModule.revocationPath)).toBe(true);
       expect(revocationFilters.every(filter => !Array.isArray(filter.parentId))).toBe(true);
 
       const grantsAgain = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/revocation-roundtrip-test',
+        module       : 'http://example.com/revocation-roundtrip-test',
         checkRevoked : true,
       });
       expect(grantsAgain).toHaveLength(1);
@@ -692,7 +692,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/cross-tenant-revocation-test'
+          module    : 'http://example.com/cross-tenant-revocation-test'
         }
       });
       const processDwnRequestStub = spyOn(testHarness.agent, 'processDwnRequest').mockImplementation(async (request) => {
@@ -700,7 +700,7 @@ describe('AgentPermissionsApi', () => {
           ? request.messageParams.filter as Record<string, unknown>
           : {};
 
-        if (request.messageType === DwnInterface.RecordsQuery && filter.protocolPath === PermissionsProtocol.grantPath) {
+        if (request.messageType === DwnInterface.RecordsQuery && filter.modulePath === PermissionsModule.grantPath) {
           return {
             messageCid : '',
             reply      : { entries: [writeGrant.message], status: { code: 200, detail: 'OK' } }
@@ -716,7 +716,7 @@ describe('AgentPermissionsApi', () => {
       const grants = await testHarness.agent.permissions.fetchGrants({
         author       : bobDid.uri,
         target       : aliceDid.uri,
-        protocol     : 'http://example.com/cross-tenant-revocation-test',
+        module       : 'http://example.com/cross-tenant-revocation-test',
         checkRevoked : true,
       });
 
@@ -726,9 +726,9 @@ describe('AgentPermissionsApi', () => {
         .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
         .map(([request]) => request.messageParams.filter as Record<string, unknown>);
       expect(revocationFilters).toEqual([{
-        parentId     : writeGrant.message.recordId,
-        protocol     : PermissionsProtocol.uri,
-        protocolPath : PermissionsProtocol.revocationPath,
+        parentId   : writeGrant.message.recordId,
+        module     : PermissionsModule.uri,
+        modulePath : PermissionsModule.revocationPath,
       }]);
     });
 
@@ -768,45 +768,45 @@ describe('AgentPermissionsApi', () => {
       expect(sendDwnRequestStub).toHaveBeenCalled();
     });
 
-    it('filter by protocol', async () => {
+    it('filter by module', async () => {
       // create a request for permission-1
-      const protocol1Request = await testHarness.agent.permissions.createRequest({
+      const module1Request = await testHarness.agent.permissions.createRequest({
         author : aliceDid.uri,
         store  : true,
         scope  : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol-1'
+          module    : 'http://example.com/module-1'
         }
       });
 
       // create a request for permission-2
-      const protocol2Request = await testHarness.agent.permissions.createRequest({
+      const module2Request = await testHarness.agent.permissions.createRequest({
         author : aliceDid.uri,
         store  : true,
         scope  : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol-2'
+          module    : 'http://example.com/module-2'
         }
       });
 
       // fetch permission grants
-      const protocol1Requests = await testHarness.agent.permissions.fetchRequests({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/protocol-1'
+      const module1Requests = await testHarness.agent.permissions.fetchRequests({
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/module-1'
       });
-      expect(protocol1Requests).toHaveLength(1);
-      expect(protocol1Requests[0].request.id).toBe(protocol1Request.request.id);
+      expect(module1Requests).toHaveLength(1);
+      expect(module1Requests[0].request.id).toBe(module1Request.request.id);
 
-      const protocol2Requests = await testHarness.agent.permissions.fetchRequests({
-        author   : aliceDid.uri,
-        target   : aliceDid.uri,
-        protocol : 'http://example.com/protocol-2'
+      const module2Requests = await testHarness.agent.permissions.fetchRequests({
+        author : aliceDid.uri,
+        target : aliceDid.uri,
+        module : 'http://example.com/module-2'
       });
-      expect(protocol2Requests).toHaveLength(1);
-      expect(protocol2Requests[0].request.id).toBe(protocol2Request.request.id);
+      expect(module2Requests).toHaveLength(1);
+      expect(module2Requests[0].request.id).toBe(module2Request.request.id);
     });
 
     it('throws if the query returns anything other than 200', async () => {
@@ -882,7 +882,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -950,7 +950,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -982,7 +982,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -1032,7 +1032,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -1082,7 +1082,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -1125,7 +1125,7 @@ describe('AgentPermissionsApi', () => {
           scope  : {
             interface : DwnInterfaceName.Records,
             method    : DwnMethodName.Write,
-            protocol  : 'http://example.com/protocol'
+            module    : 'http://example.com/module'
           }
         });
       } catch (error: any) {
@@ -1144,7 +1144,7 @@ describe('AgentPermissionsApi', () => {
         scope  : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -1168,7 +1168,7 @@ describe('AgentPermissionsApi', () => {
         scope  : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'http://example.com/protocol'
+          module    : 'http://example.com/module'
         }
       });
 
@@ -1185,13 +1185,13 @@ describe('AgentPermissionsApi', () => {
 
   describe('matchGrantFromArray', () => {
 
-    const createRecordGrants = async ({ grantee, grantor, grantorAgent, protocol, protocolPath, contextId }:{
+    const createRecordGrants = async ({ grantee, grantor, grantorAgent, module, modulePath, contextId }:{
       grantorAgent: EnboxPlatformAgent;
       granteeAgent: EnboxPlatformAgent;
       grantor: string;
       grantee: string;
-      protocol: string;
-      protocolPath?: string;
+      module: string;
+      modulePath?: string;
       contextId?: string;
     }): Promise<Record<string, PermissionGrantEntry>> => {
       const recordsWriteGrant = await grantorAgent.permissions.createGrant({
@@ -1203,8 +1203,8 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol,
-          protocolPath,
+          module,
+          modulePath,
           contextId
         }
       });
@@ -1218,8 +1218,8 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Read,
-          protocol,
-          protocolPath,
+          module,
+          modulePath,
           contextId
         }
       });
@@ -1233,8 +1233,8 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Delete,
-          protocol,
-          protocolPath,
+          module,
+          modulePath,
           contextId
         }
       });
@@ -1246,12 +1246,12 @@ describe('AgentPermissionsApi', () => {
       };
     };
 
-    const createMessageGrants = async ({ grantee, grantor, grantorAgent, protocol }:{
+    const createMessageGrants = async ({ grantee, grantor, grantorAgent, module }:{
       grantorAgent: EnboxPlatformAgent;
       granteeAgent: EnboxPlatformAgent;
       grantor: string;
       grantee: string;
-      protocol?: string;
+      module?: string;
     }): Promise<Record<string, PermissionGrantEntry>> => {
 
       const messagesReadGrant = await grantorAgent.permissions.createGrant({
@@ -1262,7 +1262,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol
+          module
         }
       });
 
@@ -1274,7 +1274,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol
+          module
         }
       });
 
@@ -1286,7 +1286,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol
+          module
         }
       });
 
@@ -1310,7 +1310,7 @@ describe('AgentPermissionsApi', () => {
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
 
 
       const deviceXRecordGrantsFromAlice = await createRecordGrants({
@@ -1318,7 +1318,7 @@ describe('AgentPermissionsApi', () => {
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol
+        module
       });
 
       const deviceXRecordGrantsFromAliceArray = [
@@ -1330,7 +1330,7 @@ describe('AgentPermissionsApi', () => {
       // attempt to match a grant with a different grantee, aliceDeviceY
       const notFoundGrantee = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceY.did.uri, {
         messageType: DwnInterface.RecordsWrite,
-        protocol
+        module
       }, deviceXRecordGrantsFromAliceArray);
 
       expect(notFoundGrantee).toBeUndefined();
@@ -1340,7 +1340,7 @@ describe('AgentPermissionsApi', () => {
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDeviceX.did.uri,
         grantee      : aliceDeviceY.did.uri,
-        protocol
+        module
       });
 
       const deviceYRecordGrantsFromDeviceXArray = [
@@ -1351,7 +1351,7 @@ describe('AgentPermissionsApi', () => {
 
       const notFoundGrantor = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceY.did.uri, {
         messageType: DwnInterface.RecordsWrite,
-        protocol
+        module
       }, deviceYRecordGrantsFromDeviceXArray);
 
       expect(notFoundGrantor).toBeUndefined();
@@ -1395,13 +1395,13 @@ describe('AgentPermissionsApi', () => {
       expect(notFoundDelegated).toBeUndefined();
 
       // create delegated record grants
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
       const recordsGrants = await createRecordGrants({
         grantorAgent : testHarness.agent as EnboxPlatformAgent,
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol
+        module
       });
 
       const deviceXRecordGrants = [
@@ -1413,7 +1413,7 @@ describe('AgentPermissionsApi', () => {
       // match a delegated grant
       const writeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.RecordsWrite,
-        protocol
+        module
       }, deviceXRecordGrants, true);
 
       expect(writeGrant?.message.recordId).toBe(recordsGrants.write.message.recordId);
@@ -1544,37 +1544,37 @@ describe('AgentPermissionsApi', () => {
       }
     });
 
-    it('Messages with protocol', async () => {
+    it('Messages with module', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/protocol';
-      const otherProtocol = 'http://example.com/other-protocol';
+      const module = 'http://example.com/module';
+      const otherModule = 'http://example.com/other-module';
 
-      // Messages.Read is the only valid Messages scope — one grant per protocol
+      // Messages.Read is the only valid Messages scope — one grant per module
       // covers Query, Read, and Subscribe operations.
-      const protoGrant = await testHarness.agent.permissions.createGrant({
+      const moduleGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         store       : true,
-        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol },
+        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module },
       });
 
-      const otherProtoGrant = await testHarness.agent.permissions.createGrant({
+      const otherModuleGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         store       : true,
-        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, protocol: otherProtocol },
+        scope       : { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: otherModule },
       });
 
-      const deviceXMessageGrants = [ protoGrant, otherProtoGrant ];
+      const deviceXMessageGrants = [ moduleGrant, otherModuleGrant ];
 
-      // All Messages feed operations match the same Read grant for the given protocol.
+      // All Messages feed operations match the same Read grant for the given module.
       for (const messageType of [
         DwnInterface.MessagesQuery,
         DwnInterface.MessagesRead,
@@ -1582,38 +1582,38 @@ describe('AgentPermissionsApi', () => {
       ]) {
         const matched = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
           messageType,
-          protocol,
+          module,
         }, deviceXMessageGrants);
-        expect(matched?.message.recordId).toBe(protoGrant.message.recordId);
+        expect(matched?.message.recordId).toBe(moduleGrant.message.recordId);
       }
 
-      // Unknown protocol returns no match.
+      // Unknown module returns no match.
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesQuery,
-        protocol    : 'http://example.com/unknown-protocol'
+        module      : 'http://example.com/unknown-module'
       }, deviceXMessageGrants);
 
       expect(invalidGrant).toBeUndefined();
 
-      // Other protocol matches the other grant.
+      // Other module matches the other grant.
       const otherMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesQuery,
-        protocol    : otherProtocol
+        module      : otherModule
       }, deviceXMessageGrants);
 
-      expect(otherMatch?.message.recordId).toBe(otherProtoGrant.message.recordId);
+      expect(otherMatch?.message.recordId).toBe(otherModuleGrant.message.recordId);
     });
 
-    it('Messages.Read unified scope covers Query, Read, and Subscribe with protocol', async () => {
+    it('Messages.Read unified scope covers Query, Read, and Subscribe with module', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
 
-      // Only a Messages.Read grant scoped to the protocol
+      // Only a Messages.Read grant scoped to the module
       const readGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
         grantedTo   : aliceDeviceX.did.uri,
@@ -1622,42 +1622,42 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol
+          module
         }
       });
 
       const readOnlyGrants = [ readGrant ];
 
-      // Matches MessagesQuery for the same protocol
+      // Matches MessagesQuery for the same module
       const matchedQuery = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesQuery,
-        protocol
+        module
       }, readOnlyGrants);
       expect(matchedQuery?.message.recordId).toBe(readGrant.message.recordId);
 
-      // Matches MessagesSubscribe for the same protocol
+      // Matches MessagesSubscribe for the same module
       const matchedSubscribe = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesSubscribe,
-        protocol
+        module
       }, readOnlyGrants);
       expect(matchedSubscribe?.message.recordId).toBe(readGrant.message.recordId);
 
-      // Does NOT match a different protocol
+      // Does NOT match a different module
       const noMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesQuery,
-        protocol    : 'http://example.com/other-protocol'
+        module      : 'http://example.com/other-module'
       }, readOnlyGrants);
       expect(noMatch).toBeUndefined();
     });
 
-    it('Messages with protocolPath and contextId', async () => {
+    it('Messages with modulePath and contextId', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/messages-scope-protocol';
+      const module = 'http://example.com/messages-scope-module';
 
       const pathGrant = await testHarness.agent.permissions.createGrant({
         author      : aliceDid.uri,
@@ -1665,10 +1665,10 @@ describe('AgentPermissionsApi', () => {
         dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
         store       : true,
         scope       : {
-          interface    : DwnInterfaceName.Messages,
-          method       : DwnMethodName.Read,
-          protocol,
-          protocolPath : 'post'
+          interface  : DwnInterfaceName.Messages,
+          method     : DwnMethodName.Read,
+          module,
+          modulePath : 'post'
         }
       });
 
@@ -1680,7 +1680,7 @@ describe('AgentPermissionsApi', () => {
         scope       : {
           interface : DwnInterfaceName.Messages,
           method    : DwnMethodName.Read,
-          protocol,
+          module,
           contextId : 'root'
         }
       });
@@ -1688,52 +1688,52 @@ describe('AgentPermissionsApi', () => {
       const grants = [pathGrant, contextGrant];
 
       const pathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.MessagesRead,
-        protocol,
-        protocolPath : 'post'
+        messageType : DwnInterface.MessagesRead,
+        module,
+        modulePath  : 'post'
       }, grants);
       expect(pathMatch?.message.recordId).toBe(pathGrant.message.recordId);
 
       const queryPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.MessagesQuery,
-        protocol,
-        protocolPath : 'post'
+        messageType : DwnInterface.MessagesQuery,
+        module,
+        modulePath  : 'post'
       }, grants);
       expect(queryPathMatch?.message.recordId).toBe(pathGrant.message.recordId);
 
       const childPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.MessagesRead,
-        protocol,
-        protocolPath : 'post/comment'
+        messageType : DwnInterface.MessagesRead,
+        module,
+        modulePath  : 'post/comment'
       }, grants);
       expect(childPathMatch?.message.recordId).toBe(pathGrant.message.recordId);
 
-      const wrongProtocolPathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.MessagesRead,
-        protocol     : 'http://example.com/messages-scope-other-protocol',
-        protocolPath : 'post'
+      const wrongModulePathMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+        messageType : DwnInterface.MessagesRead,
+        module      : 'http://example.com/messages-scope-other-module',
+        modulePath  : 'post'
       }, grants);
-      expect(wrongProtocolPathMatch).toBeUndefined();
+      expect(wrongModulePathMatch).toBeUndefined();
 
       const contextChildMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesRead,
-        protocol,
+        module,
         contextId   : 'root/child'
       }, grants);
       expect(contextChildMatch?.message.recordId).toBe(contextGrant.message.recordId);
 
       const contextSiblingMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.MessagesRead,
-        protocol,
+        module,
         contextId   : 'root2'
       }, grants);
       expect(contextSiblingMatch).toBeUndefined();
 
-      const protocolOnlyMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+      const moduleOnlyMatch = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType: DwnInterface.MessagesQuery,
-        protocol
+        module
       }, grants);
-      expect(protocolOnlyMatch).toBeUndefined();
+      expect(moduleOnlyMatch).toBeUndefined();
     });
 
     it('Records', async () => {
@@ -1743,108 +1743,108 @@ describe('AgentPermissionsApi', () => {
         didMethod : 'jwk'
       });
 
-      const protocol1 = 'http://example.com/protocol';
-      const protocol2 = 'http://example.com/other-protocol';
+      const module1 = 'http://example.com/module';
+      const module2 = 'http://example.com/other-module';
 
-      const protocol1Grants = await createRecordGrants({
+      const module1Grants = await createRecordGrants({
         grantorAgent : testHarness.agent as EnboxPlatformAgent,
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol     : protocol1,
+        module       : module1,
       });
 
-      const otherProtocolGrants = await createRecordGrants({
+      const otherModuleGrants = await createRecordGrants({
         grantorAgent : testHarness.agent as EnboxPlatformAgent,
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol     : protocol2,
+        module       : module2,
       });
 
       const deviceXRecordGrants = [
-        protocol1Grants.write,
-        protocol1Grants.read,
-        protocol1Grants.delete,
-        otherProtocolGrants.write,
-        otherProtocolGrants.read,
-        otherProtocolGrants.delete
+        module1Grants.write,
+        module1Grants.read,
+        module1Grants.delete,
+        otherModuleGrants.write,
+        otherModuleGrants.read,
+        otherModuleGrants.delete
       ];
 
       const writeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(writeGrant?.message.recordId).toBe(protocol1Grants.write.message.recordId);
+      expect(writeGrant?.message.recordId).toBe(module1Grants.write.message.recordId);
 
       const readGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsRead,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(readGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
+      expect(readGrant?.message.recordId).toBe(module1Grants.read.message.recordId);
 
       const deleteGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsDelete,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(deleteGrant?.message.recordId).toBe(protocol1Grants.delete.message.recordId);
+      expect(deleteGrant?.message.recordId).toBe(module1Grants.delete.message.recordId);
 
       const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(queryGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
+      expect(queryGrant?.message.recordId).toBe(module1Grants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsSubscribe,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(subscribeGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
+      expect(subscribeGrant?.message.recordId).toBe(module1Grants.read.message.recordId);
 
       const countGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsCount,
-        protocol    : protocol1
+        module      : module1
       }, deviceXRecordGrants);
 
-      expect(countGrant?.message.recordId).toBe(protocol1Grants.read.message.recordId);
+      expect(countGrant?.message.recordId).toBe(module1Grants.read.message.recordId);
 
-      const queryGrantOtherProtocol = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
+      const queryGrantOtherModule = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
-        protocol    : protocol2
+        module      : module2
       }, deviceXRecordGrants);
 
-      expect(queryGrantOtherProtocol?.message.recordId).toBe(otherProtocolGrants.read.message.recordId);
+      expect(queryGrantOtherModule?.message.recordId).toBe(otherModuleGrants.read.message.recordId);
 
-      // unknown protocol
+      // unknown module
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsQuery,
-        protocol    : 'http://example.com/unknown-protocol'
+        module      : 'http://example.com/unknown-module'
       }, deviceXRecordGrants);
 
       expect(invalidGrant).toBeUndefined();
     });
 
-    it('Records with protocolPath', async () => {
+    it('Records with modulePath', async () => {
       const aliceDeviceX = await testHarness.agent.identity.create({
         store     : true,
         metadata  : { name: 'Alice Device X' },
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
 
       const fooGrants = await createRecordGrants({
         grantorAgent : testHarness.agent as EnboxPlatformAgent,
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol,
-        protocolPath : 'foo'
+        module,
+        modulePath   : 'foo'
       });
 
       const barGrants = await createRecordGrants({
@@ -1852,11 +1852,11 @@ describe('AgentPermissionsApi', () => {
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol,
-        protocolPath : 'foo/bar'
+        module,
+        modulePath   : 'foo/bar'
       });
 
-      const protocolGrants = [
+      const moduleGrants = [
         fooGrants.write,
         fooGrants.read,
         fooGrants.delete,
@@ -1866,58 +1866,58 @@ describe('AgentPermissionsApi', () => {
       ];
 
       const writeFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocol,
-        protocolPath : 'foo'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsWrite,
+        module      : module,
+        modulePath  : 'foo'
+      }, moduleGrants);
 
       expect(writeFooGrant?.message.recordId).toBe(fooGrants.write.message.recordId);
 
       const readFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsRead,
-        protocol     : protocol,
-        protocolPath : 'foo'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsRead,
+        module      : module,
+        modulePath  : 'foo'
+      }, moduleGrants);
 
       expect(readFooGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const deleteFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsDelete,
-        protocol     : protocol,
-        protocolPath : 'foo'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsDelete,
+        module      : module,
+        modulePath  : 'foo'
+      }, moduleGrants);
 
       expect(deleteFooGrant?.message.recordId).toBe(fooGrants.delete.message.recordId);
 
       const queryGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsQuery,
-        protocol     : protocol,
-        protocolPath : 'foo'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsQuery,
+        module      : module,
+        modulePath  : 'foo'
+      }, moduleGrants);
 
       expect(queryGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const subscribeGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsSubscribe,
-        protocol     : protocol,
-        protocolPath : 'foo'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsSubscribe,
+        module      : module,
+        modulePath  : 'foo'
+      }, moduleGrants);
 
       expect(subscribeGrant?.message.recordId).toBe(fooGrants.read.message.recordId);
 
       const writeBarGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocol,
-        protocolPath : 'foo/bar'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsWrite,
+        module      : module,
+        modulePath  : 'foo/bar'
+      }, moduleGrants);
 
       expect(writeBarGrant?.message.recordId).toBe(barGrants.write.message.recordId);
 
       const noMatchGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
-        messageType  : DwnInterface.RecordsWrite,
-        protocol     : protocol,
-        protocolPath : 'bar'
-      }, protocolGrants);
+        messageType : DwnInterface.RecordsWrite,
+        module      : module,
+        modulePath  : 'bar'
+      }, moduleGrants);
 
       expect(noMatchGrant).toBeUndefined();
     });
@@ -1929,14 +1929,14 @@ describe('AgentPermissionsApi', () => {
         didMethod : 'jwk'
       });
 
-      const protocol = 'http://example.com/protocol';
+      const module = 'http://example.com/module';
 
       const abcGrants = await createRecordGrants({
         grantorAgent : testHarness.agent as EnboxPlatformAgent,
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol,
+        module,
         contextId    : 'abc'
       });
 
@@ -1945,7 +1945,7 @@ describe('AgentPermissionsApi', () => {
         granteeAgent : testHarness.agent as EnboxPlatformAgent,
         grantor      : aliceDid.uri,
         grantee      : aliceDeviceX.did.uri,
-        protocol,
+        module,
         contextId    : 'def/ghi'
       });
 
@@ -1960,7 +1960,7 @@ describe('AgentPermissionsApi', () => {
 
       const writeFooGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol,
+        module      : module,
         contextId   : 'abc'
       }, contextGrants);
 
@@ -1968,7 +1968,7 @@ describe('AgentPermissionsApi', () => {
 
       const writeBarGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol,
+        module      : module,
         contextId   : 'def/ghi'
       }, contextGrants);
 
@@ -1976,7 +1976,7 @@ describe('AgentPermissionsApi', () => {
 
       const invalidGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol,
+        module      : module,
         contextId   : 'def'
       }, contextGrants);
 
@@ -1984,7 +1984,7 @@ describe('AgentPermissionsApi', () => {
 
       const childContextGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol,
+        module      : module,
         contextId   : 'abc/child'
       }, contextGrants);
 
@@ -1992,7 +1992,7 @@ describe('AgentPermissionsApi', () => {
 
       const withoutContextGrant = await AgentPermissionsApi.matchGrantFromArray(aliceDid.uri, aliceDeviceX.did.uri, {
         messageType : DwnInterface.RecordsWrite,
-        protocol    : protocol
+        module      : module
       }, contextGrants);
 
       expect(withoutContextGrant).toBeUndefined();

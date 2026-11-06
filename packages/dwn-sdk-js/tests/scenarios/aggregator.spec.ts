@@ -1,13 +1,13 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import { type DataStore, DataStream, type MessageStore, type ProtocolDefinition, type ResumableTaskStore } from '../../src/index.js';
+import { type DataStore, DataStream, type MessageStore, type ModuleDefinition, type ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Dwn } from '../../src/dwn.js';
 import { Jws } from '../../src/utils/jws.js';
-import { ProtocolsConfigure } from '../../src/interfaces/protocols-configure.js';
+import { ModulesConfigure } from '../../src/interfaces/modules-configure.js';
 import { RecordsQuery } from '../../src/interfaces/records-query.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -28,11 +28,11 @@ describe('Aggregator Model', () => {
   let eventLog: EventLog;
   let dwn: Dwn;
 
-  const protocol = 'https://example.org/notes';
+  const module = 'https://example.org/notes';
 
-  // A simple protocol for the user that only allows them to write or read their own notes
-  const userProtocolDefinition:ProtocolDefinition = {
-    protocol,
+  // A simple module for the user that only allows them to write or read their own notes
+  const userModuleDefinition:ModuleDefinition = {
+    module,
     published : true,
     types     : {
       note: {
@@ -45,10 +45,10 @@ describe('Aggregator Model', () => {
     }
   };
 
-  // A simple protocol that allows members of an aggregator to write notes to the aggregator
+  // A simple module that allows members of an aggregator to write notes to the aggregator
   // Anyone can query or read public notes, the rest of the notes are enforced by `recipient/author` rules.
-  const aggregatorProtocolDefinition:ProtocolDefinition = {
-    protocol,
+  const aggregatorModuleDefinition:ModuleDefinition = {
+    module,
     published : true,
     types     : {
       note: {
@@ -111,86 +111,86 @@ describe('Aggregator Model', () => {
     // Carol can see all notes from Alice and Bob in her query, including the private notes intended for her.
     // Alice can see all notes from Bob and Carol in her query, including the private notes intended for her.
 
-    // create aggregator DID and install aggregator note protocol
+    // create aggregator DID and install aggregator note module
     const aggregator = await TestDataGenerator.generateDidKeyPersona();
-    const aggregatorProtocolConfigure = await ProtocolsConfigure.create({
+    const aggregatorModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(aggregator),
-      definition : aggregatorProtocolDefinition,
+      definition : aggregatorModuleDefinition,
     });
-    const aggregatorProtocolReply = await dwn.processMessage(aggregator.did, aggregatorProtocolConfigure.message);
-    expect(aggregatorProtocolReply.status.code).toBe(202, 'aggregator configure');
+    const aggregatorModuleReply = await dwn.processMessage(aggregator.did, aggregatorModuleConfigure.message);
+    expect(aggregatorModuleReply.status.code).toBe(202, 'aggregator configure');
 
-    // create 4 users and install user note protocol
+    // create 4 users and install user note module
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    const aliceProtocolConfigure = await ProtocolsConfigure.create({
+    const aliceModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(alice),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const aliceProtocolReply = await dwn.processMessage(alice.did, aliceProtocolConfigure.message);
-    expect(aliceProtocolReply.status.code).toBe(202, 'alice configure');
+    const aliceModuleReply = await dwn.processMessage(alice.did, aliceModuleConfigure.message);
+    expect(aliceModuleReply.status.code).toBe(202, 'alice configure');
 
     const bob = await TestDataGenerator.generateDidKeyPersona();
-    const bobProtocolConfigure = await ProtocolsConfigure.create({
+    const bobModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(bob),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const bobProtocolReply = await dwn.processMessage(bob.did, bobProtocolConfigure.message);
-    expect(bobProtocolReply.status.code).toBe(202, 'bob configure');
+    const bobModuleReply = await dwn.processMessage(bob.did, bobModuleConfigure.message);
+    expect(bobModuleReply.status.code).toBe(202, 'bob configure');
 
     const carol = await TestDataGenerator.generateDidKeyPersona();
-    const carolProtocolConfigure = await ProtocolsConfigure.create({
+    const carolModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(carol),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const carolProtocolReply = await dwn.processMessage(carol.did, carolProtocolConfigure.message);
-    expect(carolProtocolReply.status.code).toBe(202, 'carol configure');
+    const carolModuleReply = await dwn.processMessage(carol.did, carolModuleConfigure.message);
+    expect(carolModuleReply.status.code).toBe(202, 'carol configure');
 
     const daniel = await TestDataGenerator.generateDidKeyPersona();
-    const danielProtocolConfigure = await ProtocolsConfigure.create({
+    const danielModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(daniel),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const danielProtocolReply = await dwn.processMessage(daniel.did, danielProtocolConfigure.message);
-    expect(danielProtocolReply.status.code).toBe(202, 'daniel configure');
+    const danielModuleReply = await dwn.processMessage(daniel.did, danielModuleConfigure.message);
+    expect(danielModuleReply.status.code).toBe(202, 'daniel configure');
 
 
     // The aggregator creates member records for alice, bob and carol
 
     const aliceMemberData = TestDataGenerator.randomBytes(256);
     const aliceMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : alice.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : aliceMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : alice.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : aliceMemberData,
     });
     const aliceMemberReply = await dwn.processMessage(aggregator.did, aliceMember.message, { dataStream: DataStream.fromBytes(aliceMemberData) });
     expect(aliceMemberReply.status.code).toBe(202, 'alice member ' + aliceMemberReply.status.detail);
 
     const bobMemberData = TestDataGenerator.randomBytes(256);
     const bobMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : bob.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : bobMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : bob.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : bobMemberData,
     });
     const bobMemberReply = await dwn.processMessage(aggregator.did, bobMember.message, { dataStream: DataStream.fromBytes(bobMemberData) });
     expect(bobMemberReply.status.code).toBe(202, 'bob member');
 
     const carolMemberData = TestDataGenerator.randomBytes(256);
     const carolMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : carol.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : carolMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : carol.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : carolMemberData,
     });
 
     const carolMemberReply = await dwn.processMessage(aggregator.did, carolMember.message, { dataStream: DataStream.fromBytes(carolMemberData) });
@@ -199,15 +199,15 @@ describe('Aggregator Model', () => {
     // alice writes a public note to carol and posts it in the aggregator
     const aliceNoteData = TestDataGenerator.randomBytes(256);
     const aliceNoteToCarol = await RecordsWrite.create({
-      signer       : Jws.createSigner(alice),
-      recipient    : carol.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : aliceNoteData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(alice),
+      recipient  : carol.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : aliceNoteData,
+      moduleRole : 'member'
     });
 
     // Alice writes it to her own DWN and the aggregator
@@ -221,15 +221,15 @@ describe('Aggregator Model', () => {
     // bob writes a public note to alice and posts it in the aggregator
     const bobNoteToAliceData = TestDataGenerator.randomBytes(256);
     const bobNoteToAlice = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : alice.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobNoteToAliceData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : alice.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobNoteToAliceData,
+      moduleRole : 'member'
     });
 
     // Bob writes it to his own DWN and the aggregator
@@ -243,15 +243,15 @@ describe('Aggregator Model', () => {
     // carol writes a public note to bob and posts it in the aggregator
     const carolNoteToBobData = TestDataGenerator.randomBytes(256);
     const carolNoteToBob = await RecordsWrite.create({
-      signer       : Jws.createSigner(carol),
-      recipient    : bob.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : carolNoteToBobData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(carol),
+      recipient  : bob.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : carolNoteToBobData,
+      moduleRole : 'member'
     });
 
     // Carol writes it to her own DWN and the aggregator
@@ -267,15 +267,15 @@ describe('Aggregator Model', () => {
     // daniel writes a public note to alice and posts it in the aggregator (which will reject it as he is not a member)
     const danielNoteToAlice = TestDataGenerator.randomBytes(256);
     const danielNote = await RecordsWrite.create({
-      signer       : Jws.createSigner(daniel),
-      recipient    : alice.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : danielNoteToAlice,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(daniel),
+      recipient  : alice.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : danielNoteToAlice,
+      moduleRole : 'member'
     });
 
     // Daniel writes it to his own DWN and the aggregator
@@ -289,9 +289,9 @@ describe('Aggregator Model', () => {
     const danielRead = await RecordsQuery.create({
       signer : Jws.createSigner(daniel),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        author       : [alice.did, bob.did],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        author     : [alice.did, bob.did],
       }
     });
 
@@ -304,15 +304,15 @@ describe('Aggregator Model', () => {
     // create  private notes to carol from alice and bob
     const alicePrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const aliceNoteToCarolPrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(alice),
-      recipient    : carol.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : alicePrivateNoteToCarol,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(alice),
+      recipient  : carol.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : alicePrivateNoteToCarol,
+      moduleRole : 'member'
     });
 
     const aliceNoteToCarolLocal = await dwn.processMessage(alice.did, aliceNoteToCarolPrivate.message, {
@@ -327,15 +327,15 @@ describe('Aggregator Model', () => {
 
     const bobPrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const bobNoteToCarolPrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : carol.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobPrivateNoteToCarol,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : carol.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobPrivateNoteToCarol,
+      moduleRole : 'member'
     });
 
     const bobNoteToCarolLocal = await dwn.processMessage(bob.did, bobNoteToCarolPrivate.message, {
@@ -351,15 +351,15 @@ describe('Aggregator Model', () => {
     // create a private note from bob to alice
     const bobNoteToAlicePrivateData = TestDataGenerator.randomBytes(256);
     const bobNoteToAlicePrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : alice.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobNoteToAlicePrivateData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : alice.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobNoteToAlicePrivateData,
+      moduleRole : 'member'
     });
 
     const bobNoteToAliceLocal = await dwn.processMessage(bob.did, bobNoteToAlicePrivate.message, {
@@ -375,9 +375,9 @@ describe('Aggregator Model', () => {
     const danielRead2 = await RecordsQuery.create({
       signer : Jws.createSigner(daniel),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        author       : [alice.did, bob.did],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        author     : [alice.did, bob.did],
       }
     });
 
@@ -392,9 +392,9 @@ describe('Aggregator Model', () => {
     const carolRead = await RecordsQuery.create({
       signer : Jws.createSigner(carol),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        author       : [alice.did, bob.did],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        author     : [alice.did, bob.did],
       }
     });
 
@@ -410,9 +410,9 @@ describe('Aggregator Model', () => {
     const aliceRead = await RecordsQuery.create({
       signer : Jws.createSigner(alice),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        author       : [bob.did, carol.did],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        author     : [bob.did, carol.did],
       }
     });
 
@@ -426,86 +426,86 @@ describe('Aggregator Model', () => {
 
   it('should support querying from multiple recipients', async () => {
 
-    // create aggregator DID and install aggregator note protocol
+    // create aggregator DID and install aggregator note module
     const aggregator = await TestDataGenerator.generateDidKeyPersona();
-    const aggregatorProtocolConfigure = await ProtocolsConfigure.create({
+    const aggregatorModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(aggregator),
-      definition : aggregatorProtocolDefinition,
+      definition : aggregatorModuleDefinition,
     });
-    const aggregatorProtocolReply = await dwn.processMessage(aggregator.did, aggregatorProtocolConfigure.message);
-    expect(aggregatorProtocolReply.status.code).toBe(202, 'aggregator configure');
+    const aggregatorModuleReply = await dwn.processMessage(aggregator.did, aggregatorModuleConfigure.message);
+    expect(aggregatorModuleReply.status.code).toBe(202, 'aggregator configure');
 
-    // create 4 users and install user note protocol
+    // create 4 users and install user note module
     const alice = await TestDataGenerator.generateDidKeyPersona();
-    const aliceProtocolConfigure = await ProtocolsConfigure.create({
+    const aliceModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(alice),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const aliceProtocolReply = await dwn.processMessage(alice.did, aliceProtocolConfigure.message);
-    expect(aliceProtocolReply.status.code).toBe(202, 'alice configure');
+    const aliceModuleReply = await dwn.processMessage(alice.did, aliceModuleConfigure.message);
+    expect(aliceModuleReply.status.code).toBe(202, 'alice configure');
 
     const bob = await TestDataGenerator.generateDidKeyPersona();
-    const bobProtocolConfigure = await ProtocolsConfigure.create({
+    const bobModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(bob),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const bobProtocolReply = await dwn.processMessage(bob.did, bobProtocolConfigure.message);
-    expect(bobProtocolReply.status.code).toBe(202, 'bob configure');
+    const bobModuleReply = await dwn.processMessage(bob.did, bobModuleConfigure.message);
+    expect(bobModuleReply.status.code).toBe(202, 'bob configure');
 
     const carol = await TestDataGenerator.generateDidKeyPersona();
-    const carolProtocolConfigure = await ProtocolsConfigure.create({
+    const carolModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(carol),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const carolProtocolReply = await dwn.processMessage(carol.did, carolProtocolConfigure.message);
-    expect(carolProtocolReply.status.code).toBe(202, 'carol configure');
+    const carolModuleReply = await dwn.processMessage(carol.did, carolModuleConfigure.message);
+    expect(carolModuleReply.status.code).toBe(202, 'carol configure');
 
     const daniel = await TestDataGenerator.generateDidKeyPersona();
-    const danielProtocolConfigure = await ProtocolsConfigure.create({
+    const danielModuleConfigure = await ModulesConfigure.create({
       signer     : Jws.createSigner(daniel),
-      definition : userProtocolDefinition,
+      definition : userModuleDefinition,
     });
-    const danielProtocolReply = await dwn.processMessage(daniel.did, danielProtocolConfigure.message);
-    expect(danielProtocolReply.status.code).toBe(202, 'daniel configure');
+    const danielModuleReply = await dwn.processMessage(daniel.did, danielModuleConfigure.message);
+    expect(danielModuleReply.status.code).toBe(202, 'daniel configure');
 
 
     // The aggregator creates member records for alice, bob and carol
 
     const aliceMemberData = TestDataGenerator.randomBytes(256);
     const aliceMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : alice.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : aliceMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : alice.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : aliceMemberData,
     });
     const aliceMemberReply = await dwn.processMessage(aggregator.did, aliceMember.message, { dataStream: DataStream.fromBytes(aliceMemberData) });
     expect(aliceMemberReply.status.code).toBe(202, 'alice member ' + aliceMemberReply.status.detail);
 
     const bobMemberData = TestDataGenerator.randomBytes(256);
     const bobMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : bob.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : bobMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : bob.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : bobMemberData,
     });
     const bobMemberReply = await dwn.processMessage(aggregator.did, bobMember.message, { dataStream: DataStream.fromBytes(bobMemberData) });
     expect(bobMemberReply.status.code).toBe(202, 'bob member');
 
     const carolMemberData = TestDataGenerator.randomBytes(256);
     const carolMember = await RecordsWrite.create({
-      signer       : Jws.createSigner(aggregator),
-      recipient    : carol.did,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'member',
-      schema       : 'https://example.org/member',
-      dataFormat   : 'application/json',
-      data         : carolMemberData,
+      signer     : Jws.createSigner(aggregator),
+      recipient  : carol.did,
+      module     : userModuleDefinition.module,
+      modulePath : 'member',
+      schema     : 'https://example.org/member',
+      dataFormat : 'application/json',
+      data       : carolMemberData,
     });
 
     const carolMemberReply = await dwn.processMessage(aggregator.did, carolMember.message, { dataStream: DataStream.fromBytes(carolMemberData) });
@@ -514,15 +514,15 @@ describe('Aggregator Model', () => {
     // alice writes a public note to carol and posts it in the aggregator
     const aliceNoteData = TestDataGenerator.randomBytes(256);
     const aliceNoteToCarol = await RecordsWrite.create({
-      signer       : Jws.createSigner(alice),
-      recipient    : carol.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : aliceNoteData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(alice),
+      recipient  : carol.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : aliceNoteData,
+      moduleRole : 'member'
     });
 
     // Alice writes it to her own DWN and the aggregator
@@ -536,15 +536,15 @@ describe('Aggregator Model', () => {
     // bob writes a public note to alice and posts it in the aggregator
     const bobNoteToAliceData = TestDataGenerator.randomBytes(256);
     const bobNoteToAlice = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : alice.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobNoteToAliceData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : alice.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobNoteToAliceData,
+      moduleRole : 'member'
     });
 
     // Bob writes it to his own DWN and the aggregator
@@ -558,15 +558,15 @@ describe('Aggregator Model', () => {
     // carol writes a public note to bob and posts it in the aggregator
     const carolNoteToBobData = TestDataGenerator.randomBytes(256);
     const carolNoteToBob = await RecordsWrite.create({
-      signer       : Jws.createSigner(carol),
-      recipient    : bob.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : carolNoteToBobData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(carol),
+      recipient  : bob.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : carolNoteToBobData,
+      moduleRole : 'member'
     });
 
     // Carol writes it to her own DWN and the aggregator
@@ -582,15 +582,15 @@ describe('Aggregator Model', () => {
     // daniel writes a public note to alice and posts it in the aggregator (which will reject it as he is not a member)
     const danielNoteToAlice = TestDataGenerator.randomBytes(256);
     const danielNote = await RecordsWrite.create({
-      signer       : Jws.createSigner(daniel),
-      recipient    : alice.did,
-      published    : true,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : danielNoteToAlice,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(daniel),
+      recipient  : alice.did,
+      published  : true,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : danielNoteToAlice,
+      moduleRole : 'member'
     });
 
     // Daniel writes it to his own DWN and the aggregator
@@ -604,9 +604,9 @@ describe('Aggregator Model', () => {
     const danielRead = await RecordsQuery.create({
       signer : Jws.createSigner(daniel),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        recipient    : [ alice.did, carol.did ],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        recipient  : [ alice.did, carol.did ],
       }
     });
 
@@ -619,15 +619,15 @@ describe('Aggregator Model', () => {
     // create  private notes to carol from alice and bob
     const alicePrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const aliceNoteToCarolPrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(alice),
-      recipient    : carol.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : alicePrivateNoteToCarol,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(alice),
+      recipient  : carol.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : alicePrivateNoteToCarol,
+      moduleRole : 'member'
     });
 
     const aliceNoteToCarolLocal = await dwn.processMessage(alice.did, aliceNoteToCarolPrivate.message, {
@@ -642,15 +642,15 @@ describe('Aggregator Model', () => {
 
     const bobPrivateNoteToCarol = TestDataGenerator.randomBytes(256);
     const bobNoteToCarolPrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : carol.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobPrivateNoteToCarol,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : carol.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobPrivateNoteToCarol,
+      moduleRole : 'member'
     });
 
     const bobNoteToCarolLocal = await dwn.processMessage(bob.did, bobNoteToCarolPrivate.message, {
@@ -666,15 +666,15 @@ describe('Aggregator Model', () => {
     // create a private note from bob to alice
     const bobNoteToAlicePrivateData = TestDataGenerator.randomBytes(256);
     const bobNoteToAlicePrivate = await RecordsWrite.create({
-      signer       : Jws.createSigner(bob),
-      recipient    : alice.did,
-      published    : false,
-      protocol     : userProtocolDefinition.protocol,
-      protocolPath : 'note',
-      dataFormat   : 'application/json',
-      schema       : 'https://example.org/note',
-      data         : bobNoteToAlicePrivateData,
-      protocolRole : 'member'
+      signer     : Jws.createSigner(bob),
+      recipient  : alice.did,
+      published  : false,
+      module     : userModuleDefinition.module,
+      modulePath : 'note',
+      dataFormat : 'application/json',
+      schema     : 'https://example.org/note',
+      data       : bobNoteToAlicePrivateData,
+      moduleRole : 'member'
     });
 
     const bobNoteToAliceLocal = await dwn.processMessage(bob.did, bobNoteToAlicePrivate.message, {
@@ -690,9 +690,9 @@ describe('Aggregator Model', () => {
     const danielRead2 = await RecordsQuery.create({
       signer : Jws.createSigner(daniel),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        recipient    : [ alice.did, carol.did ],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        recipient  : [ alice.did, carol.did ],
       }
     });
 
@@ -707,9 +707,9 @@ describe('Aggregator Model', () => {
     const carolRead = await RecordsQuery.create({
       signer : Jws.createSigner(carol),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        recipient    : [ alice.did, carol.did ],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        recipient  : [ alice.did, carol.did ],
       }
     });
 
@@ -725,9 +725,9 @@ describe('Aggregator Model', () => {
     const aliceRead = await RecordsQuery.create({
       signer : Jws.createSigner(alice),
       filter : {
-        protocol     : userProtocolDefinition.protocol,
-        protocolPath : 'note',
-        recipient    : [ carol.did, bob.did ],
+        module     : userModuleDefinition.module,
+        modulePath : 'note',
+        recipient  : [ carol.did, bob.did ],
       }
     });
 

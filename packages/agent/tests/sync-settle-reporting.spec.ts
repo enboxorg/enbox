@@ -15,6 +15,7 @@ describe('SyncEngineLevel settle failure handling', () => {
     { detailsReported: false, expectedLogs: 1, label: 'reports an otherwise unobserved failure' },
   ])('$label', async ({ detailsReported, expectedLogs }) => {
     const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+    sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
     const internal = syncEngine as any;
     const error = new SyncRunFailedError('one endpoint failed', { detailsReported });
     sinon.stub(internal._runCoordinator, 'settle').rejects(error);
@@ -31,6 +32,7 @@ describe('SyncEngineLevel settle failure handling', () => {
 
   it('continues unrelated link recovery after reported endpoint failures', async () => {
     const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
+    sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
     const internal = syncEngine as any;
     const error = new SyncRunFailedError('one endpoint failed', { detailsReported: true });
     const orphanedTarget = {

@@ -110,6 +110,7 @@ describe('web features', () => {
     });
 
     it('configures the realm default DID DHT resolver', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
       const gatewayUri = 'http://127.0.0.1:17527';
       const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
       activatePolyfills({
@@ -1079,8 +1080,8 @@ describe('web features', () => {
     });
 
     it('should preserve nested path segments', () => {
-      const result = parseDrlUrl('https://dweb/did:dht:abc/protocols/xyz/records/123');
-      expect(result).toEqual(['did:dht:abc', 'protocols/xyz/records/123']);
+      const result = parseDrlUrl('https://dweb/did:dht:abc/modules/xyz/records/123');
+      expect(result).toEqual(['did:dht:abc', 'modules/xyz/records/123']);
     });
   });
 });

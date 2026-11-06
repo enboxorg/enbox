@@ -37,15 +37,15 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
     expect(isVaultConnect({ metadata: { name: 'Alice' } })).toBe(true);
   });
 
-  test('non-empty protocols option → handler connect', () => {
-    expect(isVaultConnect({ protocols: [{ protocol: 'x', published: true, types: {}, structure: {} } as any] })).toBe(false);
+  test('non-empty modules option → handler connect', () => {
+    expect(isVaultConnect({ modules: [{ module: 'x', published: true, types: {}, structure: {} } as any] })).toBe(false);
   });
 
-  test('empty protocols array → vault connect (no scopes for handler to authorize)', () => {
+  test('empty modules array → vault connect (no scopes for handler to authorize)', () => {
     // An empty array carries no permission intent; treating it as a handler
     // signal would produce a zero-grant "connected" session that's
     // indistinguishable from a denied connect.
-    expect(isVaultConnect({ protocols: [] })).toBe(true);
+    expect(isVaultConnect({ modules: [] })).toBe(true);
   });
 
   test('connectHandler option → handler connect', () => {
@@ -57,9 +57,9 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
     expect(isVaultConnect({ sync: '15s' })).toBe(true);
   });
 
-  test('non-empty protocols + password → handler connect (handler signal wins)', () => {
-    const proto = { protocol: 'x', published: true, types: {}, structure: {} } as any;
-    expect(isVaultConnect({ protocols: [proto], password: 'test' })).toBe(false);
+  test('non-empty modules + password → handler connect (handler signal wins)', () => {
+    const moduleDefinition = { module: 'x', published: true, types: {}, structure: {} } as any;
+    expect(isVaultConnect({ modules: [moduleDefinition], password: 'test' })).toBe(false);
   });
 
   test('connectHandler + createIdentity → handler connect (handler signal wins)', () => {
@@ -67,17 +67,17 @@ describe('_isVaultConnect heuristic (tested via reflection)', () => {
     expect(isVaultConnect({ connectHandler: handler, createIdentity: true })).toBe(false);
   });
 
-  test('non-empty protocols + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
-    const proto = { protocol: 'x', published: true, types: {}, structure: {} } as any;
+  test('non-empty modules + dwnEndpoints + metadata → handler connect (handler signal wins)', () => {
+    const moduleDefinition = { module: 'x', published: true, types: {}, structure: {} } as any;
     expect(isVaultConnect({
-      protocols    : [proto],
+      modules      : [moduleDefinition],
       dwnEndpoints : ['https://dwn.example.com'],
       metadata     : { name: 'Alice' },
     })).toBe(false);
   });
 
-  test('protocols: null is treated as no handler signal → vault connect', () => {
-    expect(isVaultConnect({ protocols: null as any })).toBe(true);
+  test('modules: null is treated as no handler signal → vault connect', () => {
+    expect(isVaultConnect({ modules: null as any })).toBe(true);
   });
 
   test('connectHandler: null → vault connect', () => {

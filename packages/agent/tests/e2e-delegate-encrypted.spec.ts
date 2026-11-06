@@ -1,5 +1,5 @@
 /**
- * e2e: delegate + encrypted protocol
+ * e2e: delegate + encrypted module
  *
  * Verifies the durable grantKey path used by delegate sessions. Connect
  * responses no longer carry decryption keys; delegates hydrate grantKey
@@ -8,7 +8,7 @@
 
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PublicKeyJwk } from '@enbox/crypto';
-import type { ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -20,11 +20,11 @@ import { TestAgent } from './utils/test-agent.js';
 import { testDwnUrl } from './utils/test-config.js';
 
 import { AudienceDecryptError, createGrantKeyRecordsForGrants, getEncryptionKeyInfo, resolveKeyDecrypter } from '../src/dwn-encryption.js';
-import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionProtocol, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
+import { ContentEncryptionAlgorithm, DataStream, DwnInterfaceName, DwnMethodName, Encoder, EncryptionModule, KeyDerivationScheme } from '@enbox/dwn-sdk-js';
 
-const encryptedNoteProtocol: ProtocolDefinition = {
+const encryptedNoteModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://protocol.xyz/e2e-delegate-encrypted-notes',
+  module    : 'https://module.xyz/e2e-delegate-encrypted-notes',
   types     : {
     note: {
       schema             : 'https://schemas.xyz/note',
@@ -35,9 +35,9 @@ const encryptedNoteProtocol: ProtocolDefinition = {
   structure: { note: {} },
 };
 
-const multiTypeProtocol: ProtocolDefinition = {
+const multiTypeModule: ModuleDefinition = {
   published : true,
-  protocol  : 'https://protocol.xyz/e2e-delegate-multi-type',
+  module    : 'https://module.xyz/e2e-delegate-multi-type',
   types     : {
     note: {
       schema             : 'https://schemas.xyz/note',
@@ -56,13 +56,13 @@ const multiTypeProtocol: ProtocolDefinition = {
 async function queryRawEntry(
   harness: PlatformAgentTestHarness,
   authorDid: string,
-  protocol: string,
+  module: string,
 ): Promise<RecordsWriteMessage | undefined> {
   const { reply } = await harness.agent.processDwnRequest({
     author        : authorDid,
     target        : authorDid,
     messageType   : DwnInterface.RecordsQuery,
-    messageParams : { filter: { protocol } },
+    messageParams : { filter: { module } },
   });
   return reply.entries?.[0] as RecordsWriteMessage | undefined;
 }
@@ -82,17 +82,17 @@ async function applyDataEncodedRecord(
   expect([202, 409]).toContain(applyReply.status.code);
 }
 
-async function copyProtocolToHarness(
+async function copyModuleToHarness(
   source: PlatformAgentTestHarness,
   destination: PlatformAgentTestHarness,
   tenantDid: string,
-  protocol: string,
+  module: string,
 ): Promise<void> {
   const { reply } = await source.agent.processDwnRequest({
     author        : tenantDid,
     target        : tenantDid,
-    messageType   : DwnInterface.ProtocolsQuery,
-    messageParams : { filter: { protocol } },
+    messageType   : DwnInterface.ModulesQuery,
+    messageParams : { filter: { module } },
   });
   const applyReply = await destination.agent.dwn.processRawMessage(
     tenantDid,
@@ -144,15 +144,15 @@ async function readApplicationText(
   return new TextDecoder().decode(await DataStream.toBytes(decrypted));
 }
 
-async function installProtocol(
+async function installModule(
   harness: PlatformAgentTestHarness,
   tenantDid: string,
-  definition: ProtocolDefinition,
+  definition: ModuleDefinition,
 ): Promise<void> {
   const { reply } = await harness.agent.processDwnRequest({
     author        : tenantDid,
     target        : tenantDid,
-    messageType   : DwnInterface.ProtocolsConfigure,
+    messageType   : DwnInterface.ModulesConfigure,
     messageParams : { definition },
   });
   expect(reply.status.code).toBe(202);
@@ -165,8 +165,8 @@ async function createReadGrantAndGrantKey(params: {
   delegateDid: string;
   delegateRootPublicKey?: PublicKeyJwk;
   delegateX25519PrivateKey?: any;
-  protocol: string;
-  protocolPath?: string;
+  module: string;
+  modulePath?: string;
 }): Promise<{ grant: any; grantId: string; grantKeyRecords: Array<RecordsWriteMessage & { encodedData: string }> }> {
   const readGrant = await params.walletHarness.agent.permissions.createGrant({
     author      : params.walletDid,
@@ -176,8 +176,8 @@ async function createReadGrantAndGrantKey(params: {
     scope       : {
       interface : DwnInterfaceName.Records,
       method    : DwnMethodName.Read,
-      protocol  : params.protocol,
-      ...(params.protocolPath === undefined ? {} : { protocolPath: params.protocolPath }),
+      module    : params.module,
+      ...(params.modulePath === undefined ? {} : { modulePath: params.modulePath }),
     },
     store: true,
   });
@@ -202,11 +202,11 @@ async function createReadGrantAndGrantKey(params: {
     grantMessages: [readGrant.message as any],
   });
   expect(grantKeyRecords).toHaveLength(1);
-  expect(grantKeyRecords[0].descriptor.protocol).toBe(EncryptionProtocol.uri);
-  expect(grantKeyRecords[0].descriptor.protocolPath).toBe(
+  expect(grantKeyRecords[0].descriptor.module).toBe(EncryptionModule.uri);
+  expect(grantKeyRecords[0].descriptor.modulePath).toBe(
     params.delegateX25519PrivateKey === undefined
-      ? EncryptionProtocol.wrappedGrantKeyPath
-      : EncryptionProtocol.grantKeyPath,
+      ? EncryptionModule.wrappedGrantKeyPath
+      : EncryptionModule.grantKeyPath,
   );
   expect(grantKeyRecords[0].descriptor.recipient).toBe(params.delegateDid);
   await applyDataEncodedRecord(
@@ -222,7 +222,7 @@ async function createReadGrantAndGrantKey(params: {
   };
 }
 
-describe('e2e: delegate + encrypted protocol', () => {
+describe('e2e: delegate + encrypted module', () => {
   let walletHarness: PlatformAgentTestHarness;
   let delegateHarness: PlatformAgentTestHarness;
   let walletIdentity: BearerIdentity;
@@ -264,14 +264,14 @@ describe('e2e: delegate + encrypted protocol', () => {
     sinon.restore();
   });
 
-  it('should inject $keyAgreement keys when installing an encrypted protocol', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+  it('should inject $keyAgreement keys when installing an encrypted module', async () => {
+    await installModule(walletHarness, walletIdentity.did.uri, encryptedNoteModule);
 
     const { reply } = await walletHarness.agent.processDwnRequest({
       author        : walletIdentity.did.uri,
       target        : walletIdentity.did.uri,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: encryptedNoteModule.module } },
     });
 
     const installedDefinition = (reply.entries![0] as any).descriptor.definition;
@@ -279,19 +279,19 @@ describe('e2e: delegate + encrypted protocol', () => {
     expect(installedDefinition.structure.note.$keyAgreement.publicKeyJwk).toHaveProperty('crv', 'X25519');
   });
 
-  it('should produce encrypted protocolPath records for encrypted protocol types', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+  it('should produce encrypted modulePath records for encrypted module types', async () => {
+    await installModule(walletHarness, walletIdentity.did.uri, encryptedNoteModule);
 
     const { reply } = await walletHarness.agent.processDwnRequest({
       author        : walletIdentity.did.uri,
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : encryptedNoteProtocol.protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode('This is a secret delegate note'),
+        module     : encryptedNoteModule.module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode('This is a secret delegate note'),
       },
     });
     expect(reply.status.code).toBe(202);
@@ -299,15 +299,15 @@ describe('e2e: delegate + encrypted protocol', () => {
     const rawEntry = await queryRawEntry(
       walletHarness,
       walletIdentity.did.uri,
-      encryptedNoteProtocol.protocol,
+      encryptedNoteModule.module,
     );
     expect(rawEntry?.encryption?.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
     expect(rawEntry?.encryption?.keyEncryption).toHaveLength(1);
-    expect(rawEntry!.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+    expect(rawEntry!.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
   });
 
   it('should hydrate delivered keys from durable grantKey records on cache miss and fail closed after revocation', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+    await installModule(walletHarness, walletIdentity.did.uri, encryptedNoteModule);
 
     const noteData = 'Secret note from durable grantKey';
     const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
@@ -315,11 +315,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : encryptedNoteProtocol.protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(noteData),
+        module     : encryptedNoteModule.module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(noteData),
       },
     });
 
@@ -328,12 +328,12 @@ describe('e2e: delegate + encrypted protocol', () => {
       delegateDid,
       delegateHarness,
       delegateX25519PrivateKey,
-      protocol  : encryptedNoteProtocol.protocol,
+      module    : encryptedNoteModule.module,
       walletDid : walletIdentity.did.uri,
       walletHarness,
     });
 
-    await copyProtocolToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol);
+    await copyModuleToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, encryptedNoteModule.module);
     await copyRecordToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, (noteWrite as RecordsWriteMessage).recordId);
 
     delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
@@ -399,7 +399,7 @@ describe('e2e: delegate + encrypted protocol', () => {
   });
 
   it('should hydrate wrapped durable grantKeys for a pre-supplied delegate DID', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+    await installModule(walletHarness, walletIdentity.did.uri, encryptedNoteModule);
 
     const noteData = 'Secret note from wrapped durable grantKey';
     const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
@@ -407,11 +407,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : encryptedNoteProtocol.protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(noteData),
+        module     : encryptedNoteModule.module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(noteData),
       },
     });
 
@@ -421,14 +421,14 @@ describe('e2e: delegate + encrypted protocol', () => {
       delegateDid,
       delegateHarness,
       delegateRootPublicKey,
-      protocol  : encryptedNoteProtocol.protocol,
+      module    : encryptedNoteModule.module,
       walletDid : walletIdentity.did.uri,
       walletHarness,
     });
 
     expect(grantKeyRecords[0].encryption).toBeUndefined();
 
-    await copyProtocolToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol);
+    await copyModuleToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, encryptedNoteModule.module);
     await copyRecordToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, (noteWrite as RecordsWriteMessage).recordId);
 
     delegateHarness.agent.dwn.clearDelegateDecryptionKeys(delegateDid);
@@ -454,8 +454,8 @@ describe('e2e: delegate + encrypted protocol', () => {
     )).toBe(noteData);
   });
 
-  it('should hydrate protocolPath-scoped durable grantKeys without owner KMS fallback', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, multiTypeProtocol);
+  it('should hydrate modulePath-scoped durable grantKeys without owner KMS fallback', async () => {
+    await installModule(walletHarness, walletIdentity.did.uri, multiTypeModule);
 
     const noteData = 'Secret path-scoped note from durable grantKey';
     const { message: noteWrite } = await walletHarness.agent.processDwnRequest({
@@ -463,11 +463,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : multiTypeProtocol.protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(noteData),
+        module     : multiTypeModule.module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(noteData),
       },
     });
 
@@ -476,13 +476,13 @@ describe('e2e: delegate + encrypted protocol', () => {
       delegateDid,
       delegateHarness,
       delegateX25519PrivateKey,
-      protocol     : multiTypeProtocol.protocol,
-      protocolPath : 'note',
-      walletDid    : walletIdentity.did.uri,
+      module     : multiTypeModule.module,
+      modulePath : 'note',
+      walletDid  : walletIdentity.did.uri,
       walletHarness,
     });
 
-    await copyProtocolToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, multiTypeProtocol.protocol);
+    await copyModuleToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, multiTypeModule.module);
     await copyRecordToHarness(walletHarness, delegateHarness, walletIdentity.did.uri, (noteWrite as RecordsWriteMessage).recordId);
 
     const { reply } = await delegateHarness.agent.processDwnRequest({
@@ -507,7 +507,7 @@ describe('e2e: delegate + encrypted protocol', () => {
   });
 
   it('should install, write, and read encrypted records as owner', async () => {
-    await installProtocol(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol);
+    await installModule(walletHarness, walletIdentity.did.uri, encryptedNoteModule);
 
     const noteData = 'Owner secret note';
     const { reply: writeReply } = await walletHarness.agent.processDwnRequest({
@@ -515,11 +515,11 @@ describe('e2e: delegate + encrypted protocol', () => {
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : encryptedNoteProtocol.protocol,
-        protocolPath : 'note',
-        schema       : 'https://schemas.xyz/note',
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(noteData),
+        module     : encryptedNoteModule.module,
+        modulePath : 'note',
+        schema     : 'https://schemas.xyz/note',
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(noteData),
       },
     });
     expect(writeReply.status.code).toBe(202);
@@ -528,7 +528,7 @@ describe('e2e: delegate + encrypted protocol', () => {
       author        : walletIdentity.did.uri,
       target        : walletIdentity.did.uri,
       messageType   : DwnInterface.RecordsRead,
-      messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+      messageParams : { filter: { module: encryptedNoteModule.module } },
     });
 
     expect(readReply.status.code).toBe(200);
@@ -538,6 +538,6 @@ describe('e2e: delegate + encrypted protocol', () => {
       walletIdentity.did.uri,
       readReply.entry!,
     )).toBe(noteData);
-    expect((await queryRawEntry(walletHarness, walletIdentity.did.uri, encryptedNoteProtocol.protocol))?.encryption).toBeDefined();
+    expect((await queryRawEntry(walletHarness, walletIdentity.did.uri, encryptedNoteModule.module))?.encryption).toBeDefined();
   });
 });

@@ -1,11 +1,11 @@
 import type { DidResolver } from '@enbox/dids';
-import type { DataStore, MessageStore, ProtocolDefinition, ProtocolRuleSet, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, ModuleRuleSet, ResumableTaskStore } from '../../src/index.js';
 import type { EventLog, SubscriptionEvent, SubscriptionMessage } from '../../src/types/subscriptions.js';
 import type { GenerateGrantCreateOutput, GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import freeForAll from '../vectors/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAll from '../vectors/module-definitions/free-for-all.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { createMessagesRoleContext } from '../utils/messages-role-test-utils.js';
@@ -22,8 +22,8 @@ import { Poller } from '../utils/poller.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
-import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedProtocol, processControlWrite } from '../utils/encryption-control-test-utils.js';
-import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsProtocol, RecordsWrite, Replication, Time } from '../../src/index.js';
+import { createAudienceControlWrite, createDeliveryControlWrite, installEncryptedModule, processControlWrite } from '../utils/encryption-control-test-utils.js';
+import { DataStream, DwnInterfaceName, DwnMethodName, PermissionGrant, PermissionsModule, RecordsWrite, Replication, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 import { createTestValidationStateReader } from '../utils/test-validation-state-reader.js';
@@ -145,30 +145,30 @@ export function testMessagesSubscribeHandler(): void {
       it('rejects a signed grant subscription whose exact path is paired with a broader path prefix', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
-        const protocol = 'http://messages-subscribe-ambiguous-path-filter';
+        const module = 'http://messages-subscribe-ambiguous-path-filter';
         const grant = await TestDataGenerator.generateGrantCreate({
           author    : alice,
           grantedTo : bob,
           scope     : {
-            interface    : DwnInterfaceName.Messages,
-            method       : DwnMethodName.Read,
-            protocol,
-            protocolPath : 'post/attachment',
+            interface  : DwnInterfaceName.Messages,
+            method     : DwnMethodName.Read,
+            module,
+            modulePath : 'post/attachment',
           },
         });
         expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
 
         const subscribe = await TestDataGenerator.generateMessagesSubscribe({
           author             : bob,
-          filters            : [{ protocol, protocolPath: 'post/attachment' }],
+          filters            : [{ module, modulePath: 'post/attachment' }],
           permissionGrantIds : [grant.message.recordId],
         });
         const descriptor = {
           ...subscribe.message.descriptor,
           filters: [{
-            protocol,
-            protocolPath       : 'post/attachment',
-            protocolPathPrefix : 'post',
+            module,
+            modulePath       : 'post/attachment',
+            modulePathPrefix : 'post',
           }],
         };
         const authorization = await Message.createAuthorization({
@@ -186,7 +186,7 @@ export function testMessagesSubscribeHandler(): void {
 
       it('should allow tenant to subscribe their own event stream', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
         // set up a promise to read later that captures the emitted messageCid
         let handler;
@@ -218,15 +218,15 @@ export function testMessagesSubscribeHandler(): void {
       });
 
       it('closes a delegated role feed when its concrete role assignment is revoked', async () => {
-        const { delegate, member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
-        const delegatedGrant = await PermissionsProtocol.createGrant({
+        const { delegate, member, moduleDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+        const delegatedGrant = await PermissionsModule.createGrant({
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
           delegated   : true,
           grantedTo   : delegate.did,
           scope       : {
             interface : DwnInterfaceName.Messages,
             method    : DwnMethodName.Read,
-            protocol  : protocolDefinition.protocol,
+            module    : moduleDefinition.module,
           },
           signer: Jws.createSigner(member),
         });
@@ -237,10 +237,10 @@ export function testMessagesSubscribeHandler(): void {
           filters        : [{
             contextIdPrefix : thread.message.contextId!,
             interface       : DwnInterfaceName.Records,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/chat',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/chat',
           }],
-          protocolRole: 'thread/participant',
+          moduleRole: 'thread/participant',
         });
         const subscribeReply = await dwn.processMessage(source.did, subscribe.message, {
           subscriptionHandler: message => { received.push(message); },
@@ -262,8 +262,8 @@ export function testMessagesSubscribeHandler(): void {
         const chat = await TestDataGenerator.generateRecordsWrite({
           author          : source,
           parentContextId : thread.message.contextId,
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'thread/chat',
+          module          : moduleDefinition.module,
+          modulePath      : 'thread/chat',
         });
         expect((await dwn.processMessage(source.did, chat.message, { dataStream: chat.dataStream })).status.code).toBe(202);
         await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -281,17 +281,17 @@ export function testMessagesSubscribeHandler(): void {
       });
 
       it('delivers role wake events when the caller explicitly subscribed to the role path', async () => {
-        const { member, protocolDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
+        const { member, moduleDefinition, role, source, thread } = await createMessagesRoleContext(dwn);
         const received: SubscriptionMessage[] = [];
         const subscribe = await TestDataGenerator.generateMessagesSubscribe({
           author  : member,
           filters : [{
             contextIdPrefix : thread.message.contextId!,
             interface       : DwnInterfaceName.Records,
-            protocol        : protocolDefinition.protocol,
-            protocolPath    : 'thread/participant',
+            module          : moduleDefinition.module,
+            modulePath      : 'thread/participant',
           }],
-          protocolRole: 'thread/participant',
+          moduleRole: 'thread/participant',
         });
         const reply = await dwn.processMessage(source.did, subscribe.message, {
           subscriptionHandler: message => { received.push(message); },
@@ -364,7 +364,7 @@ export function testMessagesSubscribeHandler(): void {
 
         it('should attach a head and fingerprint consistent with a drained MessagesQuery', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           for (let i = 0; i < 3; i++) {
             const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -386,26 +386,26 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it('should attach the protocol-scope fingerprint for protocol-only filters', async () => {
+        it('should attach the module-scope fingerprint for module-only filters', async () => {
           const feedReader = messageStore;
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
           expect(writeReply.status.code).toBe(202);
-          const protocol = record.message.descriptor.protocol!;
+          const module = record.message.descriptor.module!;
 
           const messagesSubscribe = await MessagesSubscribe.create({
             signer  : Jws.createSigner(alice),
-            filters : [{ protocol }],
+            filters : [{ module }],
           });
           const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
           expect(reply.status.code).toBe(200);
           expect(reply.fingerprint).toBe(await feedReader.fingerprint(alice.did, [
-            Replication.protocolDomain(protocol),
-            Replication.permissionDomain(protocol),
-            Replication.encryptionDomain(protocol),
+            Replication.moduleDomain(module),
+            Replication.permissionDomain(module),
+            Replication.encryptionDomain(module),
           ]));
 
           const bounds = await feedReader.logBounds(alice.did);
@@ -414,15 +414,15 @@ export function testMessagesSubscribeHandler(): void {
           await reply.subscription!.close();
         });
 
-        it('should omit the fingerprint for filter sets naming a core protocol directly', async () => {
+        it('should omit the fingerprint for filter sets naming a core module directly', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
 
-          // Core protocols contribute no tagged domains for themselves, so a
+          // Core modules contribute no tagged domains for themselves, so a
           // fingerprint over this set would have known-incomplete coverage —
           // it fails closed instead.
           const messagesSubscribe = await MessagesSubscribe.create({
             signer  : Jws.createSigner(alice),
-            filters : [{ protocol: PermissionsProtocol.uri }],
+            filters : [{ module: PermissionsModule.uri }],
           });
           const reply = await dwn.processMessage(alice.did, messagesSubscribe.message, { subscriptionHandler: (_) => {} });
           expect(reply.status.code).toBe(200);
@@ -454,7 +454,7 @@ export function testMessagesSubscribeHandler(): void {
           expect(reply.head).toBeUndefined();
 
           // The subscription is genuinely live — an event flows through it.
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
           const record = await TestDataGenerator.generateRecordsWrite({ author: alice });
           const writeReply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
           expect(writeReply.status.code).toBe(202);
@@ -491,7 +491,7 @@ export function testMessagesSubscribeHandler(): void {
       describe('cursor-based subscriptions', () => {
         it('should deliver catch-up events through the handler when cursor is provided', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // Read the EventLog to get a cursor before writing.
           const { cursor: cursorBefore } = await eventLog.read(alice.did);
@@ -528,7 +528,7 @@ export function testMessagesSubscribeHandler(): void {
 
         it('should receive live events after cursor catch-up completes', async () => {
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // Write before subscribing.
           const write1 = await TestDataGenerator.generateRecordsWrite({ author: alice });
@@ -595,8 +595,8 @@ export function testMessagesSubscribeHandler(): void {
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
           expect(grantReply.status.code).toBe(202);
 
-          // install the default test protocol used by generateRecordsWrite
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          // install the default test module used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
@@ -616,27 +616,27 @@ export function testMessagesSubscribeHandler(): void {
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
           expect(subscribeReply.status.code).toBe(200);
 
-          // configure the freeForAll protocol
-          const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : freeForAll,
+          // configure the freeForAll module
+          const { message: freeForAllConfigure } = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : freeForAll,
           });
           const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
           expect(freeForAllReplyStatus.code).toBe(202);
 
-          // configure a random protocol configuration
-          const { message: protocolMessage } = await TestDataGenerator.generateProtocolsConfigure({
+          // configure a random module configuration
+          const { message: moduleMessage } = await TestDataGenerator.generateModulesConfigure({
             author: alice,
           });
-          const { status: configureStatus } = await dwn.processMessage(alice.did, protocolMessage);
+          const { status: configureStatus } = await dwn.processMessage(alice.did, moduleMessage);
           expect(configureStatus.code).toBe(202);
 
           // write a message to the Records free for all interface
           const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
-            protocol     : freeForAll.protocol,
-            protocolPath : 'post',
-            schema       : freeForAll.types.post.schema,
-            author       : alice
+            module     : freeForAll.module,
+            modulePath : 'post',
+            schema     : freeForAll.types.post.schema,
+            author     : alice
           });
 
           const recordReply = await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream });
@@ -654,7 +654,7 @@ export function testMessagesSubscribeHandler(): void {
             expect(messageCids).toHaveLength(4);
             const expectedCids = [
               await Message.getCid(freeForAllConfigure),
-              await Message.getCid(protocolMessage),
+              await Message.getCid(moduleMessage),
               await Message.getCid(recordMessage),
               await Message.getCid(randomMessage),
             ];
@@ -679,8 +679,8 @@ export function testMessagesSubscribeHandler(): void {
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
           expect(grantReply.status.code).toBe(202);
 
-          // install the default test protocol used by generateRecordsWrite
-          await TestDataGenerator.installDefaultTestProtocol(dwn, alice);
+          // install the default test module used by generateRecordsWrite
+          await TestDataGenerator.installDefaultTestModule(dwn, alice);
 
           // create a handler to capture the emitted messageCids
           const messageCids: string[] = [];
@@ -700,19 +700,19 @@ export function testMessagesSubscribeHandler(): void {
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
           expect(subscribeReply.status.code).toBe(200);
 
-          // install the freeForAll protocol and write a record to trigger events
-          const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-            author             : alice,
-            protocolDefinition : freeForAll,
+          // install the freeForAll module and write a record to trigger events
+          const { message: freeForAllConfigure } = await TestDataGenerator.generateModulesConfigure({
+            author           : alice,
+            moduleDefinition : freeForAll,
           });
           const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
           expect(freeForAllReplyStatus.code).toBe(202);
 
           const { message: recordMessage, dataStream: recordDataStream } = await TestDataGenerator.generateRecordsWrite({
-            protocol     : freeForAll.protocol,
-            protocolPath : 'post',
-            schema       : freeForAll.types.post.schema,
-            author       : alice
+            module     : freeForAll.module,
+            modulePath : 'post',
+            schema     : freeForAll.types.post.schema,
+            author     : alice
           });
           const recordReply = await dwn.processMessage(alice.did, recordMessage, { dataStream: recordDataStream });
           expect(recordReply.status.code).toBe(202);
@@ -728,8 +728,8 @@ export function testMessagesSubscribeHandler(): void {
           const bob = await TestDataGenerator.generateDidKeyPersona();
           const carol = await TestDataGenerator.generateDidKeyPersona();
 
-          const protocolDefinition: ProtocolDefinition = {
-            protocol  : 'http://messages-subscribe-control-delivery.xyz',
+          const moduleDefinition: ModuleDefinition = {
+            module    : 'http://messages-subscribe-control-delivery.xyz',
             published : false,
             types     : {
               member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
@@ -740,24 +740,24 @@ export function testMessagesSubscribeHandler(): void {
               post   : {},
             },
           };
-          const encryptedDefinition = await installEncryptedProtocol(dwn, alice, protocolDefinition);
-          const roleRuleSet = encryptedDefinition.structure.member as ProtocolRuleSet;
+          const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+          const roleRuleSet = encryptedDefinition.structure.member as ModuleRuleSet;
           const audience = await createAudienceControlWrite({
             author   : alice,
-            protocol : protocolDefinition.protocol,
+            module   : moduleDefinition.module,
             rolePath : 'member',
             roleRuleSet,
           });
           await processControlWrite(dwn, alice.did, audience);
 
           const roleRecord = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            data         : Encoder.stringToBytes('bob is a member'),
-            dataFormat   : 'application/json',
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'member',
-            recipient    : bob.did,
-            schema       : 'http://member-schema',
+            author     : alice,
+            data       : Encoder.stringToBytes('bob is a member'),
+            dataFormat : 'application/json',
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+            recipient  : bob.did,
+            schema     : 'http://member-schema',
           });
           expect((await dwn.processMessage(alice.did, roleRecord.message, { dataStream: roleRecord.dataStream })).status.code).toBe(202);
 
@@ -767,7 +767,7 @@ export function testMessagesSubscribeHandler(): void {
             scope     : {
               interface : DwnInterfaceName.Messages,
               method    : DwnMethodName.Read,
-              protocol  : protocolDefinition.protocol,
+              module    : moduleDefinition.module,
             },
           });
           expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
@@ -784,7 +784,7 @@ export function testMessagesSubscribeHandler(): void {
           };
           const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
             author             : carol,
-            filters            : [{ protocol: protocolDefinition.protocol }],
+            filters            : [{ module: moduleDefinition.module }],
             permissionGrantIds : [grant.message.recordId],
           });
           const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
@@ -793,7 +793,7 @@ export function testMessagesSubscribeHandler(): void {
           const delivery = await createDeliveryControlWrite({
             author             : alice,
             keyId              : audience.keyId,
-            protocol           : protocolDefinition.protocol,
+            module             : moduleDefinition.module,
             recipient          : bob.did,
             recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
             rolePath           : 'member',
@@ -802,10 +802,10 @@ export function testMessagesSubscribeHandler(): void {
           await processControlWrite(dwn, alice.did, delivery);
 
           const record = await TestDataGenerator.generateRecordsWrite({
-            author       : alice,
-            protocol     : protocolDefinition.protocol,
-            protocolPath : 'post',
-            schema       : 'http://post-schema',
+            author     : alice,
+            module     : moduleDefinition.module,
+            modulePath : 'post',
+            schema     : 'http://post-schema',
           });
           expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
           const recordCid = await Message.getCid(record.message);
@@ -822,14 +822,14 @@ export function testMessagesSubscribeHandler(): void {
           const alice = await TestDataGenerator.generateDidKeyPersona();
           const bob = await TestDataGenerator.generateDidKeyPersona();
 
-          // create grant that is scoped to `RecordsWrite` for bob scoped to the `freeForAll` protocol
+          // create grant that is scoped to `RecordsWrite` for bob scoped to the `freeForAll` module
           const { message: grantMessage, dataStream } = await TestDataGenerator.generateGrantCreate({
             author    : alice,
             grantedTo : bob,
             scope     : {
               interface : DwnInterfaceName.Records,
               method    : DwnMethodName.Write,
-              protocol  : freeForAll.protocol
+              module    : freeForAll.module
             }
           });
           const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
@@ -845,61 +845,61 @@ export function testMessagesSubscribeHandler(): void {
           expect(bobReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationInterfaceMismatch);
         });
 
-        describe('protocol filtered messages', () => {
-          it('allows subscribe of protocol filtered messages with matching protocol grant scopes', async () => {
+        describe('module filtered messages', () => {
+          it('allows subscribe of module filtered messages with matching module grant scopes', async () => {
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            // install protocol 1
-            const protocol1: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol1' };
-            const { message: protocol1Configure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : protocol1,
+            // install module 1
+            const module1: ModuleDefinition = { ...freeForAll, published: true, module: 'http://protcol1' };
+            const { message: module1Configure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : module1,
             });
-            const { status: protocol1ConfigureStatus } = await dwn.processMessage(alice.did, protocol1Configure);
-            expect(protocol1ConfigureStatus.code).toBe(202);
+            const { status: module1ConfigureStatus } = await dwn.processMessage(alice.did, module1Configure);
+            expect(module1ConfigureStatus.code).toBe(202);
 
-            // install protocol 2
-            const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol2' };
-            const { message: protocol2Configure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : protocol2,
+            // install module 2
+            const module2: ModuleDefinition = { ...freeForAll, published: true, module: 'http://protcol2' };
+            const { message: module2Configure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : module2,
             });
-            const { status: protocol2ConfigureStatus } = await dwn.processMessage(alice.did, protocol2Configure);
-            expect(protocol2ConfigureStatus.code).toBe(202);
+            const { status: module2ConfigureStatus } = await dwn.processMessage(alice.did, module2Configure);
+            expect(module2ConfigureStatus.code).toBe(202);
 
-            // grant bob permission to subscribe for protocol 1
+            // grant bob permission to subscribe for module 1
             const { message: grant1Message, dataStream: grant1DataStream } = await TestDataGenerator.generateGrantCreate({
               author    : alice,
               grantedTo : bob,
               scope     : {
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
-                protocol  : protocol1.protocol
+                module    : module1.module
               }
             });
 
             const grant1Reply = await dwn.processMessage(alice.did, grant1Message, { dataStream: grant1DataStream });
             expect(grant1Reply.status.code).toBe(202);
 
-            // bob uses the grant to subscribe to protocol 1 messages
-            const proto1MessageCids: string[] = [];
-            let proto1EncodedData: string | undefined;
-            const proto1Handler = async (msg: SubscriptionMessage):Promise<void> => {
+            // bob uses the grant to subscribe to module 1 messages
+            const module1MessageCids: string[] = [];
+            let module1EncodedData: string | undefined;
+            const module1SubscriptionHandler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
               const { message } = msg.event;
               const messageCid = await Message.getCid(message);
-              proto1MessageCids.push(messageCid);
-              proto1EncodedData = msg.encodedData;
+              module1MessageCids.push(messageCid);
+              module1EncodedData = msg.encodedData;
             };
 
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol1.protocol }],
+              filters            : [{ module: module1.module }],
               permissionGrantIds : [grant1Message.recordId]
             });
-            const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: proto1Handler });
+            const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1, { subscriptionHandler: module1SubscriptionHandler });
             expect(bobReply1.status.code).toBe(200);
 
             const allMessages: string[] = [];
@@ -916,71 +916,71 @@ export function testMessagesSubscribeHandler(): void {
             const allReply = await dwn.processMessage(alice.did, allSubscribe, { subscriptionHandler: allHandler });
             expect(allReply.status.code).toBe(200);
 
-            // alice writes a message to protocol 1
-            const proto1Data = Encoder.stringToBytes('protocol payload');
-            const { message: proto1Message, dataStream: proto1DataStream } = await TestDataGenerator.generateRecordsWrite({
-              data         : proto1Data,
-              protocol     : protocol1.protocol,
-              protocolPath : 'post',
-              schema       : protocol1.types.post.schema,
-              author       : alice
+            // alice writes a message to module 1
+            const module1Data = Encoder.stringToBytes('module payload');
+            const { message: module1RecordMessage, dataStream: module1DataStream } = await TestDataGenerator.generateRecordsWrite({
+              data       : module1Data,
+              module     : module1.module,
+              modulePath : 'post',
+              schema     : module1.types.post.schema,
+              author     : alice
             });
-            const proto1Reply = await dwn.processMessage(alice.did, proto1Message, { dataStream: proto1DataStream });
-            expect(proto1Reply.status.code).toBe(202);
+            const module1WriteReply = await dwn.processMessage(alice.did, module1RecordMessage, { dataStream: module1DataStream });
+            expect(module1WriteReply.status.code).toBe(202);
 
-            // alice writes a message to protocol 2
-            const { message: proto2Message, dataStream: proto2DataStream } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : protocol2.protocol,
-              protocolPath : 'post',
-              schema       : protocol2.types.post.schema,
-              author       : alice
+            // alice writes a message to module 2
+            const { message: module2RecordMessage, dataStream: module2DataStream } = await TestDataGenerator.generateRecordsWrite({
+              module     : module2.module,
+              modulePath : 'post',
+              schema     : module2.types.post.schema,
+              author     : alice
             });
-            const proto2Reply = await dwn.processMessage(alice.did, proto2Message, { dataStream: proto2DataStream });
-            expect(proto2Reply.status.code).toBe(202);
+            const module2WriteReply = await dwn.processMessage(alice.did, module2RecordMessage, { dataStream: module2DataStream });
+            expect(module2WriteReply.status.code).toBe(202);
 
             // ensure that all messages have been received as a control
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(allMessages).toHaveLength(2);
               const expectedAllCids = [
-                await Message.getCid(proto1Message),
-                await Message.getCid(proto2Message)
+                await Message.getCid(module1RecordMessage),
+                await Message.getCid(module2RecordMessage)
               ];
               expect(allMessages.sort()).toEqual(expectedAllCids.sort());
 
-              // proto 1 messages should only have one message
-              expect(proto1MessageCids).toHaveLength(1);
-              const expectedProto1Cids = [await Message.getCid(proto1Message)];
-              expect(proto1MessageCids.sort()).toEqual(expectedProto1Cids.sort());
+              // module 1 should only have one message
+              expect(module1MessageCids).toHaveLength(1);
+              const expectedModule1Cids = [await Message.getCid(module1RecordMessage)];
+              expect(module1MessageCids.sort()).toEqual(expectedModule1Cids.sort());
             });
-            expect(proto1EncodedData).toBe(Encoder.bytesToBase64Url(proto1Data));
+            expect(module1EncodedData).toBe(Encoder.bytesToBase64Url(module1Data));
 
           });
 
-          it('allows subscribe filters covered by a plural protocol grant set', async () => {
+          it('allows subscribe filters covered by a plural module grant set', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocol1: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-1' };
-            const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-2' };
+            const module1: ModuleDefinition = { ...freeForAll, published: true, module: 'http://plural-grant-subscribe-1' };
+            const module2: ModuleDefinition = { ...freeForAll, published: true, module: 'http://plural-grant-subscribe-2' };
 
-            for (const protocolDefinition of [protocol1, protocol2]) {
-              const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            for (const moduleDefinition of [module1, module2]) {
+              const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
                 author: alice,
-                protocolDefinition,
+                moduleDefinition,
               });
-              const protocolReply = await dwn.processMessage(alice.did, protocolConfigure);
-              expect(protocolReply.status.code).toBe(202);
+              const moduleReply = await dwn.processMessage(alice.did, moduleConfigure);
+              expect(moduleReply.status.code).toBe(202);
             }
 
             const permissionGrantIds: string[] = [];
-            for (const protocolDefinition of [protocol1, protocol2]) {
+            for (const moduleDefinition of [module1, module2]) {
               const { message: grantMessage, dataStream: grantDataStream } = await TestDataGenerator.generateGrantCreate({
                 author    : alice,
                 grantedTo : bob,
                 scope     : {
                   interface : DwnInterfaceName.Messages,
                   method    : DwnMethodName.Read,
-                  protocol  : protocolDefinition.protocol,
+                  module    : moduleDefinition.module,
                 }
               });
               const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream: grantDataStream });
@@ -996,32 +996,32 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol1.protocol }, { protocol: protocol2.protocol }],
+              filters            : [{ module: module1.module }, { module: module2.module }],
               permissionGrantIds : permissionGrantIds.reverse(),
             });
             const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, { subscriptionHandler: handler });
             expect(subscribeReply.status.code).toBe(200);
 
-            const { message: protocol1Record, dataStream: protocol1DataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocol1.protocol,
-              protocolPath : 'post',
-              schema       : protocol1.types.post.schema,
+            const { message: module1Record, dataStream: module1DataStream } = await TestDataGenerator.generateRecordsWrite({
+              author     : alice,
+              module     : module1.module,
+              modulePath : 'post',
+              schema     : module1.types.post.schema,
             });
-            await dwn.processMessage(alice.did, protocol1Record, { dataStream: protocol1DataStream });
+            await dwn.processMessage(alice.did, module1Record, { dataStream: module1DataStream });
 
-            const { message: protocol2Record, dataStream: protocol2DataStream } = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocol2.protocol,
-              protocolPath : 'post',
-              schema       : protocol2.types.post.schema,
+            const { message: module2Record, dataStream: module2DataStream } = await TestDataGenerator.generateRecordsWrite({
+              author     : alice,
+              module     : module2.module,
+              modulePath : 'post',
+              schema     : module2.types.post.schema,
             });
-            await dwn.processMessage(alice.did, protocol2Record, { dataStream: protocol2DataStream });
+            await dwn.processMessage(alice.did, module2Record, { dataStream: module2DataStream });
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(receivedMessageCids.sort()).toEqual([
-                await Message.getCid(protocol1Record),
-                await Message.getCid(protocol2Record),
+                await Message.getCid(module1Record),
+                await Message.getCid(module2Record),
               ].sort());
             });
 
@@ -1033,13 +1033,13 @@ export function testMessagesSubscribeHandler(): void {
             const bob = await TestDataGenerator.generateDidKeyPersona();
             const carol = await TestDataGenerator.generateDidKeyPersona();
 
-            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://plural-grant-subscribe-wrong-grantee' };
-            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            const moduleDefinition: ModuleDefinition = { ...freeForAll, published: true, module: 'http://plural-grant-subscribe-wrong-grantee' };
+            const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            const protocolReply = await dwn.processMessage(alice.did, protocolConfigure);
-            expect(protocolReply.status.code).toBe(202);
+            const moduleReply = await dwn.processMessage(alice.did, moduleConfigure);
+            expect(moduleReply.status.code).toBe(202);
 
             const grantIds: string[] = [];
             for (const grantedTo of [bob, carol]) {
@@ -1049,7 +1049,7 @@ export function testMessagesSubscribeHandler(): void {
                 scope  : {
                   interface : DwnInterfaceName.Messages,
                   method    : DwnMethodName.Read,
-                  protocol  : protocolDefinition.protocol,
+                  module    : moduleDefinition.module,
                 }
               });
               const grantReply = await dwn.processMessage(alice.did, grantMessage, { dataStream });
@@ -1059,7 +1059,7 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocolDefinition.protocol }],
+              filters            : [{ module: moduleDefinition.module }],
               permissionGrantIds : grantIds,
             });
 
@@ -1069,24 +1069,24 @@ export function testMessagesSubscribeHandler(): void {
             expect(reply.subscription).toBeUndefined();
           });
 
-          const createDelegatedProtocolSubscribe = async (
-            protocol: string,
+          const createDelegatedModuleSubscribe = async (
+            module: string,
             options?: { dateExpires?: string },
           ): Promise<{
             alice: Persona;
-            protocolDefinition: ProtocolDefinition;
+            moduleDefinition: ModuleDefinition;
             grant: GenerateGrantCreateOutput;
             received: SubscriptionMessage[];
           }> => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol };
+            const moduleDefinition: ModuleDefinition = { ...freeForAll, published: true, module };
 
-            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
+            expect((await dwn.processMessage(alice.did, moduleConfigure)).status.code).toBe(202);
 
             const grant = await TestDataGenerator.generateGrantCreate({
               author      : alice,
@@ -1095,7 +1095,7 @@ export function testMessagesSubscribeHandler(): void {
               scope       : {
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
-                protocol  : protocolDefinition.protocol,
+                module    : moduleDefinition.module,
               },
             });
             expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
@@ -1103,7 +1103,7 @@ export function testMessagesSubscribeHandler(): void {
             const received: SubscriptionMessage[] = [];
             const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocolDefinition.protocol }],
+              filters            : [{ module: moduleDefinition.module }],
               permissionGrantIds : [grant.message.recordId],
             });
             const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, {
@@ -1111,33 +1111,33 @@ export function testMessagesSubscribeHandler(): void {
             });
             expect(subscribeReply.status.code).toBe(200);
 
-            return { alice, protocolDefinition, grant, received };
+            return { alice, moduleDefinition, grant, received };
           };
 
-          const writeProtocolPost = async (
+          const writeModulePost = async (
             author: Persona,
-            protocolDefinition: ProtocolDefinition,
+            moduleDefinition: ModuleDefinition,
           ): Promise<GenerateRecordsWriteOutput> => {
             const record = await TestDataGenerator.generateRecordsWrite({
               author,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
-              schema       : protocolDefinition.types.post.schema,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
+              schema     : moduleDefinition.types.post.schema,
             });
             expect((await dwn.processMessage(author.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
             return record;
           };
 
           it('stops delegated delivery when an invoked grant is revoked after subscribe opens', async () => {
-            const { alice, protocolDefinition, grant, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-revoked-delivery');
-            await writeProtocolPost(alice, protocolDefinition);
+            const { alice, moduleDefinition, grant, received } = await createDelegatedModuleSubscribe('http://delegated-subscribe-revoked-delivery');
+            await writeModulePost(alice, moduleDefinition);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
 
             await Time.minimalSleep();
-            const revocation = await PermissionsProtocol.createRevocation({
+            const revocation = await PermissionsModule.createRevocation({
               signer : Jws.createSigner(alice),
               grant  : PermissionGrant.parse(grant.dataEncodedMessage),
             });
@@ -1156,22 +1156,22 @@ export function testMessagesSubscribeHandler(): void {
 
           it('stops delegated delivery when an invoked grant expires after subscribe opens', async () => {
             const dateExpires = Time.createOffsetTimestamp({ seconds: 60 });
-            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe(
+            const { alice, moduleDefinition, received } = await createDelegatedModuleSubscribe(
               'http://delegated-subscribe-expired-delivery',
               { dateExpires }
             );
 
-            await writeProtocolPost(alice, protocolDefinition);
+            await writeModulePost(alice, moduleDefinition);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               expect(received.filter(msg => msg.type === 'event')).toHaveLength(1);
             });
 
             const secondRecord = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
-              schema       : protocolDefinition.types.post.schema,
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
+              schema     : moduleDefinition.types.post.schema,
             });
             sinon.stub(Time, 'getCurrentTimestamp').returns(Time.createOffsetTimestamp({ seconds: 1 }, dateExpires));
             expect((await dwn.processMessage(alice.did, secondRecord.message, { dataStream: secondRecord.dataStream })).status.code).toBe(202);
@@ -1184,7 +1184,7 @@ export function testMessagesSubscribeHandler(): void {
           });
 
           it('delivers delegated events in cursor order when delivery authorization resolves out of order', async () => {
-            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-ordered-delivery');
+            const { alice, moduleDefinition, received } = await createDelegatedModuleSubscribe('http://delegated-subscribe-ordered-delivery');
 
             let firstAuthorizationStarted!: () => void;
             let releaseFirstAuthorization!: () => void;
@@ -1201,10 +1201,10 @@ export function testMessagesSubscribeHandler(): void {
             });
             deliveryAuthorizationStub.onSecondCall().resolves();
 
-            await writeProtocolPost(alice, protocolDefinition);
+            await writeModulePost(alice, moduleDefinition);
             await firstAuthorizationStartedPromise;
 
-            await writeProtocolPost(alice, protocolDefinition);
+            await writeModulePost(alice, moduleDefinition);
 
             await Time.minimalSleep();
             expect(received.filter(msg => msg.type === 'event')).toHaveLength(0);
@@ -1221,7 +1221,7 @@ export function testMessagesSubscribeHandler(): void {
           });
 
           it('emits one terminal error when multiple delegated deliveries fail concurrently', async () => {
-            const { alice, protocolDefinition, received } = await createDelegatedProtocolSubscribe('http://delegated-subscribe-single-terminal-error');
+            const { alice, moduleDefinition, received } = await createDelegatedModuleSubscribe('http://delegated-subscribe-single-terminal-error');
 
             let releaseAuthorizationFailures!: () => void;
             const releaseAuthorizationFailuresPromise = new Promise<void>((resolve) => {
@@ -1232,8 +1232,8 @@ export function testMessagesSubscribeHandler(): void {
               throw new Error('delivery authorization failed');
             });
 
-            await writeProtocolPost(alice, protocolDefinition);
-            await writeProtocolPost(alice, protocolDefinition);
+            await writeModulePost(alice, moduleDefinition);
+            await writeModulePost(alice, moduleDefinition);
 
             releaseAuthorizationFailures();
             await Poller.pollUntilSuccessOrTimeout(async () => {
@@ -1247,18 +1247,18 @@ export function testMessagesSubscribeHandler(): void {
 
           it('does not run delivery grant checks for owner subscriptions', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
-            const protocolDefinition: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://owner-subscribe-pass-through-delivery' };
+            const moduleDefinition: ModuleDefinition = { ...freeForAll, published: true, module: 'http://owner-subscribe-pass-through-delivery' };
 
-            const { message: protocolConfigure } = await TestDataGenerator.generateProtocolsConfigure({
+            const { message: moduleConfigure } = await TestDataGenerator.generateModulesConfigure({
               author: alice,
-              protocolDefinition,
+              moduleDefinition,
             });
-            expect((await dwn.processMessage(alice.did, protocolConfigure)).status.code).toBe(202);
+            expect((await dwn.processMessage(alice.did, moduleConfigure)).status.code).toBe(202);
 
             const received: SubscriptionMessage[] = [];
             const { message: subscribeMessage } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: protocolDefinition.protocol }],
+              filters : [{ module: moduleDefinition.module }],
             });
             const deliveryAuthorizationStub = sinon.stub(MessagesGrantAuthorization, 'authorizeSubscribeDelivery').rejects(new Error('owner path should not check grants'));
             const subscribeReply = await dwn.processMessage(alice.did, subscribeMessage, {
@@ -1267,10 +1267,10 @@ export function testMessagesSubscribeHandler(): void {
             expect(subscribeReply.status.code).toBe(200);
 
             const record = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              protocol     : protocolDefinition.protocol,
-              protocolPath : 'post',
-              schema       : protocolDefinition.types.post.schema,
+              author     : alice,
+              module     : moduleDefinition.module,
+              modulePath : 'post',
+              schema     : moduleDefinition.types.post.schema,
             });
             expect((await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream })).status.code).toBe(202);
 
@@ -1280,18 +1280,18 @@ export function testMessagesSubscribeHandler(): void {
             expect(deliveryAuthorizationStub.callCount).toBe(0);
           });
 
-          it('allows subscribe of protocolPathPrefix filtered messages including protocol metadata', async () => {
-            // scenario: Alice installs a protocol with two paths (post, post/attachment).
-            // She subscribes with a protocolPathPrefix filter for 'post'.
+          it('allows subscribe of modulePathPrefix filtered messages including module metadata', async () => {
+            // scenario: Alice installs a module with two paths (post, post/attachment).
+            // She subscribes with a modulePathPrefix filter for 'post'.
             // Expected behavior:
             //   - Both 'post' and 'post/attachment' records are received (prefix semantics)
-            //   - The ProtocolsConfigure event IS also received (shadow filter for metadata)
-            //   - Records from an unrelated protocol are NOT received
+            //   - The ModulesConfigure event IS also received (shadow filter for metadata)
+            //   - Records from an unrelated module are NOT received
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            // subscribe with protocolPathPrefix filter for 'post' BEFORE installing
-            // the protocol, so we can verify the ProtocolsConfigure event is received.
+            // subscribe with modulePathPrefix filter for 'post' BEFORE installing
+            // the module, so we can verify the ModulesConfigure event is received.
             const prefixMessageCids: string[] = [];
             const prefixHandler = async (msg: SubscriptionMessage):Promise<void> => {
               if (msg.type !== 'event') { return; }
@@ -1302,64 +1302,64 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: prefixSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post' }],
+              filters : [{ module: freeForAll.module, modulePathPrefix: 'post' }],
             });
             const prefixReply = await dwn.processMessage(alice.did, prefixSubscribe, { subscriptionHandler: prefixHandler });
             expect(prefixReply.status.code).toBe(200);
 
-            // install the freeForAll protocol — this ProtocolsConfigure event should
+            // install the freeForAll module — this ModulesConfigure event should
             // be received by the prefix subscription via the shadow metadata filter.
-            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : freeForAll,
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : freeForAll,
             });
             const { status: freeForAllReplyStatus } = await dwn.processMessage(alice.did, freeForAllConfigure);
             expect(freeForAllReplyStatus.code).toBe(202);
 
-            // install a second unrelated protocol — its ProtocolsConfigure should NOT
+            // install a second unrelated module — its ModulesConfigure should NOT
             // be received by the prefix subscription.
-            const unrelatedProtocol: ProtocolDefinition = { ...freeForAll, protocol: 'http://unrelated-protocol' };
-            const { message: unrelatedConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : unrelatedProtocol,
+            const unrelatedModule: ModuleDefinition = { ...freeForAll, module: 'http://unrelated-module' };
+            const { message: unrelatedConfigure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : unrelatedModule,
             });
             const { status: unrelatedReplyStatus } = await dwn.processMessage(alice.did, unrelatedConfigure);
             expect(unrelatedReplyStatus.code).toBe(202);
 
             // write a record at 'post' path
             const { message: postMessage, dataStream: postDataStream } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
-              author       : alice,
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
+              author     : alice,
             });
             const postWriteReply = await dwn.processMessage(alice.did, postMessage, { dataStream: postDataStream });
             expect(postWriteReply.status.code).toBe(202);
 
             // write a record at 'post/attachment' path (child of a post)
             const { message: attachmentMessage, dataStream: attachmentDataStream } = await TestDataGenerator.generateRecordsWrite({
-              protocol        : freeForAll.protocol,
-              protocolPath    : 'post/attachment',
+              module          : freeForAll.module,
+              modulePath      : 'post/attachment',
               parentContextId : postMessage.recordId,
               author          : alice,
             });
             const attachmentWriteReply = await dwn.processMessage(alice.did, attachmentMessage, { dataStream: attachmentDataStream });
             expect(attachmentWriteReply.status.code).toBe(202);
 
-            // write a record to the unrelated protocol — should NOT be received
+            // write a record to the unrelated module — should NOT be received
             const { message: unrelatedMessage, dataStream: unrelatedDataStream } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : unrelatedProtocol.protocol,
-              protocolPath : 'post',
-              schema       : unrelatedProtocol.types.post.schema,
-              author       : alice,
+              module     : unrelatedModule.module,
+              modulePath : 'post',
+              schema     : unrelatedModule.types.post.schema,
+              author     : alice,
             });
             const unrelatedWriteReply = await dwn.processMessage(alice.did, unrelatedMessage, { dataStream: unrelatedDataStream });
             expect(unrelatedWriteReply.status.code).toBe(202);
 
-            // verify: prefix subscription received the ProtocolsConfigure + both records
-            // but NOT the unrelated protocol's ProtocolsConfigure or record.
+            // verify: prefix subscription received the ModulesConfigure + both records
+            // but NOT the unrelated module's ModulesConfigure or record.
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              expect(prefixMessageCids).toHaveLength(3); // ProtocolsConfigure + post + post/attachment
+              expect(prefixMessageCids).toHaveLength(3); // ModulesConfigure + post + post/attachment
               const expectedCids = [
                 await Message.getCid(freeForAllConfigure),
                 await Message.getCid(postMessage),
@@ -1369,16 +1369,16 @@ export function testMessagesSubscribeHandler(): void {
             });
           });
 
-          it('protocolPathPrefix excludes sibling paths that share a string prefix but not a path prefix', async () => {
+          it('modulePathPrefix excludes sibling paths that share a string prefix but not a path prefix', async () => {
             // Verifies that 'post' prefix does NOT match 'poster' — the range
             // filter gte:'post', lt:'post/\uffff' correctly uses '/' as the
             // boundary character, not naive string prefix matching.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            // Define a protocol with paths 'post', 'post/attachment', and 'poster'
-            const siblingProtocol: ProtocolDefinition = {
-              protocol  : 'http://sibling-path-test',
+            // Define a module with paths 'post', 'post/attachment', and 'poster'
+            const siblingModule: ModuleDefinition = {
+              module    : 'http://sibling-path-test',
               published : true,
               types     : {
                 post       : { schema: 'post', dataFormats: ['application/json'] },
@@ -1398,14 +1398,14 @@ export function testMessagesSubscribeHandler(): void {
               },
             };
 
-            const { message: siblingConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : siblingProtocol,
+            const { message: siblingConfigure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : siblingModule,
             });
             const { status: siblingConfigureStatus } = await dwn.processMessage(alice.did, siblingConfigure);
             expect(siblingConfigureStatus.code).toBe(202);
 
-            // subscribe with protocolPathPrefix 'post' — should get 'post' and
+            // subscribe with modulePathPrefix 'post' — should get 'post' and
             // 'post/attachment' but NOT 'poster'
             const prefixCids: string[] = [];
             const prefixHandler = async (msg: SubscriptionMessage):Promise<void> => {
@@ -1415,24 +1415,24 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: prefixSub } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: siblingProtocol.protocol, protocolPathPrefix: 'post' }],
+              filters : [{ module: siblingModule.module, modulePathPrefix: 'post' }],
             });
             const prefixReply = await dwn.processMessage(alice.did, prefixSub, { subscriptionHandler: prefixHandler });
             expect(prefixReply.status.code).toBe(200);
 
             // write to 'post'
             const { message: postMsg, dataStream: postDs } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : siblingProtocol.protocol,
-              protocolPath : 'post',
-              schema       : 'post',
-              author       : alice,
+              module     : siblingModule.module,
+              modulePath : 'post',
+              schema     : 'post',
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, postMsg, { dataStream: postDs })).status.code).toBe(202);
 
             // write to 'post/attachment'
             const { message: attachMsg, dataStream: attachDs } = await TestDataGenerator.generateRecordsWrite({
-              protocol        : siblingProtocol.protocol,
-              protocolPath    : 'post/attachment',
+              module          : siblingModule.module,
+              modulePath      : 'post/attachment',
               parentContextId : postMsg.recordId,
               author          : alice,
             });
@@ -1440,10 +1440,10 @@ export function testMessagesSubscribeHandler(): void {
 
             // write to 'poster' — this should NOT match the 'post' prefix
             const { message: posterMsg, dataStream: posterDs } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : siblingProtocol.protocol,
-              protocolPath : 'poster',
-              schema       : 'poster',
-              author       : alice,
+              module     : siblingModule.module,
+              modulePath : 'poster',
+              schema     : 'poster',
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, posterMsg, { dataStream: posterDs })).status.code).toBe(202);
 
@@ -1458,15 +1458,15 @@ export function testMessagesSubscribeHandler(): void {
             });
           });
 
-          it('protocolPathPrefix for a child path does not include parent records', async () => {
-            // Subscribing with protocolPathPrefix 'post/attachment' should receive
+          it('modulePathPrefix for a child path does not include parent records', async () => {
+            // Subscribing with modulePathPrefix 'post/attachment' should receive
             // only 'post/attachment' records, NOT 'post' records.
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : freeForAll,
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : freeForAll,
             });
             expect((await dwn.processMessage(alice.did, freeForAllConfigure)).status.code).toBe(202);
 
@@ -1478,30 +1478,30 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: childSub } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post/attachment' }],
+              filters : [{ module: freeForAll.module, modulePathPrefix: 'post/attachment' }],
             });
             expect((await dwn.processMessage(alice.did, childSub, { subscriptionHandler: childHandler })).status.code).toBe(200);
 
             // write a 'post' record — should NOT match 'post/attachment' prefix
             const { message: postMsg, dataStream: postDs } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
-              author       : alice,
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, postMsg, { dataStream: postDs })).status.code).toBe(202);
 
             // write a 'post/attachment' record — should match
             const { message: attachMsg, dataStream: attachDs } = await TestDataGenerator.generateRecordsWrite({
-              protocol        : freeForAll.protocol,
-              protocolPath    : 'post/attachment',
+              module          : freeForAll.module,
+              modulePath      : 'post/attachment',
               parentContextId : postMsg.recordId,
               author          : alice,
             });
             expect((await dwn.processMessage(alice.did, attachMsg, { dataStream: attachDs })).status.code).toBe(202);
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
-              // only the attachment record should be received (ProtocolsConfigure
+              // only the attachment record should be received (ModulesConfigure
               // was installed before the subscription was opened, so it's not
               // delivered as a live event)
               expect(childCids).toHaveLength(1);
@@ -1510,36 +1510,36 @@ export function testMessagesSubscribeHandler(): void {
           });
 
           it('allows subscribe of contextIdPrefix filtered messages with real context inclusion and exclusion', async () => {
-            // scenario: Alice installs a protocol, writes two root posts (each in its own context),
+            // scenario: Alice installs a module, writes two root posts (each in its own context),
             // then writes a child attachment under one post. She subscribes with a contextIdPrefix
             // matching the first post's contextId. Expected:
-            //   - ProtocolsConfigure received (shadow filter)
+            //   - ModulesConfigure received (shadow filter)
             //   - Post A and its attachment received (contextId matches prefix)
             //   - Post B NOT received (different context)
 
             const alice = await TestDataGenerator.generateDidKeyPersona();
 
-            // install the protocol first so we can write records
-            const { message: freeForAllConfigure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : freeForAll,
+            // install the module first so we can write records
+            const { message: freeForAllConfigure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : freeForAll,
             });
             expect((await dwn.processMessage(alice.did, freeForAllConfigure)).status.code).toBe(202);
 
             // write post A — its contextId will be its own recordId
             const { message: postA, dataStream: dsA } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
-              author       : alice,
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, postA, { dataStream: dsA })).status.code).toBe(202);
             const postAContextId = postA.contextId ?? postA.recordId;
 
             // write an attachment under post A — contextId = postA.recordId/attachment.recordId
             const { message: attachA, dataStream: dsAttachA } = await TestDataGenerator.generateRecordsWrite({
-              protocol        : freeForAll.protocol,
-              protocolPath    : 'post/attachment',
+              module          : freeForAll.module,
+              modulePath      : 'post/attachment',
               parentContextId : postA.recordId,
               author          : alice,
             });
@@ -1547,10 +1547,10 @@ export function testMessagesSubscribeHandler(): void {
 
             // write post B — different context
             const { message: postB, dataStream: dsB } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
-              author       : alice,
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, postB, { dataStream: dsB })).status.code).toBe(202);
 
@@ -1564,24 +1564,24 @@ export function testMessagesSubscribeHandler(): void {
 
             const { message: ctxSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
               author  : alice,
-              filters : [{ protocol: freeForAll.protocol, contextIdPrefix: postAContextId }],
+              filters : [{ module: freeForAll.module, contextIdPrefix: postAContextId }],
             });
             const ctxReply = await dwn.processMessage(alice.did, ctxSubscribe, { subscriptionHandler: ctxHandler });
             expect(ctxReply.status.code).toBe(200);
 
             // write another record AFTER subscribing to test live delivery
             const { message: postC, dataStream: dsC } = await TestDataGenerator.generateRecordsWrite({
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
-              author       : alice,
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
+              author     : alice,
             });
             expect((await dwn.processMessage(alice.did, postC, { dataStream: dsC })).status.code).toBe(202);
 
             // write another attachment under post A — should match the contextId prefix
             const { message: attachA2, dataStream: dsAttachA2 } = await TestDataGenerator.generateRecordsWrite({
-              protocol        : freeForAll.protocol,
-              protocolPath    : 'post/attachment',
+              module          : freeForAll.module,
+              modulePath      : 'post/attachment',
               parentContextId : postA.recordId,
               author          : alice,
             });
@@ -1589,7 +1589,7 @@ export function testMessagesSubscribeHandler(): void {
 
             await Poller.pollUntilSuccessOrTimeout(async () => {
               // Should receive: attachA2 (live, context matches) but NOT postC (different context)
-              // Also may receive ProtocolsConfigure via shadow filter (it was installed before subscribe,
+              // Also may receive ModulesConfigure via shadow filter (it was installed before subscribe,
               // so it won't appear in live events, but the shadow filter ensures it COULD if timing differed)
               const attachA2Cid = await Message.getCid(attachA2);
               expect(ctxCids).toContain(attachA2Cid);
@@ -1600,43 +1600,43 @@ export function testMessagesSubscribeHandler(): void {
             });
           });
 
-          it('rejects subscribe of protocol filtered messages with mismatching protocol grant scopes', async () => {
+          it('rejects subscribe of module filtered messages with mismatching module grant scopes', async () => {
             const alice = await TestDataGenerator.generateDidKeyPersona();
             const bob = await TestDataGenerator.generateDidKeyPersona();
 
-            // install protocol 1
-            const protocol1: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol1' };
-            const { message: protocol1Configure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : protocol1,
+            // install module 1
+            const module1: ModuleDefinition = { ...freeForAll, published: true, module: 'http://protcol1' };
+            const { message: module1Configure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : module1,
             });
-            const { status: protocol1ConfigureStatus } = await dwn.processMessage(alice.did, protocol1Configure);
-            expect(protocol1ConfigureStatus.code).toBe(202);
+            const { status: module1ConfigureStatus } = await dwn.processMessage(alice.did, module1Configure);
+            expect(module1ConfigureStatus.code).toBe(202);
 
-            // install protocol 2
-            const protocol2: ProtocolDefinition = { ...freeForAll, published: true, protocol: 'http://protcol2' };
-            const { message: protocol2Configure } = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : protocol2,
+            // install module 2
+            const module2: ModuleDefinition = { ...freeForAll, published: true, module: 'http://protcol2' };
+            const { message: module2Configure } = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : module2,
             });
-            const { status: protocol2ConfigureStatus } = await dwn.processMessage(alice.did, protocol2Configure);
-            expect(protocol2ConfigureStatus.code).toBe(202);
+            const { status: module2ConfigureStatus } = await dwn.processMessage(alice.did, module2Configure);
+            expect(module2ConfigureStatus.code).toBe(202);
 
-            // grant bob permission to subscribe for protocol 1
+            // grant bob permission to subscribe for module 1
             const { message: grant1Message, dataStream: grant1DataStream } = await TestDataGenerator.generateGrantCreate({
               author    : alice,
               grantedTo : bob,
               scope     : {
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
-                protocol  : protocol1.protocol
+                module    : module1.module
               }
             });
 
             const grant1Reply = await dwn.processMessage(alice.did, grant1Message, { dataStream: grant1DataStream });
             expect(grant1Reply.status.code).toBe(202);
 
-            // bob cannot use a protocol-scoped grant for an unfiltered all-message subscription
+            // bob cannot use a module-scoped grant for an unfiltered all-message subscription
             const { message: unfilteredSubscribe } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
               filters            : [],
@@ -1644,30 +1644,30 @@ export function testMessagesSubscribeHandler(): void {
             });
             const unfilteredReply = await dwn.processMessage(alice.did, unfilteredSubscribe);
             expect(unfilteredReply.status.code).toBe(401);
-            expect(unfilteredReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope);
+            expect(unfilteredReply.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeModuleScope);
             expect(unfilteredReply.subscription).toBeUndefined();
 
-            // bob uses the grant for protocol 1 to subscribe for protocol 2 messages
+            // bob uses the grant for module 1 to subscribe for module 2 messages
             const { message: bobSubscribe1 } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol2.protocol }],
+              filters            : [{ module: module2.module }],
               permissionGrantIds : [grant1Message.recordId]
             });
             const bobReply1 = await dwn.processMessage(alice.did, bobSubscribe1);
             expect(bobReply1.status.code).toBe(401);
-            expect(bobReply1.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+            expect(bobReply1.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch);
             expect(bobReply1.subscription).toBeUndefined();
 
-            // bob attempts to use the grant for protocol 1 to subscribe to messages in protocol 1 OR protocol 2 given two filters
-            // this should fail because the grant is scoped to protocol 1 only
+            // bob attempts to use the grant for module 1 to subscribe to messages in module 1 OR module 2 given two filters
+            // this should fail because the grant is scoped to module 1 only
             const { message: bobSubscribe2 } = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: protocol1.protocol }, { protocol: protocol2.protocol }],
+              filters            : [{ module: module1.module }, { module: module2.module }],
               permissionGrantIds : [grant1Message.recordId]
             });
             const bobReply2 = await dwn.processMessage(alice.did, bobSubscribe2);
             expect(bobReply2.status.code).toBe(401);
-            expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch);
+            expect(bobReply2.status.detail).toContain(DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch);
             expect(bobReply2.subscription).toBeUndefined();
           });
 
@@ -1679,10 +1679,10 @@ export function testMessagesSubscribeHandler(): void {
               author    : alice,
               grantedTo : bob,
               scope     : {
-                interface    : DwnInterfaceName.Messages,
-                method       : DwnMethodName.Read,
-                protocol     : freeForAll.protocol,
-                protocolPath : 'post',
+                interface  : DwnInterfaceName.Messages,
+                method     : DwnMethodName.Read,
+                module     : freeForAll.module,
+                modulePath : 'post',
               },
             });
             expect((await dwn.processMessage(alice.did, pathGrant.message, { dataStream: pathGrant.dataStream })).status.code).toBe(202);
@@ -1690,7 +1690,7 @@ export function testMessagesSubscribeHandler(): void {
             const pathEvents: SubscriptionEvent[] = [];
             const pathSubscribe = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
-              filters            : [{ protocol: freeForAll.protocol, protocolPathPrefix: 'post' }],
+              filters            : [{ module: freeForAll.module, modulePathPrefix: 'post' }],
               permissionGrantIds : [pathGrant.message.recordId],
             });
             const pathReply = await dwn.processMessage(alice.did, pathSubscribe.message, {
@@ -1702,18 +1702,18 @@ export function testMessagesSubscribeHandler(): void {
             });
             expect(pathReply.status.code).toBe(200);
 
-            const configure = await TestDataGenerator.generateProtocolsConfigure({
-              author             : alice,
-              protocolDefinition : freeForAll,
+            const configure = await TestDataGenerator.generateModulesConfigure({
+              author           : alice,
+              moduleDefinition : freeForAll,
             });
             expect((await dwn.processMessage(alice.did, configure.message)).status.code).toBe(202);
 
             const postA = await TestDataGenerator.generateRecordsWrite({
-              author       : alice,
-              data         : Encoder.stringToBytes('post payload'),
-              protocol     : freeForAll.protocol,
-              protocolPath : 'post',
-              schema       : freeForAll.types.post.schema,
+              author     : alice,
+              data       : Encoder.stringToBytes('post payload'),
+              module     : freeForAll.module,
+              modulePath : 'post',
+              schema     : freeForAll.types.post.schema,
             });
             expect((await dwn.processMessage(alice.did, postA.message, { dataStream: postA.dataStream })).status.code).toBe(202);
 
@@ -1725,7 +1725,7 @@ export function testMessagesSubscribeHandler(): void {
                 contextId,
                 interface : DwnInterfaceName.Messages,
                 method    : DwnMethodName.Read,
-                protocol  : freeForAll.protocol,
+                module    : freeForAll.module,
               },
             });
             expect((await dwn.processMessage(alice.did, contextGrant.message, { dataStream: contextGrant.dataStream })).status.code).toBe(202);
@@ -1736,8 +1736,8 @@ export function testMessagesSubscribeHandler(): void {
               author          : alice,
               data            : Encoder.stringToBytes('inside context'),
               parentContextId : postA.message.recordId,
-              protocol        : freeForAll.protocol,
-              protocolPath    : 'post/attachment',
+              module          : freeForAll.module,
+              modulePath      : 'post/attachment',
             });
             expect((await dwn.processMessage(alice.did, attachmentA.message, { dataStream: attachmentA.dataStream })).status.code).toBe(202);
 
@@ -1752,7 +1752,7 @@ export function testMessagesSubscribeHandler(): void {
             const contextSubscribe = await TestDataGenerator.generateMessagesSubscribe({
               author             : bob,
               cursor,
-              filters            : [{ protocol: freeForAll.protocol, contextIdPrefix: contextId }],
+              filters            : [{ module: freeForAll.module, contextIdPrefix: contextId }],
               permissionGrantIds : [contextGrant.message.recordId],
             });
             const contextReply = await dwn.processMessage(alice.did, contextSubscribe.message, {

@@ -22,10 +22,10 @@ function walletConnect(
 }
 
 /** Build a well-formed Messages.Read grant message that DwnPermissionGrant.parse() accepts. */
-function buildTestGrant(protocol: string, grantId: string): any {
+function buildTestGrant(module: string, grantId: string): any {
   const grantData = JSON.stringify({
     dateExpires : '2040-06-25T16:09:16.693356Z',
-    scope       : { interface: 'Messages', method: 'Read', protocol },
+    scope       : { interface: 'Messages', method: 'Read', module },
     delegated   : true,
   });
   // Use base64url encoding (required by DwnPermissionGrant.parse → Encoder.base64UrlToObject).
@@ -35,15 +35,15 @@ function buildTestGrant(protocol: string, grantId: string): any {
     contextId   : grantId,
     encodedData : encoded,
     descriptor  : {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:dht:delegate123',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:dht:delegate123',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:connected456#sig' })) }] },
@@ -55,7 +55,7 @@ function buildTestGrant(protocol: string, grantId: string): any {
 function buildTestGrantNonMessages(grantId: string): any {
   const grantData = JSON.stringify({
     dateExpires : '2040-06-25T16:09:16.693356Z',
-    scope       : { interface: 'Records', method: 'Write', protocol: 'https://proto.example/other' },
+    scope       : { interface: 'Records', method: 'Write', module: 'https://modules.example/other' },
     delegated   : true,
   });
   const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -64,15 +64,15 @@ function buildTestGrantNonMessages(grantId: string): any {
     contextId   : grantId,
     encodedData : encoded,
     descriptor  : {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : 'did:dht:delegate123',
-      dateCreated  : '2025-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : 'did:dht:delegate123',
+      dateCreated : '2025-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:connected456#sig' })) }] },
@@ -89,14 +89,14 @@ function createInitClientResult(delegateGrants: any[] = []): any {
 }
 
 const CHAT_PERMISSION_REQUESTS: any = [{
-  protocolDefinition: {
-    protocol  : 'https://proto.example/chat',
+  moduleDefinition: {
+    module    : 'https://modules.example/chat',
     published : true,
     types     : {},
     structure : {},
   },
   permissionScopes: [
-    { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+    { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
   ],
 }];
 
@@ -144,7 +144,7 @@ describe('processConnectedGrants', () => {
     expect(result).toEqual([]);
   });
 
-  test('processes grants and returns protocol URIs', async () => {
+  test('processes grants and returns module URIs', async () => {
     const processCalls: any[] = [];
     const agent = createMockAgent({
       processDwnRequest: async (params: any) => {
@@ -155,8 +155,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/chat', 'rec1'),
-      buildTestGrant('https://proto.example/notes', 'rec2'),
+      buildTestGrant('https://modules.example/chat', 'rec1'),
+      buildTestGrant('https://modules.example/notes', 'rec2'),
       buildTestGrantNonMessages('rec3'), // Records grant — should not contribute to sync scope
     ] as any;
 
@@ -167,7 +167,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/chat', 'https://proto.example/notes']);
+    expect(result).toEqual(['https://modules.example/chat', 'https://modules.example/notes']);
     // 3 grants stored in delegate partition via processDwnRequest
     expect(processCalls).toHaveLength(3);
 
@@ -181,7 +181,7 @@ describe('processConnectedGrants', () => {
     // (not processDwnRequest), so they don't appear in processCalls.
   });
 
-  test('deduplicates protocol URIs', async () => {
+  test('deduplicates module URIs', async () => {
     const agent = createMockAgent({
       processDwnRequest: async () => ({
         reply: { status: { code: 202, detail: 'Accepted' } },
@@ -189,8 +189,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/chat', 'rec1'),
-      buildTestGrant('https://proto.example/chat', 'rec2'),
+      buildTestGrant('https://modules.example/chat', 'rec1'),
+      buildTestGrant('https://modules.example/chat', 'rec2'),
     ] as any;
 
     const result = await processConnectedGrants({
@@ -200,7 +200,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/chat']);
+    expect(result).toEqual(['https://modules.example/chat']);
   });
 
   test('throws when grant processing fails', async () => {
@@ -210,7 +210,7 @@ describe('processConnectedGrants', () => {
       }),
     });
 
-    const grants = [buildTestGrant('https://proto.example/chat', 'rec1')] as any;
+    const grants = [buildTestGrant('https://modules.example/chat', 'rec1')] as any;
 
     await expect(
       processConnectedGrants({
@@ -257,8 +257,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/a', 'rec-a'),
-      buildTestGrant('https://proto.example/b', 'rec-b'),
+      buildTestGrant('https://modules.example/a', 'rec-a'),
+      buildTestGrant('https://modules.example/b', 'rec-b'),
     ] as any;
 
     await expect(
@@ -292,8 +292,8 @@ describe('processConnectedGrants', () => {
     });
 
     const grants = [
-      buildTestGrant('https://proto.example/a', 'rec-a'),
-      buildTestGrant('https://proto.example/b', 'rec-b'),
+      buildTestGrant('https://modules.example/a', 'rec-a'),
+      buildTestGrant('https://modules.example/b', 'rec-b'),
     ] as any;
 
     // Should succeed — 409 is treated as idempotent success.
@@ -304,7 +304,7 @@ describe('processConnectedGrants', () => {
       grants,
     });
 
-    expect(result).toEqual(['https://proto.example/a', 'https://proto.example/b']);
+    expect(result).toEqual(['https://modules.example/a', 'https://modules.example/b']);
   });
 });
 
@@ -600,7 +600,7 @@ describe('walletConnect', () => {
       },
     });
 
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
 
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
@@ -664,8 +664,8 @@ describe('walletConnect', () => {
       syncSetIdentityOptions : async () => { throw new Error('sync reg failed'); },
     });
 
-    // Provide a grant so connectedProtocols is non-empty and sync registration is attempted.
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    // Provide a grant so connectedModules is non-empty and sync registration is attempted.
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     await expect(
@@ -702,7 +702,7 @@ describe('walletConnect', () => {
     });
 
     // Provide a Messages.Read grant so sync registration is attempted.
-    const grantData = [buildTestGrant('https://proto.example/chat', 'rec1')];
+    const grantData = [buildTestGrant('https://modules.example/chat', 'rec1')];
     initClientStub.onFirstCall().resolves(createInitClientResult(grantData));
 
     // Should not throw from cleanup — only from the original error

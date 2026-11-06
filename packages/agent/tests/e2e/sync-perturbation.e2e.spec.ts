@@ -11,7 +11,7 @@
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
 import type { PlatformAgentTestHarness } from '../../src/test-harness.js';
-import type { GenericMessage, MessageSigner, ProtocolDefinition, ProtocolsConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessageSigner, ModuleDefinition, ModulesConfigureMessage, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { PlatformAgentTestHarness as AgentTestHarness } from '../../src/test-harness.js';
 import { DwnInterface } from '../../src/types/dwn.js';
@@ -30,16 +30,16 @@ type Device = {
 
 type SnapshotEntry = {
   data: string;
-  protocolPath: string;
+  modulePath: string;
   recordId: string;
 };
 
 const testDwnUrls = [testDwnUrl];
-const rootSnapshotProtocolPaths = ['note', 'thread', 'profile', 'pin', 'bookmark'];
+const rootSnapshotModulePaths = ['note', 'thread', 'profile', 'pin', 'bookmark'];
 
-const harnessProtocolV1: ProtocolDefinition = {
+const harnessModuleV1: ModuleDefinition = {
   published : true,
-  protocol  : 'https://e2e-sync-perturbation.example/harness',
+  module    : 'https://e2e-sync-perturbation.example/harness',
   types     : {
     bookmark: {
       schema      : 'https://e2e-sync-perturbation.example/schemas/bookmark',
@@ -76,10 +76,10 @@ const harnessProtocolV1: ProtocolDefinition = {
   },
 };
 
-const harnessProtocolV2: ProtocolDefinition = {
-  ...harnessProtocolV1,
+const harnessModuleV2: ModuleDefinition = {
+  ...harnessModuleV1,
   structure: {
-    ...harnessProtocolV1.structure,
+    ...harnessModuleV1.structure,
     bookmark: {},
   },
 };
@@ -115,9 +115,9 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   });
 
   it('should converge offline mutations, restart, config churn, record limits, deletes, prune, fingerprints, and data bytes', async () => {
-    const initialProtocol = await configureProtocol(deviceA, harnessProtocolV1);
-    const protocolReply = await deviceB.harness.dwn.processMessage(aliceDid, initialProtocol);
-    expect(protocolReply.status.code).toBe(202);
+    const initialModule = await configureModule(deviceA, harnessModuleV1);
+    const moduleReply = await deviceB.harness.dwn.processMessage(aliceDid, initialModule);
+    expect(moduleReply.status.code).toBe(202);
 
     await Promise.all([
       registerDevice(deviceA),
@@ -148,7 +148,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     await updateRecord(deviceA, aNote.message, 'device-a note after update');
     await deleteRecord(deviceB, bNote.message.recordId);
     await deleteRecord(deviceA, thread.message.recordId, true);
-    await configureProtocol(deviceB, harnessProtocolV2);
+    await configureModule(deviceB, harnessModuleV2);
     const bookmark = await writeRecord(deviceB, 'bookmark', 'device-b bookmark after config churn');
 
     await syncDevicesUntilConverged();
@@ -190,11 +190,11 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     await device.harness.closeStorage();
   }
 
-  async function configureProtocol(device: Device, definition: ProtocolDefinition): Promise<ProtocolsConfigureMessage> {
+  async function configureModule(device: Device, definition: ModuleDefinition): Promise<ModulesConfigureMessage> {
     const { reply, message } = await device.harness.agent.dwn.processRequest({
       author        : aliceDid,
       target        : aliceDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition },
     });
     expect(reply.status.code).toBe(202);
@@ -205,7 +205,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   async function registerDevice(device: Device): Promise<void> {
     await device.harness.agent.sync.setIdentityOptions({
       did     : aliceDid,
-      options : { protocols: [harnessProtocolV1.protocol] },
+      options : { modules: [harnessModuleV1.module] },
     });
   }
 
@@ -219,7 +219,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
 
   async function writeRecord(
     device: Device,
-    protocolPath: string,
+    modulePath: string,
     data: string,
     parentContextId?: string,
   ): Promise<{ message: RecordsWriteMessage }> {
@@ -230,9 +230,9 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
       messageParams : {
         dataFormat : 'text/plain',
         parentContextId,
-        protocol   : harnessProtocolV1.protocol,
-        protocolPath,
-        schema     : schemaForProtocolPath(protocolPath),
+        module     : harnessModuleV1.module,
+        modulePath,
+        schema     : schemaForModulePath(modulePath),
       },
       dataStream: new Blob([data]),
     });
@@ -271,11 +271,11 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     return (device.harness.agent.dwn as unknown as { getSigner(did: string): Promise<MessageSigner> }).getSigner(aliceDid);
   }
 
-  function schemaForProtocolPath(protocolPath: string): string {
-    const typeName = protocolPath.split('/').at(-1);
-    const type = typeName === undefined ? undefined : harnessProtocolV1.types[typeName];
+  function schemaForModulePath(modulePath: string): string {
+    const typeName = modulePath.split('/').at(-1);
+    const type = typeName === undefined ? undefined : harnessModuleV1.types[typeName];
     if (type?.schema === undefined) {
-      throw new Error(`schemaForProtocolPath: no schema for ${protocolPath}`);
+      throw new Error(`schemaForModulePath: no schema for ${modulePath}`);
     }
     return type.schema;
   }
@@ -321,19 +321,19 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     const snapshot: SnapshotEntry[] = [];
     const threadContextIds: string[] = [];
 
-    for (const protocolPath of rootSnapshotProtocolPaths) {
+    for (const modulePath of rootSnapshotModulePaths) {
       const entries = await querySnapshotEntries(location, {
-        protocol: harnessProtocolV1.protocol,
-        protocolPath,
+        module: harnessModuleV1.module,
+        modulePath,
       });
       for (const entry of entries) {
         snapshot.push({
-          data         : await readRecordText(location, entry.recordId),
-          protocolPath : entry.descriptor.protocolPath,
-          recordId     : entry.recordId,
+          data       : await readRecordText(location, entry.recordId),
+          modulePath : entry.descriptor.modulePath,
+          recordId   : entry.recordId,
         });
 
-        if (protocolPath === 'thread' && entry.contextId !== undefined) {
+        if (modulePath === 'thread' && entry.contextId !== undefined) {
           threadContextIds.push(entry.contextId);
         }
       }
@@ -342,14 +342,14 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     for (const contextId of threadContextIds.sort(compareStrings)) {
       const entries = await querySnapshotEntries(location, {
         contextId,
-        protocol     : harnessProtocolV1.protocol,
-        protocolPath : 'thread/reply',
+        module     : harnessModuleV1.module,
+        modulePath : 'thread/reply',
       });
       for (const entry of entries) {
         snapshot.push({
-          data         : await readRecordText(location, entry.recordId),
-          protocolPath : entry.descriptor.protocolPath,
-          recordId     : entry.recordId,
+          data       : await readRecordText(location, entry.recordId),
+          modulePath : entry.descriptor.modulePath,
+          recordId   : entry.recordId,
         });
       }
     }
@@ -396,11 +396,11 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     return deviceA.harness.agent.dwn.sendRequest(baseRequest as never);
   }
 
-  async function expectRecordLimitOccupantsConverged(protocolPath: string, expectedCount: number): Promise<void> {
+  async function expectRecordLimitOccupantsConverged(modulePath: string, expectedCount: number): Promise<void> {
     const [a, b, remote] = await Promise.all([
-      recordLimitOccupants('local-a', protocolPath),
-      recordLimitOccupants('local-b', protocolPath),
-      recordLimitOccupants('remote', protocolPath),
+      recordLimitOccupants('local-a', modulePath),
+      recordLimitOccupants('local-b', modulePath),
+      recordLimitOccupants('remote', modulePath),
     ]);
 
     expect(a).toHaveLength(expectedCount);
@@ -408,11 +408,11 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
     expect(remote).toEqual(a);
   }
 
-  async function recordLimitOccupants(location: 'local-a' | 'local-b' | 'remote', protocolPath: string): Promise<string[]> {
+  async function recordLimitOccupants(location: 'local-a' | 'local-b' | 'remote', modulePath: string): Promise<string[]> {
     const { reply } = await request(location, DwnInterface.RecordsQuery, {
       filter: {
-        protocol: harnessProtocolV1.protocol,
-        protocolPath,
+        module: harnessModuleV1.module,
+        modulePath,
       },
     });
     expect(reply.status.code).toBe(200);
@@ -450,7 +450,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   async function fingerprint(location: 'local-a' | 'local-b' | 'remote'): Promise<string | undefined> {
     const params = {
       did      : aliceDid,
-      filters  : [{ protocol: harnessProtocolV1.protocol }],
+      filters  : [{ module: harnessModuleV1.module }],
       cidsOnly : true,
       limit    : 100,
     };
@@ -469,7 +469,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   async function feedCids(location: 'local-a' | 'local-b' | 'remote'): Promise<string[]> {
     const params = {
       did     : aliceDid,
-      filters : [{ protocol: harnessProtocolV1.protocol }],
+      filters : [{ module: harnessModuleV1.module }],
       limit   : 500,
     };
     const reply = location === 'local-a'
@@ -494,16 +494,16 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
       recordId?: string;
       descriptor: GenericMessage['descriptor'] & {
         dataCid?: string;
-        definition?: ProtocolDefinition;
-        protocol?: string;
-        protocolPath?: string;
+        definition?: ModuleDefinition;
+        module?: string;
+        modulePath?: string;
       };
     };
     return [
       enriched.descriptor.interface,
       enriched.descriptor.method,
-      enriched.descriptor.definition?.protocol ?? enriched.descriptor.protocol,
-      enriched.descriptor.protocolPath,
+      enriched.descriptor.definition?.module ?? enriched.descriptor.module,
+      enriched.descriptor.modulePath,
       enriched.recordId,
       enriched.contextId,
       enriched.descriptor.dataCid,
@@ -517,7 +517,7 @@ describe('E2E: two-device durable feed perturbation convergence', () => {
   }
 
   function compareSnapshotEntries(a: SnapshotEntry, b: SnapshotEntry): number {
-    return compareStrings(`${a.protocolPath}\0${a.recordId}`, `${b.protocolPath}\0${b.recordId}`);
+    return compareStrings(`${a.modulePath}\0${a.recordId}`, `${b.modulePath}\0${b.recordId}`);
   }
 
   function compareStrings(a: string, b: string): number {

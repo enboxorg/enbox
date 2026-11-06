@@ -1,0 +1,256 @@
+import type { RecordsWrite } from '../../src/interfaces/records-write.js';
+import type { RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { ModuleRuleSet, ModuleTypes } from '../../src/types/modules-types.js';
+
+import { describe, expect, it } from 'bun:test';
+
+import fc from 'fast-check';
+
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
+import { verifySizeLimit, verifyType } from '../../src/core/module-authorization-validation.js';
+
+const numRuns = Number(process.env.FAST_CHECK_NUM_RUNS) || 100;
+
+/**
+ * Generator for a single module path segment (also a valid type name).
+ * Matches the JSON schema constraint for a single segment: `[a-zA-Z]+`.
+ */
+const moduleSegment = fc.stringMatching(/^[a-zA-Z]{1,20}$/);
+
+/**
+ * Generator for a valid modulePath string.
+ * Matches the JSON schema regex: `^[a-zA-Z]+(\/[a-zA-Z]+)*$`
+ * e.g. "thread", "thread/comment", "note/attachment/thumbnail"
+ */
+const modulePath = fc.stringMatching(/^[a-zA-Z]{1,20}(\/[a-zA-Z]{1,20}){0,2}$/);
+
+/**
+ * Builds a minimal RecordsWrite stub for verifySizeLimit testing.
+ */
+function stubRecordsWrite(dataSize: number): RecordsWrite {
+  return {
+    message: {
+      descriptor: { dataSize }
+    }
+  } as unknown as RecordsWrite;
+}
+
+/**
+ * Builds a minimal RecordsWriteMessage stub for verifyType testing.
+ */
+function stubRecordsWriteMessage(opts: {
+  modulePath: string;
+  dataFormat: string;
+  schema?: string;
+}): RecordsWriteMessage {
+  return {
+    descriptor: {
+      modulePath : opts.modulePath,
+      dataFormat : opts.dataFormat,
+      schema     : opts.schema,
+    }
+  } as unknown as RecordsWriteMessage;
+}
+
+describe('Module validation — fuzz', () => {
+
+  describe('verifySizeLimit — boundary behavior', () => {
+    it('should accept dataSize within [min, max]', () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 0, max: 10000 }),
+          fc.integer({ min: 0, max: 10000 }),
+          (minSize, extraMax) => {
+            const maxSize = minSize + extraMax; // ensures max >= min
+            const dataSize = minSize + Math.floor(extraMax / 2); // dataSize in [min, max]
+            const ruleSet: ModuleRuleSet = { $size: { min: minSize, max: maxSize } };
+            // Should NOT throw
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).not.toThrow();
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should reject dataSize below min', () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 1, max: 10000 }),
+          fc.integer({ min: 0, max: 9999 }),
+          (minSize, belowOffset) => {
+            const dataSize = Math.max(0, minSize - 1 - (belowOffset % minSize));
+            if (dataSize >= minSize) {
+              return; // skip if we can't go below min
+            }
+            const ruleSet: ModuleRuleSet = { $size: { min: minSize } };
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).toThrow(
+              DwnErrorCode.ModuleAuthorizationMinSizeInvalid
+            );
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should reject dataSize above max', () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 0, max: 10000 }),
+          fc.integer({ min: 1, max: 10000 }),
+          (maxSize, overAmount) => {
+            const dataSize = maxSize + overAmount;
+            const ruleSet: ModuleRuleSet = { $size: { max: maxSize } };
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).toThrow(
+              DwnErrorCode.ModuleAuthorizationMaxSizeInvalid
+            );
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should accept any dataSize when max is undefined (only min enforced)', () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 0, max: 1000 }),
+          fc.integer({ min: 0, max: 1000000 }),
+          (minSize, extra) => {
+            const dataSize = minSize + extra; // always >= minSize
+            const ruleSet: ModuleRuleSet = { $size: { min: minSize } };
+            // Should NOT throw — no max means no upper bound
+            expect(() => verifySizeLimit(stubRecordsWrite(dataSize), ruleSet)).not.toThrow();
+          }
+        ),
+        { numRuns }
+      );
+    });
+  });
+
+  describe('verifyType — dataFormats and schema consistency', () => {
+    it('should accept when dataFormat matches one of the allowed formats', () => {
+      fc.assert(
+        fc.property(
+          fc.array(fc.string({ minLength: 3, maxLength: 30 }), { minLength: 1, maxLength: 5 }),
+          fc.nat(),
+          (formats, indexSeed) => {
+            const chosenFormat = formats[indexSeed % formats.length];
+            const typeName = 'testType';
+            const moduleTypes: ModuleTypes = {
+              [typeName]: { dataFormats: formats },
+            };
+            const msg = stubRecordsWriteMessage({
+              modulePath : typeName,
+              dataFormat : chosenFormat,
+            });
+            // Should NOT throw
+            expect(() => verifyType(msg, moduleTypes)).not.toThrow();
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should reject when dataFormat does not match any allowed format', () => {
+      fc.assert(
+        fc.property(
+          fc.array(fc.string({ minLength: 3, maxLength: 30 }), { minLength: 1, maxLength: 5 }),
+          fc.string({ minLength: 3, maxLength: 30 }),
+          (formats, rogue) => {
+            // Skip if rogue happens to be in the formats list
+            if (formats.includes(rogue)) {
+              return;
+            }
+            const typeName = 'testType';
+            const moduleTypes: ModuleTypes = {
+              [typeName]: { dataFormats: formats },
+            };
+            const msg = stubRecordsWriteMessage({
+              modulePath : typeName,
+              dataFormat : rogue,
+            });
+            expect(() => verifyType(msg, moduleTypes)).toThrow(
+              DwnErrorCode.ModuleAuthorizationIncorrectDataFormat
+            );
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should accept any dataFormat when dataFormats is undefined', () => {
+      fc.assert(
+        fc.property(
+          fc.string({ minLength: 1, maxLength: 30 }),
+          (dataFormat) => {
+            const typeName = 'testType';
+            const moduleTypes: ModuleTypes = {
+              [typeName]: {}, // no dataFormats constraint
+            };
+            const msg = stubRecordsWriteMessage({
+              modulePath: typeName,
+              dataFormat,
+            });
+            // Should NOT throw
+            expect(() => verifyType(msg, moduleTypes)).not.toThrow();
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should reject when schema does not match', () => {
+      fc.assert(
+        fc.property(
+          fc.string({ minLength: 5, maxLength: 40 }),
+          fc.string({ minLength: 5, maxLength: 40 }),
+          (requiredSchema, actualSchema) => {
+            if (requiredSchema === actualSchema) {
+              return; // skip when they match
+            }
+            const typeName = 'testType';
+            const moduleTypes: ModuleTypes = {
+              [typeName]: { schema: requiredSchema },
+            };
+            const msg = stubRecordsWriteMessage({
+              modulePath : typeName,
+              dataFormat : 'application/json',
+              schema     : actualSchema,
+            });
+            expect(() => verifyType(msg, moduleTypes)).toThrow(
+              DwnErrorCode.ModuleAuthorizationInvalidSchema
+            );
+          }
+        ),
+        { numRuns }
+      );
+    });
+
+    it('should reject when typeName is not in moduleTypes', () => {
+      fc.assert(
+        fc.property(
+          modulePath,
+          moduleSegment,
+          (declaredType, existingType) => {
+            // verifyType extracts the last path segment via getTypeName(),
+            // so "thread/comment" resolves to "comment" for the type lookup.
+            const resolvedType = declaredType.split('/').slice(-1)[0];
+            if (resolvedType === existingType) {
+              return;
+            }
+            const moduleTypes: ModuleTypes = {
+              [existingType]: {},
+            };
+            const msg = stubRecordsWriteMessage({
+              modulePath : declaredType,
+              dataFormat : 'application/json',
+            });
+            expect(() => verifyType(msg, moduleTypes)).toThrow(
+              DwnErrorCode.ModuleAuthorizationInvalidType
+            );
+          }
+        ),
+        { numRuns }
+      );
+    });
+  });
+});

@@ -1,4 +1,4 @@
-import type { DwnProtocolDefinition, EnboxUserAgent } from '@enbox/agent';
+import type { DwnModuleDefinition, EnboxUserAgent } from '@enbox/agent';
 
 import { describe, expect, spyOn, test } from 'bun:test';
 
@@ -6,20 +6,20 @@ import { AuthManager } from '../src/auth-manager.js';
 import { Convert } from '@enbox/common';
 import { MemoryStorage } from '../src/storage/storage.js';
 import { PasswordProvider } from '../src/password-provider.js';
-import { setStoredSession } from './helpers/session.js';
 import { STORAGE_KEYS } from '../src/types.js';
 import { WalletConnect } from '../src/wallet-connect-client.js';
 import { ConnectDeniedError, isConnectDeniedError } from '../src/errors.js';
 import { createMockAgent, createMockIdentity } from './helpers/mock-agent.js';
+import { setStoredRetryContext, setStoredSession } from './helpers/session.js';
 
 /**
- * A minimal non-empty protocols array suitable for routing to the
+ * A minimal non-empty modules array suitable for routing to the
  * handler flow. Use this instead of `[]` — empty arrays no longer count
  * as a handler signal (see {@link AuthManager._isVaultConnect}).
  */
-const HANDLER_PROTOCOLS: DwnProtocolDefinition[] = [
+const HANDLER_MODULES: DwnModuleDefinition[] = [
   {
-    protocol  : 'https://example.com/handler-routing',
+    module    : 'https://example.com/handler-routing',
     published : true,
     types     : {},
     structure : {},
@@ -47,15 +47,15 @@ function createGrantMessage({
       scope,
     }).toBase64Url(),
     descriptor: {
-      interface    : 'Records',
-      method       : 'Write',
-      protocol     : 'https://identity.foundation/dwn/permissions',
-      protocolPath : 'grant',
-      recipient    : grantee,
-      dateCreated  : '2026-01-01T00:00:00.000000Z',
-      dataFormat   : 'application/json',
-      dataCid      : 'bafytest',
-      dataSize     : 100,
+      interface   : 'Records',
+      method      : 'Write',
+      module      : 'https://identity.foundation/dwn/permissions',
+      modulePath  : 'grant',
+      recipient   : grantee,
+      dateCreated : '2026-01-01T00:00:00.000000Z',
+      dataFormat  : 'application/json',
+      dataCid     : 'bafytest',
+      dataSize    : 100,
     },
     authorization: {
       signature: {
@@ -81,7 +81,7 @@ function createTestManager(
     password?: string;
     passwordProvider?: PasswordProvider;
     sync?: any;
-    identitySyncProtocols?: 'all' | [string, ...string[]];
+    identitySyncModules?: 'all' | [string, ...string[]];
     dwnEndpoints?: string[];
     initialState?: string;
   } = {},
@@ -106,7 +106,7 @@ function createTestManager(
   manager._defaultPassword = overrides.password;
   manager._passwordProvider = overrides.passwordProvider;
   manager._defaultSync = overrides.sync;
-  manager._defaultIdentitySyncProtocols = overrides.identitySyncProtocols;
+  manager._defaultIdentitySyncModules = overrides.identitySyncModules;
   manager._defaultDwnEndpoints = overrides.dwnEndpoints;
 
   return manager as AuthManager;
@@ -170,6 +170,29 @@ describe('AuthManager', () => {
   });
 
   describe('connect()', () => {
+    test('rejects protocol-format options before restoring a session or selecting a flow', async () => {
+      const storage = new MemoryStorage();
+      await setStoredSession(storage, 'did:dht:testuser123');
+      const agent = createMockAgent();
+      const manager = createTestManager(agent, { storage });
+      const start = spyOn(agent, 'start');
+
+      for (const options of [
+        { protocols: HANDLER_MODULES },
+        { protocols: HANDLER_MODULES, modules: HANDLER_MODULES },
+        { identitySyncProtocols: 'all' },
+      ]) {
+        await expect(manager.connect(options as never)).rejects.toThrow('use module-based options');
+      }
+      expect(start).not.toHaveBeenCalled();
+      expect(manager.session).toBeUndefined();
+    });
+
+    test('rejects protocol-format default sync scope before agent creation', async () => {
+      await expect(AuthManager.create({ identitySyncProtocols: 'all' } as never))
+        .rejects.toThrow('use module-based options');
+    });
+
     test('calls vaultConnect and sets state to connected', async () => {
       const agent = createMockAgent({
         firstLaunch  : async () => false,
@@ -403,7 +426,7 @@ describe('AuthManager', () => {
           delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
           delegateGrants      : [createGrantMessage({
             grantee : 'did:jwk:delegate123',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
           })],
           connectedDid: 'did:dht:owner456',
         }),
@@ -412,7 +435,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
       (manager as any)._connectHandler = mockHandler;
 
-      const session = await manager.connect({ protocols: HANDLER_PROTOCOLS });
+      const session = await manager.connect({ modules: HANDLER_MODULES });
 
       expect(session.did).toBe('did:dht:owner456');
       expect(manager.isConnected).toBe(true);
@@ -429,7 +452,7 @@ describe('AuthManager', () => {
       };
 
       const manager = createTestManager(agent);
-      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+      await expect(manager.connect({ connectHandler: handler, modules: HANDLER_MODULES }))
         .rejects.toThrow('returned no grants');
     });
 
@@ -441,13 +464,13 @@ describe('AuthManager', () => {
           connectedDid        : 'did:dht:owner456',
           delegateGrants      : [createGrantMessage({
             grantee : 'did:jwk:someone-else',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
           })],
         }),
       };
 
       const manager = createTestManager(agent);
-      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+      await expect(manager.connect({ connectHandler: handler, modules: HANDLER_MODULES }))
         .rejects.toThrow('Revoke the approved session in your wallet');
     });
 
@@ -460,13 +483,13 @@ describe('AuthManager', () => {
           delegateGrants      : [createGrantMessage({
             grantor : 'did:dht:someone-else',
             grantee : 'did:jwk:delegate123',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
           })],
         }),
       };
 
       const manager = createTestManager(agent);
-      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+      await expect(manager.connect({ connectHandler: handler, modules: HANDLER_MODULES }))
         .rejects.toThrow('connected DID');
     });
 
@@ -478,13 +501,13 @@ describe('AuthManager', () => {
           connectedDid        : 'did:dht:owner456',
           delegateGrants      : [createGrantMessage({
             grantee : 'did:jwk:delegate123',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/other-protocol' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/other-module' },
           })],
         }),
       };
 
       const manager = createTestManager(agent);
-      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+      await expect(manager.connect({ connectHandler: handler, modules: HANDLER_MODULES }))
         .rejects.toThrow('outside the requested permission scope');
     });
 
@@ -507,7 +530,7 @@ describe('AuthManager', () => {
             createGrantMessage({
               grantId : 'session-grant',
               grantee : 'did:jwk:delegate123',
-              scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+              scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
             }),
             createGrantMessage({
               grantId : 'revocation-grant',
@@ -515,7 +538,7 @@ describe('AuthManager', () => {
               scope   : {
                 interface : 'Records',
                 method    : 'Write',
-                protocol  : 'https://identity.foundation/dwn/permissions',
+                module    : 'https://identity.foundation/dwn/permissions',
                 contextId : 'session-grant',
               },
             }),
@@ -525,7 +548,7 @@ describe('AuthManager', () => {
       };
 
       const manager = createTestManager(agent);
-      const session = await manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS });
+      const session = await manager.connect({ connectHandler: handler, modules: HANDLER_MODULES });
       expect(session.did).toBe('did:dht:owner456');
     });
 
@@ -541,7 +564,7 @@ describe('AuthManager', () => {
             scope   : {
               interface : 'Records',
               method    : 'Write',
-              protocol  : 'https://identity.foundation/dwn/permissions',
+              module    : 'https://identity.foundation/dwn/permissions',
               contextId : 'session-grant',
             },
           })],
@@ -550,7 +573,7 @@ describe('AuthManager', () => {
       };
 
       const manager = createTestManager(agent);
-      await expect(manager.connect({ connectHandler: handler, protocols: HANDLER_PROTOCOLS }))
+      await expect(manager.connect({ connectHandler: handler, modules: HANDLER_MODULES }))
         .rejects.toThrow('returned no grants');
     });
 
@@ -573,7 +596,7 @@ describe('AuthManager', () => {
           delegateGrants      : [createGrantMessage({
             grantor : 'did:dht:owner999',
             grantee : 'did:jwk:delegate789',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
           })],
           connectedDid: 'did:dht:owner999',
         }),
@@ -582,7 +605,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       const session = await manager.connect({
-        protocols      : HANDLER_PROTOCOLS,
+        modules        : HANDLER_MODULES,
         connectHandler : perCallHandler,
       });
 
@@ -598,7 +621,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       await expect(
-        manager.connect({ protocols: HANDLER_PROTOCOLS })
+        manager.connect({ modules: HANDLER_MODULES })
       ).rejects.toThrow('No connect handler provided');
     });
 
@@ -618,7 +641,7 @@ describe('AuthManager', () => {
       const manager = createTestManager(agent);
 
       await expect(
-        manager.connect({ protocols: HANDLER_PROTOCOLS })
+        manager.connect({ modules: HANDLER_MODULES })
       ).rejects.toThrow('No connect handler provided');
 
       expect(initializeCalled).toBe(false);
@@ -638,7 +661,7 @@ describe('AuthManager', () => {
       (manager as any)._connectHandler = mockHandler;
 
       await expect(
-        manager.connect({ protocols: HANDLER_PROTOCOLS })
+        manager.connect({ modules: HANDLER_MODULES })
       ).rejects.toThrow('denied or cancelled');
     });
 
@@ -657,7 +680,7 @@ describe('AuthManager', () => {
 
       let caught: unknown;
       try {
-        await manager.connect({ protocols: HANDLER_PROTOCOLS });
+        await manager.connect({ modules: HANDLER_MODULES });
       } catch (error: unknown) {
         caught = error;
       }
@@ -685,7 +708,7 @@ describe('AuthManager', () => {
           delegatePortableDid : { uri: 'did:jwk:delegate123', document: {}, privateKeys: [] },
           delegateGrants      : [createGrantMessage({
             grantee : 'did:jwk:delegate123',
-            scope   : { interface: 'Records', method: 'Write', protocol: 'https://example.com/handler-routing' },
+            scope   : { interface: 'Records', method: 'Write', module: 'https://example.com/handler-routing' },
           })],
           connectedDid: 'did:dht:owner456',
         }),
@@ -695,7 +718,7 @@ describe('AuthManager', () => {
       (manager as any)._connectHandler = mockHandler;
       (manager as any)._defaultSync = 'off';
 
-      const session = await manager.connect({ protocols: HANDLER_PROTOCOLS });
+      const session = await manager.connect({ modules: HANDLER_MODULES });
       expect(session.did).toBe('did:dht:owner456');
     });
   });
@@ -1286,7 +1309,7 @@ describe('AuthManager', () => {
         connectedDid : identity.metadata.connectedDid,
         revocations  : [{ grantId: 'grant', revocationGrantId: 'revocation-grant' }],
       }]);
-      await storage.set(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT, journal);
+      await setStoredRetryContext(storage, journal);
       const calls: string[] = [];
       const manager = createTestManager(createMockAgent({
         identityGet    : async () => identity,
@@ -1645,15 +1668,15 @@ describe('AuthManager', () => {
         syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, {
-        sync                  : '10s',
-        identitySyncProtocols : ['https://proto.example/profile'],
+        sync                : '10s',
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:dht:testuser123');
 
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].did).toBe('did:dht:testuser123');
-      expect(registerCalls[0].options.protocols).toEqual(['https://proto.example/profile']);
+      expect(registerCalls[0].options.modules).toEqual(['https://modules.example/profile']);
     });
 
     test('leaves local identity sync registration to the application when no explicit scope is configured', async () => {
@@ -1688,8 +1711,8 @@ describe('AuthManager', () => {
         syncStartSync          : async () => {},
       });
       const manager = createTestManager(agent, {
-        sync                  : '10s',
-        identitySyncProtocols : ['https://proto.example/profile'],
+        sync                : '10s',
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:delegate');
@@ -1710,7 +1733,7 @@ describe('AuthManager', () => {
         identityGet            : async () => identity,
         syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
         syncStartSync          : async () => {},
-        // Return an unscoped grant (no protocol in scope).
+        // Return an unscoped grant (no module in scope).
         processDwnRequest      : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
@@ -1720,20 +1743,20 @@ describe('AuthManager', () => {
                   recordId    : 'grant-unrestricted',
                   contextId   : 'grant-unrestricted',
                   encodedData : btoa(JSON.stringify({
-                    dateExpires : '2040-01-01T00:00:00.000Z',
+                    dateExpires : '2040-01-01T00:00:00.000000Z',
                     scope       : { interface: 'Messages', method: 'Read' },
                     delegated   : true,
                   })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
                   descriptor: {
-                    interface    : 'Records',
-                    method       : 'Write',
-                    protocol     : 'https://identity.foundation/dwn/permissions',
-                    protocolPath : 'grant',
-                    recipient    : 'did:delegate',
-                    dateCreated  : '2025-01-01T00:00:00.000000Z',
-                    dataFormat   : 'application/json',
-                    dataCid      : 'bafytest',
-                    dataSize     : 100,
+                    interface   : 'Records',
+                    method      : 'Write',
+                    module      : 'https://identity.foundation/dwn/permissions',
+                    modulePath  : 'grant',
+                    recipient   : 'did:delegate',
+                    dateCreated : '2025-01-01T00:00:00.000000Z',
+                    dataFormat  : 'application/json',
+                    dataCid     : 'bafytest',
+                    dataSize    : 100,
                   },
                   authorization: {
                     signature: {
@@ -1748,14 +1771,14 @@ describe('AuthManager', () => {
         },
       });
       const manager = createTestManager(agent, {
-        sync                  : '10s',
-        identitySyncProtocols : ['https://proto.example/profile'],
+        sync                : '10s',
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:delegate');
 
       expect(registerCalls).toHaveLength(1);
-      expect(registerCalls[0].options.protocols).toBe('all');
+      expect(registerCalls[0].options.modules).toBe('all');
     });
 
     test('rethrows I/O errors from removeIdentity', async () => {
@@ -1783,8 +1806,8 @@ describe('AuthManager', () => {
         syncStartSync          : async (params) => { syncStartCalls.push(params); },
       });
       const manager = createTestManager(agent, {
-        sync                  : 'off',
-        identitySyncProtocols : ['https://proto.example/profile'],
+        sync                : 'off',
+        identitySyncModules : ['https://modules.example/profile'],
       });
 
       await manager.switchIdentity('did:dht:testuser123');

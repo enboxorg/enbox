@@ -7,10 +7,10 @@ if [ -n "${CHANGESETS_OUTPUT:-}" ]; then
   : > "$CHANGESETS_OUTPUT"
 fi
 
-# Custom publish script that resolves Bun's workspace:* protocol before publishing.
+# Custom publish script that resolves Bun's workspace:* module before publishing.
 #
 # Changesets' built-in publish uses `npm publish` directly on the package
-# directory, which does NOT resolve Bun's `workspace:*` protocol — resulting
+# directory, which does NOT resolve Bun's `workspace:*` module — resulting
 # in broken packages on npm with literal "workspace:*" strings.
 #
 # This script uses a two-step approach:
@@ -33,8 +33,8 @@ PACKAGES=(
   "packages/agent"
   "packages/auth"
   "packages/api"
-  "packages/protocols"
-  "packages/protocol-codegen"
+  "packages/modules"
+  "packages/module-codegen"
   "packages/browser"
   "packages/cli"
   "packages/dwn-sql-store"

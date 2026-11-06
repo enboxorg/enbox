@@ -111,7 +111,7 @@ export class SyncNextPullPage {
       filters            : messageFeedFiltersForSyncScope(target.scope),
       limit              : SYNC_NEXT_PAGE_SIZE,
       permissionGrantIds : target.permissionGrantIds,
-      protocolRole       : role?.protocolRole,
+      moduleRole         : role?.moduleRole,
       runRemoteRequest   : this._runRemoteRequest,
     });
   }

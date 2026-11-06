@@ -1,12 +1,12 @@
 /// <reference types="@enbox/dwn-sdk-js" />
 
 import type { EnboxPlatformAgent } from '@enbox/agent';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
-import type { ProtocolReadinessApi } from './protocol-readiness.js';
+import type { ModuleReadinessApi } from './module-readiness.js';
 import type { RecordCodecMap } from './record-codec.js';
 import type { RoleDeliveryState } from './typed-enbox.js';
-import type { TypedProtocol } from './protocol-types.js';
+import type { TypedModule } from './module-types.js';
 import type {
   EnboxAnonymousApi,
   EnboxAnonymousOptions,
@@ -18,15 +18,15 @@ import { AnonymousDwnApi } from '@enbox/agent';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { createDidDhtMethod, DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
-import { createProtocolReadinessApi } from './protocol-readiness.js';
+import { createModuleReadinessApi } from './module-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-paths.js';
+import { collectModulePaths, isEncryptedRoleAudiencePath } from './module-paths.js';
 
 /**
- * The main Enbox API interface. It provides protocol-scoped access to
+ * The main Enbox API interface. It provides module-scoped access to
  * Decentralized Web Nodes (DWNs) and Decentralized Identifiers (DIDs).
  *
  * Applications normally receive an instance from a connection store snapshot.
@@ -43,7 +43,7 @@ import { collectProtocolPaths, isEncryptedRoleAudiencePath } from './protocol-pa
  *   throw snapshot.error ?? new Error('Connection failed.');
  * }
  *
- * const notes = snapshot.enbox.using(NotesProtocol);
+ * const notes = snapshot.enbox.using(NotesModule);
  * ```
  */
 export class Enbox {
@@ -59,7 +59,7 @@ export class Enbox {
   /** Exposed instance to the DID APIs, allow users to create and resolve DIDs. */
   public did: DidApi;
 
-  /** Internal DWN API instance. Use {@link Enbox.using} for protocol-scoped access. */
+  /** Internal DWN API instance. Use {@link Enbox.using} for module-scoped access. */
   private readonly _dwn: DwnApi;
 
   /** Tenant DID bound to this facade. */
@@ -75,16 +75,16 @@ export class Enbox {
   private readonly _lifetimeSignal: AbortSignal;
 
   /**
-   * Cache of {@link TypedEnbox} instances keyed by typed-protocol identity.
+   * Cache of {@link TypedEnbox} instances keyed by typed-module identity.
    *
-   * Ensures that `enbox.using(Protocol)` returns the **same** `TypedEnbox`
-   * instance for the same protocol object across multiple call sites, avoiding
-   * redundant protocol installations and duplicated internal state.
+   * Ensures that `enbox.using(Module)` returns the **same** `TypedEnbox`
+   * instance for the same module object across multiple call sites, avoiding
+   * redundant module installations and duplicated internal state.
    */
   private readonly _typedInstances = new Map<object, unknown>();
 
-  /** Application protocol installation and hosted-publication lifecycle. */
-  public protocols: ProtocolReadinessApi;
+  /** Application module installation and hosted-publication lifecycle. */
+  public modules: ModuleReadinessApi;
 
   public constructor({ agent, connectedDid, delegateDid, signal }: EnboxParams) {
     this.agent = agent;
@@ -95,7 +95,7 @@ export class Enbox {
     this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
     this._connectedDid = connectedDid;
     this._delegateDid = delegateDid;
-    this.protocols = createProtocolReadinessApi({
+    this.modules = createModuleReadinessApi({
       agent,
       connectedDid,
       delegateDid,
@@ -109,7 +109,7 @@ export class Enbox {
    * This is the supported escape hatch to the raw DWN layer — use it when an
    * operation is not (yet) surfaced by {@link Enbox.using}'s typed API, e.g.
    * a low-level `records.write` with explicit message params. Prefer
-   * `enbox.using(protocol)` for everything the typed surface covers.
+   * `enbox.using(module)` for everything the typed surface covers.
    */
   public get dwn(): DwnApi {
     this._lifetimeSignal.throwIfAborted();
@@ -135,24 +135,24 @@ export class Enbox {
   }
 
   /**
-   * Returns a {@link TypedEnbox} instance scoped to the given protocol.
+   * Returns a {@link TypedEnbox} instance scoped to the given module.
    *
    * This is the **primary developer interface** for interacting with
-   * protocol-backed records. It auto-injects the protocol URI, protocolPath,
+   * module-backed records. It auto-injects the module URI, modulePath,
    * and schema into every operation, and provides compile-time path
    * autocompletion plus typed application values via runtime codecs.
    *
-   * Instances are cached by the typed protocol object's identity. Calling
-   * `using()` repeatedly with the same exported protocol constant returns the
+   * Instances are cached by the typed module object's identity. Calling
+   * `using()` repeatedly with the same exported module constant returns the
    * same instance, while independently declared codec maps never alias merely
-   * because they use the same protocol URI.
+   * because they use the same module URI.
    *
-   * @param protocol - A typed protocol created via `defineProtocol()`.
-   * @returns A `TypedEnbox` instance bound to the given protocol.
+   * @param module - A typed module created via `defineModule()`.
+   * @returns A `TypedEnbox` instance bound to the given module.
    *
    * @example
    * ```ts
-   * const notes = enbox.using(NotesProtocol);
+   * const notes = enbox.using(NotesModule);
    *
    * const record = await notes.records.create('note', {
    *   data: { title: 'Hello', body: 'Typed data' },
@@ -162,25 +162,25 @@ export class Enbox {
    * ```
    */
   public using<
-    D extends ProtocolDefinition,
+    D extends ModuleDefinition,
     C extends RecordCodecMap,
   >(
-    protocol: TypedProtocol<D, C>,
+    module: TypedModule<D, C>,
   ): TypedEnbox<D, C> {
     this._lifetimeSignal.throwIfAborted();
-    const cached = this._typedInstances.get(protocol);
+    const cached = this._typedInstances.get(module);
 
     if (cached) {
-      // Object identity ties the erased cache value back to this exact typed protocol.
+      // Object identity ties the erased cache value back to this exact typed module.
       return cached as TypedEnbox<D, C>;
     }
 
     const deliverySession = {
-      protocol : protocol.definition.protocol,
-      signal   : this._lifetimeSignal,
-      target   : this._connectedDid,
+      module : module.definition.module,
+      signal : this._lifetimeSignal,
+      target : this._connectedDid,
     };
-    const instance = new TypedEnbox<D, C>(this._dwn, protocol, {
+    const instance = new TypedEnbox<D, C>(this._dwn, module, {
       roleDelivery: {
         get: (roleRecordId): Promise<RoleDeliveryState | undefined> => this.agent.dwn.getAudienceKeyDeliveryState({
           ...deliverySession,
@@ -198,16 +198,16 @@ export class Enbox {
       signal : this._lifetimeSignal,
       sync   : this.agent.sync,
     });
-    const rolePaths = [...collectProtocolPaths(protocol.definition.structure)]
-      .filter(path => isEncryptedRoleAudiencePath(protocol.definition, path));
+    const rolePaths = [...collectModulePaths(module.definition.structure)]
+      .filter(path => isEncryptedRoleAudiencePath(module.definition, path));
     if (rolePaths.length > 0) {
-      this.agent.dwn.registerAudienceKeyDeliveryProtocol({
+      this.agent.dwn.registerAudienceKeyDeliveryModule({
         ...deliverySession,
         granteeDid: this._delegateDid,
         rolePaths,
       });
     }
-    this._typedInstances.set(protocol, instance);
+    this._typedInstances.set(module, instance);
     return instance;
   }
 
@@ -235,7 +235,7 @@ export class Enbox {
    * Creates a lightweight, read-only Enbox instance for querying public DWN data.
    *
    * No identity, vault, password, or signing keys are required. The returned
-   * API supports querying and reading published records and protocols from any
+   * API supports querying and reading published records and modules from any
    * remote DWN, using **unsigned** (anonymous) DWN messages.
    *
    * @param options - Optional configuration overrides.
@@ -247,7 +247,7 @@ export class Enbox {
    *
    * const { records } = await dwn.records.query({
    *   from: 'did:dht:alice...',
-   *   filter: { protocol: 'https://blog.example/posts', protocolPath: 'post' },
+   *   filter: { module: 'https://blog.example/posts', modulePath: 'post' },
    * });
    *
    * for (const record of records) {

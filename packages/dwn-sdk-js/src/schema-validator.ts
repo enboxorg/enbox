@@ -1,3 +1,5 @@
+import type { ModuleDefinition } from './types/modules-types.js';
+
 import * as precompiledValidators from '../generated/precompiled-validators.js';
 import { DwnError, DwnErrorCode } from './core/dwn-error.js';
 
@@ -9,6 +11,11 @@ interface ValidateError {
   params: Record<string, unknown>;
 }
 type ValidateFn = ((payload: unknown) => boolean) & { errors?: ValidateError[] };
+
+/** Validate the module wire shape without resolving references or requiring runtime key metadata. */
+export function validateModuleDefinitionSchema(definition: unknown): asserts definition is ModuleDefinition {
+  validateJsonSchema('ModuleDefinition', definition);
+}
 
 /**
  * Validates the given payload using JSON schema keyed by the given schema name. Throws if the given payload fails validation.

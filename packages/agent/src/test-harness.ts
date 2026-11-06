@@ -96,7 +96,7 @@ export class PlatformAgentTestHarness {
     keyStore: DwnKeyStore;
     identityStore: DwnIdentityStore;
     didStore: DwnDidStore;
-    /** clears the protocol initialization caches */
+    /** clears the module initialization caches */
     clear: () => void;
   };
 
@@ -297,9 +297,9 @@ export class PlatformAgentTestHarness {
       identityStore : new DwnIdentityStore(),
       didStore      : new DwnDidStore(),
       clear         : ():void => {
-        dwnStores.keyStore['_protocolInitializedCache']?.clear();
-        dwnStores.identityStore['_protocolInitializedCache']?.clear();
-        dwnStores.didStore['_protocolInitializedCache']?.clear();
+        dwnStores.keyStore['_moduleInitializedCache']?.clear();
+        dwnStores.identityStore['_moduleInitializedCache']?.clear();
+        dwnStores.didStore['_moduleInitializedCache']?.clear();
       }
     };
 

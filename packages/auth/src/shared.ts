@@ -29,9 +29,9 @@ export {
   isSessionInvalidError,
   reconcileConnectionStatusGrants,
 } from './connect/status.js';
-export { normalizePermissionPolicy, normalizeProtocolRequests } from './permissions.js';
+export { normalizePermissionPolicy, normalizeModuleRequests } from './permissions.js';
 export { WalletConnect } from './wallet-connect-client.js';
-export type { ProtocolPermissionOptions, WalletAuthenticationClientOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
+export type { ModulePermissionOptions, WalletAuthenticationClientOptions, WalletConnectClientOptions } from './wallet-connect-client.js';
 
 export {
   applyLocalDwnDiscovery,
@@ -107,9 +107,9 @@ export type {
   LocalDwnStrategy,
   Permission,
   PortableIdentity,
-  ProtocolDefinitionCarrier,
-  ProtocolPermissionRequest,
-  ProtocolRequest,
+  ModuleDefinitionCarrier,
+  ModulePermissionRequest,
+  ModuleRequest,
   ProviderAuthParams,
   ProviderAuthResult,
   RegistrationOptions,

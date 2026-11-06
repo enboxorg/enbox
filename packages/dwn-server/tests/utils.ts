@@ -26,8 +26,8 @@ export type CreateRecordsWriteOverrides =
       dateCreated?: string;
       published?: boolean;
       recordId?: string;
-      protocol?: string;
-      protocolPath?: string;
+      module?: string;
+      modulePath?: string;
     } & { data?: never })
   | ({
       dataCid?: never;
@@ -35,8 +35,8 @@ export type CreateRecordsWriteOverrides =
       dateCreated?: string;
       published?: boolean;
       recordId?: string;
-      protocol?: string;
-      protocolPath?: string;
+      module?: string;
+      modulePath?: string;
     } & { data?: Uint8Array });
 
 export type GenerateRecordsWriteOutput = {
@@ -53,11 +53,11 @@ export async function createRecordsWriteMessage(
   }
 
   const recordsWrite = await RecordsWrite.create({
-    protocol     : 'http://test-protocol.xyz',
-    protocolPath : 'testRecord',
+    module     : 'http://test-module.xyz',
+    modulePath : 'testRecord',
     ...overrides,
-    dataFormat   : 'application/json',
-    signer       : signer.signer,
+    dataFormat : 'application/json',
+    signer     : signer.signer,
   });
 
   let dataStream: ReadableStream<Uint8Array> | undefined;

@@ -375,7 +375,7 @@ export type PopupConnectOptions = {
   /** Base URL of the wallet app (e.g. `https://enbox-wallet.pages.dev`). */
   walletUrl: string;
 
-  /** DWN protocols and permission scopes to request from the wallet. */
+  /** DWN modules and permission scopes to request from the wallet. */
   permissionRequests: ConnectPermissionRequest[];
 
   /**

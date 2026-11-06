@@ -3,7 +3,7 @@ import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, ResumableTaskStore } from '../../src/index.js';
 
 import sinon from 'sinon';
-import slackProtocolDefinition from '../vectors/protocol-definitions/slack.json' with { type: 'json' };
+import slackModuleDefinition from '../vectors/module-definitions/slack.json' with { type: 'json' };
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Dwn } from '../../src/dwn.js';
@@ -51,9 +51,9 @@ export function testNestedRoleScenarios(): void {
       await dwn.close();
     });
 
-    it('should support Slack-like protocol with community and gated channels', async () => {
+    it('should support Slack-like module with community and gated channels', async () => {
       // scenario:
-      // 1. Alice installs the Slack-like protocol
+      // 1. Alice installs the Slack-like module
       // 2. Alice creates a community
       // 3. Alice can assign Bob as an `admin` in the community
       // 4. Bob can invoke his `admin` role to perform actions:
@@ -79,21 +79,21 @@ export function testNestedRoleScenarios(): void {
       const daniel = await TestDataGenerator.generateDidKeyPersona();
       const mallory = await TestDataGenerator.generateDidKeyPersona(); // unauthorized person
 
-      const protocolDefinition = slackProtocolDefinition;
+      const moduleDefinition = slackModuleDefinition;
 
-      // 1. Alice installs the Slack-like protocol
-      const protocolsConfig = await TestDataGenerator.generateProtocolsConfigure({
+      // 1. Alice installs the Slack-like module
+      const modulesConfig = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition
+        moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a community
       const communityRecord = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'community'
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'community'
       });
       const communityRecordReply = await dwn.processMessage(alice.did, communityRecord.message, { dataStream: communityRecord.dataStream });
       expect(communityRecordReply.status.code).toBe(202);
@@ -102,8 +102,8 @@ export function testNestedRoleScenarios(): void {
       const communityAdminBobRecord = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
         recipient       : bob.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/admin',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/admin',
         parentContextId : communityRecord.message.contextId,
       });
       const communityAdminBobRecordReply
@@ -113,12 +113,12 @@ export function testNestedRoleScenarios(): void {
       // 4. Bob can invoke his `admin` role to perform actions:
       //   4a. Bob can read the community record
       const bobCommunityRead = await RecordsRead.create({
-        signer       : Jws.createSigner(bob),
-        protocolRole : 'community/admin',
-        filter       : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community',
-          contextId    : communityRecord.message.contextId
+        signer     : Jws.createSigner(bob),
+        moduleRole : 'community/admin',
+        filter     : {
+          module     : moduleDefinition.module,
+          modulePath : 'community',
+          contextId  : communityRecord.message.contextId
         }
       });
       const bobCommunityReadReply = await dwn.processMessage(alice.did, bobCommunityRead.message);
@@ -128,9 +128,9 @@ export function testNestedRoleScenarios(): void {
       //   4b. Bob can create gated-channels 1 & 2 in the community
       const channel1Record = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/admin',
-        protocolPath    : 'community/gatedChannel',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/admin',
+        modulePath      : 'community/gatedChannel',
         parentContextId : communityRecord.message.contextId
       });
       const channel1RecordReply = await dwn.processMessage(alice.did, channel1Record.message, { dataStream: channel1Record.dataStream });
@@ -138,9 +138,9 @@ export function testNestedRoleScenarios(): void {
 
       const channel2Record = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/admin',
-        protocolPath    : 'community/gatedChannel',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/admin',
+        modulePath      : 'community/gatedChannel',
         parentContextId : communityRecord.message.contextId
       });
       const channel2RecordReply = await dwn.processMessage(alice.did, channel2Record.message, { dataStream: channel2Record.dataStream });
@@ -148,12 +148,12 @@ export function testNestedRoleScenarios(): void {
 
       //   4c. Bob can query all gated-channels in the community
       const bobQuery = await RecordsQuery.create({
-        signer       : Jws.createSigner(bob),
-        protocolRole : 'community/admin',
-        filter       : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/gatedChannel',
-          contextId    : communityRecord.message.contextId
+        signer     : Jws.createSigner(bob),
+        moduleRole : 'community/admin',
+        filter     : {
+          module     : moduleDefinition.module,
+          modulePath : 'community/gatedChannel',
+          contextId  : communityRecord.message.contextId
         }
       });
       const bobQueryReply = await dwn.processMessage(alice.did, bobQuery.message);
@@ -165,8 +165,8 @@ export function testNestedRoleScenarios(): void {
       const channel1ParticipantBobRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : bob.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel1Record.message.contextId,
       });
       const channel1ParticipantBobRecordReply
@@ -176,8 +176,8 @@ export function testNestedRoleScenarios(): void {
       const channel1ParticipantCarolRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : carol.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel1Record.message.contextId,
       });
       const channel1ParticipantCarolRecordReply
@@ -188,8 +188,8 @@ export function testNestedRoleScenarios(): void {
       const channel2ParticipantBobRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : bob.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel2Record.message.contextId,
       });
       const channel2ParticipantBobRecordReply
@@ -199,8 +199,8 @@ export function testNestedRoleScenarios(): void {
       const channel2ParticipantDanielRecord = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
         recipient       : daniel.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel2Record.message.contextId,
       });
       const channel2ParticipantDanielRecordReply
@@ -209,12 +209,12 @@ export function testNestedRoleScenarios(): void {
 
       // 6. Carol can read the gated channel 1 record by invoking her child participant role to the gated channel 1
       const carolRead = await RecordsRead.create({
-        signer       : Jws.createSigner(carol),
-        protocolRole : 'community/gatedChannel/participant',
-        filter       : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/gatedChannel',
-          contextId    : channel1Record.message.contextId
+        signer     : Jws.createSigner(carol),
+        moduleRole : 'community/gatedChannel/participant',
+        filter     : {
+          module     : moduleDefinition.module,
+          modulePath : 'community/gatedChannel',
+          contextId  : channel1Record.message.contextId
         }
       });
       const carolReadReply = await dwn.processMessage(alice.did, carolRead.message);
@@ -225,36 +225,36 @@ export function testNestedRoleScenarios(): void {
       const participantCarolRecord = await TestDataGenerator.generateRecordsWrite({
         author          : carol,
         recipient       : carol.did,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/gatedChannel/participant',
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/gatedChannel/participant',
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel2Record.message.contextId
       });
       const participantCarolRecordReply
         = await dwn.processMessage(alice.did, participantCarolRecord.message, { dataStream: participantCarolRecord.dataStream });
       expect(participantCarolRecordReply.status.code).toBe(401);
-      expect(participantCarolRecordReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(participantCarolRecordReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
 
       // 8. Carol CANNOT add Daniel as another participant in the gated-channel without invoking her role
       const participantDanielRecordAttempt1 = await TestDataGenerator.generateRecordsWrite({
         author          : carol,
         recipient       : daniel.did,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel1Record.message.contextId,
       });
       const participantDanielRecordAttempt1Reply
         = await dwn.processMessage(alice.did, participantDanielRecordAttempt1.message, { dataStream: participantDanielRecordAttempt1.dataStream });
       expect(participantDanielRecordAttempt1Reply.status.code).toBe(401);
-      expect(participantDanielRecordAttempt1Reply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+      expect(participantDanielRecordAttempt1Reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
       // 9. Carol can invoke her participant role to add Daniel as another participant in the gated-channel
       const participantDanielRecordAttempt2 = await TestDataGenerator.generateRecordsWrite({
         author          : carol,
         recipient       : daniel.did,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/gatedChannel/participant',
-        protocolPath    : 'community/gatedChannel/participant',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/gatedChannel/participant',
+        modulePath      : 'community/gatedChannel/participant',
         parentContextId : channel1Record.message.contextId,
       });
       const participantDanielRecordAttempt2Reply
@@ -264,9 +264,9 @@ export function testNestedRoleScenarios(): void {
       // 10. Bob can invoke the participant role to write a chat message in the channel
       const bobChatMessage = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/gatedChannel/participant',
-        protocolPath    : 'community/gatedChannel/message',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/gatedChannel/participant',
+        modulePath      : 'community/gatedChannel/message',
         parentContextId : channel1Record.message.contextId
       });
       const bobChatMessageReply = await dwn.processMessage(alice.did, bobChatMessage.message, { dataStream: bobChatMessage.dataStream });
@@ -274,12 +274,12 @@ export function testNestedRoleScenarios(): void {
 
       // 11. Carol can invoke the participant role to read chat messages in the channel
       const carolQuery = await RecordsQuery.create({
-        signer       : Jws.createSigner(carol),
-        protocolRole : 'community/gatedChannel/participant',
-        filter       : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/gatedChannel/message',
-          contextId    : channel1Record.message.contextId
+        signer     : Jws.createSigner(carol),
+        moduleRole : 'community/gatedChannel/participant',
+        filter     : {
+          module     : moduleDefinition.module,
+          modulePath : 'community/gatedChannel/message',
+          contextId  : channel1Record.message.contextId
         }
       });
       const carolQueryReply = await dwn.processMessage(alice.did, carolQuery.message);
@@ -289,9 +289,9 @@ export function testNestedRoleScenarios(): void {
       // 12. Carol can invoke the participant role to react to Bob's chat message in the channel
       const carolReaction = await TestDataGenerator.generateRecordsWrite({
         author          : bob,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/gatedChannel/participant',
-        protocolPath    : 'community/gatedChannel/message/reaction',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/gatedChannel/participant',
+        modulePath      : 'community/gatedChannel/message/reaction',
         parentContextId : bobChatMessage.message.contextId
       });
       const carolReactionReply = await dwn.processMessage(alice.did, carolReaction.message, { dataStream: carolReaction.dataStream });
@@ -299,29 +299,29 @@ export function testNestedRoleScenarios(): void {
 
       // 13. Mallory CANNOT invoke the participant role (which she is not given) to read the chat messages in the channel
       const malloryQuery = await RecordsQuery.create({
-        signer       : Jws.createSigner(mallory),
-        protocolRole : 'community/gatedChannel/participant',
-        filter       : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/gatedChannel/message',
-          contextId    : channel1Record.message.contextId
+        signer     : Jws.createSigner(mallory),
+        moduleRole : 'community/gatedChannel/participant',
+        filter     : {
+          module     : moduleDefinition.module,
+          modulePath : 'community/gatedChannel/message',
+          contextId  : channel1Record.message.contextId
         }
       });
       const malloryQueryReply = await dwn.processMessage(alice.did, malloryQuery.message);
       expect(malloryQueryReply.status.code).toBe(401);
-      expect(malloryQueryReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(malloryQueryReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
 
       // 14. Mallory CANNOT invoke the participant role (which she is not given) to write a chat message in the channel
       const malloryChatMessage = await TestDataGenerator.generateRecordsWrite({
         author          : mallory,
-        protocol        : protocolDefinition.protocol,
-        protocolRole    : 'community/gatedChannel/participant',
-        protocolPath    : 'community/gatedChannel/message',
+        module          : moduleDefinition.module,
+        moduleRole      : 'community/gatedChannel/participant',
+        modulePath      : 'community/gatedChannel/message',
         parentContextId : channel1Record.message.contextId
       });
       const malloryChatMessageReply = await dwn.processMessage(alice.did, malloryChatMessage.message, { dataStream: malloryChatMessage.dataStream });
       expect(malloryChatMessageReply.status.code).toBe(401);
-      expect(malloryChatMessageReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationMatchingRoleRecordNotFound);
+      expect(malloryChatMessageReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationMatchingRoleRecordNotFound);
     });
   });
 }

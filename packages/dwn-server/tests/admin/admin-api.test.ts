@@ -1535,7 +1535,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
 
     it('should return messages after a DWN request creates data', async () => {
       // Send a DWN request that will store a message (even if it fails authorization,
-      // the message store should have the query/protocol config attempt).
+      // the message store should have the query/module config attempt).
       const dwnRequest = {
         jsonrpc : '2.0',
         id      : 'browser-test-1',
@@ -1559,7 +1559,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
       });
 
       // Note: RecordsQuery messages are not stored in the message store.
-      // Only writes and protocol configurations get stored.
+      // Only writes and module configurations get stored.
       // This test verifies the endpoint works — the actual message content
       // depends on what the DWN stores.
       const response = await adminFetch({ port }, '/tenants/did:test:browser-msgs/messages');
@@ -1586,12 +1586,12 @@ describe('AdminApi — tenant data browser endpoints', () => {
     });
   });
 
-  describe('GET /admin/api/tenants/:did/protocols', () => {
-    it('should return protocols for a tenant (may be empty)', async () => {
-      const response = await adminFetch({ port }, '/tenants/did:test:browser-empty/protocols');
+  describe('GET /admin/api/tenants/:did/modules', () => {
+    it('should return modules for a tenant (may be empty)', async () => {
+      const response = await adminFetch({ port }, '/tenants/did:test:browser-empty/modules');
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.protocols).toBeInstanceOf(Array);
+      expect(body.modules).toBeInstanceOf(Array);
     });
   });
 });
@@ -1713,10 +1713,11 @@ describe('AdminApi — config PATCH validation', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
-    port = 8850 + Math.floor(Math.random() * 40);
+    port = 0;
     tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-configval-'));
     dwnServer = new DwnServer({ config: createTestConfig(port, tmpDir) });
     await dwnServer.start();
+    port = dwnServer.httpServer.port!;
   });
 
   afterAll(async () => {
@@ -1883,7 +1884,7 @@ describe('AdminApi — rate limiter hot-reload (#389)', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
-    port = 8850 + Math.floor(Math.random() * 40);
+    port = 0;
     tmpDir = mkdtempSync(join(tmpdir(), 'dwn-admin-ratelimit-'));
     dwnServer = new DwnServer({
       config: {
@@ -1895,6 +1896,7 @@ describe('AdminApi — rate limiter hot-reload (#389)', () => {
       },
     });
     await dwnServer.start();
+    port = dwnServer.httpServer.port!;
   });
 
   afterAll(async () => {

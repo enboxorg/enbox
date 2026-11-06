@@ -2,7 +2,7 @@ import type { GenericMessage } from '../../src/types/message-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
 import type { GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 import type { MessagesQueryReply, MessagesQueryReplyEntry } from '../../src/types/messages-types.js';
-import type { ProtocolDefinition, RecordsQueryReply } from '../../src/index.js';
+import type { ModuleDefinition, RecordsQueryReply } from '../../src/index.js';
 
 import fc from 'fast-check';
 import { rm } from 'node:fs/promises';
@@ -57,7 +57,7 @@ type LiveRecordSnapshot = {
   data: string;
   initialCid?: string;
   latestCid: string;
-  protocolPath: string;
+  modulePath: string;
   recordId: string;
 };
 
@@ -86,15 +86,15 @@ describe('replication replay property', () => {
           harnesses.push(source, replica);
 
           const alice = await TestDataGenerator.generateDidKeyPersona();
-          const protocol = `https://replay-property.example/${runId}`;
+          const module = `https://replay-property.example/${runId}`;
 
-          await driveSourceMutationPlan(source.dwn, alice, protocol, operations);
+          await driveSourceMutationPlan(source.dwn, alice, module, operations);
           await replayFeed(source.dwn, replica.dwn, alice, replayOrderSeed);
 
-          await expectFingerprintsEqual(source.messageStore, replica.messageStore, alice.did, protocol);
-          await expectLiveRecordsEqual(source.dwn, replica.dwn, alice, protocol);
-          await expectOccupantsEqual(source.dwn, replica.dwn, alice, protocol, 'profile', 1);
-          await expectOccupantsEqual(source.dwn, replica.dwn, alice, protocol, 'pin', 2);
+          await expectFingerprintsEqual(source.messageStore, replica.messageStore, alice.did, module);
+          await expectLiveRecordsEqual(source.dwn, replica.dwn, alice, module);
+          await expectOccupantsEqual(source.dwn, replica.dwn, alice, module, 'profile', 1);
+          await expectOccupantsEqual(source.dwn, replica.dwn, alice, module, 'pin', 2);
         }
       ),
       { numRuns, seed: 1046 }
@@ -120,7 +120,7 @@ describe('replication replay property', () => {
 async function driveSourceMutationPlan(
   dwn: Dwn,
   alice: Persona,
-  protocol: string,
+  module: string,
   operations: ReplayOperation[],
 ): Promise<void> {
   let sequence = 1;
@@ -133,41 +133,41 @@ async function driveSourceMutationPlan(
   const notes: Array<{ deleted: boolean; latest: GenerateRecordsWriteOutput['recordsWrite']; recordId: string }> = [];
   const threads: Array<{ deleted: boolean; recordId: string }> = [];
 
-  await installProtocol(dwn, alice, protocolDefinition(protocol, configRevision), nextTimestamp());
+  await installModule(dwn, alice, moduleDefinition(module, configRevision), nextTimestamp());
 
-  const firstNote = await writeRecord(dwn, alice, protocol, 'note', 'initial-note-a', nextTimestamp());
-  const secondNote = await writeRecord(dwn, alice, protocol, 'note', 'initial-note-b', nextTimestamp());
+  const firstNote = await writeRecord(dwn, alice, module, 'note', 'initial-note-a', nextTimestamp());
+  const secondNote = await writeRecord(dwn, alice, module, 'note', 'initial-note-b', nextTimestamp());
   notes.push(
     { deleted: false, latest: firstNote.recordsWrite, recordId: firstNote.message.recordId },
     { deleted: false, latest: secondNote.recordsWrite, recordId: secondNote.message.recordId },
   );
 
-  await writeRecord(dwn, alice, protocol, 'profile', 'profile-a', nextTimestamp());
-  await writeRecord(dwn, alice, protocol, 'profile', 'profile-b', nextTimestamp());
-  await writeRecord(dwn, alice, protocol, 'pin', 'pin-a', nextTimestamp());
-  await writeRecord(dwn, alice, protocol, 'pin', 'pin-b', nextTimestamp());
-  await writeRecord(dwn, alice, protocol, 'pin', 'pin-c', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'profile', 'profile-a', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'profile', 'profile-b', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'pin', 'pin-a', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'pin', 'pin-b', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'pin', 'pin-c', nextTimestamp());
 
-  const thread = await writeRecord(dwn, alice, protocol, 'thread', 'thread-a', nextTimestamp());
-  await writeRecord(dwn, alice, protocol, 'thread/reply', 'reply-a', nextTimestamp(), thread.message.contextId);
+  const thread = await writeRecord(dwn, alice, module, 'thread', 'thread-a', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'thread/reply', 'reply-a', nextTimestamp(), thread.message.contextId);
   threads.push({ deleted: false, recordId: thread.message.recordId });
 
-  await writeRecord(dwn, alice, protocol, 'patch', 'patch-before-squash', nextTimestamp());
+  await writeRecord(dwn, alice, module, 'patch', 'patch-before-squash', nextTimestamp());
 
   for (const operation of operations) {
     if (operation === 'config-churn') {
       configRevision++;
-      await installProtocol(dwn, alice, protocolDefinition(protocol, configRevision), nextTimestamp());
+      await installModule(dwn, alice, moduleDefinition(module, configRevision), nextTimestamp());
     } else if (operation === 'create-note') {
-      const note = await writeRecord(dwn, alice, protocol, 'note', `${operation}-${sequence}`, nextTimestamp());
+      const note = await writeRecord(dwn, alice, module, 'note', `${operation}-${sequence}`, nextTimestamp());
       notes.push({ deleted: false, latest: note.recordsWrite, recordId: note.message.recordId });
     } else if (operation === 'create-pin') {
-      await writeRecord(dwn, alice, protocol, 'pin', `${operation}-${sequence}`, nextTimestamp());
+      await writeRecord(dwn, alice, module, 'pin', `${operation}-${sequence}`, nextTimestamp());
     } else if (operation === 'create-profile') {
-      await writeRecord(dwn, alice, protocol, 'profile', `${operation}-${sequence}`, nextTimestamp());
+      await writeRecord(dwn, alice, module, 'profile', `${operation}-${sequence}`, nextTimestamp());
     } else if (operation === 'create-thread-reply') {
-      const createdThread = await writeRecord(dwn, alice, protocol, 'thread', `${operation}-thread-${sequence}`, nextTimestamp());
-      await writeRecord(dwn, alice, protocol, 'thread/reply', `${operation}-reply-${sequence}`, nextTimestamp(), createdThread.message.contextId);
+      const createdThread = await writeRecord(dwn, alice, module, 'thread', `${operation}-thread-${sequence}`, nextTimestamp());
+      await writeRecord(dwn, alice, module, 'thread/reply', `${operation}-reply-${sequence}`, nextTimestamp(), createdThread.message.contextId);
       threads.push({ deleted: false, recordId: createdThread.message.recordId });
     } else if (operation === 'delete-note') {
       const note = notes.find(candidate => !candidate.deleted);
@@ -182,7 +182,7 @@ async function driveSourceMutationPlan(
         activeThread.deleted = true;
       }
     } else if (operation === 'squash-patch') {
-      await writeRecord(dwn, alice, protocol, 'patch', `${operation}-${sequence}`, nextTimestamp(), undefined, true);
+      await writeRecord(dwn, alice, module, 'patch', `${operation}-${sequence}`, nextTimestamp(), undefined, true);
     } else {
       const note = notes.find(candidate => !candidate.deleted);
       if (note !== undefined) {
@@ -200,10 +200,10 @@ async function driveSourceMutationPlan(
   }
 }
 
-function protocolDefinition(protocol: string, revision: number): ProtocolDefinition {
+function moduleDefinition(module: string, revision: number): ModuleDefinition {
   const extraType = `extra${revision}`;
   return {
-    protocol,
+    module,
     published : false,
     types     : {
       [extraType] : {},
@@ -225,16 +225,16 @@ function protocolDefinition(protocol: string, revision: number): ProtocolDefinit
   };
 }
 
-async function installProtocol(
+async function installModule(
   dwn: Dwn,
   alice: Persona,
-  definition: ProtocolDefinition,
+  definition: ModuleDefinition,
   timestamp: string,
 ): Promise<void> {
-  const configure = await TestDataGenerator.generateProtocolsConfigure({
-    author             : alice,
-    messageTimestamp   : timestamp,
-    protocolDefinition : definition,
+  const configure = await TestDataGenerator.generateModulesConfigure({
+    author           : alice,
+    messageTimestamp : timestamp,
+    moduleDefinition : definition,
   });
   const reply = await dwn.processMessage(alice.did, configure.message);
   expect(reply.status.code).toBe(202);
@@ -243,8 +243,8 @@ async function installProtocol(
 async function writeRecord(
   dwn: Dwn,
   alice: Persona,
-  protocol: string,
-  protocolPath: string,
+  module: string,
+  modulePath: string,
   data: string,
   timestamp: string,
   parentContextId?: string,
@@ -257,9 +257,9 @@ async function writeRecord(
     dateCreated      : timestamp,
     messageTimestamp : timestamp,
     parentContextId,
-    protocol,
-    protocolPath,
-    schema           : `${protocol}/schema/${protocolPath.split('/').at(-1)}`,
+    module,
+    modulePath,
+    schema           : `${module}/schema/${modulePath.split('/').at(-1)}`,
     squash,
   });
   const reply = await dwn.processMessage(alice.did, record.message, { dataStream: record.dataStream });
@@ -323,7 +323,7 @@ async function replayFeed(source: Dwn, replica: Dwn, alice: Persona, replayOrder
   expect(incompleteDeferrals).toBeGreaterThan(0);
 }
 
-// Shuffling puts records before protocol configs, forcing dependency Incomplete outcomes before retry convergence.
+// Shuffling puts records before module configs, forcing dependency Incomplete outcomes before retry convergence.
 function permuteReplayEntries(entries: ReplayEntry[], replayOrderSeed: number): ReplayEntry[] {
   return entries
     .map((entry, index) => ({
@@ -350,7 +350,7 @@ function permuteReplayEntries(entries: ReplayEntry[], replayOrderSeed: number): 
 
 function replayDependencyGroup(replayEntry: ReplayEntry): number {
   const descriptor = replayEntry.entry.message?.descriptor;
-  return descriptor?.interface === DwnInterfaceName.Protocols && descriptor.method === DwnMethodName.Configure ? 1 : 0;
+  return descriptor?.interface === DwnInterfaceName.Modules && descriptor.method === DwnMethodName.Configure ? 1 : 0;
 }
 
 function replaySortKey(replayOrderSeed: number, messageCid: string, index: number): number {
@@ -426,36 +426,36 @@ async function expectFingerprintsEqual(
   source: MessageStoreLevel,
   replica: MessageStoreLevel,
   tenant: string,
-  protocol: string,
+  module: string,
 ): Promise<void> {
   const scopes = [Replication.globalDomain];
   expect(await replica.fingerprint(tenant, scopes)).toBe(await source.fingerprint(tenant, scopes));
 
-  const protocolScopes = [
-    Replication.protocolDomain(protocol),
-    Replication.permissionDomain(protocol),
-    Replication.encryptionDomain(protocol),
+  const moduleScopes = [
+    Replication.moduleDomain(module),
+    Replication.permissionDomain(module),
+    Replication.encryptionDomain(module),
   ];
-  expect(await replica.fingerprint(tenant, protocolScopes)).toBe(await source.fingerprint(tenant, protocolScopes));
+  expect(await replica.fingerprint(tenant, moduleScopes)).toBe(await source.fingerprint(tenant, moduleScopes));
 }
 
 async function expectLiveRecordsEqual(
   source: Dwn,
   replica: Dwn,
   alice: Persona,
-  protocol: string,
+  module: string,
 ): Promise<void> {
-  expect(await liveRecordSnapshot(replica, alice, protocol)).toEqual(await liveRecordSnapshot(source, alice, protocol));
+  expect(await liveRecordSnapshot(replica, alice, module)).toEqual(await liveRecordSnapshot(source, alice, module));
 }
 
 async function liveRecordSnapshot(
   dwn: Dwn,
   alice: Persona,
-  protocol: string,
+  module: string,
 ): Promise<LiveRecordSnapshot[]> {
   const query = await TestDataGenerator.generateRecordsQuery({
     author : alice,
-    filter : { protocol },
+    filter : { module },
   });
   const reply = await dwn.processMessage(alice.did, query.message) as RecordsQueryReply;
   expect(reply.status.code).toBe(200);
@@ -464,11 +464,11 @@ async function liveRecordSnapshot(
   for (const entry of reply.entries ?? []) {
     const { encodedData, initialWrite, ...recordsWrite } = entry;
     snapshot.push({
-      data         : encodedData ?? '',
-      initialCid   : initialWrite === undefined ? undefined : await Message.getCid(initialWrite),
-      latestCid    : await Message.getCid(recordsWrite),
-      protocolPath : recordsWrite.descriptor.protocolPath,
-      recordId     : recordsWrite.recordId,
+      data       : encodedData ?? '',
+      initialCid : initialWrite === undefined ? undefined : await Message.getCid(initialWrite),
+      latestCid  : await Message.getCid(recordsWrite),
+      modulePath : recordsWrite.descriptor.modulePath,
+      recordId   : recordsWrite.recordId,
     });
   }
 
@@ -476,8 +476,8 @@ async function liveRecordSnapshot(
 }
 
 function compareLiveRecords(left: LiveRecordSnapshot, right: LiveRecordSnapshot): number {
-  const leftKey = `${left.protocolPath}:${left.recordId}`;
-  const rightKey = `${right.protocolPath}:${right.recordId}`;
+  const leftKey = `${left.modulePath}:${left.recordId}`;
+  const rightKey = `${right.modulePath}:${right.recordId}`;
   return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
 }
 
@@ -485,12 +485,12 @@ async function expectOccupantsEqual(
   source: Dwn,
   replica: Dwn,
   alice: Persona,
-  protocol: string,
-  protocolPath: string,
+  module: string,
+  modulePath: string,
   expectedMax: number,
 ): Promise<void> {
-  const sourceOccupants = await queryRecordIds(source, alice, protocol, protocolPath);
-  const replicaOccupants = await queryRecordIds(replica, alice, protocol, protocolPath);
+  const sourceOccupants = await queryRecordIds(source, alice, module, modulePath);
+  const replicaOccupants = await queryRecordIds(replica, alice, module, modulePath);
 
   expect(replicaOccupants).toEqual(sourceOccupants);
   expect(sourceOccupants.length).toBeLessThanOrEqual(expectedMax);
@@ -499,12 +499,12 @@ async function expectOccupantsEqual(
 async function queryRecordIds(
   dwn: Dwn,
   alice: Persona,
-  protocol: string,
-  protocolPath: string,
+  module: string,
+  modulePath: string,
 ): Promise<string[]> {
   const query = await TestDataGenerator.generateRecordsQuery({
     author : alice,
-    filter : { protocol, protocolPath },
+    filter : { module, modulePath },
   });
   const reply = await dwn.processMessage(alice.did, query.message) as RecordsQueryReply;
   expect(reply.status.code).toBe(200);

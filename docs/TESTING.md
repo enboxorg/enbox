@@ -78,7 +78,7 @@ bun test tests/store-key.spec.ts    # from a package directory
 Filter by test name (dwn-sdk-js):
 
 ```bash
-GREP="ProtocolsConfigure" bun run test:node-grep
+GREP="ModulesConfigure" bun run test:node-grep
 ```
 
 ## Test Infrastructure

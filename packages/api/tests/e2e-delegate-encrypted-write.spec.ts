@@ -1,21 +1,21 @@
 /**
- * End-to-end test: delegate DID writes to a protocol with encrypted types.
+ * End-to-end test: delegate DID writes to a module with encrypted types.
  *
  * Exercises the exact flow that real dapps (like nutsd) hit when connected
  * via DWeb Connect to an external wallet:
  *
  *   1. Wallet agent creates a did:dht identity with Ed25519 + X25519 keys.
- *   2. Wallet installs a protocol WITH `$keyAgreement` keys on the remote DWN.
+ *   2. Wallet installs a module WITH `$keyAgreement` keys on the remote DWN.
  *   3. Wallet creates a delegate did:jwk and grants permissions.
  *   4. Dapp agent imports the delegate, processes grants.
- *   5. Dapp uses `Enbox.using(Protocol).records.create(...)` to write records.
- *   6. Auto-configure fetches the remote protocol definition (with `$keyAgreement`).
+ *   5. Dapp uses `Enbox.using(Module).records.create(...)` to write records.
+ *   6. Auto-configure fetches the remote module definition (with `$keyAgreement`).
  *   7. The delegate encrypts records using only the public keys from `$keyAgreement`.
  *
  * The test validates:
  *   - The delegate agent has NO owner private signing key.
  *   - Non-encrypted record writes via delegate succeed.
- *   - Encrypted record writes via delegate succeed (ProtocolPath encryption).
+ *   - Encrypted record writes via delegate succeed (ModulePath encryption).
  *   - The TypedEnbox / `Enbox.using()` path handles delegates.
  *   - Record author is the wallet owner DID; signer is the delegate DID.
  *   - Encrypted records carry encryption metadata accepted by the DWN.
@@ -24,14 +24,14 @@
  *   "AgentDwnApi: Unable to get signer for author 'did:dht:...': Key not found"
  * when a delegate tried to write encrypted cashu-wallet records. The root cause
  * was that `TypedEnbox` skipped auto-encryption for delegates, but the DWN SDK
- * enforces `encryptionRequired` at `protocol-authorization-validation.ts:265`
+ * enforces `encryptionRequired` at `module-authorization-validation.ts:265`
  * for every write.
  */
 
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { BearerDid, PortableDid } from '@enbox/dids';
 import type { ConnectHandler, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/auth';
-import type { DwnDataEncodedRecordsWriteMessage, DwnProtocolDefinition, EnboxPlatformAgent } from '@enbox/agent';
+import type { DwnDataEncodedRecordsWriteMessage, DwnModuleDefinition, EnboxPlatformAgent } from '@enbox/agent';
 
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -45,12 +45,12 @@ import {
 import {
   createPermissionGrants, DwnInterface, EnboxUserAgent, ensureDelegateX25519PrivateKey, executeConnectApproval,
 } from '@enbox/agent';
-import { Encoder, EncryptionProtocol, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
+import { Encoder, EncryptionModule, Jws, WRAPPED_GRANT_KEY_FORMAT } from '@enbox/dwn-sdk-js';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { Enbox } from '../src/enbox.js';
-import { publishProtocol } from './utils/test-dwn-operations.js';
+import { publishModule } from './utils/test-dwn-operations.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TestDataGenerator } from './utils/test-data-generator.js';
 import { testDwnUrl } from './utils/test-config.js';
@@ -58,34 +58,34 @@ import { testDwnUrl } from './utils/test-config.js';
 const testDwnUrls: string[] = [testDwnUrl];
 
 // ---------------------------------------------------------------------------
-// Protocol definition mimicking the cashu-wallet protocol:
+// Module definition mimicking the cashu-wallet module:
 // - `mint`          : top-level, NO encryption, has tags
 // - `mint/proof`    : child, encryption REQUIRED, no tags
 // - `transaction`   : top-level, encryption REQUIRED, no tags
 // - `preference`    : top-level, NO encryption, singleton
 // ---------------------------------------------------------------------------
 
-function createEncryptedProtocol(protocolUri: string): DwnProtocolDefinition {
+function createEncryptedModule(moduleUri: string): DwnModuleDefinition {
   return {
     published : false,
-    protocol  : protocolUri,
+    module    : moduleUri,
     types     : {
       mint: {
-        schema      : `${protocolUri}/schemas/mint`,
+        schema      : `${moduleUri}/schemas/mint`,
         dataFormats : ['application/json'],
       },
       proof: {
-        schema             : `${protocolUri}/schemas/proof`,
+        schema             : `${moduleUri}/schemas/proof`,
         dataFormats        : ['application/json'],
         encryptionRequired : true,
       },
       transaction: {
-        schema             : `${protocolUri}/schemas/transaction`,
+        schema             : `${moduleUri}/schemas/transaction`,
         dataFormats        : ['application/json'],
         encryptionRequired : true,
       },
       preference: {
-        schema      : `${protocolUri}/schemas/preference`,
+        schema      : `${moduleUri}/schemas/preference`,
         dataFormats : ['application/json'],
       },
     },
@@ -96,7 +96,7 @@ function createEncryptedProtocol(protocolUri: string): DwnProtocolDefinition {
       transaction : {},
       preference  : {},
     },
-  } as DwnProtocolDefinition;
+  } as DwnModuleDefinition;
 }
 
 const encryptedCodecs = {
@@ -110,8 +110,8 @@ const encryptedCodecs = {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('E2E: Delegate writes to protocol with encrypted types', () => {
-  // "Wallet" agent — owns the identity and protocol.
+describe('E2E: Delegate writes to module with encrypted types', () => {
+  // "Wallet" agent — owns the identity and module.
   // Uses the SHARED DWN server so the dapp agent can query the remote DWN.
   let walletHarness: PlatformAgentTestHarness;
   let walletDid: BearerDid;
@@ -178,29 +178,29 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
   });
 
   /**
-   * Helper: sets up the full delegate connect flow for a given protocol.
+   * Helper: sets up the full delegate connect flow for a given module.
    *
    * Mirrors the real DWeb Connect flow:
-   * 1. Wallet installs the protocol WITH encryption on local AND remote DWN
+   * 1. Wallet installs the module WITH encryption on local AND remote DWN
    * 2. Wallet creates a delegate did:jwk and grants permissions
    * 3. Dapp agent imports the delegate, processes grants, registers sync
    * 4. Returns an Enbox instance ready for use
    */
-  async function setupDelegateFlow(protocolDef: DwnProtocolDefinition): Promise<{
+  async function setupDelegateFlow(moduleDef: DwnModuleDefinition): Promise<{
     delegateDid: PortableDid;
     dappEnbox: Enbox;
   }> {
-    // 1. Wallet installs the protocol WITH encryption (derives `$keyAgreement` keys).
-    const { status: configStatus, protocol: walletProtocol } = await walletDwn.protocols.configure({
-      definition: protocolDef,
+    // 1. Wallet installs the module WITH encryption (derives `$keyAgreement` keys).
+    const { status: configStatus, module: walletModule } = await walletDwn.modules.configure({
+      definition: moduleDef,
     });
     expect(configStatus.code).toBe(202);
 
-    // Send the protocol (with `$keyAgreement`) to the wallet's remote DWN.
-    // This is what real wallets do in `prepareProtocol()`.
-    const { status: sendStatus } = await publishProtocol(
+    // Send the module (with `$keyAgreement`) to the wallet's remote DWN.
+    // This is what real wallets do in `prepareModule()`.
+    const { status: sendStatus } = await publishModule(
       walletHarness.agent,
-      walletProtocol!,
+      walletModule!,
       walletDid.uri,
       walletDid.uri,
     );
@@ -214,9 +214,9 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     const delegatePortable = await delegatedBearerDid.export();
 
     // 3. Create permission grants. Read is the unified read-like Records scope;
-    // Protocols.Configure remains wallet-owned.
-    const grantRequest = WalletConnect.createPermissionRequestForProtocol({
-      definition  : protocolDef,
+    // Modules.Configure remains wallet-owned.
+    const grantRequest = WalletConnect.createPermissionRequestForModule({
+      definition  : moduleDef,
       permissions : ['write', 'read', 'delete'],
     });
 
@@ -241,7 +241,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
 
     // 5. Process grants (stores them in both delegate and connected partitions).
-    const connectedProtocols = await processConnectedGrants({
+    const connectedModules = await processConnectedGrants({
       grants,
       connectedDid : walletDid.uri,
       delegateDid  : delegatePortable.uri,
@@ -253,13 +253,13 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       did     : walletDid.uri,
       options : {
         delegateDid : delegatePortable.uri,
-        protocols   : connectedProtocols,
+        modules     : connectedModules,
       },
     });
 
     // 7. Construct the Enbox instance with delegate support.
     //    Note: we do NOT call sync.sync('pull') here — the auto-configure
-    //    in TypedEnbox fetches the remote protocol definition directly.
+    //    in TypedEnbox fetches the remote module definition directly.
     const dappEnbox = new Enbox({
       agent        : dappHarness.agent,
       connectedDid : walletDid.uri,
@@ -272,14 +272,14 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
   // ─── Tests ───────────────────────────────────────────────────────
 
   describe('TypedEnbox (Enbox.using) delegate encrypted writes', () => {
-    it('should write a non-encrypted record via typed protocol as delegate', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
+    it('should write a non-encrypted record via typed module as delegate', async () => {
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       // Write a `mint` record (non-encrypted type) through the typed API.
       const record = await typed.records.create('mint', {
@@ -293,14 +293,14 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       expect(signerDid).toBe(delegateDid.uri);
     });
 
-    it('should write an encrypted child record via typed protocol as delegate', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
+    it('should write an encrypted child record via typed module as delegate', async () => {
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       // First create the parent `mint` record.
       const mintRecord = await typed.records.create('mint', {
@@ -308,7 +308,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       });
 
       // Write a `mint/proof` record (encrypted child type).
-      // The delegate encrypts using the public keys from the owner's protocol
+      // The delegate encrypts using the public keys from the owner's module
       // definition — no owner private key needed.
       const proofRecord = await typed.records.create(
         'mint/proof' as any,
@@ -328,14 +328,14 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
       expect(signerDid).toBe(delegateDid.uri);
     });
 
-    it('should write a top-level encrypted record via typed protocol as delegate', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
+    it('should write a top-level encrypted record via typed module as delegate', async () => {
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       // Write a `transaction` record (top-level encrypted type).
       const record = await typed.records.create('transaction', {
@@ -352,13 +352,13 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
 
     it('should handle the full nutsd-style flow: mint → proof → transaction', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { delegateDid, dappEnbox } = await setupDelegateFlow(protocolDef);
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { delegateDid, dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       // Step 1: Create a mint (non-encrypted, with tags).
       const mintRecord = await typed.records.create('mint', {
@@ -407,13 +407,13 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
 
     it('should update a delegate-written record', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { dappEnbox } = await setupDelegateFlow(protocolDef);
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       const record = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
@@ -427,13 +427,13 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
     });
 
     it('should delete a delegate-written record', async () => {
-      const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-      const protocolDef = createEncryptedProtocol(protocolUri);
-      const { dappEnbox } = await setupDelegateFlow(protocolDef);
+      const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+      const moduleDef = createEncryptedModule(moduleUri);
+      const { dappEnbox } = await setupDelegateFlow(moduleDef);
 
-      const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+      const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
-      const typed = dappEnbox.using(EncTestProtocol);
+      const typed = dappEnbox.using(EncTestModule);
 
       const record = await typed.records.create('mint', {
         data: { url: 'https://mint.example', unit: 'sat' },
@@ -458,7 +458,7 @@ describe('E2E: Delegate writes to protocol with encrypted types', () => {
  * In-process ConnectHandler that acts as the wallet during tests.
  *
  * Delegates to the canonical wallet-side approval ceremony so this fixture
- * cannot drift from production protocol preparation, grant creation, key
+ * cannot drift from production module preparation, grant creation, key
  * delivery, or session revocation behavior.
  */
 class InProcessWalletHandler implements ConnectHandler {
@@ -543,7 +543,7 @@ async function queryWrappedGrantKeyEnvelope(params: {
   agent: EnboxPlatformAgent;
   ownerDid: string;
   delegateDid: string;
-  protocol: string;
+  module: string;
 }): Promise<any> {
   const { reply } = await params.agent.processDwnRequest({
     author        : params.ownerDid,
@@ -551,10 +551,10 @@ async function queryWrappedGrantKeyEnvelope(params: {
     messageType   : DwnInterface.RecordsQuery,
     messageParams : {
       filter: {
-        protocol     : EncryptionProtocol.uri,
-        protocolPath : EncryptionProtocol.wrappedGrantKeyPath,
-        recipient    : params.delegateDid,
-        tags         : { protocol: params.protocol },
+        module     : EncryptionModule.uri,
+        modulePath : EncryptionModule.wrappedGrantKeyPath,
+        recipient  : params.delegateDid,
+        tags       : { module: params.module },
       },
     },
   });
@@ -587,7 +587,7 @@ async function queryDataEncodedRecord(params: {
   return record!;
 }
 
-describe('E2E: AuthManager.connect() with encrypted protocol', () => {
+describe('E2E: AuthManager.connect() with encrypted module', () => {
   let walletHarness: PlatformAgentTestHarness;
   let walletDid: BearerDid;
   let dappAgent: EnboxUserAgent;
@@ -630,10 +630,10 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
   it('should write encrypted records through the full auth.connect() → Enbox.using() flow', async () => {
     sinon.stub(console, 'warn');
 
-    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-    const protocolDef = createEncryptedProtocol(protocolUri);
+    const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const moduleDef = createEncryptedModule(moduleUri);
 
-    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
     // Create the auth manager with the dapp's agent and our in-process
     // wallet handler — this is the same shape a real dapp would use with
@@ -647,11 +647,11 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
       ),
     });
 
-    // Drive the full connect flow: normalizeProtocolRequests →
+    // Drive the full connect flow: normalizeModuleRequests →
     // handler.requestAccess → importDelegateAndSetupSync →
     // finalizeDelegateSession → AgentSession.
     const session = await auth.connect({
-      protocols: [protocolDef],
+      modules: [moduleDef],
     });
 
     // Verify session shape.
@@ -661,7 +661,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
 
     // Use the session exactly as a dapp would.
     const enbox = Enbox.fromSession(session);
-    const typed = enbox.using(EncTestProtocol);
+    const typed = enbox.using(EncTestModule);
 
     // Write a non-encrypted record.
     const mintRecord = await typed.records.create('mint', {
@@ -696,9 +696,9 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
   it('should refresh real grants for the existing delegate and continue encrypted writes', async () => {
     sinon.stub(console, 'warn');
 
-    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-    const protocolDef = createEncryptedProtocol(protocolUri);
-    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+    const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const moduleDef = createEncryptedModule(moduleUri);
+    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
     const auth = await AuthManager.create({
       agent          : dappAgent,
@@ -709,12 +709,12 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
       ),
     });
 
-    const initialSession = await auth.connect({ protocols: [protocolDef] });
+    const initialSession = await auth.connect({ modules: [moduleDef] });
     const initialStatus = await auth.getConnectionStatus();
     expect(initialStatus.state).toBe('active');
     expect(initialStatus.connectSessionId).toBeDefined();
 
-    const refreshedSession = await auth.refresh({ protocols: [protocolDef] });
+    const refreshedSession = await auth.refresh({ modules: [moduleDef] });
     const refreshedStatus = await auth.getConnectionStatus();
     expect(refreshedSession.did).toBe(initialSession.did);
     expect(refreshedSession.delegateDid).toBe(initialSession.delegateDid);
@@ -722,7 +722,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     expect(refreshedStatus.connectSessionId).toBeDefined();
     expect(refreshedStatus.connectSessionId).not.toBe(initialStatus.connectSessionId);
 
-    const typed = Enbox.fromSession(refreshedSession).using(EncTestProtocol);
+    const typed = Enbox.fromSession(refreshedSession).using(EncTestModule);
     const record = await typed.records.create('transaction', {
       data: { type: 'receive', amount: 900 },
     });
@@ -743,10 +743,10 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
     await suppliedDappHarness.clearStorage();
     await suppliedDappHarness.createAgentDid();
 
-    const protocolUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
-    const protocolDef = createEncryptedProtocol(protocolUri);
+    const moduleUri = `https://e2e-test.example/${TestDataGenerator.randomString(15)}`;
+    const moduleDef = createEncryptedModule(moduleUri);
 
-    const EncTestProtocol = defineProtocol(protocolDef as ProtocolDefinition, encryptedCodecs);
+    const EncTestModule = defineModule(moduleDef as ModuleDefinition, encryptedCodecs);
 
     try {
       const auth = await AuthManager.create({
@@ -761,7 +761,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
       });
 
       const session = await auth.connect({
-        protocols: [protocolDef],
+        modules: [moduleDef],
       });
 
       expect(session.did).toBe(walletDid.uri);
@@ -772,7 +772,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
         agent       : walletHarness.agent,
         ownerDid    : walletDid.uri,
         delegateDid : session.delegateDid!,
-        protocol    : protocolUri,
+        module      : moduleUri,
       });
       expect(envelope.format).toBe(WRAPPED_GRANT_KEY_FORMAT);
 
@@ -782,10 +782,10 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
         target        : walletDid.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : protocolUri,
-          protocolPath : 'transaction',
-          schema       : protocolDef.types.transaction.schema,
-          dataFormat   : 'application/json',
+          module     : moduleUri,
+          modulePath : 'transaction',
+          schema     : moduleDef.types.transaction.schema,
+          dataFormat : 'application/json',
         },
         dataStream: new Blob([JSON.stringify(walletRecordData)]),
       });
@@ -801,7 +801,7 @@ describe('E2E: AuthManager.connect() with encrypted protocol', () => {
       ]);
 
       const enbox = Enbox.fromSession(session);
-      const typed = enbox.using(EncTestProtocol);
+      const typed = enbox.using(EncTestModule);
       const hydratedRecord = await typed.records.read('transaction', {
         from   : walletDid.uri,
         filter : { recordId: walletWrite.message!.recordId },

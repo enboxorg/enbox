@@ -145,7 +145,7 @@ describe('AdminStore', () => {
       // Write messages for several tenants.
       for (let i = 0; i < 5; i++) {
         const persona = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+        await TestDataGenerator.installDefaultTestModule(dwn, persona);
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
         const result = await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
         expect(result.status.code).toBe(202);
@@ -185,7 +185,7 @@ describe('AdminStore', () => {
   describe('purgeTenantData()', () => {
     it('should delete all data for a tenant and return the message count', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       // Write a record for this tenant.
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
@@ -215,7 +215,7 @@ describe('AdminStore', () => {
       await adminStore.getGlobalStats();
 
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
       await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
 
@@ -241,7 +241,7 @@ describe('AdminStore', () => {
         .insertInto('replicationFingerprints')
         .values([
           { tenant: tenant.did, scope: 'global', fingerprint: '1'.repeat(64) },
-          { tenant: tenant.did, scope: 'protocol:example', fingerprint: '2'.repeat(64) },
+          { tenant: tenant.did, scope: 'module:example', fingerprint: '2'.repeat(64) },
           { tenant: otherTenant.did, scope: 'global', fingerprint: '3'.repeat(64) },
         ])
         .execute();
@@ -345,7 +345,7 @@ describe('AdminStore', () => {
     it('should return message metadata for a tenant', async () => {
       // Create a persona and write a message.
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
       const result = await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
       expect(result.status.code).toBe(202);
@@ -371,7 +371,7 @@ describe('AdminStore', () => {
     it('should support pagination with limit and cursor', async () => {
       // Create a persona with multiple messages.
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       for (let i = 0; i < 5; i++) {
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
@@ -397,7 +397,7 @@ describe('AdminStore', () => {
 
     it('should filter by interface', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
       await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
 
@@ -407,17 +407,17 @@ describe('AdminStore', () => {
         expect(msg.interface).toBe('Records');
       }
 
-      // Filter for Protocols interface — should include the protocol install.
-      const { messages: protoMsgs } = await adminStore.getTenantMessages(persona.did, { interface: 'Protocols' });
-      expect(protoMsgs.length).toBeGreaterThanOrEqual(1);
-      for (const msg of protoMsgs) {
-        expect(msg.interface).toBe('Protocols');
+      // Filter for Modules interface — should include the module install.
+      const { messages: moduleMessages } = await adminStore.getTenantMessages(persona.did, { interface: 'Modules' });
+      expect(moduleMessages.length).toBeGreaterThanOrEqual(1);
+      for (const msg of moduleMessages) {
+        expect(msg.interface).toBe('Modules');
       }
     });
 
     it('should filter by method', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
       await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
 
@@ -429,46 +429,46 @@ describe('AdminStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // getTenantProtocolCounts()
+  // getTenantModuleCounts()
   // ---------------------------------------------------------------------------
 
-  describe('getTenantProtocolCounts()', () => {
-    it('should return per-protocol message counts', async () => {
+  describe('getTenantModuleCounts()', () => {
+    it('should return per-module message counts', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
       await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
 
-      const protocols = await adminStore.getTenantProtocolCounts(persona.did);
-      expect(protocols.length).toBeGreaterThanOrEqual(1);
+      const modules = await adminStore.getTenantModuleCounts(persona.did);
+      expect(modules.length).toBeGreaterThanOrEqual(1);
 
-      for (const proto of protocols) {
-        expect(proto.protocol).toBeDefined();
-        expect(typeof proto.protocol).toBe('string');
-        expect(typeof proto.messageCount).toBe('number');
-        expect(proto.messageCount).toBeGreaterThan(0);
+      for (const moduleSummary of modules) {
+        expect(moduleSummary.module).toBeDefined();
+        expect(typeof moduleSummary.module).toBe('string');
+        expect(typeof moduleSummary.messageCount).toBe('number');
+        expect(moduleSummary.messageCount).toBeGreaterThan(0);
       }
     });
 
-    it('should return empty array for tenant with no protocol messages', async () => {
-      const protocols = await adminStore.getTenantProtocolCounts('did:key:no-protocols');
-      expect(protocols).toBeInstanceOf(Array);
-      expect(protocols).toHaveLength(0);
+    it('should return empty array for tenant with no module messages', async () => {
+      const modules = await adminStore.getTenantModuleCounts('did:key:no-modules');
+      expect(modules).toBeInstanceOf(Array);
+      expect(modules).toHaveLength(0);
     });
 
     it('should order by messageCount descending', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
-      // Write multiple records to increase the protocol message count.
+      // Write multiple records to increase the module message count.
       for (let i = 0; i < 3; i++) {
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
         await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
       }
 
-      const protocols = await adminStore.getTenantProtocolCounts(persona.did);
-      for (let i = 1; i < protocols.length; i++) {
-        expect(protocols[i - 1].messageCount).toBeGreaterThanOrEqual(protocols[i].messageCount);
+      const modules = await adminStore.getTenantModuleCounts(persona.did);
+      for (let i = 1; i < modules.length; i++) {
+        expect(modules[i - 1].messageCount).toBeGreaterThanOrEqual(modules[i].messageCount);
       }
     });
   });
@@ -486,7 +486,7 @@ describe('AdminStore', () => {
   describe('getTenantStorageSize()', () => {
     it('should return the correct byte total for a tenant with large data records', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const data = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
@@ -499,7 +499,7 @@ describe('AdminStore', () => {
 
     it('should include small inline data that never reaches the data store', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       // Small data is stored inline in encodedData, NOT in dataRefs.
       const data = TestDataGenerator.randomBytes(SMALL_DATA_SIZE);
@@ -518,7 +518,7 @@ describe('AdminStore', () => {
 
     it('should exclude retained non-latest write history after an update and delete', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const initialData = TestDataGenerator.randomBytes(SMALL_DATA_SIZE);
       const initial = await TestDataGenerator.generateRecordsWrite({ author: persona, data: initialData });
@@ -558,7 +558,7 @@ describe('AdminStore', () => {
 
     it('should sum storage across multiple data records for one tenant', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const sizes = [LARGE_DATA_SIZE, LARGE_DATA_SIZE + 1000, LARGE_DATA_SIZE + 2000];
       for (const size of sizes) {
@@ -576,8 +576,8 @@ describe('AdminStore', () => {
     it('should count storage independently per tenant when sharing the same dataCid', async () => {
       const tenantA = await TestDataGenerator.generateDidKeyPersona();
       const tenantB = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantA);
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantB);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantA);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantB);
 
       // Write the exact same bytes to both tenants — same dataCid.
       const sharedData = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
@@ -605,7 +605,7 @@ describe('AdminStore', () => {
       const newTenantCount = 3;
       for (let i = 0; i < newTenantCount; i++) {
         const persona = await TestDataGenerator.generateDidKeyPersona();
-        await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+        await TestDataGenerator.installDefaultTestModule(dwn, persona);
         const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona });
         await dwn.processMessage(persona.did, recordsWrite.message, { dataStream });
       }
@@ -622,7 +622,7 @@ describe('AdminStore', () => {
   describe('getTenantStats()', () => {
     it('should return correct aggregated stats for a tenant', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const data = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
@@ -631,19 +631,19 @@ describe('AdminStore', () => {
 
       const stats = await adminStore.getTenantStats(persona.did);
 
-      // Protocol install (ProtocolsConfigure) + RecordsWrite = at least 2 messages.
+      // Module install (ModulesConfigure) + RecordsWrite = at least 2 messages.
       expect(stats.messageCount).toBeGreaterThanOrEqual(2);
       expect(stats.dataStorageBytes).toBe(data.length);
-      expect(stats.protocolCount).toBeGreaterThanOrEqual(1);
-      expect(stats.protocols).toHaveLength(stats.protocolCount);
+      expect(stats.moduleCount).toBeGreaterThanOrEqual(1);
+      expect(stats.modules).toHaveLength(stats.moduleCount);
     });
 
     it('should return all-zero stats for a nonexistent tenant', async () => {
       const stats = await adminStore.getTenantStats('did:key:does-not-exist-stats');
       expect(stats.messageCount).toBe(0);
       expect(stats.dataStorageBytes).toBe(0);
-      expect(stats.protocolCount).toBe(0);
-      expect(stats.protocols).toEqual([]);
+      expect(stats.moduleCount).toBe(0);
+      expect(stats.modules).toEqual([]);
     });
   });
 
@@ -678,8 +678,8 @@ describe('AdminStore', () => {
 
       const tenantA = await TestDataGenerator.generateDidKeyPersona();
       const tenantB = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantA);
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantB);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantA);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantB);
 
       // Write the same large data to both tenants (must exceed 30KB to use dataStore).
       const sharedData = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
@@ -702,7 +702,7 @@ describe('AdminStore', () => {
   describe('purgeTenantData() — content-addressed GC', () => {
     it('should delete dataRefs for the purged tenant', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const data = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
@@ -719,7 +719,7 @@ describe('AdminStore', () => {
 
     it('should garbage-collect dataBlocks when the last ref is deleted', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const data = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
@@ -757,8 +757,8 @@ describe('AdminStore', () => {
     it('should NOT garbage-collect dataBlocks when another tenant still references the same dataCid', async () => {
       const tenantA = await TestDataGenerator.generateDidKeyPersona();
       const tenantB = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantA);
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantB);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantA);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantB);
 
       // Write identical large data to both tenants — produces the same dataCid.
       const sharedData = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
@@ -802,8 +802,8 @@ describe('AdminStore', () => {
     it('should garbage-collect after both tenants sharing a dataCid are purged', async () => {
       const tenantA = await TestDataGenerator.generateDidKeyPersona();
       const tenantB = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantA);
-      await TestDataGenerator.installDefaultTestProtocol(dwn, tenantB);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantA);
+      await TestDataGenerator.installDefaultTestModule(dwn, tenantB);
 
       const sharedData = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const writeA = await TestDataGenerator.generateRecordsWrite({ author: tenantA, data: sharedData });
@@ -831,7 +831,7 @@ describe('AdminStore', () => {
 
     it('should handle multiple records with different dataCids for one tenant', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const dataCids: string[] = [];
       for (let i = 0; i < 3; i++) {
@@ -866,7 +866,7 @@ describe('AdminStore', () => {
   describe('exportTenantData()', () => {
     it('should export messages and dataRecords for a tenant', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
 
       const data = TestDataGenerator.randomBytes(LARGE_DATA_SIZE);
       const { recordsWrite, dataStream } = await TestDataGenerator.generateRecordsWrite({ author: persona, data });
@@ -877,7 +877,7 @@ describe('AdminStore', () => {
       // Metadata.
       expect(exported.metadata.tenant).toBe(persona.did);
       expect(exported.metadata.exportedAt).toBeDefined();
-      expect(exported.metadata.messageCount).toBeGreaterThanOrEqual(2); // ProtocolsConfigure + RecordsWrite
+      expect(exported.metadata.messageCount).toBeGreaterThanOrEqual(2); // ModulesConfigure + RecordsWrite
       expect(exported.metadata.dataRecordCount).toBeGreaterThanOrEqual(1);
 
       // Messages should include expected fields.
@@ -903,10 +903,10 @@ describe('AdminStore', () => {
       expect(exported.dataRecords).toEqual([]);
     });
 
-    it('should return empty dataRecords when tenant has only protocol messages', async () => {
+    it('should return empty dataRecords when tenant has only module messages', async () => {
       const persona = await TestDataGenerator.generateDidKeyPersona();
-      await TestDataGenerator.installDefaultTestProtocol(dwn, persona);
-      // No RecordsWrite — only ProtocolsConfigure messages.
+      await TestDataGenerator.installDefaultTestModule(dwn, persona);
+      // No RecordsWrite — only ModulesConfigure messages.
 
       const exported = await adminStore.exportTenantData(persona.did);
       expect(exported.metadata.messageCount).toBeGreaterThanOrEqual(1);

@@ -1,16 +1,16 @@
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { DwnApi, RecordsQueryRequest, RecordsQueryResponse } from '../src/dwn-api.js';
 
 import { describe, expect, it } from 'bun:test';
 
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 const ViewIntegrationDefinition = {
-  protocol  : 'https://example.com/protocols/record-view-integration',
+  module    : 'https://example.com/modules/record-view-integration',
   published : true,
   types     : {
     note: {
@@ -37,11 +37,11 @@ const ViewIntegrationDefinition = {
       $recordLimit: { max: 1 },
     },
   },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
 type NoteData = { title: string };
 
-const ViewIntegrationProtocol = defineProtocol(
+const ViewIntegrationModule = defineModule(
   ViewIntegrationDefinition,
   {
     label      : recordCodecs.text(),
@@ -49,7 +49,7 @@ const ViewIntegrationProtocol = defineProtocol(
     preference : recordCodecs.text(),
   },
 );
-const ViewIntegrationApplication = defineApplicationManifest({ protocols: [ViewIntegrationProtocol] });
+const ViewIntegrationApplication = defineApplicationManifest({ modules: [ViewIntegrationModule] });
 const LABEL_PATH = 'note/label';
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -90,7 +90,7 @@ describe('RecordView local DWN integration', () => {
     const context = await createEnboxTestContext({ application: ViewIntegrationApplication });
 
     try {
-      const typed = context.enbox.using(ViewIntegrationProtocol);
+      const typed = context.enbox.using(ViewIntegrationModule);
 
       const view = await typed.records.observe('note', {
         filter     : { tags: { status: 'draft' } },
@@ -144,7 +144,7 @@ describe('RecordView local DWN integration', () => {
 
     try {
       const captured = captureRecordQueries(context.enbox.dwn);
-      const typed = new TypedEnbox(captured.dwn, ViewIntegrationProtocol);
+      const typed = new TypedEnbox(captured.dwn, ViewIntegrationModule);
 
       const setAtRuntime = typed.records.set as unknown as (
         path: string,
@@ -153,7 +153,7 @@ describe('RecordView local DWN integration', () => {
       await expect(setAtRuntime('preference', { data: 'invalid', within: 'note-context' }))
         .rejects.toThrow('a root singleton does not accept within');
       await expect(setAtRuntime(LABEL_PATH, { data: 'invalid', within: 'too/deep/context' }))
-        .rejects.toThrow('within cannot be deeper than protocol path');
+        .rejects.toThrow('within cannot be deeper than module path');
       expect(captured.requests).toHaveLength(0);
 
       const preference = await typed.records.set('preference', { data: 'compact' });

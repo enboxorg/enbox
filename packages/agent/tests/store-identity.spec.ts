@@ -7,7 +7,7 @@ import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
 import { AgentIdentityApi } from '../src/identity-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { IdentityProtocolDefinition } from '../src/store-data-protocols.js';
+import { IdentityModuleDefinition } from '../src/store-data-modules.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnIdentityStore, InMemoryIdentityStore } from '../src/store-identity.js';
@@ -195,7 +195,7 @@ describe('IdentityStore', () => {
         // Skip this test for InMemoryIdentityStore, as the in-memory store returns all records
         // regardless of the size of the data.
         it.skipIf(IdentityStore.name === 'InMemoryIdentityStore')('throws an error if the Identity records exceed the DWN maximum data size for query results', async () => {
-          // since we are writing directly to the dwn we first initialize the storage protocol
+          // since we are writing directly to the dwn we first initialize the storage module
           await (identityStore as DwnDataStore<IdentityMetadata>)['initialize']({ agent: testHarness.agent });
 
           const identityBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
@@ -206,10 +206,10 @@ describe('IdentityStore', () => {
             target        : testHarness.agent.agentDid.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              dataFormat   : 'application/json',
-              protocol     : IdentityProtocolDefinition.protocol,
-              protocolPath : 'identityMetadata',
-              schema       : IdentityProtocolDefinition.types.identityMetadata.schema,
+              dataFormat : 'application/json',
+              module     : IdentityModuleDefinition.module,
+              modulePath : 'identityMetadata',
+              schema     : IdentityModuleDefinition.types.identityMetadata.schema,
             },
             dataStream: new Blob([identityBytes], { type: 'application/json' })
           });

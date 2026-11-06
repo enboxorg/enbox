@@ -6,8 +6,8 @@ import type {
   ResumableTaskStore,
 } from '../../src/index.js';
 
-import messageProtocolDefinition from '../vectors/protocol-definitions/message.json' with { type: 'json' };
-import nestedProtocolDefinition from '../vectors/protocol-definitions/nested.json' with { type: 'json' };
+import messageModuleDefinition from '../vectors/module-definitions/message.json' with { type: 'json' };
+import nestedModuleDefinition from '../vectors/module-definitions/nested.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { DwnInterfaceName } from '../../src/enums/dwn-interface-method.js';
@@ -15,7 +15,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ProtocolsConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection, Time } from '../../src/index.js';
+import { DataStream, Dwn, DwnConstant, DwnErrorCode, Jws, ModulesConfigure, RecordsDelete, RecordsQuery, RecordsWrite, SortDirection, Time } from '../../src/index.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
 
@@ -58,26 +58,26 @@ export function testRecordsPrune(): void {
     it('should prune all descendants when given RecordsDelete with `prune` set to `true`', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol with foo <- bar <- baz structure
-      const nestedProtocol = nestedProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : nestedProtocol,
+      // install a module with foo <- bar <- baz structure
+      const nestedModule = nestedModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : nestedModule,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // writes 2 foos, 2 bars under foo1, and 2 bazes under bar1
 
       // write 2 foos
       const fooData = TestDataGenerator.randomBytes(100);
       const fooOptions = {
-        signer       : Jws.createSigner(alice),
-        protocol     : nestedProtocol.protocol,
-        protocolPath : 'foo',
-        schema       : nestedProtocol.types.foo.schema,
-        dataFormat   : nestedProtocol.types.foo.dataFormats[0],
-        data         : fooData
+        signer     : Jws.createSigner(alice),
+        module     : nestedModule.module,
+        modulePath : 'foo',
+        schema     : nestedModule.types.foo.schema,
+        dataFormat : nestedModule.types.foo.dataFormats[0],
+        data       : fooData
       };
 
       const foo1 = await RecordsWrite.create(fooOptions);
@@ -92,10 +92,10 @@ export function testRecordsPrune(): void {
       const barData = TestDataGenerator.randomBytes(DwnConstant.maxDataSizeAllowedToBeEncoded + 1);
       const barOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar',
-        schema          : nestedProtocol.types.bar.schema,
-        dataFormat      : nestedProtocol.types.bar.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar',
+        schema          : nestedModule.types.bar.schema,
+        dataFormat      : nestedModule.types.bar.dataFormats[0],
         parentContextId : foo1.message.contextId,
         data            : barData
       };
@@ -112,10 +112,10 @@ export function testRecordsPrune(): void {
       const bazData = TestDataGenerator.randomBytes(100);
       const bazOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar/baz',
-        schema          : nestedProtocol.types.baz.schema,
-        dataFormat      : nestedProtocol.types.baz.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar/baz',
+        schema          : nestedModule.types.baz.schema,
+        dataFormat      : nestedModule.types.baz.dataFormats[0],
         parentContextId : bar1.message.contextId,
         data            : bazData
       };
@@ -149,7 +149,7 @@ export function testRecordsPrune(): void {
       // sanity test messages are inserted in message store
       const queryFilter = [{
         interface : DwnInterfaceName.Records,
-        protocol  : nestedProtocol.protocol
+        module    : nestedModule.module
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
       expect(queryResult.messages).toHaveLength(8); // 2 foos, 2 bars, 2 bazes x 2 messages each
@@ -186,7 +186,7 @@ export function testRecordsPrune(): void {
       // sanity test an external query will no longer return the deleted records
       const queryData = await RecordsQuery.create({
         signer : Jws.createSigner(alice),
-        filter : { protocol: nestedProtocol.protocol }
+        filter : { module: nestedModule.module }
       });
       const reply2 = await dwn.processMessage(alice.did, queryData.message);
       expect(reply2.status.code).toBe(200);
@@ -202,26 +202,26 @@ export function testRecordsPrune(): void {
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol with foo <- bar <- baz structure
-      const nestedProtocol = nestedProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : nestedProtocol,
+      // install a module with foo <- bar <- baz structure
+      const nestedModule = nestedModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : nestedModule,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 1. Alice has a record `foo` with a descendent chain
       // write foo <- bar <- baz records
 
       const fooData = TestDataGenerator.randomBytes(100);
       const fooOptions = {
-        signer       : Jws.createSigner(alice),
-        protocol     : nestedProtocol.protocol,
-        protocolPath : 'foo',
-        schema       : nestedProtocol.types.foo.schema,
-        dataFormat   : nestedProtocol.types.foo.dataFormats[0],
-        data         : fooData
+        signer     : Jws.createSigner(alice),
+        module     : nestedModule.module,
+        modulePath : 'foo',
+        schema     : nestedModule.types.foo.schema,
+        dataFormat : nestedModule.types.foo.dataFormats[0],
+        data       : fooData
       };
       const foo = await RecordsWrite.create(fooOptions);
       const fooWriteResponse = await dwn.processMessage(alice.did, foo.message, { dataStream: DataStream.fromBytes(fooData) });
@@ -230,10 +230,10 @@ export function testRecordsPrune(): void {
       const barData = TestDataGenerator.randomBytes(100);
       const barOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar',
-        schema          : nestedProtocol.types.bar.schema,
-        dataFormat      : nestedProtocol.types.bar.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar',
+        schema          : nestedModule.types.bar.schema,
+        dataFormat      : nestedModule.types.bar.dataFormats[0],
         parentContextId : foo.message.contextId,
         data            : barData
       };
@@ -244,10 +244,10 @@ export function testRecordsPrune(): void {
       const bazData = TestDataGenerator.randomBytes(100);
       const bazOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar/baz',
-        schema          : nestedProtocol.types.baz.schema,
-        dataFormat      : nestedProtocol.types.baz.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar/baz',
+        schema          : nestedModule.types.baz.schema,
+        dataFormat      : nestedModule.types.baz.dataFormats[0],
         parentContextId : bar.message.contextId,
         data            : bazData
       };
@@ -259,7 +259,7 @@ export function testRecordsPrune(): void {
       // sanity records are inserted in message store
       const queryFilter = [{
         interface : DwnInterfaceName.Records,
-        protocol  : nestedProtocol.protocol
+        module    : nestedModule.module
       }];
       const messagesBeforeDelete = await messageStore.query(alice.did, queryFilter);
       expect(messagesBeforeDelete.messages).toHaveLength(3);
@@ -267,7 +267,7 @@ export function testRecordsPrune(): void {
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
         signer : Jws.createSigner(alice),
-        filter : { protocol: nestedProtocol.protocol }
+        filter : { module: nestedModule.module }
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
@@ -324,26 +324,26 @@ export function testRecordsPrune(): void {
 
       const alice = await TestDataGenerator.generateDidKeyPersona();
 
-      // install a protocol with foo <- bar <- baz structure
-      const nestedProtocol = nestedProtocolDefinition;
-      const protocolsConfig = await ProtocolsConfigure.create({
-        definition : nestedProtocol,
+      // install a module with foo <- bar <- baz structure
+      const nestedModule = nestedModuleDefinition;
+      const modulesConfig = await ModulesConfigure.create({
+        definition : nestedModule,
         signer     : Jws.createSigner(alice)
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 1. Alice has a record `foo` with a descendent chain
       // write foo <- bar <- baz records
 
       const fooData = TestDataGenerator.randomBytes(100);
       const fooOptions = {
-        signer       : Jws.createSigner(alice),
-        protocol     : nestedProtocol.protocol,
-        protocolPath : 'foo',
-        schema       : nestedProtocol.types.foo.schema,
-        dataFormat   : nestedProtocol.types.foo.dataFormats[0],
-        data         : fooData
+        signer     : Jws.createSigner(alice),
+        module     : nestedModule.module,
+        modulePath : 'foo',
+        schema     : nestedModule.types.foo.schema,
+        dataFormat : nestedModule.types.foo.dataFormats[0],
+        data       : fooData
       };
       const foo = await RecordsWrite.create(fooOptions);
       const fooWriteResponse = await dwn.processMessage(alice.did, foo.message, { dataStream: DataStream.fromBytes(fooData) });
@@ -352,10 +352,10 @@ export function testRecordsPrune(): void {
       const barData = TestDataGenerator.randomBytes(100);
       const barOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar',
-        schema          : nestedProtocol.types.bar.schema,
-        dataFormat      : nestedProtocol.types.bar.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar',
+        schema          : nestedModule.types.bar.schema,
+        dataFormat      : nestedModule.types.bar.dataFormats[0],
         parentContextId : foo.message.contextId,
         data            : barData
       };
@@ -366,10 +366,10 @@ export function testRecordsPrune(): void {
       const bazData = TestDataGenerator.randomBytes(100);
       const bazOptions = {
         signer          : Jws.createSigner(alice),
-        protocol        : nestedProtocol.protocol,
-        protocolPath    : 'foo/bar/baz',
-        schema          : nestedProtocol.types.baz.schema,
-        dataFormat      : nestedProtocol.types.baz.dataFormats[0],
+        module          : nestedModule.module,
+        modulePath      : 'foo/bar/baz',
+        schema          : nestedModule.types.baz.schema,
+        dataFormat      : nestedModule.types.baz.dataFormats[0],
         parentContextId : bar.message.contextId,
         data            : bazData
       };
@@ -381,7 +381,7 @@ export function testRecordsPrune(): void {
       // sanity records are inserted in message store
       const queryFilter = [{
         interface : DwnInterfaceName.Records,
-        protocol  : nestedProtocol.protocol
+        module    : nestedModule.module
       }];
       const queryResult = await messageStore.query(alice.did, queryFilter);
       expect(queryResult.messages).toHaveLength(3);
@@ -389,7 +389,7 @@ export function testRecordsPrune(): void {
       // sanity verify RecordsQuery returns no records
       const recordsQuery = await RecordsQuery.create({
         signer : Jws.createSigner(alice),
-        filter : { protocol: nestedProtocol.protocol }
+        filter : { module: nestedModule.module }
       });
       const recordsQueryBeforeDeleteReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryBeforeDeleteReply.status.code).toBe(200);
@@ -422,10 +422,10 @@ export function testRecordsPrune(): void {
       expect(prune1RetryReply.status.code).toBe(409);
     });
 
-    describe('prune and co-prune protocol action', () => {
+    describe('prune and co-prune module action', () => {
       it('should only allow a non-owner author to prune if `prune` is allowed and set to `true` in RecordsDelete', async () => {
         // Scenario:
-        // 1. Alice installs a protocol allowing others to add and prune records.
+        // 1. Alice installs a module allowing others to add and prune records.
         // 2. Bob writes a record + a descendant in Alice's DWN.
         // 3. Verify Bob cannot prune the records if `prune` is not set to `true` in RecordsDelete.
         // 4. Verify Bob can prune the records by setting `prune` to `true` in RecordsDelete.
@@ -433,9 +433,9 @@ export function testRecordsPrune(): void {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // 1. Alice installs a protocol allowing others to add and prune records.
-        const protocolDefinition = {
-          protocol  : 'http://post-protocol.xyz',
+        // 1. Alice installs a module allowing others to add and prune records.
+        const moduleDefinition = {
+          module    : 'http://post-module.xyz',
           published : true,
           types     : {
             post       : { },
@@ -469,21 +469,21 @@ export function testRecordsPrune(): void {
             }
           }
         };
-        const protocolsConfig = await ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        const modulesConfig = await ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
         const postOptions = {
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          dataFormat   : 'application/json',
-          data         : postData
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          dataFormat : 'application/json',
+          data       : postData
         };
 
         const post = await RecordsWrite.create(postOptions);
@@ -493,8 +493,8 @@ export function testRecordsPrune(): void {
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
           signer          : Jws.createSigner(bob),
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'post/attachment',
+          module          : moduleDefinition.module,
+          modulePath      : 'post/attachment',
           parentContextId : post.message.contextId,
           dataFormat      : 'application/octet-stream',
           data            : attachmentData
@@ -513,7 +513,7 @@ export function testRecordsPrune(): void {
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
         expect(unauthorizedPostPruneReply.status.code).toBe(401);
-        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
         // 4. Verify Bob can prune the records by setting `prune` to `true` in RecordsDelete.
         const postPrune = await RecordsDelete.create({
@@ -528,7 +528,7 @@ export function testRecordsPrune(): void {
         // sanity test `RecordsQuery` no longer returns the deleted record
         const recordsQuery = await RecordsQuery.create({
           signer : Jws.createSigner(bob),
-          filter : { protocol: protocolDefinition.protocol }
+          filter : { module: moduleDefinition.module }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
@@ -537,31 +537,31 @@ export function testRecordsPrune(): void {
 
       it('should not allow a non-owner author to prune if `prune` is not an authorized action', async () => {
         // Scenario:
-        // 1. Alice installs a protocol allowing others to add records but not prune.
+        // 1. Alice installs a module allowing others to add records but not prune.
         // 2. Bob writes a record + a descendant in Alice's DWN.
         // 3. Verify Bob cannot prune the records.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // 1. Alice installs a protocol allowing others to add records but not prune.
-        const protocolDefinition = messageProtocolDefinition;
-        const protocolsConfig = await ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        // 1. Alice installs a module allowing others to add records but not prune.
+        const moduleDefinition = messageModuleDefinition;
+        const modulesConfig = await ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const messageData = TestDataGenerator.randomBytes(100);
         const messageOptions = {
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'message',
-          schema       : protocolDefinition.types.message.schema,
-          dataFormat   : protocolDefinition.types.message.dataFormats[0],
-          data         : messageData
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'message',
+          schema     : moduleDefinition.types.message.schema,
+          dataFormat : moduleDefinition.types.message.dataFormats[0],
+          data       : messageData
         };
 
         const message = await RecordsWrite.create(messageOptions);
@@ -571,8 +571,8 @@ export function testRecordsPrune(): void {
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
           signer          : Jws.createSigner(bob),
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'message/attachment',
+          module          : moduleDefinition.module,
+          modulePath      : 'message/attachment',
           parentContextId : message.message.contextId,
           dataFormat      : 'application/octet-stream',
           data            : attachmentData
@@ -591,12 +591,12 @@ export function testRecordsPrune(): void {
 
         const deleteReply = await dwn.processMessage(alice.did, messagePrune.message);
         expect(deleteReply.status.code).toBe(401);
-        expect(deleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(deleteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
         // sanity test `RecordsQuery` still returns the records
         const recordsQuery = await RecordsQuery.create({
           signer : Jws.createSigner(alice),
-          filter : { protocol: protocolDefinition.protocol }
+          filter : { module: moduleDefinition.module }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
@@ -605,7 +605,7 @@ export function testRecordsPrune(): void {
 
       it('should allow a non-author to prune if `co-prune` is allowed and `prune` is set to `true` in RecordsDelete', async () => {
         // Scenario:
-        // 1. Alice installs a protocol allowing others to add and prune records.
+        // 1. Alice installs a module allowing others to add and prune records.
         // 2. Bob writes a record + a descendant in Alice's DWN.
         // 3. Verify Carol cannot prune the records if `prune` is not set to `true` in RecordsDelete.
         // 4. Verify Carol can prune the records by setting `prune` to `true` in RecordsDelete.
@@ -614,9 +614,9 @@ export function testRecordsPrune(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        // 1. Alice installs a protocol allowing others to add and prune records.
-        const protocolDefinition = {
-          protocol  : 'http://post-protocol.xyz',
+        // 1. Alice installs a module allowing others to add and prune records.
+        const moduleDefinition = {
+          module    : 'http://post-module.xyz',
           published : true,
           types     : {
             post       : { },
@@ -648,21 +648,21 @@ export function testRecordsPrune(): void {
             }
           }
         };
-        const protocolsConfig = await ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        const modulesConfig = await ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
         const postOptions = {
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          dataFormat   : 'application/json',
-          data         : postData
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          dataFormat : 'application/json',
+          data       : postData
         };
 
         const post = await RecordsWrite.create(postOptions);
@@ -672,8 +672,8 @@ export function testRecordsPrune(): void {
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
           signer          : Jws.createSigner(bob),
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'post/attachment',
+          module          : moduleDefinition.module,
+          modulePath      : 'post/attachment',
           parentContextId : post.message.contextId,
           dataFormat      : 'application/octet-stream',
           data            : attachmentData
@@ -692,7 +692,7 @@ export function testRecordsPrune(): void {
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
         expect(unauthorizedPostPruneReply.status.code).toBe(401);
-        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
         // 4. Verify Carol can prune the records by setting `prune` to `true` in RecordsDelete.
         const postPrune = await RecordsDelete.create({
@@ -707,7 +707,7 @@ export function testRecordsPrune(): void {
         // sanity test `RecordsQuery` no longer returns the deleted record
         const recordsQuery = await RecordsQuery.create({
           signer : Jws.createSigner(bob),
-          filter : { protocol: protocolDefinition.protocol }
+          filter : { module: moduleDefinition.module }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
@@ -716,7 +716,7 @@ export function testRecordsPrune(): void {
 
       it('should not allow a non-author to prune if `prune` is allowed but `co-prune` is not allowed', async () => {
         // Scenario:
-        // 1. Alice installs a protocol allowing others to add records AND only author to prune.
+        // 1. Alice installs a module allowing others to add records AND only author to prune.
         // 2. Bob writes a record + a descendant in Alice's DWN.
         // 3. Verify Carol cannot prune the records.
 
@@ -724,9 +724,9 @@ export function testRecordsPrune(): void {
         const bob = await TestDataGenerator.generateDidKeyPersona();
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
-        // 1. Alice installs a protocol allowing others to add records AND only author to prune.
-        const protocolDefinition = {
-          protocol  : 'http://post-protocol.xyz',
+        // 1. Alice installs a module allowing others to add records AND only author to prune.
+        const moduleDefinition = {
+          module    : 'http://post-module.xyz',
           published : true,
           types     : {
             post       : { },
@@ -760,21 +760,21 @@ export function testRecordsPrune(): void {
             }
           }
         };
-        const protocolsConfig = await ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        const modulesConfig = await ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
         const postOptions = {
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          dataFormat   : 'application/json',
-          data         : postData
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          dataFormat : 'application/json',
+          data       : postData
         };
 
         const post = await RecordsWrite.create(postOptions);
@@ -784,8 +784,8 @@ export function testRecordsPrune(): void {
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
           signer          : Jws.createSigner(bob),
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'post/attachment',
+          module          : moduleDefinition.module,
+          modulePath      : 'post/attachment',
           parentContextId : post.message.contextId,
           dataFormat      : 'application/octet-stream',
           data            : attachmentData
@@ -804,12 +804,12 @@ export function testRecordsPrune(): void {
 
         const deleteReply = await dwn.processMessage(alice.did, postPrune.message);
         expect(deleteReply.status.code).toBe(401);
-        expect(deleteReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(deleteReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
 
         // sanity test `RecordsQuery` still returns the records
         const recordsQuery = await RecordsQuery.create({
           signer : Jws.createSigner(bob),
-          filter : { protocol: protocolDefinition.protocol }
+          filter : { module: moduleDefinition.module }
         });
         const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
         expect(recordsQueryReply.status.code).toBe(200);
@@ -818,16 +818,16 @@ export function testRecordsPrune(): void {
 
       it('should throw if only `delete` is allowed but received a RecordsDelete with `prune` set to `true`', async () => {
         // Scenario:
-        // 1. Alice installs a protocol allowing others to add and delete (not prune) records.
+        // 1. Alice installs a module allowing others to add and delete (not prune) records.
         // 2. Bob writes a record + a descendant in Alice's DWN.
         // 3. Verify Bob cannot prune the records.
 
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
 
-        // 1. Alice installs a protocol allowing others to add and delete (not prune) records.
-        const protocolDefinition = {
-          protocol  : 'http://post-protocol.xyz',
+        // 1. Alice installs a module allowing others to add and delete (not prune) records.
+        const moduleDefinition = {
+          module    : 'http://post-module.xyz',
           published : true,
           types     : {
             post       : { },
@@ -859,21 +859,21 @@ export function testRecordsPrune(): void {
             }
           }
         };
-        const protocolsConfig = await ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        const modulesConfig = await ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
-        const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-        expect(protocolsConfigureReply.status.code).toBe(202);
+        const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+        expect(modulesConfigureReply.status.code).toBe(202);
 
         // 2. Bob writes a record + a descendant in Alice's DWN.
         const postData = TestDataGenerator.randomBytes(100);
         const postOptions = {
-          signer       : Jws.createSigner(bob),
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'post',
-          dataFormat   : 'application/json',
-          data         : postData
+          signer     : Jws.createSigner(bob),
+          module     : moduleDefinition.module,
+          modulePath : 'post',
+          dataFormat : 'application/json',
+          data       : postData
         };
 
         const post = await RecordsWrite.create(postOptions);
@@ -883,8 +883,8 @@ export function testRecordsPrune(): void {
         const attachmentData = TestDataGenerator.randomBytes(100);
         const attachmentOptions = {
           signer          : Jws.createSigner(bob),
-          protocol        : protocolDefinition.protocol,
-          protocolPath    : 'post/attachment',
+          module          : moduleDefinition.module,
+          modulePath      : 'post/attachment',
           parentContextId : post.message.contextId,
           dataFormat      : 'application/octet-stream',
           data            : attachmentData
@@ -903,14 +903,14 @@ export function testRecordsPrune(): void {
 
         const unauthorizedPostPruneReply = await dwn.processMessage(alice.did, unauthorizedPostPrune.message);
         expect(unauthorizedPostPruneReply.status.code).toBe(401);
-        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ProtocolAuthorizationActionNotAllowed);
+        expect(unauthorizedPostPruneReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
       });
 
-      it('should not allow creation of a protocol definition with action rule containing `prune` without `create`', async () => {
+      it('should not allow creation of a module definition with action rule containing `prune` without `create`', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
 
-        const protocolDefinition = {
-          protocol  : 'http://prune-without-create.xyz',
+        const moduleDefinition = {
+          module    : 'http://prune-without-create.xyz',
           published : true,
           types     : {
             post: {},
@@ -927,13 +927,13 @@ export function testRecordsPrune(): void {
           }
         };
 
-        const protocolsConfigureCreatePromise = ProtocolsConfigure.create({
-          definition : protocolDefinition,
+        const modulesConfigureCreatePromise = ModulesConfigure.create({
+          definition : moduleDefinition,
           signer     : Jws.createSigner(alice)
         });
 
-        await expect(protocolsConfigureCreatePromise)
-          .rejects.toThrow(DwnErrorCode.ProtocolsConfigureInvalidActionPruneWithoutCreate);
+        await expect(modulesConfigureCreatePromise)
+          .rejects.toThrow(DwnErrorCode.ModulesConfigureInvalidActionPruneWithoutCreate);
       });
     });
   });

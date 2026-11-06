@@ -27,7 +27,7 @@ describe('requireDwnSuccess', () => {
     const status = {
       code      : 409,
       detail    : 'squash timestamp is not newer than the authoritative floor',
-      errorCode : DwnErrorCode.ProtocolAuthorizationSquashBackstop,
+      errorCode : DwnErrorCode.ModuleAuthorizationSquashBackstop,
       info      : { squashFloorTimestamp: '2026-01-01T00:00:00.000001Z' },
     };
 
@@ -38,10 +38,10 @@ describe('requireDwnSuccess', () => {
     expect(error.status).toEqual(status);
   });
 
-  it('should classify both same-protocol parent misses', () => {
+  it('should classify both same-module parent misses', () => {
     const parentMissingCodes = [
-      DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
-      DwnErrorCode.ProtocolAuthorizationParentNotFoundConstructingRecordChain,
+      DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
+      DwnErrorCode.ModuleAuthorizationParentNotFoundConstructingRecordChain,
     ];
 
     for (const errorCode of parentMissingCodes) {
@@ -53,26 +53,26 @@ describe('requireDwnSuccess', () => {
     }
   });
 
-  it('should keep crossed, uncoded, and cross-protocol responses generic', () => {
+  it('should keep crossed, uncoded, and cross-module responses generic', () => {
     const responses: DwnResponseStatus['status'][] = [
       {
         code      : 400,
         detail    : 'bad request',
-        errorCode : DwnErrorCode.ProtocolAuthorizationSquashBackstop,
+        errorCode : DwnErrorCode.ModuleAuthorizationSquashBackstop,
       },
       {
         code      : 409,
         detail    : 'conflict',
-        errorCode : DwnErrorCode.ProtocolAuthorizationParentRecordNotFound,
+        errorCode : DwnErrorCode.ModuleAuthorizationParentRecordNotFound,
       },
       {
         code   : 400,
-        detail : `${DwnErrorCode.ProtocolAuthorizationParentRecordNotFound}: parent record was not found`,
+        detail : `${DwnErrorCode.ModuleAuthorizationParentRecordNotFound}: parent record was not found`,
       },
       {
         code      : 400,
-        detail    : 'cross-protocol parent record was not found',
-        errorCode : DwnErrorCode.ProtocolAuthorizationCrossProtocolParentNotFound,
+        detail    : 'cross-module parent record was not found',
+        errorCode : DwnErrorCode.ModuleAuthorizationCrossModuleParentNotFound,
       },
     ];
 

@@ -46,7 +46,7 @@ async function connect(): Promise<void> {
 ```
 
 Keep one application for the browser lifetime. It derives the manifest from
-feature protocols and owns the connection, session-scoped resources, commands,
+feature modules and owns the connection, session-scoped resources, commands,
 and cleanup. `application.connection.disconnect()` signs out;
 `application.dispose()` permanently tears down the owner. React binds the same
 runtime through `EnboxProvider application={application}`.

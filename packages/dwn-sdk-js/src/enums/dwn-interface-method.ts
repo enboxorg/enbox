@@ -1,6 +1,6 @@
 export enum DwnInterfaceName {
   Messages = 'Messages',
-  Protocols = 'Protocols',
+  Modules = 'Modules',
   Records = 'Records'
 }
 

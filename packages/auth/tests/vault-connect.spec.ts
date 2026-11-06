@@ -150,11 +150,11 @@ describe('vaultConnect', () => {
 
     await vaultConnect(
       {
-        userAgent                    : agent,
+        userAgent                  : agent,
         emitter,
         storage,
-        defaultSync                  : '15s',
-        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+        defaultSync                : '15s',
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { createIdentity: true },
     );
@@ -162,12 +162,12 @@ describe('vaultConnect', () => {
     // Two registrations: agent DID (early, for recovery support) + new identity DID
     expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
-    expect(syncCalls[0].options.protocols).toEqual([
-      'https://identity.foundation/protocols/web5/identity-store',
-      'https://identity.foundation/protocols/web5/jwk-store',
+    expect(syncCalls[0].options.modules).toEqual([
+      'https://identity.foundation/modules/web5/identity-store',
+      'https://identity.foundation/modules/web5/jwk-store',
     ]);
     expect(syncCalls[1].did).toBe('did:dht:testuser123');
-    expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/profile']);
+    expect(syncCalls[1].options.modules).toEqual(['https://modules.example/profile']);
   });
 
   test('recovers remote identities before creating a fallback identity on fresh vault restore', async () => {
@@ -191,11 +191,11 @@ describe('vaultConnect', () => {
 
     const session = await vaultConnect(
       {
-        userAgent                    : agent,
+        userAgent                  : agent,
         emitter,
         storage,
-        defaultSync                  : '15s',
-        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+        defaultSync                : '15s',
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { recoveryPhrase: 'existing recovery phrase', password: 'pass', createIdentity: true },
     );
@@ -304,10 +304,10 @@ describe('vaultConnect', () => {
 
     await vaultConnect(
       {
-        userAgent                    : agent,
+        userAgent                  : agent,
         emitter,
         storage,
-        defaultIdentitySyncProtocols : ['https://proto.example/profile'],
+        defaultIdentitySyncModules : ['https://modules.example/profile'],
       },
       { password: 'test-pass' },
     );
@@ -315,9 +315,9 @@ describe('vaultConnect', () => {
     // Only recovery registration; app identity scope must not overwrite the agent DID.
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
-    expect(syncCalls[0].options.protocols).toEqual([
-      'https://identity.foundation/protocols/web5/identity-store',
-      'https://identity.foundation/protocols/web5/jwk-store',
+    expect(syncCalls[0].options.modules).toEqual([
+      'https://identity.foundation/modules/web5/identity-store',
+      'https://identity.foundation/modules/web5/jwk-store',
     ]);
   });
 
@@ -558,7 +558,7 @@ describe('vaultConnect', () => {
 
     const grantData = JSON.stringify({
       dateExpires : '2040-06-25T16:09:16.693356Z',
-      scope       : { interface: 'Messages', method: 'Read', protocol: 'https://proto.example/chat' },
+      scope       : { interface: 'Messages', method: 'Read', module: 'https://modules.example/chat' },
       delegated   : true,
     });
     const encoded = btoa(grantData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -567,15 +567,15 @@ describe('vaultConnect', () => {
       contextId   : 'grant-1',
       encodedData : encoded,
       descriptor  : {
-        interface    : 'Records',
-        method       : 'Write',
-        protocol     : 'https://identity.foundation/dwn/permissions',
-        protocolPath : 'grant',
-        recipient    : 'did:dht:external',
-        dateCreated  : '2025-01-01T00:00:00.000000Z',
-        dataFormat   : 'application/json',
-        dataCid      : 'bafytest',
-        dataSize     : 100,
+        interface   : 'Records',
+        method      : 'Write',
+        module      : 'https://identity.foundation/dwn/permissions',
+        modulePath  : 'grant',
+        recipient   : 'did:dht:external',
+        dateCreated : '2025-01-01T00:00:00.000000Z',
+        dataFormat  : 'application/json',
+        dataCid     : 'bafytest',
+        dataSize    : 100,
       },
       authorization: { signature: { signatures: [{ protected: btoa(JSON.stringify({ kid: 'did:dht:owner1#sig' })) }] } },
     };
@@ -601,7 +601,7 @@ describe('vaultConnect', () => {
     expect(syncCalls).toHaveLength(2);
     expect(syncCalls[0].did).toBe('did:dht:testagent');
     expect(syncCalls[1].did).toBe('did:dht:external');
-    expect(syncCalls[1].options.protocols).toEqual(['https://proto.example/chat']);
+    expect(syncCalls[1].options.modules).toEqual(['https://modules.example/chat']);
     expect(syncCalls[1].options.delegateDid).toBe('did:dht:testuser123');
   });
 

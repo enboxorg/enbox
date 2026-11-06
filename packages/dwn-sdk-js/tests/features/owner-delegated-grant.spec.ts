@@ -2,14 +2,14 @@ import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
 import type { DataStore, MessageStore, PermissionScope, ResumableTaskStore } from '../../src/index.js';
 
-import minimalProtocolDefinition from '../vectors/protocol-definitions/minimal.json' with { type: 'json' };
+import minimalModuleDefinition from '../vectors/module-definitions/minimal.json' with { type: 'json' };
 import sinon from 'sinon';
 
 import { DataStream } from '../../src/utils/data-stream.js';
 import { Dwn } from '../../src/dwn.js';
 import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
-import { PermissionGrant } from '../../src/protocols/permission-grant.js';
+import { PermissionGrant } from '../../src/modules/permission-grant.js';
 import { RecordsWrite } from '../../src/interfaces/records-write.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
@@ -17,7 +17,7 @@ import { TestStores } from '../test-stores.js';
 import { Time } from '../../src/utils/time.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnInterfaceName, DwnMethodName, Encoder, PermissionsProtocol, ProtocolsConfigure } from '../../src/index.js';
+import { DwnInterfaceName, DwnMethodName, Encoder, ModulesConfigure, PermissionsModule } from '../../src/index.js';
 
 
 export function testOwnerDelegatedGrant(): void {
@@ -62,16 +62,16 @@ export function testOwnerDelegatedGrant(): void {
         const bob = await TestDataGenerator.generatePersona();
         const appX = await TestDataGenerator.generatePersona();
 
-        // Alice grants App X to write as her for the chat protocol
+        // Alice grants App X to write as her for the chat module
         const scope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'chat'
+          module    : 'chat'
         };
-        const grantToAppX = await PermissionsProtocol.createGrant({
+        const grantToAppX = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow App X to write as me in chat protocol',
+          description : 'Allow App X to write as me in chat module',
           grantedTo   : appX.did,
           scope,
           signer      : Jws.createSigner(alice)
@@ -79,11 +79,11 @@ export function testOwnerDelegatedGrant(): void {
 
         // Bob creates a RecordsWrite message
         const recordsWrite = await RecordsWrite.create({
-          signer       : Jws.createSigner(bob),
-          protocol     : 'http://test-protocol.xyz',
-          protocolPath : 'testRecord',
-          dataFormat   : 'application/octet-stream',
-          data         : TestDataGenerator.randomBytes(10),
+          signer     : Jws.createSigner(bob),
+          module     : 'http://test-module.xyz',
+          modulePath : 'testRecord',
+          dataFormat : 'application/octet-stream',
+          data       : TestDataGenerator.randomBytes(10),
         });
 
         // App X signs over Bob's RecordsWrite as DWN owner but does not include the delegated grant (we remove it below)
@@ -100,16 +100,16 @@ export function testOwnerDelegatedGrant(): void {
         const bob = await TestDataGenerator.generatePersona();
         const appX = await TestDataGenerator.generatePersona();
 
-        // Alice grants App X to write as her for the chat protocol
+        // Alice grants App X to write as her for the chat module
         const scope: PermissionScope = {
           interface : DwnInterfaceName.Records,
           method    : DwnMethodName.Write,
-          protocol  : 'chat'
+          module    : 'chat'
         };
-        const grantToAppX = await PermissionsProtocol.createGrant({
+        const grantToAppX = await PermissionsModule.createGrant({
           delegated   : true, // this is a delegated grant
           dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
-          description : 'Allow App X to write as me in chat protocol',
+          description : 'Allow App X to write as me in chat module',
           grantedTo   : appX.did,
           scope,
           signer      : Jws.createSigner(alice)
@@ -117,11 +117,11 @@ export function testOwnerDelegatedGrant(): void {
 
         // Bob creates a RecordsWrite message
         const recordsWrite = await RecordsWrite.create({
-          signer       : Jws.createSigner(bob),
-          protocol     : 'http://test-protocol.xyz',
-          protocolPath : 'testRecord',
-          dataFormat   : 'application/octet-stream',
-          data         : TestDataGenerator.randomBytes(10),
+          signer     : Jws.createSigner(bob),
+          module     : 'http://test-module.xyz',
+          modulePath : 'testRecord',
+          dataFormat : 'application/octet-stream',
+          data       : TestDataGenerator.randomBytes(10),
         });
 
         // App X attempts to sign over Bob's RecordsWrite as the DWN owner by including an owner-delegated grant
@@ -139,8 +139,8 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should only allow correct entity invoking an owner-delegated grant to write', async () => {
       // scenario:
-      // 1. Alice installs a protocol
-      // 2. Alice creates a delegated grant for app X to write in the protocol
+      // 1. Alice installs a module
+      // 2. Alice creates a delegated grant for app X to write in the module
       // 3. A third party (Bob) authors a RecordsWrite
       // 4. Sanity test that Bob's RecordsWrite cannot be written to Alice's DWN by itself
       // 5. Verify that App Y cannot write Bob's message in Alice's DWN by invoking the delegated grant for App X.
@@ -151,24 +151,24 @@ export function testOwnerDelegatedGrant(): void {
       const appX = await TestDataGenerator.generateDidKeyPersona();
       const appY = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
-      // 2. Alice creates a delegated grant for app X to write in the protocol
+      // 2. Alice creates a delegated grant for app X to write in the module
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         delegated   : true, // this is a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -179,11 +179,11 @@ export function testOwnerDelegatedGrant(): void {
       // 3. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 4. Sanity test that Bob's RecordsWrite cannot be written to Alice's DWN by itself
@@ -219,7 +219,7 @@ export function testOwnerDelegatedGrant(): void {
       // 7. Sanity verify the RecordsWrite written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
@@ -234,8 +234,8 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should not allow entity using a non-delegated grant as an owner-delegated grant to invoke write', async () => {
       // scenario:
-      // 1. Alice installs a protocol
-      // 2. Alice creates a non-delegated grant for app X to write in the protocol
+      // 1. Alice installs a module
+      // 2. Alice creates a non-delegated grant for app X to write in the module
       // 3. A third party (Bob) authors a RecordsWrite
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an non-delegated grant
       // 5. Sanity verify the RecordsWrite is not written by App X
@@ -243,24 +243,24 @@ export function testOwnerDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
-      // 2. Alice creates a non-delegated grant for app X to write in the protocol
+      // 2. Alice creates a non-delegated grant for app X to write in the module
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         // delegated   : true, // intentionally commented out to show that this is not a delegated grant
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -271,11 +271,11 @@ export function testOwnerDelegatedGrant(): void {
       // 3. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an non-delegated grant
@@ -296,44 +296,44 @@ export function testOwnerDelegatedGrant(): void {
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
       expect(recordsQueryReply.entries).toHaveLength(0);
     });
 
-    it('should fail if owner-delegated grant invoked for write has a mismatching interface method or protocol scope', async () => {
+    it('should fail if owner-delegated grant invoked for write has a mismatching interface method or module scope', async () => {
       // scenario:
-      // 1. Alice installs a protocol
-      // 2. Alice creates a delegated grant for app X to read in the protocol
-      // 3. Alice creates a delegated grant for app X to write in another random protocol
+      // 1. Alice installs a module
+      // 2. Alice creates a delegated grant for app X to read in the module
+      // 3. Alice creates a delegated grant for app X to write in another random module
       // 4. A third party (Bob) authors a RecordsWrite
       // 5. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for RecordsRead
-      // 6. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for writing in another random protocol
+      // 6. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for writing in another random module
       // 7. Sanity verify the RecordsWrite is not written by App X
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
-      // 2. Alice creates a delegated grant for app X to read in the protocol
+      // 2. Alice creates a delegated grant for app X to read in the module
       const readScope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Read,
-        protocol
+        module
       };
 
-      const appXGrantToRead = await PermissionsProtocol.createGrant({
+      const appXGrantToRead = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -341,29 +341,29 @@ export function testOwnerDelegatedGrant(): void {
         signer      : Jws.createSigner(alice)
       });
 
-      // 3. Alice creates a delegated grant for app X to write in another random protocol
-      const randomProtocolWriteScope: PermissionScope = {
+      // 3. Alice creates a delegated grant for app X to write in another random module
+      const randomModuleWriteScope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol  : `random-protocol`
+        module    : `random-module`
       };
 
-      const appXGrantToWriteInRandomProtocol = await PermissionsProtocol.createGrant({
+      const appXGrantToWriteInRandomModule = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
-        scope       : randomProtocolWriteScope,
+        scope       : randomModuleWriteScope,
         signer      : Jws.createSigner(alice)
       });
 
       // 4. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 5. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for RecordsRead
@@ -381,11 +381,11 @@ export function testOwnerDelegatedGrant(): void {
       expect(appXWriteReply.status.code).toBe(401);
       expect(appXWriteReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationMethodMismatch);
 
-      // 6. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for writing in another random protocol
+      // 6. Verify that App X cannot write Bob's message in Alice's DWN by invoking a delegated grant for writing in another random module
       const appXAugmentedWrite2 = await RecordsWrite.parse(bobRecordsWrite.message);
       await appXAugmentedWrite2.signAsOwnerDelegate(
         Jws.createSigner(appX),
-        appXGrantToWriteInRandomProtocol.dataEncodedMessage
+        appXGrantToWriteInRandomModule.dataEncodedMessage
       );
 
       const appXWriteReply2 = await dwn.processMessage(
@@ -394,12 +394,12 @@ export function testOwnerDelegatedGrant(): void {
         { dataStream: DataStream.fromBytes(bobRecordsWriteBytes) }
       );
       expect(appXWriteReply2.status.code).toBe(401);
-      expect(appXWriteReply2.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeProtocolMismatch);
+      expect(appXWriteReply2.status.detail).toContain(DwnErrorCode.RecordsGrantAuthorizationScopeModuleMismatch);
 
       // 7. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
@@ -408,7 +408,7 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should fail RecordsWrite if presented with an owner-delegated grant with invalid grantor signature', async () => {
       // scenario:
-      // 1. Alice installs a protocol
+      // 1. Alice installs a module
       // 2. Alice creates a delegated grant for App X to write as Alice, but with invalid signature
       // 3. A third party (Bob) authors a RecordsWrite
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an owner-delegated grant with invalid signature
@@ -417,24 +417,24 @@ export function testOwnerDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice, but with invalid signature
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -448,11 +448,11 @@ export function testOwnerDelegatedGrant(): void {
       // 3. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an owner-delegated grant with invalid signature
@@ -470,7 +470,7 @@ export function testOwnerDelegatedGrant(): void {
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
@@ -479,7 +479,7 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should fail RecordsWrite if grant ID in owner signature payload and CID of owner-delegated grant are mismatching', async () => {
       // scenario:
-      // 1. Alice installs a protocol
+      // 1. Alice installs a module
       // 2. Creates two delegated grant for App X to write as Alice
       // 3. A third party (Bob) authors a RecordsWrite
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an owner-delegated grant with the wrong ID
@@ -488,24 +488,24 @@ export function testOwnerDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 2. Creates two delegated grant for App X to write as Alice
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -515,7 +515,7 @@ export function testOwnerDelegatedGrant(): void {
 
       await Time.minimalSleep();
 
-      const appXGrant2 = await PermissionsProtocol.createGrant({
+      const appXGrant2 = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -526,11 +526,11 @@ export function testOwnerDelegatedGrant(): void {
       // 3. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an owner-delegated grant with the wrong ID
@@ -550,7 +550,7 @@ export function testOwnerDelegatedGrant(): void {
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
@@ -559,7 +559,7 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should fail RecordsWrite if owner-delegated grant is revoked', async () => {
       // scenario:
-      // 1. Alice installs a protocol
+      // 1. Alice installs a module
       // 2. Alice creates a delegated grant for App X to write as Alice
       // 3. Alice revokes the grant
       // 4. A third party (Bob) authors a RecordsWrite
@@ -569,24 +569,24 @@ export function testOwnerDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
         grantedTo   : appX.did,
@@ -598,7 +598,7 @@ export function testOwnerDelegatedGrant(): void {
       expect(permissionGrantWriteReply.status.code).toBe(202);
 
       // 3. Alice revokes the grant
-      const permissionRevoke = await PermissionsProtocol.createRevocation({
+      const permissionRevoke = await PermissionsModule.createRevocation({
         signer : Jws.createSigner(alice),
         grant  : PermissionGrant.parse(appXGrant.dataEncodedMessage),
       });
@@ -613,11 +613,11 @@ export function testOwnerDelegatedGrant(): void {
       // 4. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 5. Verify that App X cannot write Bob's message in Alice's DWN by invoking a revoked owner-delegated grant
@@ -635,7 +635,7 @@ export function testOwnerDelegatedGrant(): void {
       // 6. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);
@@ -644,7 +644,7 @@ export function testOwnerDelegatedGrant(): void {
 
     it('should fail RecordsWrite if owner-delegated grant is expired', async () => {
       // scenario:
-      // 1. Alice installs a protocol
+      // 1. Alice installs a module
       // 2. Alice creates a delegated grant for App X to write as Alice, but make it expired
       // 3. A third party (Bob) authors a RecordsWrite
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an expired owner-delegated grant
@@ -653,24 +653,24 @@ export function testOwnerDelegatedGrant(): void {
       const bob = await TestDataGenerator.generateDidKeyPersona();
       const appX = await TestDataGenerator.generateDidKeyPersona();
 
-      // 1. Alice installs a protocol
-      const protocolDefinition = minimalProtocolDefinition;
-      const protocol = minimalProtocolDefinition.protocol;
-      const protocolsConfig = await ProtocolsConfigure.create({
+      // 1. Alice installs a module
+      const moduleDefinition = minimalModuleDefinition;
+      const module = minimalModuleDefinition.module;
+      const modulesConfig = await ModulesConfigure.create({
         signer     : Jws.createSigner(alice),
-        definition : protocolDefinition
+        definition : moduleDefinition
       });
-      const protocolsConfigureReply = await dwn.processMessage(alice.did, protocolsConfig.message);
-      expect(protocolsConfigureReply.status.code).toBe(202);
+      const modulesConfigureReply = await dwn.processMessage(alice.did, modulesConfig.message);
+      expect(modulesConfigureReply.status.code).toBe(202);
 
       // 2. Alice creates a delegated grant for App X to write as Alice, but make it expired
       const scope: PermissionScope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
-        protocol
+        module
       };
 
-      const appXGrant = await PermissionsProtocol.createGrant({
+      const appXGrant = await PermissionsModule.createGrant({
         delegated   : true,
         dateExpires : Time.getCurrentTimestamp(), // intentionally set to current time to make it expired immediately
         grantedTo   : appX.did,
@@ -681,11 +681,11 @@ export function testOwnerDelegatedGrant(): void {
       // 3. A third party (Bob) authors a RecordsWrite
       const bobRecordsWriteBytes = new TextEncoder().encode('message from Bob');
       const bobRecordsWrite = await RecordsWrite.create({
-        signer       : Jws.createSigner(bob),
-        protocol,
-        protocolPath : 'foo', // this comes from `types` in protocol definition
-        dataFormat   : 'any-format',
-        data         : bobRecordsWriteBytes
+        signer     : Jws.createSigner(bob),
+        module,
+        modulePath : 'foo', // this comes from `types` in module definition
+        dataFormat : 'any-format',
+        data       : bobRecordsWriteBytes
       });
 
       // 4. Verify that App X cannot write Bob's message in Alice's DWN by invoking an expired owner-delegated grant
@@ -703,7 +703,7 @@ export function testOwnerDelegatedGrant(): void {
       // 5. Sanity verify the RecordsWrite is not written by App X
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { protocol }
+        filter : { module }
       });
       const recordsQueryReply = await dwn.processMessage(alice.did, recordsQuery.message);
       expect(recordsQueryReply.status.code).toBe(200);

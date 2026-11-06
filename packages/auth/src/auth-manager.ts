@@ -33,7 +33,7 @@ import type {
   GetConnectionStatusOptions,
   HandlerConnectOptions,
   HeadlessConnectOptions,
-  IdentitySyncProtocols,
+  IdentitySyncModules,
   ImportFromPortableOptions,
   LocalNodeEjectOptions,
   LocalNodeEjectResult,
@@ -60,7 +60,7 @@ import { ConnectDeniedError } from './errors.js';
 import { createDefaultStorage } from './storage/storage.js';
 import { fetchConnectionStatus } from './connect/status.js';
 import { importFromPortable } from './connect/import.js';
-import { normalizeProtocolRequests } from './permissions.js';
+import { normalizeModuleRequests } from './permissions.js';
 import { STORAGE_KEYS } from './types.js';
 import { validateConnectResultGrants } from './connect/validate-grants.js';
 import { vaultConnect } from './connect/vault.js';
@@ -99,6 +99,17 @@ type ConnectionAttemptGuard = {
 function assertNoRecoveryPhrase(options: unknown, method: 'connect' | 'connectVault'): void {
   if (typeof options === 'object' && options !== null && 'recoveryPhrase' in options) {
     throw new TypeError(`AuthManager.${method}: recoveryPhrase is accepted only by restoreFromPhrase().`);
+  }
+}
+
+function assertModuleOptionNames(options: unknown, method: string): void {
+  if (typeof options !== 'object' || options === null) {
+    return;
+  }
+  for (const key of ['protocols', 'identitySyncProtocols']) {
+    if (key in options) {
+      throw new TypeError(`AuthManager.${method}: '${key}' is not supported; use module-based options.`);
+    }
   }
 }
 
@@ -141,7 +152,7 @@ function assertRestoreFromPhraseOptions(options: unknown): asserts options is Re
  * const session = await auth.walletConnect({
  *   displayName: 'My App',
  *   connectServerUrl: 'https://enbox-dwn.fly.dev/connect',
- *   permissionRequests: [{ protocolDefinition: MyProtocol.definition }],
+ *   permissionRequests: [{ moduleDefinition: MyModule.definition }],
  *   onWalletUriReady: (uri) => showQRCode(uri),
  *   validatePin: () => promptUserForPin(),
  * });
@@ -166,7 +177,7 @@ export class AuthManager {
   private readonly _defaultPassword?: string;
   private readonly _passwordProvider?: PasswordProvider;
   private readonly _defaultSync?: SyncOption;
-  private readonly _defaultIdentitySyncProtocols?: IdentitySyncProtocols;
+  private readonly _defaultIdentitySyncModules?: IdentitySyncModules;
   private readonly _defaultDwnEndpoints?: string[];
   private readonly _registration?: RegistrationOptions;
   private readonly _connectHandler?: ConnectHandler;
@@ -187,7 +198,7 @@ export class AuthManager {
     defaultPassword?: string;
     passwordProvider?: PasswordProvider;
     defaultSync?: SyncOption;
-    defaultIdentitySyncProtocols?: IdentitySyncProtocols;
+    defaultIdentitySyncModules?: IdentitySyncModules;
     defaultDwnEndpoints?: string[];
     registration?: RegistrationOptions;
     localDwnEndpoint?: string;
@@ -200,7 +211,7 @@ export class AuthManager {
     this._defaultPassword = params.defaultPassword;
     this._passwordProvider = params.passwordProvider;
     this._defaultSync = params.defaultSync;
-    this._defaultIdentitySyncProtocols = params.defaultIdentitySyncProtocols;
+    this._defaultIdentitySyncModules = params.defaultIdentitySyncModules;
     this._defaultDwnEndpoints = params.defaultDwnEndpoints;
     this._registration = params.registration;
     this._localDwnEndpoint = params.localDwnEndpoint;
@@ -219,6 +230,7 @@ export class AuthManager {
    * @returns A ready-to-use AuthManager instance.
    */
   static async create(options: AuthManagerOptions = {}): Promise<AuthManager> {
+    assertModuleOptionNames(options, 'create');
     if (options.agent !== undefined && options.didDhtNetwork !== undefined) {
       throw new Error('AuthManager: didDhtNetwork cannot be combined with a pre-built agent. Configure the agent directly.');
     }
@@ -264,15 +276,15 @@ export class AuthManager {
       userAgent,
       emitter,
       storage,
-      defaultPassword              : options.password,
-      passwordProvider             : options.passwordProvider,
-      defaultSync                  : options.sync,
-      defaultIdentitySyncProtocols : options.identitySyncProtocols,
-      defaultDwnEndpoints          : options.dwnEndpoints,
-      registration                 : options.registration,
+      defaultPassword            : options.password,
+      passwordProvider           : options.passwordProvider,
+      defaultSync                : options.sync,
+      defaultIdentitySyncModules : options.identitySyncModules,
+      defaultDwnEndpoints        : options.dwnEndpoints,
+      registration               : options.registration,
       localDwnEndpoint,
       localDwnPairing,
-      connectHandler               : options.connectHandler,
+      connectHandler             : options.connectHandler,
     });
 
     // Determine initial state.
@@ -294,7 +306,7 @@ export class AuthManager {
    * appropriate flow based on the options:
    *
    * **Handler-based connect** (dapps): Delegates credential acquisition
-   * to a {@link ConnectHandler}. Triggered when `protocols` or
+   * to a {@link ConnectHandler}. Triggered when `modules` or
    * `connectHandler` is provided.
    *
    * **Local connect** (wallets / CLI): Creates or unlocks a local vault.
@@ -311,7 +323,7 @@ export class AuthManager {
    *   connectHandler: BrowserConnectHandler(),
    * });
    * const session = await auth.connect({
-   *   protocols: [NotesProtocol],
+   *   modules: [NotesModule],
    * });
    * ```
    *
@@ -329,6 +341,7 @@ export class AuthManager {
    * @throws If handler-based connect is attempted without a handler.
    */
   async connect(options?: ConnectOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'connect');
     assertNoRecoveryPhrase(options, 'connect');
     return this._withConnectionAttempt(async (guard) => {
       // 1. Try to restore a previous session first.
@@ -359,6 +372,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async connectVault(options?: VaultConnectOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'connectVault');
     assertNoRecoveryPhrase(options, 'connectVault');
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
@@ -371,6 +385,7 @@ export class AuthManager {
    * - Different local vault: throws without clearing or replacing the existing vault.
    */
   async restoreFromPhrase(options: RestoreFromPhraseOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'restoreFromPhrase');
     assertRestoreFromPhraseOptions(options);
     return this._withConnectionAttempt((guard) => vaultConnect(this._flowContext(guard), options));
   }
@@ -387,6 +402,7 @@ export class AuthManager {
    * @throws If a connection attempt is already in progress.
    */
   async walletConnect(options: WalletConnectOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'walletConnect');
     return this._withConnectionAttempt((guard) => walletConnect(this._flowContext(guard), options));
   }
 
@@ -396,6 +412,7 @@ export class AuthManager {
    * The portable identity contains the DID's private keys and metadata.
    */
   async importFromPortable(options: ImportFromPortableOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'importFromPortable');
     return this._withConnectionAttempt((guard) => importFromPortable(this._flowContext(guard), options));
   }
 
@@ -406,6 +423,7 @@ export class AuthManager {
    * This replaces the manual `previouslyConnected` localStorage pattern.
    */
   async restoreSession(options?: RestoreSessionOptions): Promise<AgentSession | undefined> {
+    assertModuleOptionNames(options, 'restoreSession');
     return this._withConnectionAttempt((guard) => restoreSession(this._flowContext(guard), options));
   }
 
@@ -445,6 +463,7 @@ export class AuthManager {
    * denied refresh leaves the existing session active.
    */
   async refresh(options: RefreshOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'refresh');
     return this._refresh(options);
   }
 
@@ -519,6 +538,7 @@ export class AuthManager {
    * ```
    */
   async connectHeadless(options?: HeadlessConnectOptions): Promise<AgentSession> {
+    assertModuleOptionNames(options, 'connectHeadless');
     return this._withConnectionAttempt(async (guard) => {
       let password = options?.password ?? this._defaultPassword;
       this._assertConnectionAttemptActive(guard);
@@ -927,7 +947,7 @@ export class AuthManager {
       // Resolve the desired sync scope before entering the terminal commit.
       // A teardown that lands while this read is pending invalidates the
       // guard and prevents every mutation below.
-      const derivedProtocols = delegateDid
+      const derivedModules = delegateDid
         ? await deriveActiveSyncScope(this._userAgent, delegateDid)
         : undefined;
       this._assertConnectionAttemptActive(guard);
@@ -940,7 +960,7 @@ export class AuthManager {
           userAgent : this._userAgent,
           connectedDid,
           delegateDid,
-          scope     : delegateDid === undefined ? this._defaultIdentitySyncProtocols : derivedProtocols,
+          scope     : delegateDid === undefined ? this._defaultIdentitySyncModules : derivedModules,
         });
         const session = await finalizeSession({
           userAgent            : this._userAgent,
@@ -1271,10 +1291,10 @@ export class AuthManager {
   /**
    * Determine whether the given options indicate a vault connect flow.
    *
-   * Handler intent is asserted by the presence of a non-empty `protocols`
+   * Handler intent is asserted by the presence of a non-empty `modules`
    * array OR a non-null `connectHandler`; everything else (including the
-   * no-options case, an empty `protocols: []`, and `null` values from JS
-   * callers) routes to vault connect. An empty `protocols` array is
+   * no-options case, an empty `modules: []`, and `null` values from JS
+   * callers) routes to vault connect. An empty `modules` array is
    * intentionally NOT a handler signal — it carries no permission scopes
    * for the handler to authorize, so treating it as handler-flow would
    * produce a zero-grant "connected" session indistinguishable from a
@@ -1286,7 +1306,7 @@ export class AuthManager {
    */
   private _isVaultConnect(options?: ConnectOptions): options is VaultConnectOptions | undefined {
     if (options === undefined || options === null) { return true; }
-    if ('protocols' in options && Array.isArray(options.protocols) && options.protocols.length > 0) { return false; }
+    if ('modules' in options && Array.isArray(options.modules) && options.modules.length > 0) { return false; }
     if ('connectHandler' in options && options.connectHandler !== undefined && options.connectHandler !== null) { return false; }
     return true;
   }
@@ -1299,7 +1319,7 @@ export class AuthManager {
    *
    * 1. Resolve the connect handler (fast-fail when none is reachable).
    * 2. Initialize the vault (agent-only, no identity).
-   * 3. Normalize protocol permission requests.
+   * 3. Normalize module permission requests.
    * 4. Delegate to the connect handler for credential acquisition.
    * 5. Import the delegate DID, process grants, set up sync.
    * 6. Finalize and return the AgentSession.
@@ -1336,8 +1356,8 @@ export class AuthManager {
       () => ensureVaultReady({ userAgent, emitter, password, isFirstLaunch }),
     );
 
-    // 3. Normalize protocol requests.
-    const permissionRequests = normalizeProtocolRequests(options?.protocols);
+    // 3. Normalize module requests.
+    const permissionRequests = normalizeModuleRequests(options?.modules);
 
     // 4. Delegate to the handler.
     const result = await handler.requestAccess({ permissionRequests });
@@ -1402,8 +1422,8 @@ export class AuthManager {
       throw new Error('[@enbox/auth] refresh() requires an active delegated session.');
     }
 
-    if (!Array.isArray(options?.protocols) || options.protocols.length === 0) {
-      throw new Error('[@enbox/auth] refresh() requires at least one protocol request.');
+    if (!Array.isArray(options?.modules) || options.modules.length === 0) {
+      throw new Error('[@enbox/auth] refresh() requires at least one module request.');
     }
 
     const handler = options.connectHandler ?? this._connectHandler;
@@ -1433,7 +1453,7 @@ export class AuthManager {
         `[@enbox/auth] Exported delegate DID '${delegatePortableDid.uri}', expected '${delegateDid}'.`
       );
     }
-    const permissionRequests = normalizeProtocolRequests(options.protocols);
+    const permissionRequests = normalizeModuleRequests(options.modules);
     const result = await handler.requestAccess({
       permissionRequests,
       delegatePortableDid,
@@ -1576,19 +1596,19 @@ export class AuthManager {
    */
   private _flowContext(guard: ConnectionAttemptGuard): FlowContext {
     return {
-      userAgent                    : this._userAgent,
-      emitter                      : this._emitter,
-      storage                      : this._storage,
-      sessionSignal                : guard.sessionLifetime.signal,
-      operationSignal              : AbortSignal.any([guard.lifecycleSignal, guard.sessionLifetime.signal]),
-      defaultPassword              : this._defaultPassword,
-      passwordProvider             : this._passwordProvider,
-      defaultSync                  : this._defaultSync,
-      defaultIdentitySyncProtocols : this._defaultIdentitySyncProtocols,
-      defaultDwnEndpoints          : this._defaultDwnEndpoints,
-      registration                 : this._registration,
-      assertActive                 : (): void => this._assertConnectionAttemptActive(guard),
-      runMutation                  : <T>(operation: () => Promise<T>): Promise<T> =>
+      userAgent                  : this._userAgent,
+      emitter                    : this._emitter,
+      storage                    : this._storage,
+      sessionSignal              : guard.sessionLifetime.signal,
+      operationSignal            : AbortSignal.any([guard.lifecycleSignal, guard.sessionLifetime.signal]),
+      defaultPassword            : this._defaultPassword,
+      passwordProvider           : this._passwordProvider,
+      defaultSync                : this._defaultSync,
+      defaultIdentitySyncModules : this._defaultIdentitySyncModules,
+      defaultDwnEndpoints        : this._defaultDwnEndpoints,
+      registration               : this._registration,
+      assertActive               : (): void => this._assertConnectionAttemptActive(guard),
+      runMutation                : <T>(operation: () => Promise<T>): Promise<T> =>
         this._runConnectionMutation(guard, operation),
       commitSession: <T extends AgentSession | undefined>(
         operation: () => Promise<T>, options?: { completeVaultSetup?: boolean },

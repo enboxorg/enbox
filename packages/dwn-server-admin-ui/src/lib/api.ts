@@ -95,17 +95,17 @@ export const api = {
   deleteQuota: (did: string) => request<any>(`/tenants/${encodeURIComponent(did)}/quota`, { method: 'DELETE' }),
 
   // Tenant data browser
-  getTenantMessages: (did: string, opts?: { interface?: string; method?: string; protocol?: string; limit?: number; cursor?: number }) => {
+  getTenantMessages: (did: string, opts?: { interface?: string; method?: string; module?: string; limit?: number; cursor?: number }) => {
     const params = new URLSearchParams();
     if (opts?.interface) { params.set('interface', opts.interface); }
     if (opts?.method)    { params.set('method', opts.method); }
-    if (opts?.protocol)  { params.set('protocol', opts.protocol); }
+    if (opts?.module)  { params.set('module', opts.module); }
     if (opts?.limit)     { params.set('limit', String(opts.limit)); }
     if (opts?.cursor)    { params.set('cursor', String(opts.cursor)); }
     const qs = params.toString();
     return request<any>(`/tenants/${encodeURIComponent(did)}/messages${qs ? '?' + qs : ''}`);
   },
-  getTenantProtocols: (did: string) => request<any>(`/tenants/${encodeURIComponent(did)}/protocols`),
+  getTenantModules: (did: string) => request<any>(`/tenants/${encodeURIComponent(did)}/modules`),
 
   // Connections
   getConnections: () => request<any>('/connections'),
@@ -145,9 +145,9 @@ export const api = {
 
   // Public profile (no auth — uses DWN convenience routes)
   getProfile: async (did: string): Promise<{ displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string } | null> => {
-    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    const module = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
     try {
-      const res = await fetch(`/${encodeURIComponent(did)}/read/protocols/${protocol}/profile`);
+      const res = await fetch(`/${encodeURIComponent(did)}/read/modules/${module}/profile`);
       if (!res.ok) { return null; }
       return res.json();
     } catch {
@@ -155,12 +155,12 @@ export const api = {
     }
   },
   getProfileAvatarUrl: (did: string): string => {
-    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
-    return `/${encodeURIComponent(did)}/read/protocols/${protocol}/profile/avatar`;
+    const module = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    return `/${encodeURIComponent(did)}/read/modules/${module}/profile/avatar`;
   },
   getProfileHeroUrl: (did: string): string => {
-    const protocol = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
-    return `/${encodeURIComponent(did)}/read/protocols/${protocol}/profile/hero`;
+    const module = 'aHR0cHM6Ly9pZGVudGl0eS5mb3VuZGF0aW9uL3Byb3RvY29scy9wcm9maWxl';
+    return `/${encodeURIComponent(did)}/read/modules/${module}/profile/hero`;
   },
 
   // Validate token — tries /info and returns true if 200.

@@ -1,4 +1,4 @@
-import type { Dwn, ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { Dwn, ModuleDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import { Level } from 'level';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -20,8 +20,8 @@ import { computeAuthorizationEpoch, computeProjectionId } from '../src/types/syn
 
 const progressStorePath = '__TESTDATA__/sync-next-push-page-integration/progress-store';
 const remoteEndpoint = 'http://localhost:9998/dwn';
-const protocol: ProtocolDefinition = {
-  protocol  : 'https://sync-next-push.example/notes',
+const module: ModuleDefinition = {
+  module    : 'https://sync-next-push.example/notes',
   published : true,
   types     : {
     note: {
@@ -32,8 +32,8 @@ const protocol: ProtocolDefinition = {
   structure: { note: {} },
 };
 
-async function createSyncTarget(tenantDid: string, protocolUri = protocol.protocol): Promise<SyncTarget> {
-  const scope = { kind: 'protocolSet' as const, protocols: [protocolUri] as [string] };
+async function createSyncTarget(tenantDid: string, moduleUri = module.module): Promise<SyncTarget> {
+  const scope = { kind: 'moduleSet' as const, modules: [moduleUri] as [string] };
   return {
     authorization      : { kind: 'owner' },
     authorizationEpoch : await computeAuthorizationEpoch({ kind: 'owner' }),
@@ -94,12 +94,12 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should resume an outbound obligation while new feed work continues', async () => {
-    const restartProtocol = { ...protocol, protocol: 'https://sync-next-push.example/runner-restart' };
+    const restartModule = { ...module, module: 'https://sync-next-push.example/runner-restart' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: restartProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: restartModule },
     })).reply.status.code).toBe(202);
     const data = new TextEncoder().encode('restart delivery');
     const write = await harness.agent.dwn.processRequest({
@@ -107,16 +107,16 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : restartProtocol.protocol,
-        protocolPath : 'note',
-        schema       : restartProtocol.types.note.schema,
+        dataFormat : 'application/octet-stream',
+        module     : restartModule.module,
+        modulePath : 'note',
+        schema     : restartModule.types.note.schema,
       },
       dataStream: new Blob([data]),
     });
     expect(write.reply.status.code).toBe(202);
     const writeCid = await Message.getCid(write.message!);
-    const syncTarget = await createSyncTarget(tenantDid, restartProtocol.protocol);
+    const syncTarget = await createSyncTarget(tenantDid, restartModule.module);
 
     const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
     let failed = false;
@@ -142,10 +142,10 @@ describe('SyncNext push-page integration', () => {
         target        : tenantDid,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/octet-stream',
-          protocol     : restartProtocol.protocol,
-          protocolPath : 'note',
-          schema       : restartProtocol.types.note.schema,
+          dataFormat : 'application/octet-stream',
+          module     : restartModule.module,
+          modulePath : 'note',
+          schema     : restartModule.types.note.schema,
         },
         dataStream: new Blob([`fresh-${index}`]),
       })).reply.status.code).toBe(202);
@@ -170,12 +170,12 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should checkpoint a budgeted page prefix and deliver its tail on the next run', async () => {
-    const budgetProtocol = { ...protocol, protocol: 'https://sync-next-push.example/budget-prefix' };
+    const budgetModule = { ...module, module: 'https://sync-next-push.example/budget-prefix' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: budgetProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: budgetModule },
     })).reply.status.code).toBe(202);
     for (let index = 0; index < 33; index++) {
       expect((await harness.agent.dwn.processRequest({
@@ -183,16 +183,16 @@ describe('SyncNext push-page integration', () => {
         target        : tenantDid,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          dataFormat   : 'application/octet-stream',
-          protocol     : budgetProtocol.protocol,
-          protocolPath : 'note',
-          schema       : budgetProtocol.types.note.schema,
+          dataFormat : 'application/octet-stream',
+          module     : budgetModule.module,
+          modulePath : 'note',
+          schema     : budgetModule.types.note.schema,
         },
         dataStream: new Blob([`note-${index}`]),
       })).reply.status.code).toBe(202);
     }
 
-    const syncTarget = await createSyncTarget(tenantDid, budgetProtocol.protocol);
+    const syncTarget = await createSyncTarget(tenantDid, budgetModule.module);
     const appliedCids: string[] = [];
     const originalApply = harness.agent.rpc.applyReplicatedMessage.bind(harness.agent.rpc);
     harness.agent.rpc.applyReplicatedMessage = async (request): Promise<ReplicationApplyResult> => {
@@ -215,12 +215,12 @@ describe('SyncNext push-page integration', () => {
     expect(new Set(appliedCids).size).toBe(34);
   }, 30_000);
 
-  it('should hydrate a new empty remote with a protocol and detached record body', async () => {
+  it('should hydrate a new empty remote with a module and detached record body', async () => {
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: module },
     })).reply.status.code).toBe(202);
 
     const data = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(7);
@@ -229,10 +229,10 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        schema       : protocol.types.note.schema,
+        dataFormat : 'application/octet-stream',
+        module     : module.module,
+        modulePath : 'note',
+        schema     : module.types.note.schema,
       },
       dataStream: new Blob([data]),
     });
@@ -275,8 +275,8 @@ describe('SyncNext push-page integration', () => {
     const configure = await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: protocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: module },
     });
     expect(configure.reply.status.code).toBe(202);
     expect(await remoteDwn.applyReplicatedMessage(tenantDid, configure.message!))
@@ -288,10 +288,10 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : protocol.protocol,
-        protocolPath : 'note',
-        schema       : protocol.types.note.schema,
+        dataFormat : 'application/octet-stream',
+        module     : module.module,
+        modulePath : 'note',
+        schema     : module.types.note.schema,
       },
       dataStream: new Blob([data]),
     });
@@ -336,12 +336,12 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should deliver a retained detached body after a transient remote failure', async () => {
-    const retryProtocol = { ...protocol, protocol: 'https://sync-next-push.example/retry' };
+    const retryModule = { ...module, module: 'https://sync-next-push.example/retry' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: retryProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: retryModule },
     })).reply.status.code).toBe(202);
 
     const data = new Uint8Array(DwnConstant.maxDataSizeAllowedToBeEncoded + 1).fill(9);
@@ -350,16 +350,16 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : retryProtocol.protocol,
-        protocolPath : 'note',
-        schema       : retryProtocol.types.note.schema,
+        dataFormat : 'application/octet-stream',
+        module     : retryModule.module,
+        modulePath : 'note',
+        schema     : retryModule.types.note.schema,
       },
       dataStream: new Blob([data]),
     });
     expect(write.reply.status.code).toBe(202);
 
-    const syncTarget = await createSyncTarget(tenantDid, retryProtocol.protocol);
+    const syncTarget = await createSyncTarget(tenantDid, retryModule.module);
     const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
@@ -401,12 +401,12 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should settle a pruned update receipt when a newer current update delivers', async () => {
-    const updateProtocol = { ...protocol, protocol: 'https://sync-next-push.example/supersession' };
+    const updateModule = { ...module, module: 'https://sync-next-push.example/supersession' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: updateProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: updateModule },
     })).reply.status.code).toBe(202);
 
     const initial = await harness.agent.dwn.processRequest({
@@ -414,16 +414,16 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : updateProtocol.protocol,
-        protocolPath : 'note',
-        schema       : updateProtocol.types.note.schema,
+        dataFormat : 'application/octet-stream',
+        module     : updateModule.module,
+        modulePath : 'note',
+        schema     : updateModule.types.note.schema,
       },
       dataStream: new Blob(['initial note']),
     });
     expect(initial.reply.status.code).toBe(202);
 
-    const syncTarget = await createSyncTarget(tenantDid, updateProtocol.protocol);
+    const syncTarget = await createSyncTarget(tenantDid, updateModule.module);
     const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
@@ -433,12 +433,12 @@ describe('SyncNext push-page integration', () => {
       .toMatchObject({ kind: 'committed', retained: 0 });
 
     const updateParams = {
-      dataFormat   : 'application/octet-stream',
-      dateCreated  : initial.message!.descriptor.dateCreated,
-      protocol     : updateProtocol.protocol,
-      protocolPath : 'note',
-      recordId     : initial.message!.recordId,
-      schema       : updateProtocol.types.note.schema,
+      dataFormat  : 'application/octet-stream',
+      dateCreated : initial.message!.descriptor.dateCreated,
+      module      : updateModule.module,
+      modulePath  : 'note',
+      recordId    : initial.message!.recordId,
+      schema      : updateModule.types.note.schema,
     };
     const firstUpdate = await harness.agent.dwn.processRequest({
       author        : tenantDid,
@@ -505,12 +505,12 @@ describe('SyncNext push-page integration', () => {
   });
 
   it('should retain a pre-delete write that the remote tombstone still needs', async () => {
-    const deleteProtocol = { ...protocol, protocol: 'https://sync-next-push.example/delete-visibility' };
+    const deleteModule = { ...module, module: 'https://sync-next-push.example/delete-visibility' };
     expect((await harness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: deleteProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: deleteModule },
     })).reply.status.code).toBe(202);
 
     const data = new TextEncoder().encode('same note body');
@@ -519,17 +519,17 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        protocol     : deleteProtocol.protocol,
-        protocolPath : 'note',
-        schema       : deleteProtocol.types.note.schema,
-        tags         : { team: 'red' },
+        dataFormat : 'application/octet-stream',
+        module     : deleteModule.module,
+        modulePath : 'note',
+        schema     : deleteModule.types.note.schema,
+        tags       : { team: 'red' },
       },
       dataStream: new Blob([data]),
     });
     expect(initial.reply.status.code).toBe(202);
 
-    const syncTarget = await createSyncTarget(tenantDid, deleteProtocol.protocol);
+    const syncTarget = await createSyncTarget(tenantDid, deleteModule.module);
     const link = await progressStore.getOrCreateLink({
       ...syncNextLinkIdentity(syncTarget),
       authorization : syncTarget.authorization,
@@ -544,13 +544,13 @@ describe('SyncNext push-page integration', () => {
       target        : tenantDid,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/octet-stream',
-        dateCreated  : initial.message!.descriptor.dateCreated,
-        protocol     : deleteProtocol.protocol,
-        protocolPath : 'note',
-        recordId     : initial.message!.recordId,
-        schema       : deleteProtocol.types.note.schema,
-        tags         : { team: 'blue' },
+        dataFormat  : 'application/octet-stream',
+        dateCreated : initial.message!.descriptor.dateCreated,
+        module      : deleteModule.module,
+        modulePath  : 'note',
+        recordId    : initial.message!.recordId,
+        schema      : deleteModule.types.note.schema,
+        tags        : { team: 'blue' },
       },
       dataStream: new Blob([data]),
     });

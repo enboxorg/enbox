@@ -4,7 +4,7 @@
  * Validates the full identity lifecycle against a live DWN server:
  *
  * 1. Create a new agent + identity via Web5.connect()
- * 2. Install the Profile protocol and write randomly generated persona data
+ * 2. Install the Profile module and write randomly generated persona data
  * 3. Push-sync the profile to the remote DWN
  * 4. Destroy the local agent data (simulate device loss)
  * 5. Recover the agent from the seed phrase via Web5.connect()

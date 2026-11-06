@@ -114,16 +114,16 @@ export class Message {
     delegatedGrant?: DataEncodedRecordsWriteMessage,
     permissionGrantId?: string,
     permissionGrantIds?: string[],
-    protocolRole?: string
+    moduleRole?: string
   }): Promise<AuthorizationModel> {
-    const { descriptor, signer, delegatedGrant, permissionGrantId, permissionGrantIds, protocolRole } = input;
+    const { descriptor, signer, delegatedGrant, permissionGrantId, permissionGrantIds, moduleRole } = input;
 
     let delegatedGrantId;
     if (delegatedGrant !== undefined) {
       delegatedGrantId = await Message.getCid(delegatedGrant);
     }
 
-    const signature = await Message.createSignature(descriptor, signer, { delegatedGrantId, permissionGrantId, permissionGrantIds, protocolRole });
+    const signature = await Message.createSignature(descriptor, signer, { delegatedGrantId, permissionGrantId, permissionGrantIds, moduleRole });
 
     const authorization: AuthorizationModel = {
       signature
@@ -143,21 +143,21 @@ export class Message {
   public static async createSignature(
     descriptor: Descriptor,
     signer: MessageSigner,
-    additionalPayloadProperties?: { delegatedGrantId?: string, permissionGrantId?: string, permissionGrantIds?: string[], protocolRole?: string }
+    additionalPayloadProperties?: { delegatedGrantId?: string, permissionGrantId?: string, permissionGrantIds?: string[], moduleRole?: string }
   ): Promise<GeneralJws> {
     const descriptorCid = await Cid.computeCid(descriptor);
     const {
       delegatedGrantId,
       permissionGrantId,
       permissionGrantIds,
-      protocolRole
+      moduleRole
     } = additionalPayloadProperties ?? {};
     const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({ permissionGrantId, permissionGrantIds });
 
     const signaturePayload: GenericSignaturePayload = {
       descriptorCid,
       delegatedGrantId,
-      protocolRole,
+      moduleRole,
       ...permissionGrantInvocation
     };
     removeUndefinedProperties(signaturePayload);
@@ -207,7 +207,7 @@ export class Message {
   /**
    * Returns all permission grant IDs invoked by a signature payload.
    *
-   * Direct Records/Protocols operations carry a single `permissionGrantId`.
+   * Direct Records/Modules operations carry a single `permissionGrantId`.
    * Messages operations carry `permissionGrantIds`. Generic cleanup and
    * revocation code uses this helper across both wire shapes.
    */

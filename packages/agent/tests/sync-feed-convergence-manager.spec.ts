@@ -180,16 +180,16 @@ describe('SyncFeedConvergenceManager', () => {
 
   it('uses only relevant, deduplicated admission dead letters in the repeated-failure signature', async () => {
     const syncTarget = target({
-      scope: { kind: 'protocolSet', protocols: ['https://protocol.example/covered'] },
+      scope: { kind: 'moduleSet', modules: ['https://module.example/covered'] },
     });
     const context = contextFor(syncTarget);
     const { manager, operations } = createFixture({ activeLink: context.link, syncTarget });
     const relevantA = deadLetter('cid-a');
-    const relevantB = deadLetter('cid-b', { protocol: 'https://protocol.example/covered' });
-    const relevantC = deadLetter('cid-c', { protocol: 'https://protocol.example/covered' });
+    const relevantB = deadLetter('cid-b', { module: 'https://module.example/covered' });
+    const relevantC = deadLetter('cid-c', { module: 'https://module.example/covered' });
     const irrelevant = (suffix: string): DeadLetterEntry[] => [
       deadLetter(`wrong-remote-${suffix}`, { remoteEndpoint: 'https://other.example' }),
-      deadLetter(`wrong-protocol-${suffix}`, { protocol: 'https://protocol.example/sibling' }),
+      deadLetter(`wrong-module-${suffix}`, { module: 'https://module.example/sibling' }),
     ];
     operations.getDeadLettersForTenant.onCall(0).resolves([
       relevantB,
@@ -246,18 +246,18 @@ describe('SyncFeedConvergenceManager', () => {
     expect(operations.transitionToPaused.calledOnceWithExactly(context.linkKey, context.link)).toBe(true);
   });
 
-  it('includes protocol-tagged admission failures in a full-scope signature', async () => {
+  it('includes module-tagged admission failures in a full-scope signature', async () => {
     const syncTarget = target();
     const context = contextFor(syncTarget);
     const { manager, operations } = createFixture({ activeLink: context.link, maxAttempts: 2, syncTarget });
     operations.getDeadLettersForTenant.onFirstCall().resolves([
-      deadLetter('cid-a', { protocol: 'https://protocol.example/first' }),
+      deadLetter('cid-a', { module: 'https://module.example/first' }),
     ]);
     operations.getDeadLettersForTenant.onSecondCall().resolves([
-      deadLetter('cid-b', { protocol: 'https://protocol.example/second' }),
+      deadLetter('cid-b', { module: 'https://module.example/second' }),
     ]);
     operations.getDeadLettersForTenant.onThirdCall().resolves([
-      deadLetter('cid-b', { protocol: 'https://protocol.example/second' }),
+      deadLetter('cid-b', { module: 'https://module.example/second' }),
     ]);
 
     await manager.handleVerifiedDivergence(syncTarget, divergence(), context);

@@ -1,19 +1,19 @@
 import type { GenericMessage } from '../types/message-types.js';
 import type { MessagesPermissionScope } from '../types/permission-types.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
-import type { ProtocolScope } from '../utils/permission-scope.js';
+import type { ModulesConfigureMessage } from '../types/modules-types.js';
+import type { ModuleScope } from '../utils/permission-scope.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { DataEncodedRecordsWriteMessage, RecordsDeleteMessage, RecordsWriteMessage } from '../types/records-types.js';
 import type { MessagesQueryMessage, MessagesReadMessage, MessagesSubscribeMessage } from '../types/messages-types.js';
 
 import { DwnInterfaceName } from '../enums/dwn-interface-method.js';
-import { EncryptionProtocol } from '../protocols/encryption.js';
+import { EncryptionModule } from '../modules/encryption.js';
 import { GrantAuthorization } from './grant-authorization.js';
 import { Jws } from '../utils/jws.js';
 import { Message } from './message.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
-import { PermissionsProtocol } from '../protocols/permissions.js';
+import { PermissionsModule } from '../modules/permissions.js';
 import { Records } from '../utils/records.js';
 import { Replication } from '../utils/replication.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
@@ -149,25 +149,25 @@ export class MessagesGrantAuthorization {
 
     if (filters.length === 0 && !MessagesGrantAuthorization.hasUnscopedGrant(scopes)) {
       throw new DwnError(
-        DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeProtocolScope,
-        `A protocol-scoped grant cannot authorize an unfiltered subscription`
+        DwnErrorCode.MessagesGrantAuthorizationUnfilteredSubscribeModuleScope,
+        `A module-scoped grant cannot authorize an unfiltered subscription`
       );
     }
 
     let metadataOnly = false;
     for (const filter of filters) {
       const target = {
-        protocol     : filter.protocol,
-        protocolPath : filter.protocolPath ?? filter.protocolPathPrefix,
-        contextId    : filter.contextIdPrefix,
+        module     : filter.module,
+        modulePath : filter.modulePath ?? filter.modulePathPrefix,
+        contextId  : filter.contextIdPrefix,
       };
       const matchingScopes = scopes.filter(scope => PermissionScopeMatcher.matches(scope, target));
       if (matchingScopes.length > 0) {
         const filterIsMetadataOnly = matchingScopes.every(MessagesGrantAuthorization.isSubtreeScope);
-        if (filterIsMetadataOnly && filter.protocol !== undefined && Replication.isCoreProtocolUri(filter.protocol)) {
+        if (filterIsMetadataOnly && filter.module !== undefined && Replication.isCoreModuleUri(filter.module)) {
           throw new DwnError(
-            DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
-            'Subtree grants cannot authorize protocol support records',
+            DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch,
+            'Subtree grants cannot authorize module support records',
           );
         }
         metadataOnly ||= filterIsMetadataOnly;
@@ -175,8 +175,8 @@ export class MessagesGrantAuthorization {
       }
 
       throw new DwnError(
-        DwnErrorCode.MessagesGrantAuthorizationSubscribeProtocolMismatch,
-        `No permission grant scope matches protocol ${filter.protocol}`
+        DwnErrorCode.MessagesGrantAuthorizationSubscribeModuleMismatch,
+        `No permission grant scope matches module ${filter.module}`
       );
     }
 
@@ -184,7 +184,7 @@ export class MessagesGrantAuthorization {
   }
 
   private static hasUnscopedGrant(scopes: MessagesPermissionScope[]): boolean {
-    return scopes.some(scope => scope.protocol === undefined);
+    return scopes.some(scope => scope.module === undefined);
   }
 
   /**
@@ -276,13 +276,13 @@ export class MessagesGrantAuthorization {
       );
     }
 
-    if (incomingScope.protocol === undefined) {
+    if (incomingScope.module === undefined) {
       return true;
     }
 
-    if (messageToGet.descriptor.interface === DwnInterfaceName.Protocols) {
-      return MessagesGrantAuthorization.isProtocolsConfigureScopeAuthorized(
-        messageToGet as ProtocolsConfigureMessage,
+    if (messageToGet.descriptor.interface === DwnInterfaceName.Modules) {
+      return MessagesGrantAuthorization.isModulesConfigureScopeAuthorized(
+        messageToGet as ModulesConfigureMessage,
         incomingScope
       );
     }
@@ -302,17 +302,17 @@ export class MessagesGrantAuthorization {
       validationStateReader
     );
 
-    if (incomingScope.protocol === undefined) {
+    if (incomingScope.module === undefined) {
       return true;
     }
 
-    const protocol = recordsWriteMessage.descriptor.protocol;
+    const module = recordsWriteMessage.descriptor.module;
     if (MessagesGrantAuthorization.isSubtreeScope(incomingScope) &&
-        protocol !== undefined && Replication.isCoreProtocolUri(protocol)) {
+        module !== undefined && Replication.isCoreModuleUri(module)) {
       return false;
     }
 
-    if (protocol === PermissionsProtocol.uri) {
+    if (module === PermissionsModule.uri) {
       return MessagesGrantAuthorization.isPermissionRecordScopeAuthorized(
         tenant,
         recordsWriteMessage,
@@ -321,7 +321,7 @@ export class MessagesGrantAuthorization {
       );
     }
 
-    if (protocol === EncryptionProtocol.uri) {
+    if (module === EncryptionModule.uri) {
       return MessagesGrantAuthorization.isEncryptionRecordScopeAuthorized(recordsWriteMessage, incomingScope);
     }
 
@@ -334,13 +334,13 @@ export class MessagesGrantAuthorization {
     incomingScope: MessagesPermissionScope,
     validationStateReader: ValidationStateReader,
   ): Promise<boolean> {
-    const permissionScope = await PermissionsProtocol.getScopeFromPermissionRecord(
+    const permissionScope = await PermissionsModule.getScopeFromPermissionRecord(
       tenant,
       validationStateReader,
       recordsWriteMessage as DataEncodedRecordsWriteMessage
     );
 
-    return PermissionsProtocol.hasProtocolScope(permissionScope)
+    return PermissionsModule.hasModuleScope(permissionScope)
       && PermissionScopeMatcher.matches(incomingScope, permissionScope);
   }
 
@@ -349,27 +349,27 @@ export class MessagesGrantAuthorization {
     incomingScope: MessagesPermissionScope,
   ): boolean {
     const tags = recordsWriteMessage.descriptor.tags;
-    const protocol = tags?.protocol;
-    if (typeof protocol !== 'string') {
+    const module = tags?.module;
+    if (typeof module !== 'string') {
       return false;
     }
 
     return PermissionScopeMatcher.matches(incomingScope, {
-      protocol,
-      protocolPath : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'protocolPath'),
-      contextId    : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'contextId'),
+      module,
+      modulePath : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'modulePath'),
+      contextId  : MessagesGrantAuthorization.getStringTag(recordsWriteMessage, 'contextId'),
     });
   }
 
-  private static isProtocolsConfigureScopeAuthorized(
-    protocolsConfigureMessage: ProtocolsConfigureMessage,
+  private static isModulesConfigureScopeAuthorized(
+    modulesConfigureMessage: ModulesConfigureMessage,
     incomingScope: MessagesPermissionScope
   ): boolean {
-    // Protocol-wide feeds include the definition and other support records.
+    // Module-wide feeds include the definition and other support records.
     // Subtree feeds contain only records inside their explicit scope.
     return !MessagesGrantAuthorization.isSubtreeScope(incomingScope) &&
-      incomingScope.protocol !== undefined &&
-      incomingScope.protocol === protocolsConfigureMessage.descriptor.definition.protocol;
+      incomingScope.module !== undefined &&
+      incomingScope.module === modulesConfigureMessage.descriptor.definition.module;
   }
 
   private static async getAssociatedRecordsWrite(
@@ -384,10 +384,10 @@ export class MessagesGrantAuthorization {
     return validationStateReader.fetchNewestRecordsWrite(tenant, recordsMessage.descriptor.recordId);
   }
 
-  private static getRecordsScopeTarget(recordsWriteMessage: RecordsWriteMessage): ProtocolScope {
-    const { protocol, protocolPath } = recordsWriteMessage.descriptor;
+  private static getRecordsScopeTarget(recordsWriteMessage: RecordsWriteMessage): ModuleScope {
+    const { module, modulePath } = recordsWriteMessage.descriptor;
     const { contextId } = recordsWriteMessage;
-    return { protocol, protocolPath, contextId };
+    return { module, modulePath, contextId };
   }
 
   private static getStringTag(recordsWriteMessage: RecordsWriteMessage, tag: string): string | undefined {
@@ -396,6 +396,6 @@ export class MessagesGrantAuthorization {
   }
 
   private static isSubtreeScope(scope: MessagesPermissionScope): boolean {
-    return scope.protocolPath !== undefined || scope.contextId !== undefined;
+    return scope.modulePath !== undefined || scope.contextId !== undefined;
   }
 }

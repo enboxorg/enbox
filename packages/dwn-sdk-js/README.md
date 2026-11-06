@@ -4,11 +4,11 @@
 
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/LiranCohen/02d15f39a46173a612a8862ec6d7cfcf/raw/dwn-sdk-js.json)](https://github.com/enboxorg/enbox/actions/workflows/ci.yml)
 
-A TypeScript implementation of [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) — protocol-driven personal datastores that users control.
+A TypeScript implementation of [Decentralized Web Nodes](https://identity.foundation/decentralized-web-node/spec/) — module-driven personal datastores that users control.
 
 ## Overview
 
-This package is the core DWN engine used by the rest of the Enbox stack. It handles message processing, protocol authorization, record storage, and encryption. Most applications should use [`@enbox/api`](../api/) rather than this package directly.
+This package is the core DWN engine used by the rest of the Enbox stack. It handles message processing, module authorization, record storage, and encryption. Most applications should use [`@enbox/api`](../api/) rather than this package directly.
 
 ## Installation
 
@@ -44,11 +44,11 @@ console.log(result.status); // { code: 202, detail: 'Accepted' }
 await dwn.close();
 ```
 
-Level-backed store implementations are exported from `@enbox/dwn-sdk-js/stores/level` so applications that only need message and protocol APIs do not load the Level store module graph by default. Shared blockstore helpers used by alternative store implementations are available from `@enbox/dwn-sdk-js/stores/blockstore`.
+Level-backed store implementations are exported from `@enbox/dwn-sdk-js/stores/level` so applications that only need message and module APIs do not load the Level store module graph by default. Shared blockstore helpers used by alternative store implementations are available from `@enbox/dwn-sdk-js/stores/blockstore`.
 
 ### Context role preference
 
-`resolveProtocolContextRoles(definition, contextPath)` returns the root's
+`resolveModuleContextRoles(definition, contextPath)` returns the root's
 direct-child role paths granting `read`, in `$actions` array order. That order
 declares client following preference for this exact root; object property order
 does not affect it. It does not change DWN authorization, imply role inheritance,
@@ -106,7 +106,7 @@ bun run build
 bun run test:node
 
 # Test with grep filter (from this package directory)
-GREP="ProtocolsConfigure" bun run test:node-grep
+GREP="ModulesConfigure" bun run test:node-grep
 
 # Lint
 bun run lint

@@ -4,10 +4,10 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 import type { EncryptionControlAudiencePayload, EncryptionControlDeliveryTags, RoleAudienceKeyId } from '../types/encryption-types.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
-import type { ProtocolActionRule, ProtocolDefinition, ProtocolRuleSet } from '../types/protocols-types.js';
+import type { ModuleActionRule, ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js';
 import type { RecordsCountMessage, RecordsFilter, RecordsQueryMessage, RecordsReadMessage, RecordsSubscribeMessage, RecordsWriteMessage } from '../types/records-types.js';
 
-import { checkActor } from './protocol-authorization-action.js';
+import { checkActor } from './module-authorization-action.js';
 import { DwnConstant } from './dwn-constant.js';
 import { Encoder } from '../utils/encoder.js';
 import { Encryption } from '../utils/encryption.js';
@@ -17,7 +17,7 @@ import { Jws } from '../utils/jws.js';
 import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from './message.js';
 import { PermissionConditionPublication } from '../types/permission-types.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { PermissionScopeMatcher } from '../utils/permission-scope.js';
 import { Records } from '../utils/records.js';
 import { selectOccupantRecordIds } from '../utils/record-limit-occupancy.js';
@@ -26,13 +26,13 @@ import { validateJsonSchema } from '../schema-validator.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH, isEncryptionControlPath } from './constants.js';
-import { getRoleContextPrefix, getRuleSetAtPath, isCrossProtocolRef, parseCrossProtocolRef } from '../utils/protocols.js';
+import { getRoleContextPrefix, getRuleSetAtPath, isCrossModuleRef, parseCrossModuleRef } from '../utils/modules.js';
 import { grantKeyScopeCoversDeliveredScope, isGrantKeyEligibleRecordsScope } from '../utils/grant-key-coverage.js';
-import { ProtocolAction, ProtocolActor } from '../types/protocols-types.js';
+import { ModuleAction, ModuleActor } from '../types/modules-types.js';
 
 type RoleAudienceDefinition = {
-  protocolDefinition: ProtocolDefinition;
-  ruleSet: ProtocolRuleSet;
+  moduleDefinition: ModuleDefinition;
+  ruleSet: ModuleRuleSet;
 };
 
 type ValidatedAudiencePayload = {
@@ -76,11 +76,11 @@ type ControlRecordVisibilityInput<T extends RecordsWriteMessage> = Omit<ControlF
 
 export class EncryptionControl {
   public static isControlMessage(message: RecordsWriteMessage): boolean {
-    return isEncryptionControlPath(message.descriptor.protocolPath);
+    return isEncryptionControlPath(message.descriptor.modulePath);
   }
 
   public static isAudienceControlMessage(message: RecordsWriteMessage): boolean {
-    return message.descriptor.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH;
+    return message.descriptor.modulePath === ENCRYPTION_CONTROL_AUDIENCE_PATH;
   }
 
   public static isExactAudienceFilter(filter: RecordsFilter): boolean {
@@ -88,7 +88,7 @@ export class EncryptionControl {
   }
 
   public static filterTargetsOnlyControlRecords(filter: RecordsFilter): boolean {
-    return typeof filter.protocolPath === 'string' && isEncryptionControlPath(filter.protocolPath);
+    return typeof filter.modulePath === 'string' && isEncryptionControlPath(filter.modulePath);
   }
 
   public static async authorizeControlReadRequest(input: {
@@ -112,21 +112,21 @@ export class EncryptionControl {
   public static buildAudienceRecordFilters(filters: Filter[]): Filter[] {
     const audienceFilters: Filter[] = [];
     for (const filter of filters) {
-      const protocolPath = filter.protocolPath;
-      if (protocolPath === undefined) {
-        audienceFilters.push({ ...filter, protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
+      const modulePath = filter.modulePath;
+      if (modulePath === undefined) {
+        audienceFilters.push({ ...filter, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
         continue;
       }
 
-      if (typeof protocolPath === 'string') {
-        if (protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+      if (typeof modulePath === 'string') {
+        if (modulePath === ENCRYPTION_CONTROL_AUDIENCE_PATH) {
           audienceFilters.push(filter);
         }
         continue;
       }
 
-      if (Array.isArray(protocolPath) && protocolPath.includes(ENCRYPTION_CONTROL_AUDIENCE_PATH)) {
-        audienceFilters.push({ ...filter, protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
+      if (Array.isArray(modulePath) && modulePath.includes(ENCRYPTION_CONTROL_AUDIENCE_PATH)) {
+        audienceFilters.push({ ...filter, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH });
       }
     }
 
@@ -142,7 +142,7 @@ export class EncryptionControl {
   public static async resolveCurrentAudienceRecord(input: {
     messageStore: MessageStore;
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
   }): Promise<RecordsWriteMessage | undefined> {
@@ -308,7 +308,7 @@ export class EncryptionControl {
   ): Promise<void> {
     const recordType = EncryptionControl.getRecordType(recordsWrite.message);
     const tags = EncryptionControl.getRoleAudienceKeyId(recordsWrite.message, recordType);
-    const { protocolDefinition, ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(
+    const { moduleDefinition, ruleSet } = await EncryptionControl.verifyRoleAudienceDefinition(
       tenant, tags, recordsWrite.message, validationStateReader, recordType
     );
     const actor = await EncryptionControl.resolveEffectiveControlActor(tenant, recordsWrite, validationStateReader);
@@ -317,7 +317,7 @@ export class EncryptionControl {
       tenant,
       actor,
       tags,
-      protocolDefinition,
+      moduleDefinition,
       ruleSet,
       validationStateReader,
       message: recordsWrite.message,
@@ -349,7 +349,7 @@ export class EncryptionControl {
     await EncryptionControl.verifyRoleAudienceDefinition(tenant, tags, recordsWrite.message, validationStateReader, 'delivery');
     const audiences = await validationStateReader.queryAudienceRecords({
       tenant,
-      protocol  : tags.protocol,
+      module    : tags.module,
       rolePath  : tags.rolePath,
       contextId : tags.contextId,
       keyId     : tags.keyId,
@@ -378,7 +378,7 @@ export class EncryptionControl {
     tenant: string,
     recordsWrite: RecordsWrite,
     validationStateReader: ValidationStateReader,
-  ): Promise<ProtocolRuleSet> {
+  ): Promise<ModuleRuleSet> {
     const message = recordsWrite.message;
     const recordType = EncryptionControl.getRecordType(message);
     const tags = EncryptionControl.getRoleAudienceKeyId(message, recordType);
@@ -394,12 +394,12 @@ export class EncryptionControl {
       await EncryptionControl.verifyAudienceSealKey(payload, governingRuleSet);
     }
 
-    const newestDefinition = await validationStateReader.fetchProtocolDefinition(tenant, tags.protocol);
+    const newestDefinition = await validationStateReader.fetchModuleDefinition(tenant, tags.module);
     const newestRuleSet = getRuleSetAtPath(tags.rolePath, newestDefinition.structure);
     if (newestRuleSet?.$role !== true) {
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateAudienceRolePathInvalid,
-        `role audience path '${tags.rolePath}' no longer exists as a role in protocol '${tags.protocol}'.`
+        `role audience path '${tags.rolePath}' no longer exists as a role in module '${tags.module}'.`
       );
     }
 
@@ -413,7 +413,7 @@ export class EncryptionControl {
   ): Promise<void> {
     EncryptionControl.verifyInlineControlRecord(message);
 
-    switch (message.descriptor.protocolPath) {
+    switch (message.descriptor.modulePath) {
     case ENCRYPTION_CONTROL_AUDIENCE_PATH:
       await EncryptionControl.preProcessAudience(tenant, message, validationStateReader);
       return;
@@ -423,7 +423,7 @@ export class EncryptionControl {
     default:
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
-        `unexpected encryption control path '${message.descriptor.protocolPath}'.`
+        `unexpected encryption control path '${message.descriptor.modulePath}'.`
       );
     }
   }
@@ -436,7 +436,7 @@ export class EncryptionControl {
   }): Promise<void> {
     const { tenant, message, dataBytes, validationStateReader } = input;
 
-    switch (message.descriptor.protocolPath) {
+    switch (message.descriptor.modulePath) {
     case ENCRYPTION_CONTROL_AUDIENCE_PATH:
       await EncryptionControl.validateAudience(tenant, message, dataBytes, validationStateReader);
       return;
@@ -446,7 +446,7 @@ export class EncryptionControl {
     default:
       throw new DwnError(
         DwnErrorCode.EncryptionControlValidateUnexpectedRecord,
-        `unexpected encryption control path '${message.descriptor.protocolPath}'.`
+        `unexpected encryption control path '${message.descriptor.modulePath}'.`
       );
     }
   }
@@ -493,7 +493,7 @@ export class EncryptionControl {
     await EncryptionControl.verifyRoleAudienceDefinition(tenant, tags, message, validationStateReader, 'delivery');
     const audiences = await validationStateReader.queryAudienceRecords({
       tenant,
-      protocol  : tags.protocol,
+      module    : tags.module,
       rolePath  : tags.rolePath,
       contextId : tags.contextId,
       keyId     : tags.keyId,
@@ -554,7 +554,7 @@ export class EncryptionControl {
 
   private static async verifyAudienceSealKey(
     payload: EncryptionControlAudiencePayload,
-    ruleSet: ProtocolRuleSet,
+    ruleSet: ModuleRuleSet,
   ): Promise<void> {
     const sealingKeyId = await Encryption.getKeyId(ruleSet.$keyAgreement!.publicKeyJwk);
     if (Object.is(sealingKeyId, payload.sealedPrivateKey.keyId)) {
@@ -593,7 +593,7 @@ export class EncryptionControl {
   }
 
   private static verifyAudiencePayloadMatchesTags(payload: RoleAudienceKeyId, tags: RoleAudienceKeyId): void {
-    if (payload.protocol !== tags.protocol ||
+    if (payload.module !== tags.module ||
         payload.rolePath !== tags.rolePath ||
         payload.contextId !== tags.contextId ||
         payload.keyId !== tags.keyId) {
@@ -611,13 +611,13 @@ export class EncryptionControl {
     validationStateReader: ValidationStateReader,
     recordType: 'audience' | 'delivery',
   ): Promise<RoleAudienceDefinition> {
-    if (tags.protocol !== message.descriptor.protocol) {
+    if (tags.module !== message.descriptor.module) {
       const errorCode = recordType === 'audience'
         ? DwnErrorCode.EncryptionControlValidateAudienceTagsMismatch
         : DwnErrorCode.EncryptionControlValidateDeliveryTagsMismatch;
       throw new DwnError(
         errorCode,
-        'control record protocol tag must match descriptor protocol.'
+        'control record module tag must match descriptor module.'
       );
     }
 
@@ -697,21 +697,21 @@ export class EncryptionControl {
     tenant: string;
     actor: EffectiveControlActor;
     tags: RoleAudienceKeyId;
-    protocolDefinition: ProtocolDefinition;
-    ruleSet: ProtocolRuleSet;
+    moduleDefinition: ModuleDefinition;
+    ruleSet: ModuleRuleSet;
     validationStateReader: ValidationStateReader;
     message: RecordsWriteMessage;
   }): Promise<void> {
-    const { tenant, actor, tags, protocolDefinition, ruleSet, validationStateReader, message } = input;
+    const { tenant, actor, tags, moduleDefinition, ruleSet, validationStateReader, message } = input;
     const signaturePayload = Jws.decodePlainObjectPayload(message.authorization.signature);
     if (await EncryptionControl.actorCanCreateRole({
       tenant,
       actor,
       tags,
-      protocolDefinition,
+      moduleDefinition,
       ruleSet,
       validationStateReader,
-      invokedRole: signaturePayload.protocolRole,
+      invokedRole: signaturePayload.moduleRole,
     })) {
       return;
     }
@@ -726,12 +726,12 @@ export class EncryptionControl {
     tenant: string;
     actor: EffectiveControlActor;
     tags: RoleAudienceKeyId;
-    protocolDefinition: ProtocolDefinition;
-    ruleSet: ProtocolRuleSet;
+    moduleDefinition: ModuleDefinition;
+    ruleSet: ModuleRuleSet;
     validationStateReader: ValidationStateReader;
     invokedRole: string | undefined;
   }): Promise<boolean> {
-    const { tenant, actor, tags, protocolDefinition, ruleSet, validationStateReader, invokedRole } = input;
+    const { tenant, actor, tags, moduleDefinition, ruleSet, validationStateReader, invokedRole } = input;
     if (actor.did === tenant) {
       return true;
     }
@@ -746,11 +746,11 @@ export class EncryptionControl {
 
     const recordChain = await EncryptionControl.constructRoleParentChain(tenant, tags, validationStateReader);
     for (const actionRule of ruleSet.$actions ?? []) {
-      if (!actionRule.can.includes(ProtocolAction.Create)) {
+      if (!actionRule.can.includes(ModuleAction.Create)) {
         continue;
       }
 
-      if (actionRule.who === ProtocolActor.Anyone) {
+      if (actionRule.who === ModuleActor.Anyone) {
         return true;
       }
 
@@ -759,14 +759,14 @@ export class EncryptionControl {
         actor.did,
         actionRule,
         tags,
-        protocolDefinition,
+        moduleDefinition,
         validationStateReader,
         invokedRole,
       )) {
         return true;
       }
 
-      if (await checkActor(actor.did, actionRule, recordChain, protocolDefinition)) {
+      if (await checkActor(actor.did, actionRule, recordChain, moduleDefinition)) {
         return true;
       }
     }
@@ -806,7 +806,7 @@ export class EncryptionControl {
     return EncryptionControl.hasRoleRecord(
       input.tenant,
       input.message.descriptor.recipient!,
-      input.tags.protocol,
+      input.tags.module,
       input.tags.rolePath,
       input.tags.contextId,
       input.validationStateReader,
@@ -820,8 +820,8 @@ export class EncryptionControl {
     }
 
     return PermissionScopeMatcher.matches(scope, {
-      protocol     : tags.protocol,
-      protocolPath : tags.rolePath,
+      module     : tags.module,
+      modulePath : tags.rolePath,
     });
   }
 
@@ -845,7 +845,7 @@ export class EncryptionControl {
       return true;
     }
 
-    const { protocolDefinition, ruleSet } = await EncryptionControl.resolveRoleAudienceDefinition({
+    const { moduleDefinition, ruleSet } = await EncryptionControl.resolveRoleAudienceDefinition({
       tenant,
       tags,
       messageTimestamp: incomingMessage.descriptor.messageTimestamp,
@@ -853,13 +853,13 @@ export class EncryptionControl {
     });
     const invokedRole = incomingMessage.authorization === undefined
       ? undefined
-      : Jws.decodePlainObjectPayload(incomingMessage.authorization.signature).protocolRole;
+      : Jws.decodePlainObjectPayload(incomingMessage.authorization.signature).moduleRole;
 
     return EncryptionControl.actorCanCreateRole({
       tenant,
       actor: { did: actorDid },
       tags,
-      protocolDefinition,
+      moduleDefinition,
       ruleSet,
       validationStateReader,
       invokedRole,
@@ -882,7 +882,7 @@ export class EncryptionControl {
       validationStateReader,
     });
     const recipient = recordsWriteMessage.descriptor.recipient;
-    let protocolDefinition: ProtocolDefinition | undefined;
+    let moduleDefinition: ModuleDefinition | undefined;
 
     for (const grant of grants) {
       if (recipient !== grant.grantor && recipient !== grant.grantee) {
@@ -894,8 +894,8 @@ export class EncryptionControl {
       }
 
       const deliveredScope = {
-        protocol     : tags.protocol,
-        protocolPath : tags.rolePath,
+        module     : tags.module,
+        modulePath : tags.rolePath,
       };
 
       if (grantKeyScopeCoversDeliveredScope({
@@ -905,15 +905,15 @@ export class EncryptionControl {
         return true;
       }
 
-      protocolDefinition ??= await validationStateReader.fetchProtocolDefinition(
+      moduleDefinition ??= await validationStateReader.fetchModuleDefinition(
         tenant,
-        tags.protocol,
+        tags.module,
         incomingMessage.descriptor.messageTimestamp,
       );
       if (grantKeyScopeCoversDeliveredScope({
         grantScope: grant.scope,
         deliveredScope,
-        protocolDefinition,
+        moduleDefinition,
       })) {
         return true;
       }
@@ -968,8 +968,8 @@ export class EncryptionControl {
     }
 
     return PermissionScopeMatcher.matches(scope, {
-      protocol     : tags.protocol,
-      protocolPath : tags.rolePath,
+      module     : tags.module,
+      modulePath : tags.rolePath,
     });
   }
 
@@ -982,12 +982,12 @@ export class EncryptionControl {
     const { tenant, tags, messageTimestamp, validationStateReader } = input;
     EncryptionControl.verifyRoleAudienceContext(tags.rolePath, tags.contextId);
 
-    const protocolDefinition = await validationStateReader.fetchProtocolDefinition(
+    const moduleDefinition = await validationStateReader.fetchModuleDefinition(
       tenant,
-      tags.protocol,
+      tags.module,
       messageTimestamp,
     );
-    const ruleSet = getRuleSetAtPath(tags.rolePath, protocolDefinition.structure);
+    const ruleSet = getRuleSetAtPath(tags.rolePath, moduleDefinition.structure);
 
     if (ruleSet?.$role !== true || ruleSet.$keyAgreement === undefined) {
       throw new DwnError(
@@ -996,7 +996,7 @@ export class EncryptionControl {
       );
     }
 
-    return { protocolDefinition, ruleSet };
+    return { moduleDefinition, ruleSet };
   }
 
   private static verifyGrantConditions(message: RecordsWriteMessage, grant: PermissionGrant): void {
@@ -1035,9 +1035,9 @@ export class EncryptionControl {
   private static async roleRuleAllowsActor(
     tenant: string,
     actor: string,
-    actionRule: ProtocolActionRule,
+    actionRule: ModuleActionRule,
     tags: RoleAudienceKeyId,
-    protocolDefinition: ProtocolDefinition,
+    moduleDefinition: ModuleDefinition,
     validationStateReader: ValidationStateReader,
     invokedRole: string | undefined,
   ): Promise<boolean> {
@@ -1045,18 +1045,18 @@ export class EncryptionControl {
       return false;
     }
 
-    const resolved = EncryptionControl.resolveRoleReference(actionRule.role, tags.protocol, protocolDefinition);
+    const resolved = EncryptionControl.resolveRoleReference(actionRule.role, tags.module, moduleDefinition);
     if (resolved === undefined) {
       return false;
     }
 
-    return EncryptionControl.hasRoleRecord(tenant, actor, resolved.protocol, resolved.protocolPath, tags.contextId, validationStateReader);
+    return EncryptionControl.hasRoleRecord(tenant, actor, resolved.module, resolved.modulePath, tags.contextId, validationStateReader);
   }
 
   private static async hasRoleRecord(
     tenant: string,
     actor: string,
-    protocol: string,
+    module: string,
     rolePath: string,
     contextId: string,
     validationStateReader: ValidationStateReader,
@@ -1068,38 +1068,38 @@ export class EncryptionControl {
 
     return validationStateReader.hasMatchingRoleRecord({
       tenant,
-      protocol,
-      protocolPath : rolePath,
-      recipient    : actor,
+      module,
+      modulePath : rolePath,
+      recipient  : actor,
       contextIdPrefix,
     });
   }
 
   private static resolveRoleReference(
     roleRef: string,
-    currentProtocol: string,
-    protocolDefinition: ProtocolDefinition,
-  ): { protocol: string; protocolPath: string } | undefined {
-    if (!isCrossProtocolRef(roleRef)) {
-      return { protocol: currentProtocol, protocolPath: roleRef };
+    currentModule: string,
+    moduleDefinition: ModuleDefinition,
+  ): { module: string; modulePath: string } | undefined {
+    if (!isCrossModuleRef(roleRef)) {
+      return { module: currentModule, modulePath: roleRef };
     }
 
-    const parsed = parseCrossProtocolRef(roleRef);
+    const parsed = parseCrossModuleRef(roleRef);
     if (parsed === undefined) {
       return undefined;
     }
 
-    const protocol = protocolDefinition.uses?.[parsed.alias];
-    if (protocol === undefined) {
+    const module = moduleDefinition.uses?.[parsed.alias];
+    if (module === undefined) {
       return undefined;
     }
 
-    return { protocol, protocolPath: parsed.protocolPath };
+    return { module, modulePath: parsed.modulePath };
   }
 
   private static getRoleAudienceKeyId(message: RecordsWriteMessage, recordType: 'audience' | 'delivery'): RoleAudienceKeyId {
     return {
-      protocol  : EncryptionControl.getRequiredStringTag(message, 'protocol', recordType),
+      module    : EncryptionControl.getRequiredStringTag(message, 'module', recordType),
       rolePath  : EncryptionControl.getRequiredStringTag(message, 'rolePath', recordType),
       contextId : EncryptionControl.getRequiredStringTag(message, 'contextId', recordType),
       keyId     : EncryptionControl.getRequiredStringTag(message, 'keyId', recordType),
@@ -1115,7 +1115,7 @@ export class EncryptionControl {
   }
 
   private static getRecordType(message: RecordsWriteMessage): 'audience' | 'delivery' {
-    return message.descriptor.protocolPath === ENCRYPTION_CONTROL_DELIVERY_PATH ? 'delivery' : 'audience';
+    return message.descriptor.modulePath === ENCRYPTION_CONTROL_DELIVERY_PATH ? 'delivery' : 'audience';
   }
 
   private static async isVisibleControlRecord<T extends RecordsWriteMessage>(input: ControlRecordVisibilityInput<T>): Promise<boolean> {
@@ -1149,30 +1149,30 @@ export class EncryptionControl {
       return false;
     }
 
-    return tuple.protocol === tags.protocol &&
+    return tuple.module === tags.module &&
       tuple.rolePath === tags.rolePath &&
       tuple.contextId === tags.contextId &&
       (tuple.keyId === undefined || tuple.keyId === tags.keyId);
   }
 
   private static getExactAudienceFilterTuple(filter: RecordsFilter): ExactAudienceFilterTuple | undefined {
-    if (filter.protocol === undefined || filter.protocolPath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
+    if (filter.module === undefined || filter.modulePath !== ENCRYPTION_CONTROL_AUDIENCE_PATH) {
       return undefined;
     }
 
-    const protocol = EncryptionControl.getExactFilterTag(filter, 'protocol');
+    const module = EncryptionControl.getExactFilterTag(filter, 'module');
     const rolePath = EncryptionControl.getExactFilterTag(filter, 'rolePath');
     const contextId = EncryptionControl.getExactFilterTag(filter, 'contextId');
-    if (protocol !== filter.protocol || rolePath === undefined || contextId === undefined) {
+    if (module !== filter.module || rolePath === undefined || contextId === undefined) {
       return undefined;
     }
 
     const keyId = EncryptionControl.getExactFilterTag(filter, 'keyId');
     if (keyId === undefined) {
-      return { protocol, rolePath, contextId };
+      return { module, rolePath, contextId };
     }
 
-    return { protocol, rolePath, contextId, keyId };
+    return { module, rolePath, contextId, keyId };
   }
 
   private static exactAudienceRequestMatchesRecord(
@@ -1196,7 +1196,7 @@ export class EncryptionControl {
   private static async queryStoredAudienceRecordsForTuple(input: {
     messageStore: MessageStore;
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
   }): Promise<RecordsWriteMessage[]> {
@@ -1204,9 +1204,9 @@ export class EncryptionControl {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : input.protocol,
-      protocolPath      : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      'tag.protocol'    : input.protocol,
+      module            : input.module,
+      modulePath        : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      'tag.module'      : input.module,
       'tag.rolePath'    : input.rolePath,
       'tag.contextId'   : input.contextId,
     };
@@ -1217,7 +1217,7 @@ export class EncryptionControl {
   private static async resolveCurrentAudienceRecordId(input: {
     messageStore: MessageStore;
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     currentAudienceRecordIdCache?: Map<string, string | undefined>;
@@ -1244,21 +1244,21 @@ export class EncryptionControl {
     }
 
     const tags = EncryptionControl.getRoleAudienceKeyId(message, 'audience');
-    return filter.protocol === tags.protocol &&
-      filter.protocolPath === ENCRYPTION_CONTROL_AUDIENCE_PATH &&
-      filter['tag.protocol'] === tags.protocol &&
+    return filter.module === tags.module &&
+      filter.modulePath === ENCRYPTION_CONTROL_AUDIENCE_PATH &&
+      filter['tag.module'] === tags.module &&
       filter['tag.rolePath'] === tags.rolePath &&
       filter['tag.contextId'] === tags.contextId &&
       filter['tag.keyId'] === tags.keyId;
   }
 
   private static getAudienceTupleKey(input: AudienceTuple): string {
-    return JSON.stringify([input.protocol, input.rolePath, input.contextId]);
+    return JSON.stringify([input.module, input.rolePath, input.contextId]);
   }
 
   private static parseAudienceTupleKey(key: string): AudienceTuple {
-    const [protocol, rolePath, contextId] = JSON.parse(key) as string[];
-    return { protocol, rolePath, contextId };
+    const [module, rolePath, contextId] = JSON.parse(key) as string[];
+    return { module, rolePath, contextId };
   }
 
   public static compareAudienceProjectionCandidates(

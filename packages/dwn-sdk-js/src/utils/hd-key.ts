@@ -4,7 +4,7 @@ import { Encoder } from './encoder.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 
 export enum KeyDerivationScheme {
-  ProtocolPath = 'protocolPath',
+  ModulePath = 'modulePath',
 }
 
 export type DerivedPrivateJwk = {

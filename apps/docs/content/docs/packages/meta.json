@@ -7,7 +7,7 @@
     "dwn-server",
     "replication-sync",
     "agent",
-    "protocols",
+    "modules",
     "dids",
     "crypto",
     "common",

@@ -1,4 +1,4 @@
-import type { ProtocolDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -63,7 +63,7 @@ function filterKey(filter: Record<string, unknown>): string {
 
 function createLocalAgentFixture({
   messagesByCid,
-  protocols = [],
+  modules = [],
   recordsByRecordId = new Map(),
   recordsByFilter = new Map(),
   recordsReadByRecordId = new Map(),
@@ -71,7 +71,7 @@ function createLocalAgentFixture({
   applyResults,
 }: {
   messagesByCid: Map<string, { message: any; data?: ReadableStream<Uint8Array> }>;
-  protocols?: any[];
+  modules?: any[];
   recordsByRecordId?: Map<string, any[]>;
   recordsByFilter?: Map<string, any[]>;
   recordsReadByRecordId?: Map<string, { recordsWrite: any; data: ReadableStream<Uint8Array> }>;
@@ -88,11 +88,11 @@ function createLocalAgentFixture({
       };
     }
 
-    if (messageType === DwnInterface.ProtocolsQuery) {
+    if (messageType === DwnInterface.ModulesQuery) {
       return {
         reply: {
           status  : { code: 200 },
-          entries : protocols,
+          entries : modules,
         },
       };
     }
@@ -190,7 +190,7 @@ describe('sync-messages', () => {
         epoch    : 'epoch-1',
         position : '7',
       };
-      const filters = [{ protocol: 'https://example.com/protocol' }];
+      const filters = [{ module: 'https://example.com/module' }];
       const agent = {
         processDwnRequest,
         rpc: { sendDwnRequest },
@@ -236,8 +236,8 @@ describe('sync-messages', () => {
       const delegatedGrant = { recordId: 'delegate-grant' } as any;
       const filters = [{
         interface       : 'Records' as const,
-        protocol        : 'https://example.com/notebooks',
-        protocolPath    : 'notebook/page',
+        module          : 'https://example.com/notebooks',
+        modulePath      : 'notebook/page',
         contextIdPrefix : 'notebook-a',
       }];
       const processDwnRequest = sinon.stub().resolves({ message: {} });
@@ -247,12 +247,12 @@ describe('sync-messages', () => {
       } as any;
 
       await queryRemoteMessageFeed({
-        did          : 'did:example:owner',
-        authorDid    : 'did:example:member',
-        dwnUrl       : 'https://owner.example.com',
-        delegateDid  : 'did:example:device',
+        did         : 'did:example:owner',
+        authorDid   : 'did:example:member',
+        dwnUrl      : 'https://owner.example.com',
+        delegateDid : 'did:example:device',
         delegatedGrant,
-        protocolRole : 'notebook/viewer',
+        moduleRole  : 'notebook/viewer',
         filters,
         agent,
       });
@@ -269,7 +269,7 @@ describe('sync-messages', () => {
           limit              : undefined,
           cidsOnly           : undefined,
           permissionGrantIds : undefined,
-          protocolRole       : 'notebook/viewer',
+          moduleRole         : 'notebook/viewer',
           delegatedGrant,
         },
       });
@@ -297,7 +297,7 @@ describe('sync-messages', () => {
         did                : 'did:example:alice',
         delegateDid        : 'did:example:device',
         permissionGrantIds : ['grant-b', 'grant-a', 'grant-b'],
-        filters            : [{ protocol: 'https://example.com/protocol' }],
+        filters            : [{ module: 'https://example.com/module' }],
         cursor,
         limit              : 1,
         cidsOnly           : true,
@@ -312,7 +312,7 @@ describe('sync-messages', () => {
         messageType   : DwnInterface.MessagesQuery,
         granteeDid    : 'did:example:device',
         messageParams : {
-          filters            : [{ protocol: 'https://example.com/protocol' }],
+          filters            : [{ module: 'https://example.com/module' }],
           cursor,
           limit              : 1,
           cidsOnly           : true,
@@ -324,7 +324,7 @@ describe('sync-messages', () => {
 
   describe('fetchRemoteMessages', () => {
     it('should fetch messages by CID from remote DWN', async () => {
-      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const { message } = await TestDataGenerator.generateModulesConfigure();
       const messageCid = await Message.getCid(message);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: { descriptor: {} } }),
@@ -472,7 +472,7 @@ describe('sync-messages', () => {
     });
 
     it('should not include dataStream for non-RecordsWrite messages', async () => {
-      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const { message } = await TestDataGenerator.generateModulesConfigure();
       const messageCid = await Message.getCid(message);
       const mockAgent = {
         processDwnRequest : sinon.stub().resolves({ message: {} }),
@@ -498,7 +498,7 @@ describe('sync-messages', () => {
     });
 
     it('should pass resolved delegate grant IDs when delegateDid is provided', async () => {
-      const { message } = await TestDataGenerator.generateProtocolsConfigure();
+      const { message } = await TestDataGenerator.generateModulesConfigure();
       const messageCid = await Message.getCid(message);
       const processDwnRequestStub = sinon.stub().resolves({ message: {} });
       const mockAgent = {
@@ -527,7 +527,7 @@ describe('sync-messages', () => {
     it('should process all requested messages with bounded concurrency', async () => {
       const generated = await Promise.all(Array.from(
         { length: 15 },
-        () => TestDataGenerator.generateProtocolsConfigure(),
+        () => TestDataGenerator.generateModulesConfigure(),
       ));
       const messagesByCid = new Map(await Promise.all(generated.map(async ({ message }) =>
         [await Message.getCid(message), message] as const
@@ -673,7 +673,7 @@ describe('sync-messages', () => {
       const { agent, applyStub } = createLocalAgentFixture({
         messagesByCid : new Map(),
         applyResults  : [
-          { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/pending' }] },
+          { kind: 'Incomplete', missing: [{ type: 'Module', module: 'https://example.com/pending' }] },
           { kind: 'Applied' },
         ],
       });
@@ -703,8 +703,8 @@ describe('sync-messages', () => {
       const remoteResult = {
         kind    : 'Incomplete' as const,
         missing : [{
-          type       : 'Protocol' as const,
-          protocol   : 'https://example.com/revoked',
+          type       : 'Module' as const,
+          module     : 'https://example.com/revoked',
           messageCid : 'dependency-cid',
           terminal   : true,
         }],
@@ -869,35 +869,35 @@ describe('sync-messages', () => {
       payload[0] = 1;
       payload[payload.length - 1] = 2;
       const write = await TestDataGenerator.generateRecordsWrite({ data: payload });
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'https://example.com/current-payload-retry',
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'https://example.com/current-payload-retry',
         published : false,
         types     : { note: {} },
         structure : { note: {} },
       };
-      const protocol = await TestDataGenerator.generateProtocolsConfigure({
+      const module = await TestDataGenerator.generateModulesConfigure({
         author: write.author,
-        protocolDefinition,
+        moduleDefinition,
       });
       const messageCid = await Message.getCid(write.message);
-      const protocolCid = await Message.getCid(protocol.message);
+      const moduleCid = await Message.getCid(module.message);
       const messagesByCid = new Map([
         [messageCid, { message: write.message, data: streamFromBytes(payload) }],
-        [protocolCid, { message: protocol.message }],
+        [moduleCid, { message: module.message }],
       ]);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid,
         applyResults: [],
       });
       let rootAttempts = 0;
-      let protocolAttempts = 0;
+      let moduleAttempts = 0;
       applyStub.callsFake(async ({ message, data }: {
         message: any;
         data?: ReadableStream<Uint8Array>;
       }): Promise<ReplicationApplyResult> => {
         const cid = await Message.getCid(message);
-        if (cid === protocolCid) {
-          protocolAttempts++;
+        if (cid === moduleCid) {
+          moduleAttempts++;
           return { kind: 'Applied' };
         }
         if (cid !== messageCid) {
@@ -911,7 +911,7 @@ describe('sync-messages', () => {
           messagesByCid.delete(messageCid);
         }
         return rootAttempts === 1
-          ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol, messageCid: protocolCid }] }
+          ? { kind: 'Incomplete', missing: [{ type: 'Module', module: moduleDefinition.module, messageCid: moduleCid }] }
           : { kind: 'Applied' };
       });
       const context = new RemoteApplyPushContext({
@@ -929,14 +929,14 @@ describe('sync-messages', () => {
       const failed = await context.pushFeedEntry(feedEntry, []);
 
       expect(failed.succeeded).toEqual([]);
-      expect(failed.acknowledged).toEqual([{ cid: protocolCid, resolution: 'applied' }]);
+      expect(failed.acknowledged).toEqual([{ cid: moduleCid, resolution: 'applied' }]);
       expect(failed.failed).toEqual([{
         cid                  : messageCid,
         localDataUnavailable : true,
         detail               : 'required payload is unavailable for current message',
       }]);
       expect(rootAttempts).toBe(1);
-      expect(protocolAttempts).toBe(1);
+      expect(moduleAttempts).toBe(1);
 
       messagesByCid.set(messageCid, { message: write.message, data: streamFromBytes(payload) });
       expect(await context.pushFeedEntry(feedEntry, [])).toEqual({
@@ -945,7 +945,7 @@ describe('sync-messages', () => {
         failed       : [],
       });
       expect(rootAttempts).toBe(2);
-      expect(protocolAttempts).toBe(1);
+      expect(moduleAttempts).toBe(1);
       expect(processRequestStub.withArgs(sinon.match({
         messageParams : sinon.match({ messageCid }),
         messageType   : DwnInterface.MessagesRead,
@@ -984,33 +984,33 @@ describe('sync-messages', () => {
     });
 
     it('should not settle a current RecordsQuery dependency until its payload is available', async () => {
-      const protocol = 'https://example.com/current-dependency-payload';
+      const module = 'https://example.com/current-dependency-payload';
       const payload = new Uint8Array(1_048_577);
       payload[0] = 1;
       payload[payload.length - 1] = 2;
-      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, protocol });
-      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-        author             : parent.author,
-        protocolDefinition : {
-          protocol,
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, module });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, module });
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+        author           : parent.author,
+        moduleDefinition : {
+          module,
           published : false,
           types     : { note: {} },
           structure : { note: {} },
         },
       });
       const parentCid = await Message.getCid(parent.message);
-      const protocolCid = await Message.getCid(protocolConfig.message);
+      const moduleCid = await Message.getCid(moduleConfig.message);
       const rootCid = await Message.getCid(root.message);
       const messagesByCid = new Map<string, { message: any; data?: ReadableStream<Uint8Array> }>([
         [rootCid, { message: root.message }],
       ]);
       let parentAttempts = 0;
       let parentSettled = false;
-      let protocolAttempts = 0;
+      let moduleAttempts = 0;
       const { agent, applyStub } = createLocalAgentFixture({
         messagesByCid,
-        protocols         : [protocolConfig.message],
+        modules           : [moduleConfig.message],
         recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
         applyResults      : async (message): Promise<ReplicationApplyResult> => {
           const cid = await Message.getCid(message);
@@ -1018,20 +1018,20 @@ describe('sync-messages', () => {
             parentAttempts++;
             if (parentAttempts === 1) {
               messagesByCid.delete(parentCid);
-              return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] };
+              return { kind: 'Incomplete', missing: [{ type: 'Module', module }] };
             }
             parentSettled = true;
             return { kind: 'Applied' };
           }
-          if (cid === protocolCid) {
-            protocolAttempts++;
+          if (cid === moduleCid) {
+            moduleAttempts++;
             return { kind: 'Applied' };
           }
           return parentSettled
             ? { kind: 'Applied' }
             : {
               kind    : 'Incomplete',
-              missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+              missing : [{ type: 'Parent', recordId: parent.message.recordId, module }],
             };
         },
       });
@@ -1065,14 +1065,14 @@ describe('sync-messages', () => {
         detail               : expect.stringContaining('required payload is unavailable'),
       })]);
       expect(parentAttempts).toBe(1);
-      expect(protocolAttempts).toBe(1);
+      expect(moduleAttempts).toBe(1);
 
       messagesByCid.set(parentCid, { message: parent.message, data: streamFromBytes(payload) });
       const recovered = await new RemoteApplyPushContext(contextDeps).push([rootCid]);
 
       expect(recovered).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(parentAttempts).toBe(2);
-      expect(protocolAttempts).toBe(1);
+      expect(moduleAttempts).toBe(1);
       const applyCids = await Promise.all(applyStub.getCalls().map(async ({ args }): Promise<string> =>
         Message.getCid(args[0].message)));
       const parentApply = applyStub.getCalls()[applyCids.lastIndexOf(parentCid)];
@@ -1081,9 +1081,9 @@ describe('sync-messages', () => {
     });
 
     it('should return a retryable failure when a queried dependency payload read rejects', async () => {
-      const protocol = 'https://example.com/rejected-dependency-payload-read';
-      const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
-      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
+      const module = 'https://example.com/rejected-dependency-payload-read';
+      const parent = await TestDataGenerator.generateRecordsWrite({ module });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, module });
       const parentCid = await Message.getCid(parent.message);
       const rootCid = await Message.getCid(root.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
@@ -1091,7 +1091,7 @@ describe('sync-messages', () => {
         recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
         applyResults      : [{
           kind    : 'Incomplete',
-          missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, module }],
         }],
       });
       processRequestStub.withArgs(sinon.match({
@@ -1117,21 +1117,21 @@ describe('sync-messages', () => {
     });
 
     it('should release a fetched dependency payload and refetch it when a later dependency query rejects', async () => {
-      const protocol = 'https://example.com/dependency-batch-recovery';
+      const module = 'https://example.com/dependency-batch-recovery';
       const parentPayload = new TextEncoder().encode('parent payload opened before a later query fails');
-      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, protocol });
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-        author             : parent.author,
-        protocolDefinition : {
-          protocol,
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, module });
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+        author           : parent.author,
+        moduleDefinition : {
+          module,
           published : false,
           types     : { note: {} },
           structure : { note: {} },
         },
       });
-      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const root = await TestDataGenerator.generateModulesConfigure({ author: parent.author });
       const parentCid = await Message.getCid(parent.message);
-      const protocolCid = await Message.getCid(protocolConfig.message);
+      const moduleCid = await Message.getCid(moduleConfig.message);
       const rootCid = await Message.getCid(root.message);
       const cancelFirstPayload = sinon.spy();
       const firstPayload = new ReadableStream<Uint8Array>({
@@ -1143,7 +1143,7 @@ describe('sync-messages', () => {
         [rootCid, { message: root.message }],
         [parentCid, { message: parent.message, data: firstPayload }],
       ]);
-      let rejectProtocolQuery = true;
+      let rejectModuleQuery = true;
       let rootAttempts = 0;
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid,
@@ -1159,19 +1159,19 @@ describe('sync-messages', () => {
             ? {
               kind    : 'Incomplete',
               missing : [
-                { type: 'Parent', recordId: parent.message.recordId, protocol },
-                { type: 'Protocol', protocol },
+                { type: 'Parent', recordId: parent.message.recordId, module },
+                { type: 'Module', module },
               ],
             }
             : { kind: 'Applied' };
         },
       });
-      processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery }))
+      processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ModulesQuery }))
         .callsFake(async (): Promise<any> => {
-          if (rejectProtocolQuery) {
-            throw new Error('local protocol query disconnected');
+          if (rejectModuleQuery) {
+            throw new Error('local module query disconnected');
           }
-          return { reply: { status: { code: 200 }, entries: [protocolConfig.message] } };
+          return { reply: { status: { code: 200 }, entries: [moduleConfig.message] } };
         });
       const context = new RemoteApplyPushContext({
         did    : parent.author.did,
@@ -1184,11 +1184,11 @@ describe('sync-messages', () => {
       expect(failed.succeeded).toEqual([]);
       expect(failed.failed).toEqual([expect.objectContaining({
         cid    : rootCid,
-        detail : expect.stringContaining('local protocol query disconnected'),
+        detail : expect.stringContaining('local module query disconnected'),
       })]);
       expect(cancelFirstPayload.calledOnce).toBe(true);
 
-      rejectProtocolQuery = false;
+      rejectModuleQuery = false;
       messagesByCid.set(parentCid, {
         message : parent.message,
         data    : streamFromBytes(parentPayload),
@@ -1204,14 +1204,14 @@ describe('sync-messages', () => {
       const applyCids = await Promise.all(applyStub.getCalls().map(async ({ args }): Promise<string> =>
         Message.getCid(args[0].message)));
       expect(applyCids.filter(cid => cid === rootCid)).toHaveLength(3);
-      expect(applyCids.filter(cid => cid === protocolCid)).toHaveLength(1);
+      expect(applyCids.filter(cid => cid === moduleCid)).toHaveLength(1);
       expect(applyCids.filter(cid => cid === parentCid)).toHaveLength(1);
     });
 
     it('should propagate terminal authorization errors from dependency payload reads', async () => {
-      const protocol = 'https://example.com/terminal-dependency-read';
-      const parent = await TestDataGenerator.generateRecordsWrite({ protocol });
-      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const module = 'https://example.com/terminal-dependency-read';
+      const parent = await TestDataGenerator.generateRecordsWrite({ module });
+      const root = await TestDataGenerator.generateModulesConfigure({ author: parent.author });
       const parentCid = await Message.getCid(parent.message);
       const rootCid = await Message.getCid(root.message);
       const authorizationError = new DwnError(
@@ -1223,7 +1223,7 @@ describe('sync-messages', () => {
         recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
         applyResults      : [{
           kind    : 'Incomplete',
-          missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+          missing : [{ type: 'Parent', recordId: parent.message.recordId, module }],
         }],
       });
       processRequestStub.withArgs(sinon.match({
@@ -1241,21 +1241,21 @@ describe('sync-messages', () => {
     });
 
     it('should release unattempted dependency payloads when an earlier dependency apply fails', async () => {
-      const protocol = 'https://example.com/unattempted-dependency-cleanup';
-      const parentPayload = new TextEncoder().encode('payload waiting behind protocol admission');
-      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, protocol });
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
-        author             : parent.author,
-        protocolDefinition : {
-          protocol,
+      const module = 'https://example.com/unattempted-dependency-cleanup';
+      const parentPayload = new TextEncoder().encode('payload waiting behind module admission');
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: parentPayload, module });
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
+        author           : parent.author,
+        moduleDefinition : {
+          module,
           published : false,
           types     : { note: {} },
           structure : { note: {} },
         },
       });
-      const root = await TestDataGenerator.generateProtocolsConfigure({ author: parent.author });
+      const root = await TestDataGenerator.generateModulesConfigure({ author: parent.author });
       const parentCid = await Message.getCid(parent.message);
-      const protocolCid = await Message.getCid(protocolConfig.message);
+      const moduleCid = await Message.getCid(moduleConfig.message);
       const rootCid = await Message.getCid(root.message);
       const cancelFirstPayload = sinon.spy();
       const firstPayload = new ReadableStream<Uint8Array>({
@@ -1267,17 +1267,17 @@ describe('sync-messages', () => {
         [rootCid, { message: root.message }],
         [parentCid, { message: parent.message, data: firstPayload }],
       ]);
-      let failProtocolApply = true;
+      let failModuleApply = true;
       let parentApplied = false;
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid,
-        protocols         : [protocolConfig.message],
+        modules           : [moduleConfig.message],
         recordsByRecordId : new Map([[parent.message.recordId, [parent.message]]]),
         applyResults      : async (message): Promise<ReplicationApplyResult> => {
           const cid = await Message.getCid(message);
-          if (cid === protocolCid) {
-            if (failProtocolApply) {
-              throw new Error('remote protocol apply disconnected');
+          if (cid === moduleCid) {
+            if (failModuleApply) {
+              throw new Error('remote module apply disconnected');
             }
             return { kind: 'Applied' };
           }
@@ -1290,8 +1290,8 @@ describe('sync-messages', () => {
             : {
               kind    : 'Incomplete',
               missing : [
-                { type: 'Parent', recordId: parent.message.recordId, protocol },
-                { type: 'Protocol', protocol },
+                { type: 'Parent', recordId: parent.message.recordId, module },
+                { type: 'Module', module },
               ],
             };
         },
@@ -1308,12 +1308,12 @@ describe('sync-messages', () => {
       expect(failed.succeeded).toEqual([]);
       expect(failed.failed).toEqual([expect.objectContaining({
         cid           : rootCid,
-        dependencyCid : protocolCid,
-        detail        : expect.stringContaining('remote protocol apply disconnected'),
+        dependencyCid : moduleCid,
+        detail        : expect.stringContaining('remote module apply disconnected'),
       })]);
       expect(cancelFirstPayload.calledOnce).toBe(true);
 
-      failProtocolApply = false;
+      failModuleApply = false;
       messagesByCid.set(parentCid, {
         message : parent.message,
         data    : streamFromBytes(parentPayload),
@@ -1407,7 +1407,7 @@ describe('sync-messages', () => {
             missing : [{
               type       : 'Parent',
               recordId   : dependency.message.recordId,
-              protocol   : 'https://example.com/feed-dependency',
+              module     : 'https://example.com/feed-dependency',
               messageCid : dependencyCid,
             }],
           },
@@ -1473,10 +1473,10 @@ describe('sync-messages', () => {
     });
 
     it('should not open an acknowledged dependency payload that the remote still reports missing', async () => {
-      const protocol = 'https://example.com/acknowledged-dependency';
+      const module = 'https://example.com/acknowledged-dependency';
       const payload = new TextEncoder().encode('acknowledged parent payload');
-      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, protocol });
-      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, protocol });
+      const parent = await TestDataGenerator.generateRecordsWrite({ data: payload, module });
+      const root = await TestDataGenerator.generateRecordsWrite({ author: parent.author, module });
       const parentCid = await Message.getCid(parent.message);
       const rootCid = await Message.getCid(root.message);
       const cancel = sinon.spy();
@@ -1496,7 +1496,7 @@ describe('sync-messages', () => {
             ? { kind: 'Applied' }
             : {
               kind    : 'Incomplete',
-              missing : [{ type: 'Parent', recordId: parent.message.recordId, protocol }],
+              missing : [{ type: 'Parent', recordId: parent.message.recordId, module }],
             },
       });
       const context = new RemoteApplyPushContext({
@@ -1715,8 +1715,8 @@ describe('sync-messages', () => {
 
     it('should fetch dependencies requested by remote Incomplete refs until the root applies', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'https://example.com/sync-push-remote-incomplete',
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'https://example.com/sync-push-remote-incomplete',
         published : false,
         types     : {
           parent : {},
@@ -1728,22 +1728,22 @@ describe('sync-messages', () => {
           },
         },
       };
-      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+      const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const parent = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'parent',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'parent',
       });
       const child = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'parent/child',
+        module          : moduleDefinition.module,
+        modulePath      : 'parent/child',
         parentContextId : parent.message.contextId,
       });
-      const protocolCid = await Message.getCid(protocolsConfigure.message);
+      const moduleCid = await Message.getCid(modulesConfigure.message);
       const parentCid = await Message.getCid(parent.message);
       const childCid = await Message.getCid(child.message);
       const appliedCids: string[] = [];
@@ -1752,18 +1752,18 @@ describe('sync-messages', () => {
           [childCid, { message: child.message, data: child.dataStream }],
           [parentCid, { message: parent.message, data: parent.dataStream }],
         ]),
-        protocols         : [protocolsConfigure.message],
+        modules           : [modulesConfigure.message],
         recordsByRecordId : new Map([
           [parent.message.recordId, [parent.message]],
         ]),
         applyResults: async (message: any): Promise<ReplicationApplyResult> => {
           const cid = await Message.getCid(message);
           appliedCids.push(cid);
-          if (cid === childCid && !appliedCids.includes(protocolCid)) {
-            return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol }] };
+          if (cid === childCid && !appliedCids.includes(moduleCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Module', module: moduleDefinition.module }] };
           }
           if (cid === childCid && !appliedCids.includes(parentCid)) {
-            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, protocol: protocolDefinition.protocol }] };
+            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, module: moduleDefinition.module }] };
           }
           return { kind: 'Applied' };
         },
@@ -1778,18 +1778,18 @@ describe('sync-messages', () => {
 
       expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
-        Message.getCid(call.args[0].message)))).toEqual([childCid, protocolCid, childCid, parentCid, childCid]);
+        Message.getCid(call.args[0].message)))).toEqual([childCid, moduleCid, childCid, parentCid, childCid]);
     });
 
     it('fetches local push dependencies with an executable query, not a store:false short-circuit', async () => {
       // Regression: these local dependency queries once passed `store: false`,
       // which makes `AgentDwnApi.processRequest` return a synthetic 202 with no
       // entries instead of running the query — so every dependency fetch from
-      // the local DWN silently failed. Assert the ProtocolsQuery / RecordsQuery
+      // the local DWN silently failed. Assert the ModulesQuery / RecordsQuery
       // / RecordsRead dependency helpers execute against the local DWN.
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocolDefinition: ProtocolDefinition = {
-        protocol  : 'https://example.com/sync-push-store-false',
+      const moduleDefinition: ModuleDefinition = {
+        module    : 'https://example.com/sync-push-store-false',
         published : false,
         types     : {
           parent : {},
@@ -1801,22 +1801,22 @@ describe('sync-messages', () => {
           },
         },
       };
-      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({
+      const modulesConfigure = await TestDataGenerator.generateModulesConfigure({
         author: alice,
-        protocolDefinition,
+        moduleDefinition,
       });
       const parent = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'parent',
+        author     : alice,
+        module     : moduleDefinition.module,
+        modulePath : 'parent',
       });
       const child = await TestDataGenerator.generateRecordsWrite({
         author          : alice,
-        protocol        : protocolDefinition.protocol,
-        protocolPath    : 'parent/child',
+        module          : moduleDefinition.module,
+        modulePath      : 'parent/child',
         parentContextId : parent.message.contextId,
       });
-      const protocolCid = await Message.getCid(protocolsConfigure.message);
+      const moduleCid = await Message.getCid(modulesConfigure.message);
       const parentCid = await Message.getCid(parent.message);
       const childCid = await Message.getCid(child.message);
       const appliedCids: string[] = [];
@@ -1825,18 +1825,18 @@ describe('sync-messages', () => {
           [childCid, { message: child.message, data: child.dataStream }],
           [parentCid, { message: parent.message, data: parent.dataStream }],
         ]),
-        protocols         : [protocolsConfigure.message],
+        modules           : [modulesConfigure.message],
         recordsByRecordId : new Map([
           [parent.message.recordId, [parent.message]],
         ]),
         applyResults: async (message: any): Promise<ReplicationApplyResult> => {
           const cid = await Message.getCid(message);
           appliedCids.push(cid);
-          if (cid === childCid && !appliedCids.includes(protocolCid)) {
-            return { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: protocolDefinition.protocol }] };
+          if (cid === childCid && !appliedCids.includes(moduleCid)) {
+            return { kind: 'Incomplete', missing: [{ type: 'Module', module: moduleDefinition.module }] };
           }
           if (cid === childCid && !appliedCids.includes(parentCid)) {
-            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, protocol: protocolDefinition.protocol }] };
+            return { kind: 'Incomplete', missing: [{ type: 'Parent', recordId: parent.message.recordId, module: moduleDefinition.module }] };
           }
           return { kind: 'Applied' };
         },
@@ -1851,7 +1851,7 @@ describe('sync-messages', () => {
 
       expect(result).toMatchObject({ succeeded: [childCid], failed: [] });
       const localDependencyReads = processRequestStub.getCalls().filter((call): boolean =>
-        [DwnInterface.ProtocolsQuery, DwnInterface.RecordsQuery, DwnInterface.RecordsRead].includes(call.args[0].messageType));
+        [DwnInterface.ModulesQuery, DwnInterface.RecordsQuery, DwnInterface.RecordsRead].includes(call.args[0].messageType));
       expect(localDependencyReads.length).toBeGreaterThan(0);
       for (const call of localDependencyReads) {
         expect(call.args[0].store).not.toBe(false);
@@ -1970,19 +1970,19 @@ describe('sync-messages', () => {
     });
 
 
-    it('should fetch an encryption control dependency from the source protocol feed', async () => {
-      const protocol = 'https://example.com/encrypted-control-push';
-      const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+    it('should fetch an encryption control dependency from the source module feed', async () => {
+      const module = 'https://example.com/encrypted-control-push';
+      const root = await TestDataGenerator.generateRecordsWrite({ module });
       const tags = {
-        protocol,
+        module,
         contextId : 'thread-record',
         rolePath  : 'thread/member',
         keyId     : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       };
       const audience = await TestDataGenerator.generateRecordsWrite({
-        author       : root.author,
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        author     : root.author,
+        module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
         tags,
       });
       const rootCid = await Message.getCid(root.message);
@@ -1996,15 +1996,15 @@ describe('sync-messages', () => {
           isLatestBaseState : true,
           message           : audience.message,
           messageCid        : audienceCid,
-          protocol,
+          module,
         }],
         applyResults: [
           {
             kind    : 'Incomplete',
             missing : [{
-              type         : 'EncryptionControl',
-              protocol,
-              protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+              type       : 'EncryptionControl',
+              module,
+              modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
               tags,
             }],
           },
@@ -2022,7 +2022,7 @@ describe('sync-messages', () => {
 
       expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
-        messageParams : sinon.match({ filters: [{ protocol, protocolPathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
+        messageParams : sinon.match({ filters: [{ module, modulePathPrefix: ENCRYPTION_CONTROL_AUDIENCE_PATH }] }),
         messageType   : DwnInterface.MessagesQuery,
       })).calledOnce).toBe(true);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
@@ -2030,28 +2030,28 @@ describe('sync-messages', () => {
     });
 
     it('should release a partially hydrated encryption-control closure and refetch it after recovery', async () => {
-      const protocol = 'https://example.com/encrypted-control-retry';
-      const initial = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const module = 'https://example.com/encrypted-control-retry';
+      const initial = await TestDataGenerator.generateRecordsWrite({ module });
       const root = await TestDataGenerator.generateRecordsDelete({
         author   : initial.author,
         recordId : initial.message.recordId,
       });
       const tags = {
-        protocol,
+        module,
         contextId : 'retry-thread',
         rolePath  : 'thread/member',
         keyId     : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       };
       const firstAudience = await TestDataGenerator.generateRecordsWrite({
-        author       : initial.author,
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        author     : initial.author,
+        module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
         tags,
       });
       const secondAudience = await TestDataGenerator.generateRecordsWrite({
-        author       : initial.author,
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        author     : initial.author,
+        module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
         tags,
       });
       const rootCid = await Message.getCid(root.message);
@@ -2068,9 +2068,9 @@ describe('sync-messages', () => {
         [firstAudienceCid, { message: firstAudience.message, data: openFirstPayload }],
       ]);
       const missing = [{
-        type         : 'EncryptionControl' as const,
-        protocol,
-        protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        type       : 'EncryptionControl' as const,
+        module,
+        modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
         tags,
       }];
       let rootAttempts = 0;
@@ -2081,13 +2081,13 @@ describe('sync-messages', () => {
             isLatestBaseState : true,
             message           : firstAudience.message,
             messageCid        : firstAudienceCid,
-            protocol,
+            module,
           },
           {
             isLatestBaseState : true,
             message           : secondAudience.message,
             messageCid        : secondAudienceCid,
-            protocol,
+            module,
           },
         ],
         applyResults: async (message): Promise<ReplicationApplyResult> => {
@@ -2147,22 +2147,22 @@ describe('sync-messages', () => {
     });
 
     it('should query a missing role dependency with contextPrefix', async () => {
-      const protocol = 'https://example.com/role-context-prefix';
-      const protocolPath = 'thread/member';
+      const module = 'https://example.com/role-context-prefix';
+      const modulePath = 'thread/member';
       const recipient = 'did:example:role-recipient';
       const contextPrefix = 'thread-1';
-      const root = await TestDataGenerator.generateRecordsWrite({ protocol });
+      const root = await TestDataGenerator.generateRecordsWrite({ module });
       const role = await TestDataGenerator.generateRecordsWrite({
         author: root.author,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         recipient,
       });
       const rootCid = await Message.getCid(root.message);
       const roleCid = await Message.getCid(role.message);
       const roleFilter = {
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
         recipient,
         contextId: contextPrefix,
       };
@@ -2173,7 +2173,7 @@ describe('sync-messages', () => {
         ]),
         recordsByFilter : new Map([[filterKey(roleFilter), [role.message]]]),
         applyResults    : [
-          { kind: 'Incomplete', missing: [{ type: 'Role', protocol, protocolPath, recipient, contextPrefix }] },
+          { kind: 'Incomplete', missing: [{ type: 'Role', module, modulePath, recipient, contextPrefix }] },
           { kind: 'Applied' },
           { kind: 'Applied' },
         ],
@@ -2195,11 +2195,11 @@ describe('sync-messages', () => {
         Message.getCid(call.args[0].message)))).toEqual([rootCid, roleCid, rootCid]);
     });
 
-    it('should use the remote-provided protocol for cross-protocol record refs', async () => {
-      const childProtocol = 'https://example.com/child-protocol';
-      const referencedProtocol = 'https://example.com/referenced-protocol';
-      const root = await TestDataGenerator.generateRecordsWrite({ protocol: childProtocol });
-      const referenced = await TestDataGenerator.generateRecordsWrite({ protocol: referencedProtocol });
+    it('should use the remote-provided module for cross-module record refs', async () => {
+      const childModule = 'https://example.com/child-module';
+      const referencedModule = 'https://example.com/referenced-module';
+      const root = await TestDataGenerator.generateRecordsWrite({ module: childModule });
+      const referenced = await TestDataGenerator.generateRecordsWrite({ module: referencedModule });
       const rootCid = await Message.getCid(root.message);
       const referencedCid = await Message.getCid(referenced.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
@@ -2209,7 +2209,7 @@ describe('sync-messages', () => {
         ]),
         recordsByRecordId : new Map([[referenced.message.recordId, [referenced.message]]]),
         applyResults      : [
-          { kind: 'Incomplete', missing: [{ type: 'CrossProtocolRef', protocol: referencedProtocol, recordId: referenced.message.recordId }] },
+          { kind: 'Incomplete', missing: [{ type: 'CrossModuleRef', module: referencedModule, recordId: referenced.message.recordId }] },
           { kind: 'Applied' },
           { kind: 'Applied' },
         ],
@@ -2224,11 +2224,11 @@ describe('sync-messages', () => {
 
       expect(result).toMatchObject({ succeeded: [rootCid], failed: [] });
       expect(processRequestStub.withArgs(sinon.match({
-        messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, protocol: referencedProtocol } }),
+        messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, module: referencedModule } }),
         messageType   : DwnInterface.RecordsQuery,
       })).calledOnce).toBe(true);
       expect(processRequestStub.withArgs(sinon.match({
-        messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, protocol: childProtocol } }),
+        messageParams : sinon.match({ filter: { recordId: referenced.message.recordId, module: childModule } }),
         messageType   : DwnInterface.RecordsQuery,
       })).called).toBe(false);
       expect(await Promise.all(applyStub.getCalls().map(async (call): Promise<string> =>
@@ -2519,17 +2519,17 @@ describe('sync-messages', () => {
     });
 
     it('should treat non-200 local dependency queries as retryable root failures', async () => {
-      const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/missing-protocol' });
+      const { message } = await TestDataGenerator.generateRecordsWrite({ module: 'https://example.com/missing-module' });
       const messageCid = await Message.getCid(message);
       const { agent, processRequestStub } = createLocalAgentFixture({
         messagesByCid : new Map([[messageCid, { message }]]),
-        applyResults  : [{ kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/missing-protocol' }] }],
+        applyResults  : [{ kind: 'Incomplete', missing: [{ type: 'Module', module: 'https://example.com/missing-module' }] }],
       });
       processRequestStub.callsFake(async ({ messageType, messageParams }: any): Promise<any> => {
         if (messageType === DwnInterface.MessagesRead) {
           return { reply: { status: { code: 200 }, entry: { message } } };
         }
-        if (messageType === DwnInterface.ProtocolsQuery) {
+        if (messageType === DwnInterface.ModulesQuery) {
           return { reply: { status: { code: 503, detail: 'local store unavailable' } } };
         }
         throw new Error(`unexpected message type ${messageType} ${JSON.stringify(messageParams)}`);
@@ -2549,9 +2549,9 @@ describe('sync-messages', () => {
       expect(result.failed[0].localStatusCode).toBe(503);
       expect(result.failed[0].remoteResult).toEqual({
         kind    : 'Incomplete',
-        missing : [{ type: 'Protocol', protocol: 'https://example.com/missing-protocol' }],
+        missing : [{ type: 'Module', module: 'https://example.com/missing-module' }],
       });
-      expect(result.failed[0].detail).toContain('local protocol query failed');
+      expect(result.failed[0].detail).toContain('local module query failed');
     });
 
     it('should not classify a missing exact-CID dependency as a missing root', async () => {
@@ -2561,7 +2561,7 @@ describe('sync-messages', () => {
       const missing = [{
         type       : 'Parent' as const,
         recordId   : 'missing-parent',
-        protocol   : 'https://example.com/dependency',
+        module     : 'https://example.com/dependency',
         messageCid : dependencyCid,
       }];
       const { agent } = createLocalAgentFixture({
@@ -2587,12 +2587,12 @@ describe('sync-messages', () => {
     });
 
     it('should not loop forever on repeated identical Incomplete refs', async () => {
-      const { message } = await TestDataGenerator.generateRecordsWrite({ protocol: 'https://example.com/repeated-incomplete' });
+      const { message } = await TestDataGenerator.generateRecordsWrite({ module: 'https://example.com/repeated-incomplete' });
       const messageCid = await Message.getCid(message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid : new Map([[messageCid, { message }]]),
-        protocols     : [],
-        applyResults  : [{ kind: 'Incomplete', missing: [{ type: 'Protocol', protocol: 'https://example.com/repeated-incomplete' }] }],
+        modules       : [],
+        applyResults  : [{ kind: 'Incomplete', missing: [{ type: 'Module', module: 'https://example.com/repeated-incomplete' }] }],
       });
 
       const result = await pushMessages({
@@ -2606,32 +2606,32 @@ describe('sync-messages', () => {
       expect(result.failed).toHaveLength(1);
       expect(result.failed[0].cid).toBe(messageCid);
       expect(applyStub.calledOnce).toBe(true);
-      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ModulesQuery })).calledOnce).toBe(true);
     });
 
     it('should stop when the remote still reports an acknowledged dependency as missing', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      const protocol = 'https://example.com/repeated-non-empty-incomplete';
-      const protocolDefinition: ProtocolDefinition = {
-        protocol,
+      const module = 'https://example.com/repeated-non-empty-incomplete';
+      const moduleDefinition: ModuleDefinition = {
+        module,
         published : false,
         types     : { note: {} },
         structure : { note: {} },
       };
-      const protocolsConfigure = await TestDataGenerator.generateProtocolsConfigure({ author: alice, protocolDefinition });
+      const modulesConfigure = await TestDataGenerator.generateModulesConfigure({ author: alice, moduleDefinition });
       const root = await TestDataGenerator.generateRecordsWrite({
-        author       : alice,
-        protocol,
-        protocolPath : 'note',
+        author     : alice,
+        module,
+        modulePath : 'note',
       });
       const rootCid = await Message.getCid(root.message);
       const { agent, applyStub, processRequestStub } = createLocalAgentFixture({
         messagesByCid : new Map([[rootCid, { message: root.message }]]),
-        protocols     : [protocolsConfigure.message],
+        modules       : [modulesConfigure.message],
         applyResults  : async (message: any): Promise<ReplicationApplyResult> => {
           const cid = await Message.getCid(message);
           return cid === rootCid
-            ? { kind: 'Incomplete', missing: [{ type: 'Protocol', protocol }] }
+            ? { kind: 'Incomplete', missing: [{ type: 'Module', module }] }
             : { kind: 'Duplicate' };
         },
       });
@@ -2650,7 +2650,7 @@ describe('sync-messages', () => {
       expect(result.failed[0].terminal).toBeUndefined();
       expect(result.failed[0].detail).toContain('remote still reports acknowledged dependencies as missing');
       expect(applyStub.callCount).toBe(3);
-      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ProtocolsQuery })).calledOnce).toBe(true);
+      expect(processRequestStub.withArgs(sinon.match({ messageType: DwnInterface.ModulesQuery })).calledOnce).toBe(true);
     });
   });
 
@@ -2665,7 +2665,7 @@ describe('sync-messages', () => {
           processRequest: sinon.stub().resolves({
             reply: {
               status : { code: 200 },
-              entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+              entry  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
             },
           }),
         },
@@ -2731,7 +2731,7 @@ describe('sync-messages', () => {
           processRequest: sinon.stub().resolves({
             reply: {
               status : { code: 200 },
-              entry  : { message: { descriptor: { interface: 'Protocols', method: 'Configure' } } },
+              entry  : { message: { descriptor: { interface: 'Modules', method: 'Configure' } } },
             },
           }),
         },

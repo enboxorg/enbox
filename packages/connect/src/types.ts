@@ -13,7 +13,7 @@
 
 import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '@enbox/dids';
-import type { DataEncodedRecordsWriteMessage, PermissionScope, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, ModuleDefinition, PermissionScope } from '@enbox/dwn-sdk-js';
 
 // Grant-level connect session metadata is defined in `@enbox/dwn-sdk-js`
 // (the `PermissionGrant` message type depends on it), so the kernel re-exports
@@ -29,16 +29,16 @@ export type { ConnectSessionMetadata, ConnectSessionTransport } from '@enbox/dwn
 export const CONNECT_DENIED_TOKEN = 'DENIED';
 
 /**
- * The protocols of permissions requested, along with the definition and permission scopes for each protocol.
+ * The modules of permissions requested, along with the definition and permission scopes for each module.
  */
 export type ConnectPermissionRequest = {
   /**
-   * The definition of the protocol the permissions are being requested for.
-   * In the event that the protocol is not already installed, the wallet will install this given protocol definition.
+   * The definition of the module the permissions are being requested for.
+   * In the event that the module is not already installed, the wallet will install this given module definition.
    */
-  protocolDefinition: ProtocolDefinition;
+  moduleDefinition: ModuleDefinition;
 
-  /** The scope of the permissions being requested for the given protocol */
+  /** The scope of the permissions being requested for the given module */
   permissionScopes: PermissionScope[];
 };
 
@@ -142,7 +142,7 @@ export type ConnectRequest = {
   /** Required owner proof. Its absence in the response is an authentication failure, never a downgrade. */
   authentication?: ConnectAuthenticationParams;
 
-  /** DWN protocols and permission scopes being requested. */
+  /** DWN modules and permission scopes being requested. */
   permissionRequests: ConnectPermissionRequest[];
 
   /**
@@ -267,7 +267,7 @@ export type ConnectResult = {
   /** The portable delegate DID (includes private keys). */
   delegatePortableDid: PortableDid;
 
-  /** Permission grants for the requested protocols. */
+  /** Permission grants for the requested modules. */
   delegateGrants: DataEncodedRecordsWriteMessage[];
 
   /** The DID of the identity the user approved (the wallet owner's DID). */
@@ -281,7 +281,7 @@ export type ConnectResult = {
 };
 
 /**
- * Output of the wallet-side approval ceremony (grants minted, protocols
+ * Output of the wallet-side approval ceremony (grants minted, modules
  * configured, revocation grants created) that the kernel seals into a
  * {@link ConnectResponse}.
  */

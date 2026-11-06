@@ -9,7 +9,7 @@
 
 import type { AudienceDecryptFailureCause } from '../src/dwn-encryption.js';
 import type { BearerIdentity } from '../src/bearer-identity.js';
-import type { DataEncodedRecordsWriteMessage, ProtocolDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, ModuleDefinition, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { X25519 } from '@enbox/crypto';
@@ -45,11 +45,11 @@ const testDwnUrls: string[] = [testDwnUrl];
 
 const ROLE_PATH = 'admin';
 
-// Fresh protocol URI per test so audience/delivery records never bleed between tests.
-function noteProtocolDefinition(): ProtocolDefinition {
+// Fresh module URI per test so audience/delivery records never bleed between tests.
+function noteModuleDefinition(): ModuleDefinition {
   return {
     published : true,
-    protocol  : `https://protocol.test/decrypt-taxonomy/${crypto.randomUUID()}`,
+    module    : `https://module.test/decrypt-taxonomy/${crypto.randomUUID()}`,
     types     : {
       admin : { dataFormats: ['application/json'] },
       note  : { dataFormats: ['text/plain'], encryptionRequired: true },
@@ -65,17 +65,17 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   let testHarness: PlatformAgentTestHarness;
   let alice: BearerIdentity;
 
-  async function installProtocol(tenantDid: string, definition: ProtocolDefinition): Promise<void> {
+  async function installModule(tenantDid: string, definition: ModuleDefinition): Promise<void> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsConfigure,
+      messageType   : DwnInterface.ModulesConfigure,
       messageParams : { definition },
     });
     expect(reply.status.code).toBe(202);
   }
 
-  async function writeRoleRecord(definition: ProtocolDefinition, recipientDid: string): Promise<{
+  async function writeRoleRecord(definition: ModuleDefinition, recipientDid: string): Promise<{
     delivered: boolean;
     roleRecordId: string;
   }> {
@@ -84,10 +84,10 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'application/json',
-        protocol     : definition.protocol,
-        protocolPath : ROLE_PATH,
-        recipient    : recipientDid,
+        dataFormat : 'application/json',
+        module     : definition.module,
+        modulePath : ROLE_PATH,
+        recipient  : recipientDid,
       },
       dataStream: new Blob(['{}']),
     });
@@ -98,17 +98,17 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     };
   }
 
-  async function writeEncryptedNote(definition: ProtocolDefinition, data: string): Promise<RecordsWriteMessage> {
+  async function writeEncryptedNote(definition: ModuleDefinition, data: string): Promise<RecordsWriteMessage> {
     const { reply, message } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        dataFormat   : 'text/plain',
-        data         : new TextEncoder().encode(data),
-        protocol     : definition.protocol,
-        protocolPath : 'note',
-        published    : true,
+        dataFormat : 'text/plain',
+        data       : new TextEncoder().encode(data),
+        module     : definition.module,
+        modulePath : 'note',
+        published  : true,
       },
     });
     expect(reply.status.code).toBe(202);
@@ -142,17 +142,17 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     });
   }
 
-  async function queryCurrentAudienceKeyId(definition: ProtocolDefinition): Promise<string | undefined> {
+  async function queryCurrentAudienceKeyId(definition: ModuleDefinition): Promise<string | undefined> {
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : definition.protocol,
-          protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-          tags         : {
-            protocol  : definition.protocol,
+          module     : definition.module,
+          modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+          tags       : {
+            module    : definition.module,
             rolePath  : ROLE_PATH,
             contextId : '',
           },
@@ -218,24 +218,24 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   });
 
   it('reports not-wrapped-for-role for a record written before the role read rule existed', async () => {
-    const definition = noteProtocolDefinition();
+    const definition = noteModuleDefinition();
     // Revision 1: same URI, note encrypted, but NO role and no role read rule.
-    const revisionOne: ProtocolDefinition = {
+    const revisionOne: ModuleDefinition = {
       published : true,
-      protocol  : definition.protocol,
+      module    : definition.module,
       types     : { note: { dataFormats: ['text/plain'], encryptionRequired: true } },
       structure : { note: {} },
     };
-    await installProtocol(alice.did.uri, revisionOne);
+    await installModule(alice.did.uri, revisionOne);
     const noteWrite = await writeEncryptedNote(revisionOne, 'note predating the role read rule');
     expect(noteWrite.encryption?.keyEncryption.some(
       (entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME,
     )).toBe(false);
 
     // Revision 2 adds the role and its read rule; the key is delivered for NEW records.
-    await installProtocol(alice.did.uri, definition);
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob PreRole', testDwnUrls });
-    await installProtocol(bob.did.uri, definition);
+    await installModule(bob.did.uri, definition);
     const { delivered } = await writeRoleRecord(definition, bob.did.uri);
     expect(delivered).toBe(true);
 
@@ -245,14 +245,14 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       'not-wrapped-for-role',
     );
     expect(decryptError.recordId).toBe(noteWrite.recordId);
-    expect(decryptError.protocol).toBe(definition.protocol);
+    expect(decryptError.module).toBe(definition.module);
     expect(decryptError.recipientDid).toBe(bob.did.uri);
     expect(decryptError.detail).toContain('re-written');
   }, 30000);
 
   it('reports delivery-missing when the audience exists but no delivery covers the recipient', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob Undelivered', testDwnUrls });
 
     // The role write lands but its key delivery is skipped (unresolvable recipient key),
@@ -273,10 +273,10 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   }, 30000);
 
   it('reports role-not-held when the delivery exists but the role record was deleted', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob Revoked', testDwnUrls });
-    await installProtocol(bob.did.uri, definition);
+    await installModule(bob.did.uri, definition);
 
     const { delivered, roleRecordId } = await writeRoleRecord(definition, bob.did.uri);
     expect(delivered).toBe(true);
@@ -289,7 +289,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       agent        : testHarness.agent,
       contextId    : '',
       keyId        : audienceKeyId,
-      protocol     : definition.protocol,
+      module       : definition.module,
       recipientDid : alice.did.uri,
       rolePath     : ROLE_PATH,
       sourceDid    : alice.did.uri,
@@ -301,7 +301,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         contextId   : '',
         keyId       : audienceKeyId,
         keyMaterial : audienceKey!.keyMaterial,
-        protocol    : definition.protocol,
+        module      : definition.module,
         rolePath    : ROLE_PATH,
       },
       authorDid              : alice.did.uri,
@@ -329,10 +329,10 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   }, 30000);
 
   it('reports remote-unverifiable, not role-not-held, when the role lookup cannot consult the remote', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob RoleRemoteDown', testDwnUrls });
-    await installProtocol(bob.did.uri, definition);
+    await installModule(bob.did.uri, definition);
 
     const { delivered, roleRecordId } = await writeRoleRecord(definition, bob.did.uri);
     expect(delivered).toBe(true);
@@ -360,8 +360,8 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   }, 30000);
 
   it('does not report delivery-missing for a delegated actor whose empty delivery view is inconclusive', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob DelegatedBlind', testDwnUrls });
 
     // No delivery exists for Bob (skipped at share time) — the exact emptiness a plain read by
@@ -372,7 +372,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     roleKeyStub.restore();
     const noteWrite = await writeEncryptedNote(definition, 'note read through a delegated session');
 
-    // A session delegate reads for Bob under a protocol-wide delegated grant: the delivery
+    // A session delegate reads for Bob under a module-wide delegated grant: the delivery
     // query is authorized and comes back empty with the remote consulted, but a delegated
     // actor's view is visibility-filtered by design, so the emptiness must stay inconclusive
     // instead of classifying as delivery-missing.
@@ -388,7 +388,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       scope       : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Read,
-        protocol  : definition.protocol,
+        module    : definition.module,
       },
       store: true,
     });
@@ -406,10 +406,10 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   }, 30000);
 
   it('never reads an existing delivery hidden from a delegated query as delivery-missing', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     const bob = await testHarness.createIdentity({ name: 'Bob DelegatedHidden', testDwnUrls });
-    await installProtocol(bob.did.uri, definition);
+    await installModule(bob.did.uri, definition);
 
     // Bob's delivery EXISTS on Alice's tenant.
     const { delivered } = await writeRoleRecord(definition, bob.did.uri);
@@ -432,7 +432,7 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
       scope       : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Read,
-        protocol  : definition.protocol,
+        module    : definition.module,
         contextId : noteWrite.contextId!,
       },
       store: true,
@@ -451,8 +451,8 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
   }, 30000);
 
   it('reports audience-superseded when the record wraps a non-current audience key', async () => {
-    const definition = noteProtocolDefinition();
-    await installProtocol(alice.did.uri, definition);
+    const definition = noteModuleDefinition();
+    await installModule(alice.did.uri, definition);
     // Current-key projection prefers the earliest tenant-signed `dateCreated`, so a timestamp
     // captured here lets a later insertion supersede everything minted after it — the same state a
     // sync race between two writers produces.
@@ -472,17 +472,17 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
 
     // Insert a backdated audience record for the same tuple. Its earlier `dateCreated` makes it
     // the tuple's current audience, superseding the key the note is wrapped to.
-    const aliceProtocolReply = await testHarness.agent.dwn.processRequest({
+    const aliceModuleReply = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: definition.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: definition.module } },
     });
-    const storedDefinition = aliceProtocolReply.reply.entries![0].descriptor.definition;
+    const storedDefinition = aliceModuleReply.reply.entries![0].descriptor.definition;
     const sealingPublicKey = getRuleSetAtPath(ROLE_PATH, storedDefinition.structure)!.$keyAgreement!.publicKeyJwk;
     const backdatedAudience = await generateAudienceKey({
       contextId : '',
-      protocol  : definition.protocol,
+      module    : definition.module,
       rolePath  : ROLE_PATH,
     });
     const sealedPrivateKey = await Encryption.wrapSeal({
@@ -493,13 +493,13 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         contextId        : '',
         derivationScheme : SEAL_DERIVATION_SCHEME,
         keyId            : await Encryption.getKeyId(sealingPublicKey as any),
-        protocol         : definition.protocol,
+        module           : definition.module,
         publicKey        : sealingPublicKey as any,
         rolePath         : ROLE_PATH,
       },
     });
     const audiencePayloadBytes = Encoder.objectToBytes({
-      protocol     : definition.protocol,
+      module       : definition.module,
       rolePath     : ROLE_PATH,
       contextId    : '',
       keyId        : backdatedAudience.keyId,
@@ -514,11 +514,11 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         dataFormat       : 'application/json',
         dateCreated      : backdatedTimestamp,
         messageTimestamp : backdatedTimestamp,
-        protocol         : definition.protocol,
-        protocolPath     : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+        module           : definition.module,
+        modulePath       : ENCRYPTION_CONTROL_AUDIENCE_PATH,
         schema           : ENCRYPTION_CONTROL_AUDIENCE_SCHEMA_URI,
         tags             : {
-          protocol  : definition.protocol,
+          module    : definition.module,
           rolePath  : ROLE_PATH,
           contextId : '',
           keyId     : backdatedAudience.keyId,
@@ -556,26 +556,26 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
     });
 
     it('reports remote-unverifiable when the delivery lookup is empty locally and the remote is unreachable', async () => {
-      const definition = noteProtocolDefinition();
-      await installProtocol(alice.did.uri, definition);
+      const definition = noteModuleDefinition();
+      await installModule(alice.did.uri, definition);
       // Minted on Alice's node during the note write; the recipient node gets the record
       // and its audience replicated, but never a delivery.
       const noteWrite = await writeEncryptedNote(definition, 'note on an unreachable tenant');
       const bob = await recipientHarness.createIdentity({ name: 'Bob RemoteDown', testDwnUrls });
 
-      // Replicate Alice's protocol, the audience record (write admission requires it
+      // Replicate Alice's module, the audience record (write admission requires it
       // before any record wrapped to it), and the note record onto the recipient node.
-      const { reply: protocolReply } = await testHarness.agent.dwn.processRequest({
+      const { reply: moduleReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
         target        : alice.did.uri,
-        messageType   : DwnInterface.ProtocolsQuery,
-        messageParams : { filter: { protocol: definition.protocol } },
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module: definition.module } },
       });
-      const protocolApplyReply = await recipientHarness.agent.dwn.processRawMessage(
+      const moduleApplyReply = await recipientHarness.agent.dwn.processRawMessage(
         alice.did.uri,
-        protocolReply.entries![0] as any,
+        moduleReply.entries![0] as any,
       );
-      expect(protocolApplyReply.status.code).toBe(202);
+      expect(moduleApplyReply.status.code).toBe(202);
 
       const { reply: audienceReply } = await testHarness.agent.dwn.processRequest({
         author        : alice.did.uri,
@@ -583,10 +583,10 @@ describe('AgentDwnApi audience decrypt error taxonomy', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : definition.protocol,
-            protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-            tags         : {
-              protocol  : definition.protocol,
+            module     : definition.module,
+            modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+            tags       : {
+              module    : definition.module,
               rolePath  : ROLE_PATH,
               contextId : '',
             },

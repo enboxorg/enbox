@@ -5,14 +5,14 @@
  * `sync('pull')` (see enboxorg/web-wallet). With live sync running on both
  * wallets, a second same-owner wallet creates an identity and writes its profile
  * subtree. The first wallet discovers the identity over the agent-DID live sync,
- * registers the scoped protocols, and the SDK must converge the identity's
+ * registers the scoped modules, and the SDK must converge the identity's
  * existing records on its own — purely from the hot-added link under live sync,
  * with no manual pull.
  *
  * Requires: DWN server on localhost:3000 (or TEST_DWN_URL),
  *           Pkarr relay on localhost:7527 (or DID_DHT_GATEWAY_URI).
  */
-import type { ProtocolDefinition, RecordsFilter, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, RecordsFilter, RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
@@ -27,12 +27,12 @@ import { DwnInterface } from '../../src/types/dwn.js';
 import { requireDwnServer } from '../utils/require-dwn-server.js';
 import { testDwnUrl } from '../utils/test-config.js';
 import { EnboxUserAgent as UserAgent } from '../../src/enbox-user-agent.js';
-import { IdentityProtocolDefinition, JwkProtocolDefinition } from '../../src/store-data-protocols.js';
+import { IdentityModuleDefinition, JwkModuleDefinition } from '../../src/store-data-modules.js';
 
 const testDwnUrls = [testDwnUrl];
 
-const profileProtocol: ProtocolDefinition = {
-  protocol  : 'https://identity.foundation/protocols/profile',
+const profileModule: ModuleDefinition = {
+  module    : 'https://identity.foundation/modules/profile',
   published : true,
   types     : {
     profile: {
@@ -71,8 +71,8 @@ const profileProtocol: ProtocolDefinition = {
   },
 };
 
-const profileSyncProtocols: [string, ...string[]] = [profileProtocol.protocol];
-const agentDidSyncProtocols: [string, ...string[]] = [IdentityProtocolDefinition.protocol, JwkProtocolDefinition.protocol];
+const profileSyncModules: [string, ...string[]] = [profileModule.module];
+const agentDidSyncModules: [string, ...string[]] = [IdentityModuleDefinition.module, JwkModuleDefinition.module];
 
 async function waitFor(
   condition: () => Promise<boolean> | boolean,
@@ -137,15 +137,15 @@ async function retryFreshDidResolution<T extends { reply: { status: { code: numb
   return result;
 }
 
-async function installProtocolLocalAndRemote(
+async function installModuleLocalAndRemote(
   harness: PlatformAgentTestHarness,
   did: string,
-  definition: ProtocolDefinition
+  definition: ModuleDefinition
 ): Promise<void> {
   const localResult = await harness.agent.dwn.processRequest({
     author        : did,
     target        : did,
-    messageType   : DwnInterface.ProtocolsConfigure,
+    messageType   : DwnInterface.ModulesConfigure,
     messageParams : { definition },
   });
   expect(localResult.reply.status.code).toBe(202);
@@ -153,7 +153,7 @@ async function installProtocolLocalAndRemote(
   const remoteResult = await retryFreshDidResolution(() => harness.agent.dwn.sendRequest({
     author      : did,
     target      : did,
-    messageType : DwnInterface.ProtocolsConfigure,
+    messageType : DwnInterface.ModulesConfigure,
     rawMessage  : localResult.message!,
   }));
   expect(remoteResult.reply.status.code).toBe(202);
@@ -163,8 +163,8 @@ async function writeRecordLocalAndRemote(
   harness: PlatformAgentTestHarness,
   did: string,
   messageParams: {
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     schema?: string;
     parentContextId?: string;
     dataFormat: string;
@@ -249,7 +249,7 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     for (const wallet of [walletA, walletB]) {
       await wallet.agent.sync.setIdentityOptions({
         did     : wallet.agent.agentDid.uri,
-        options : { protocols: agentDidSyncProtocols },
+        options : { modules: agentDidSyncModules },
       });
       await wallet.agent.sync.startSync({ interval: '30s' });
     }
@@ -271,7 +271,7 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     discoveredIdentity = await walletB.createIdentity({ name: discoveredIdentityName, testDwnUrls });
     const did = discoveredIdentity.did.uri;
 
-    await installProtocolLocalAndRemote(walletB, did, profileProtocol);
+    await installModuleLocalAndRemote(walletB, did, profileModule);
 
     const profileData = {
       displayName : 'Live Autopull Identity',
@@ -282,24 +282,24 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     const heroBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 5, 6, 7, 8]);
 
     const profileRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol     : profileProtocol.protocol,
-      protocolPath : 'profile',
-      schema       : profileProtocol.types.profile.schema,
-      dataFormat   : 'application/json',
-      published    : true,
+      module     : profileModule.module,
+      modulePath : 'profile',
+      schema     : profileModule.types.profile.schema,
+      dataFormat : 'application/json',
+      published  : true,
     }, profileBytes);
 
     const avatarRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/avatar',
+      module          : profileModule.module,
+      modulePath      : 'profile/avatar',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
     }, avatarBytes);
 
     const heroRecord = await writeRecordLocalAndRemote(walletB, did, {
-      protocol        : profileProtocol.protocol,
-      protocolPath    : 'profile/hero',
+      module          : profileModule.module,
+      modulePath      : 'profile/hero',
       parentContextId : profileRecord.contextId,
       dataFormat      : 'image/png',
       published       : true,
@@ -317,20 +317,20 @@ describe('E2E: live-sync auto-pull of a newly-registered identity scope', () => 
     // the existing records on its own.
     await walletA.agent.sync.setIdentityOptions({
       did     : did,
-      options : { protocols: profileSyncProtocols },
+      options : { modules: profileSyncModules },
     });
 
     // The whole profile subtree must converge on wallet A via live auto-pull.
     await waitFor(async () => {
-      const profile = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: profileRecord.recordId });
-      const avatar = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: avatarRecord.recordId });
-      const hero = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: heroRecord.recordId });
+      const profile = await findRecord(walletA, did, { module: profileModule.module, recordId: profileRecord.recordId });
+      const avatar = await findRecord(walletA, did, { module: profileModule.module, recordId: avatarRecord.recordId });
+      const hero = await findRecord(walletA, did, { module: profileModule.module, recordId: heroRecord.recordId });
       return Boolean(profile && avatar && hero);
     }, 60_000);
 
-    const pulledProfile = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: profileRecord.recordId });
-    const pulledAvatar = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: avatarRecord.recordId });
-    const pulledHero = await findRecord(walletA, did, { protocol: profileProtocol.protocol, recordId: heroRecord.recordId });
+    const pulledProfile = await findRecord(walletA, did, { module: profileModule.module, recordId: profileRecord.recordId });
+    const pulledAvatar = await findRecord(walletA, did, { module: profileModule.module, recordId: avatarRecord.recordId });
+    const pulledHero = await findRecord(walletA, did, { module: profileModule.module, recordId: heroRecord.recordId });
 
     expect(pulledProfile!.contextId).toBe(profileRecord.contextId);
     expect(pulledAvatar!.descriptor.parentId).toBe(profileRecord.recordId);

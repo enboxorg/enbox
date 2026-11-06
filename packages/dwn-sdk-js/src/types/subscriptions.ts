@@ -94,8 +94,8 @@ export type SubscriptionEvent = {
   messageCid? : string;
   /** Whether this event's source row was latest base state at read time. */
   isLatestBaseState? : boolean;
-  /** Protocol index value associated with the source row, when present. */
-  protocol? : string;
+  /** Module index value associated with the source row, when present. */
+  module? : string;
   /** Base64url-encoded inline data carried beside the message payload. */
   encodedData? : string;
 };

@@ -5,7 +5,7 @@ import type { DataEncodedRecordsWriteMessage, RecordsDeleteDescriptor, RecordsDe
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
@@ -15,7 +15,7 @@ import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.j
 export type RecordsDeleteOptions = {
   recordId: string;
   messageTimestamp?: string;
-  protocolRole?: string;
+  moduleRole?: string;
   signer: MessageSigner;
 
   /**
@@ -74,7 +74,7 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
     const authorization = await Message.createAuthorization({
       descriptor,
       signer         : options.signer,
-      protocolRole   : options.protocolRole,
+      moduleRole     : options.moduleRole,
       ...permissionGrantInvocation,
       delegatedGrant : options.delegatedGrant
     });
@@ -88,12 +88,12 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
   /**
    * Indexed properties needed for MessageStore indexing.
    *
-   * Immutable record facts (`protocol`, `protocolPath`, `recipient`, `schema`, `parentId`,
+   * Immutable record facts (`module`, `modulePath`, `recipient`, `schema`, `parentId`,
    * `dateCreated`, `contextId`) come from the initial `RecordsWrite`. Mutable query-visibility
    * facts (flattened `tag.*`, `published`, and `datePublished`) come from the newest retained
    * `RecordsWrite` that existed immediately before this delete, because tombstone visibility must
    * reflect the record state being deleted: without them, tombstones of tagged records never match
-   * tag filters (e.g. the permission shadow filters on `tag.protocol`) and tombstones of published
+   * tag filters (e.g. the permission shadow filters on `tag.module`) and tombstones of published
    * records never match `published: true` or `datePublished` queries and subscriptions.
    */
   public constructIndexes(
@@ -104,7 +104,7 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
     const descriptor = { ...message.descriptor };
 
     // we add the immutable properties from the initial RecordsWrite message in order to use them when querying relevant deletes.
-    const { protocol, protocolPath, recipient, schema, parentId, dateCreated } = initialWrite.descriptor;
+    const { module, modulePath, recipient, schema, parentId, dateCreated } = initialWrite.descriptor;
 
     // Mutable visibility facts come from the newest retained RecordsWrite that held them before deletion.
     const { tags, published, datePublished } = visibilitySourceWrite.descriptor;
@@ -113,7 +113,7 @@ export class RecordsDelete extends AbstractMessage<RecordsDeleteMessage> {
       isLatestBaseState : true,
       published         : !!published,
       datePublished,
-      protocol, protocolPath, recipient, schema, parentId, dateCreated,
+      module, modulePath, recipient, schema, parentId, dateCreated,
       contextId         : initialWrite.contextId,
       author            : this.author!,
       ...descriptor

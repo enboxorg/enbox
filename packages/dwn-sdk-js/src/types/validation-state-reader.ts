@@ -1,6 +1,6 @@
 import type { GenericMessage } from './message-types.js';
-import type { PermissionGrant } from '../protocols/permission-grant.js';
-import type { ProtocolDefinition } from './protocols-types.js';
+import type { ModuleDefinition } from './modules-types.js';
+import type { PermissionGrant } from '../modules/permission-grant.js';
 import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from './records-types.js';
 
@@ -8,10 +8,10 @@ import type { RecordsWriteMessage } from './records-types.js';
  * The single narrow surface through which validation logic reads state.
  *
  * Every validation-time state read performed during message admission routes through this
- * interface, so the replay basis (initial writes ∪ latest states ∪ tombstones ∪ protocol-config
+ * interface, so the replay basis (initial writes ∪ latest states ∪ tombstones ∪ module-config
  * history ∪ permission records) provably stays closed under admission's read set. Validation
- * modules (`core/protocol-authorization*`, `protocols/permissions*`) are lint-banned from
- * importing `MessageStore` directly; a new protocol-engine feature that needs new state must add
+ * modules (`core/module-authorization*`, `modules/permissions*`) are lint-banned from
+ * importing `MessageStore` directly; a new module-engine feature that needs new state must add
  * a reader method here.
  */
 export interface ValidationStateReader {
@@ -33,21 +33,21 @@ export interface ValidationStateReader {
    * Constructs the chain of existing records from the root to the given
    * descendant, each represented by its initial `RecordsWrite`.
    * @returns the chain root-first; an empty array when `descendantRecordId` is `undefined`.
-   * @throws {DwnError} with `ProtocolAuthorizationParentNotFoundConstructingRecordChain` when any
+   * @throws {DwnError} with `ModuleAuthorizationParentNotFoundConstructingRecordChain` when any
    *         link in the chain is missing.
    */
   constructRecordChain(tenant: string, descendantRecordId: string | undefined): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Fetches the immediate parent record for protocolPath/contextId verification.
+   * Fetches the immediate parent record for modulePath/contextId verification.
    *
-   * Uses the retained initial write in the expected protocol. Soft deletes preserve ancestry;
+   * Uses the retained initial write in the expected module. Soft deletes preserve ancestry;
    * only prune removes it.
    * @returns the initial parent write, or `undefined` when the parent is absent or pruned.
    */
   fetchParentRecord(input: {
     tenant: string;
-    parentProtocolUri: string;
+    parentModuleUri: string;
     parentId: string;
   }): Promise<RecordsWriteMessage | undefined>;
 
@@ -67,8 +67,8 @@ export interface ValidationStateReader {
    */
   hasMatchingRoleRecord(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<boolean>;
@@ -79,18 +79,18 @@ export interface ValidationStateReader {
    */
   queryLatestRoleRecords(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     recipient: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage[]>;
 
   /**
-   * Queries accepted source-protocol-native audience control records by role-audience coordinates.
+   * Queries accepted source-module-native audience control records by role-audience coordinates.
    */
   queryAudienceRecords(input: {
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId?: string;
@@ -111,29 +111,29 @@ export interface ValidationStateReader {
   /**
    * Fetches the newest `RecordsWrite` associated with a record, used to authorize `Messages.Read`
    * access to `RecordsDelete` messages by projecting the delete back to the deleted record's
-   * protocol scope.
+   * module scope.
    * @throws {DwnError} with `RecordsWriteGetNewestWriteRecordNotFound` when no write exists.
    */
   fetchNewestRecordsWrite(tenant: string, recordId: string): Promise<RecordsWriteMessage>;
 
   /**
-   * Fetches the protocol definition for the given protocol URI.
+   * Fetches the module definition for the given module URI.
    * When `messageTimestamp` is provided, returns the definition active at that point in time —
-   * the `ProtocolsConfigure` with the greatest `messageTimestamp` that is <= the given timestamp,
+   * the `ModulesConfigure` with the greatest `messageTimestamp` that is <= the given timestamp,
    * read from retained config history. When not provided, returns the latest definition.
-   * Core protocol definitions are returned from the registry without a store read.
-   * @throws {DwnError} with `ProtocolAuthorizationProtocolNotFound` when no definition exists.
+   * Core module definitions are returned from the registry without a store read.
+   * @throws {DwnError} with `ModuleAuthorizationModuleNotFound` when no definition exists.
    */
-  fetchProtocolDefinition(tenant: string, protocolUri: string, messageTimestamp?: string): Promise<ProtocolDefinition>;
+  fetchModuleDefinition(tenant: string, moduleUri: string, messageTimestamp?: string): Promise<ModuleDefinition>;
 
   /**
-   * Fetches the latest `$squash: true` record at a protocol path within the parent context.
+   * Fetches the latest `$squash: true` record at a module path within the parent context.
    * This is the temporal floor used by the squash backstop.
    */
   fetchLatestSquashRecordAtScope(input: {
     tenant: string;
-    protocol: string;
-    protocolPath: string;
+    module: string;
+    modulePath: string;
     contextIdPrefix?: string;
   }): Promise<RecordsWriteMessage | undefined>;
 

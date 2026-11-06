@@ -1,6 +1,6 @@
 import type { BearerIdentity } from '../src/bearer-identity.js';
 import type { PrivateKeyJwk } from '@enbox/crypto';
-import type { DataEncodedRecordsWriteMessage, GenericMessage, ProtocolDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
+import type { DataEncodedRecordsWriteMessage, GenericMessage, ModuleDefinition, RecordsWriteMessage, SourceRoleAudienceKeyEncryption } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 
@@ -8,7 +8,7 @@ import { DidJwk } from '@enbox/dids';
 import { DwnInterface } from '../src/types/dwn.js';
 import { Ed25519 } from '@enbox/crypto';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
-import { JwkProtocolDefinition } from '../src/store-data-protocols.js';
+import { JwkModuleDefinition } from '../src/store-data-modules.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { requireDwnServer } from './utils/require-dwn-server.js';
 import { retryFreshDidResolution } from './utils/remote-dwn-retry.js';
@@ -24,7 +24,7 @@ import {
   Encoder,
   ENCRYPTION_CONTROL_AUDIENCE_PATH,
   ENCRYPTION_CONTROL_DELIVERY_PATH,
-  EncryptionProtocol,
+  EncryptionModule,
   KeyDerivationScheme,
   ROLE_AUDIENCE_DERIVATION_SCHEME,
 } from '@enbox/dwn-sdk-js';
@@ -43,14 +43,14 @@ async function decryptReadEntry(
   author: string,
   target: string,
   entry: { data: ReadableStream<Uint8Array>; recordsWrite: RecordsWriteMessage },
-  options?: { delegatedGrant?: DataEncodedRecordsWriteMessage; granteeDid?: string; protocolRole?: string },
+  options?: { delegatedGrant?: DataEncodedRecordsWriteMessage; granteeDid?: string; moduleRole?: string },
 ): Promise<Uint8Array> {
   const decrypted = await harness.agent.dwn.decryptRecordData({
     author,
     dataStream     : entry.data,
     delegatedGrant : options?.delegatedGrant,
     granteeDid     : options?.granteeDid,
-    protocolRole   : options?.protocolRole,
+    moduleRole     : options?.moduleRole,
     recordsWrite   : entry.recordsWrite,
     target,
   });
@@ -59,7 +59,7 @@ async function decryptReadEntry(
 
 /**
  * End-to-end tests for encrypted data through sync, agent lifecycle with
- * encrypted stores, and encrypted role-audience protocol boundaries.
+ * encrypted stores, and encrypted role-audience module boundaries.
  *
  * These tests require:
  * - A Pkarr gateway (for did:dht publishing via createIdentity)
@@ -82,10 +82,10 @@ describe('e2e: encrypted data survives sync round-trip', () => {
   let syncEngine: SyncEngineLevel;
   let alice: BearerIdentity;
 
-  // A protocol with encryptionRequired for end-to-end encrypted records.
-  const encryptedNoteProtocol: ProtocolDefinition = {
+  // A module with encryptionRequired for end-to-end encrypted records.
+  const encryptedNoteModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://protocol.xyz/encrypted-notes',
+    module    : 'https://module.xyz/encrypted-notes',
     types     : {
       note: {
         schema             : 'https://schemas.xyz/note',
@@ -128,8 +128,8 @@ describe('e2e: encrypted data survives sync round-trip', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
+          module     : encryptedNoteModule.module,
+          modulePath : 'note',
         }
       },
     }));
@@ -144,8 +144,8 @@ describe('e2e: encrypted data survives sync round-trip', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
+          module     : encryptedNoteModule.module,
+          modulePath : 'note',
         }
       },
     });
@@ -211,13 +211,13 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     );
   }
 
-  it('should install the encrypted protocol locally with $keyAgreement keys', async () => {
-    // Configure the protocol locally; its type definition requires encryption.
+  it('should install the encrypted module locally with $keyAgreement keys', async () => {
+    // Configure the module locally; its type definition requires encryption.
     const { reply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: encryptedNoteProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: encryptedNoteModule },
     });
     expect(reply.status.code).toBe(202);
 
@@ -225,8 +225,8 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     const { reply: queryReply } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: encryptedNoteProtocol.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: encryptedNoteModule.module } },
     });
     expect(queryReply.entries).toHaveLength(1);
     const definition = queryReply.entries![0].descriptor.definition;
@@ -246,10 +246,10 @@ describe('e2e: encrypted data survives sync round-trip', () => {
         target        : alice.did.uri,
         messageType   : DwnInterface.RecordsWrite,
         messageParams : {
-          protocol     : encryptedNoteProtocol.protocol,
-          protocolPath : 'note',
-          dataFormat   : 'text/plain',
-          schema       : 'https://schemas.xyz/note',
+          module     : encryptedNoteModule.module,
+          modulePath : 'note',
+          dataFormat : 'text/plain',
+          schema     : 'https://schemas.xyz/note',
         },
         dataStream: new Blob([new TextEncoder().encode(text)]),
       });
@@ -262,13 +262,13 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     for (const entry of queryReply.entries!) {
       expect(entry.encryption).toBeDefined();
       expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
     }
   }, 30_000);
 
   it('should push encrypted records to the remote DWN', async () => {
     // Register identity and push to remote.
-    await testHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { protocols: 'all' } });
+    await testHarness.agent.sync.setIdentityOptions({ did: alice.did.uri, options: { modules: 'all' } });
 
     // Verify records exist on the remote DWN.
     const remoteQueryReply = await syncPushUntilRemoteRecordCount(3);
@@ -279,7 +279,7 @@ describe('e2e: encrypted data survives sync round-trip', () => {
     for (const entry of remoteQueryReply.entries!) {
       expect(entry.encryption).toBeDefined();
       expect(entry.encryption!.algorithm).toBe(ContentEncryptionAlgorithm.A256CTR);
-      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ProtocolPath);
+      expect(entry.encryption!.keyEncryption[0].derivationScheme).toBe(KeyDerivationScheme.ModulePath);
     }
   }, 60_000);
 
@@ -389,8 +389,8 @@ describe('e2e: agent lifecycle with encrypted stores', () => {
         messageType   : DwnInterface.RecordsQuery,
         messageParams : {
           filter: {
-            protocol     : JwkProtocolDefinition.protocol,
-            protocolPath : 'privateJwk',
+            module     : JwkModuleDefinition.module,
+            modulePath : 'privateJwk',
           }
         },
       });
@@ -475,10 +475,10 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
   const password = 'role-audience-cache-test-password';
   const bobPassword = 'role-audience-cache-test-bob-password';
 
-  // Multi-party chat protocol with $role participants and encrypted data.
-  const chatProtocol: ProtocolDefinition = {
+  // Multi-party chat module with $role participants and encrypted data.
+  const chatModule: ModuleDefinition = {
     published : true,
-    protocol  : 'https://protocol.xyz/e2e-chat',
+    module    : 'https://module.xyz/e2e-chat',
     types     : {
       thread      : { schema: 'https://schemas.xyz/thread', dataFormats: ['application/json'] },
       participant : { schema: 'https://schemas.xyz/participant', dataFormats: ['application/json'] },
@@ -538,25 +538,25 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     await bobDelegateHarness.closeStorage();
   });
 
-  async function installChatProtocol(harness: PlatformAgentTestHarness, did: string): Promise<void> {
+  async function installChatModule(harness: PlatformAgentTestHarness, did: string): Promise<void> {
     const { reply } = await harness.agent.dwn.processRequest({
       author        : did,
       target        : did,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     });
     expect(reply.status.code).toBe(202);
 
     const { reply: remoteReply } = await retryFreshDidResolution(() => harness.agent.dwn.sendRequest({
       author        : did,
       target        : did,
-      messageType   : DwnInterface.ProtocolsConfigure,
-      messageParams : { definition: chatProtocol },
+      messageType   : DwnInterface.ModulesConfigure,
+      messageParams : { definition: chatModule },
     }));
     expect([202, 409]).toContain(remoteReply.status.code);
   }
 
-  async function copyProtocolToHarness(
+  async function copyModuleToHarness(
     source: PlatformAgentTestHarness,
     destination: PlatformAgentTestHarness,
     tenantDid: string,
@@ -564,8 +564,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     const { reply } = await source.agent.dwn.processRequest({
       author        : tenantDid,
       target        : tenantDid,
-      messageType   : DwnInterface.ProtocolsQuery,
-      messageParams : { filter: { protocol: chatProtocol.protocol } },
+      messageType   : DwnInterface.ModulesQuery,
+      messageParams : { filter: { module: chatModule.module } },
     });
     expect(reply.status.code).toBe(200);
     expect(reply.entries).toHaveLength(1);
@@ -638,7 +638,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
   }
 
   async function queryOneControlRecord(params: {
-    protocolPath: string;
+    modulePath: string;
     recipient?: string;
     tags: Record<string, string>;
   }): Promise<RecordsWriteMessage & { encodedData: string }> {
@@ -649,8 +649,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageParams : {
         filter: {
           ...(params.recipient === undefined ? {} : { recipient: params.recipient }),
-          protocol     : chatProtocol.protocol,
-          protocolPath : params.protocolPath,
+          module     : chatModule.module,
+          modulePath : params.modulePath,
         },
       },
     });
@@ -660,9 +660,9 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     );
     if (matchingEntries.length !== 1) {
       throw new Error(JSON.stringify((reply.entries ?? []).map((entry): unknown => ({
-        protocolPath : entry.descriptor.protocolPath,
-        recipient    : entry.descriptor.recipient,
-        tags         : entry.descriptor.tags,
+        modulePath : entry.descriptor.modulePath,
+        recipient  : entry.descriptor.recipient,
+        tags       : entry.descriptor.tags,
       }))));
     }
     expect(matchingEntries).toHaveLength(1);
@@ -670,14 +670,14 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     return matchingEntries[0] as RecordsWriteMessage & { encodedData: string };
   }
 
-  it('should install the chat protocol with encryption for Alice', async () => {
-    await installChatProtocol(testHarness, alice.did.uri);
+  it('should install the chat module with encryption for Alice', async () => {
+    await installChatModule(testHarness, alice.did.uri);
   }, 30_000);
 
   it('should deliver an audience key and allow a role holder to decrypt', async () => {
-    await installChatProtocol(testHarness, alice.did.uri);
-    await installChatProtocol(testHarness, bob.did.uri);
-    await installChatProtocol(testHarness, carol.did.uri);
+    await installChatModule(testHarness, alice.did.uri);
+    await installChatModule(testHarness, bob.did.uri);
+    await installChatModule(testHarness, carol.did.uri);
 
     // Alice creates a plaintext thread (root record).
     const { message: threadMsg } = await testHarness.agent.dwn.processRequest({
@@ -685,10 +685,10 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : chatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"Secret Chat"}')]),
     });
@@ -701,8 +701,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chatModule.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadContextId,
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
@@ -717,8 +717,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : bob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -733,9 +733,9 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          recipient    : bob.did.uri,
-          protocol     : chatProtocol.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          recipient  : bob.did.uri,
+          module     : chatModule.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
         },
       },
     });
@@ -747,8 +747,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chatModule.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadContextId,
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
@@ -761,7 +761,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       (entry): entry is SourceRoleAudienceKeyEncryption => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME
     );
     expect(roleAudienceEntry).toBeDefined();
-    expect(roleAudienceEntry!.protocol).toBe(chatProtocol.protocol);
+    expect(roleAudienceEntry!.module).toBe(chatModule.module);
     expect(roleAudienceEntry!.rolePath).toBe('thread/participant');
     expect(roleAudienceEntry!.keyId).toBe(deliveryReply.entries![0].descriptor.tags!.keyId);
 
@@ -770,8 +770,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
-        filter       : { recordId: (chatMessage as RecordsWriteMessage).recordId },
-        protocolRole : 'thread/participant',
+        filter     : { recordId: (chatMessage as RecordsWriteMessage).recordId },
+        moduleRole : 'thread/participant',
       },
     });
     expect(bobReadReply.status.code).toBe(200);
@@ -788,29 +788,29 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
-        filter       : { recordId: (chatMessage as RecordsWriteMessage).recordId },
-        protocolRole : 'thread/participant',
+        filter     : { recordId: (chatMessage as RecordsWriteMessage).recordId },
+        moduleRole : 'thread/participant',
       },
     });
     expect(carolReadReply.status.code).toBe(401);
   }, 30_000);
 
   it('should allow a role holder in a separate agent to decrypt with the delivered audience key', async () => {
-    await installChatProtocol(testHarness, alice.did.uri);
-    await installChatProtocol(bobHarness, separateBob.did.uri);
+    await installChatModule(testHarness, alice.did.uri);
+    await installChatModule(bobHarness, separateBob.did.uri);
 
-    await copyProtocolToHarness(bobHarness, testHarness, separateBob.did.uri);
-    await copyProtocolToHarness(testHarness, bobHarness, alice.did.uri);
+    await copyModuleToHarness(bobHarness, testHarness, separateBob.did.uri);
+    await copyModuleToHarness(testHarness, bobHarness, alice.did.uri);
 
     const { message: threadMessage } = await testHarness.agent.dwn.processRequest({
       author        : alice.did.uri,
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol     : chatProtocol.protocol,
-        protocolPath : 'thread',
-        dataFormat   : 'application/json',
-        schema       : 'https://schemas.xyz/thread',
+        module     : chatModule.module,
+        modulePath : 'thread',
+        dataFormat : 'application/json',
+        schema     : 'https://schemas.xyz/thread',
       },
       dataStream: new Blob([new TextEncoder().encode('{"title":"Separate Agent Chat"}')]),
     });
@@ -822,8 +822,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
         recipient       : separateBob.did.uri,
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/participant',
+        module          : chatModule.module,
+        modulePath      : 'thread/participant',
         parentContextId : threadContextId,
         dataFormat      : 'application/json',
         schema          : 'https://schemas.xyz/participant',
@@ -838,8 +838,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsWrite,
       messageParams : {
-        protocol        : chatProtocol.protocol,
-        protocolPath    : 'thread/chat',
+        module          : chatModule.module,
+        modulePath      : 'thread/chat',
         parentContextId : threadContextId,
         dataFormat      : 'text/plain',
         schema          : 'https://schemas.xyz/chat',
@@ -855,19 +855,19 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
     expect(roleAudienceEntry!.rolePath).toBe('thread/participant');
 
     const audienceRecord = await queryOneControlRecord({
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      tags         : {
-        protocol  : chatProtocol.protocol,
+      modulePath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      tags       : {
+        module    : chatModule.module,
         contextId : threadContextId,
         rolePath  : 'thread/participant',
         keyId     : roleAudienceEntry!.keyId,
       },
     });
     const deliveryRecord = await queryOneControlRecord({
-      recipient    : separateBob.did.uri,
-      protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-      tags         : {
-        protocol  : chatProtocol.protocol,
+      recipient  : separateBob.did.uri,
+      modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      tags       : {
+        module    : chatModule.module,
         contextId : threadContextId,
         rolePath  : 'thread/participant',
         keyId     : roleAudienceEntry!.keyId,
@@ -888,8 +888,8 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       target        : alice.did.uri,
       messageType   : DwnInterface.RecordsRead,
       messageParams : {
-        filter       : { recordId: (chatMessage as RecordsWriteMessage).recordId },
-        protocolRole : 'thread/participant',
+        filter     : { recordId: (chatMessage as RecordsWriteMessage).recordId },
+        moduleRole : 'thread/participant',
       },
     });
     expect(bobReadReply.status.code).toBe(200);
@@ -910,7 +910,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       scope       : {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Read,
-        protocol  : chatProtocol.protocol,
+        module    : chatModule.module,
       },
       store: true,
     });
@@ -920,11 +920,11 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       granteeDid            : delegateDid,
       granteeRootPrivateKey : delegateX25519PrivateKey,
       grantMessages         : [bobDelegateReadGrant.message as RecordsWriteMessage & { encodedData: string }],
-      protocolDefinitions   : [chatProtocol],
+      moduleDefinitions     : [chatModule],
     });
-    expect(grantKeyRecords.map((record) => record.descriptor.protocolPath)).toContain(EncryptionProtocol.grantKeyPath);
+    expect(grantKeyRecords.map((record) => record.descriptor.modulePath)).toContain(EncryptionModule.grantKeyPath);
 
-    await copyProtocolToHarness(testHarness, bobDelegateHarness, alice.did.uri);
+    await copyModuleToHarness(testHarness, bobDelegateHarness, alice.did.uri);
     await copyRecordToHarness(testHarness, bobDelegateHarness, alice.did.uri, (threadMessage as RecordsWriteMessage).recordId);
     await copyRecordToHarness(testHarness, bobDelegateHarness, alice.did.uri, (roleMessage as RecordsWriteMessage).recordId);
     await copyDataEncodedRecordToHarness(bobDelegateHarness, alice.did.uri, audienceRecord);
@@ -952,10 +952,10 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageType   : DwnInterface.RecordsQuery,
       messageParams : {
         filter: {
-          recipient    : delegateDid,
-          protocol     : EncryptionProtocol.uri,
-          protocolPath : EncryptionProtocol.grantKeyPath,
-          tags         : { protocol: chatProtocol.protocol },
+          recipient  : delegateDid,
+          module     : EncryptionModule.uri,
+          modulePath : EncryptionModule.grantKeyPath,
+          tags       : { module: chatModule.module },
         },
       },
     });
@@ -972,13 +972,13 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageParams : {
         delegatedGrant : bobDelegateReadGrant.message,
         filter         : {
-          recipient    : separateBob.did.uri,
-          protocol     : chatProtocol.protocol,
-          protocolPath : ENCRYPTION_CONTROL_DELIVERY_PATH,
-          tags         : {
+          recipient  : separateBob.did.uri,
+          module     : chatModule.module,
+          modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
+          tags       : {
             contextId : threadContextId,
             keyId     : roleAudienceEntry!.keyId,
-            protocol  : chatProtocol.protocol,
+            module    : chatModule.module,
             rolePath  : 'thread/participant',
           },
         },
@@ -997,7 +997,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       delegateDecryptionKeyCache : isolatedDelegateCache,
       granteeDid                 : delegateDid,
       keyId                      : roleAudienceEntry!.keyId,
-      protocol                   : chatProtocol.protocol,
+      module                     : chatModule.module,
       recipientDid               : separateBob.did.uri,
       rolePath                   : 'thread/participant',
       sourceDid                  : alice.did.uri,
@@ -1012,7 +1012,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageParams : {
         delegatedGrant : bobDelegateReadGrant.message,
         filter         : { recordId: (chatMessage as RecordsWriteMessage).recordId },
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
       },
     });
     expect(delegateReadReply.status.code).toBe(200);
@@ -1026,7 +1026,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       {
         delegatedGrant : bobDelegateReadGrant.message,
         granteeDid     : delegateDid,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
       },
     );
     expect(new TextDecoder().decode(delegateDecryptedBytes)).toBe(chatText);
@@ -1039,7 +1039,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       messageParams : {
         delegatedGrant : bobDelegateReadGrant.message,
         filter         : { recordId: (chatMessage as RecordsWriteMessage).recordId },
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
       },
     });
     expect(secondDelegateReadReply.status.code).toBe(200);
@@ -1051,7 +1051,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       {
         delegatedGrant : bobDelegateReadGrant.message,
         granteeDid     : delegateDid,
-        protocolRole   : 'thread/participant',
+        moduleRole     : 'thread/participant',
       },
     );
     expect(new TextDecoder().decode(secondDelegateDecryptedBytes)).toBe(chatText);
@@ -1060,7 +1060,7 @@ describe('e2e: encrypted role-audience records require audience keys', () => {
       const filter = request.messageParams?.filter;
       return request.target === alice.did.uri &&
         request.messageType === DwnInterface.RecordsQuery &&
-        filter?.protocol === EncryptionProtocol.uri;
+        filter?.module === EncryptionModule.uri;
     };
     const foreignGrantKeyQueries = [
       ...processSpy.getCalls(),

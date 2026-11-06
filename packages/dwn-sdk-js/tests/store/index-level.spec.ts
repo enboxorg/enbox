@@ -151,14 +151,14 @@ describe('IndexLevel', () => {
     });
 
     describe('$recordLimit parent groups', () => {
-      const protocol = 'https://example.com/record-limit';
-      const protocolPath = 'folder/item';
+      const module = 'https://example.com/record-limit';
+      const modulePath = 'folder/item';
       const candidateFilter: Filter = {
         interface         : 'Records',
         method            : 'Write',
         isLatestBaseState : true,
-        protocol,
-        protocolPath,
+        module,
+        modulePath,
       };
 
       async function putCandidate(input: {
@@ -167,15 +167,15 @@ describe('IndexLevel', () => {
         messageCid: string;
         messageTimestamp?: string;
         parentId?: string;
-        protocolPath?: string;
+        modulePath?: string;
         published?: boolean;
         recordId: string;
       }): Promise<void> {
         await testIndex.put(tenant, input.messageCid, {
           ...candidateFilter,
-          dateCreated  : input.dateCreated,
-          recordId     : input.recordId,
-          protocolPath : input.protocolPath ?? protocolPath,
+          dateCreated : input.dateCreated,
+          recordId    : input.recordId,
+          modulePath  : input.modulePath ?? modulePath,
           ...(input.author !== undefined && { author: input.author }),
           ...(input.messageTimestamp !== undefined && { messageTimestamp: input.messageTimestamp }),
           ...(input.parentId !== undefined && { parentId: input.parentId }),
@@ -209,11 +209,11 @@ describe('IndexLevel', () => {
           parentId    : 'parent-b',
         });
         await putCandidate({
-          messageCid   : 'other-path',
-          dateCreated  : '2024-01-01T00:00:00.000000Z',
-          recordId     : 'record-0',
-          parentId     : 'parent-a',
-          protocolPath : 'folder/other',
+          messageCid  : 'other-path',
+          dateCreated : '2024-01-01T00:00:00.000000Z',
+          recordId    : 'record-0',
+          parentId    : 'parent-a',
+          modulePath  : 'folder/other',
         });
 
         const cutoff = await testIndex.findRecordLimitRankCutoff(
@@ -1695,9 +1695,9 @@ describe('IndexLevel', () => {
       expect(IndexLevel.isFilterConcise({ recordId: 'record-id' }, queryOptionsWithCursor)).toBe(true);
     });
 
-    it('if there is no cursor -  protocolPath, contextId, parentId, or schema return a concise filter', async () => {
-      expect(IndexLevel.isFilterConcise({ protocolPath: 'protocolPath' }, queryOptionsWithoutCursor)).toBe(true);
-      expect(IndexLevel.isFilterConcise({ protocolPath: 'protocolPath' }, queryOptionsWithCursor)).toBe(false); // control
+    it('if there is no cursor -  modulePath, contextId, parentId, or schema return a concise filter', async () => {
+      expect(IndexLevel.isFilterConcise({ modulePath: 'modulePath' }, queryOptionsWithoutCursor)).toBe(true);
+      expect(IndexLevel.isFilterConcise({ modulePath: 'modulePath' }, queryOptionsWithCursor)).toBe(false); // control
 
       expect(IndexLevel.isFilterConcise({ contextId: 'contextId' }, queryOptionsWithoutCursor)).toBe(true);
       expect(IndexLevel.isFilterConcise({ contextId: 'contextId' }, queryOptionsWithCursor)).toBe(false); // control
@@ -1716,19 +1716,19 @@ describe('IndexLevel', () => {
       expect(IndexLevel.isFilterConcise({ schema: 'schema', contextId: 'contextId', parentId: 'parentId' }, queryOptionsWithoutCursor)).toBe(true);
     });
 
-    it('if protocol filter exists by itself it is not a concise filter', async () => {
-      expect(IndexLevel.isFilterConcise({ protocol: 'protocol' }, queryOptionsWithoutCursor)).toBe(false);
+    it('if module filter exists by itself it is not a concise filter', async () => {
+      expect(IndexLevel.isFilterConcise({ module: 'module' }, queryOptionsWithoutCursor)).toBe(false);
 
       // control
-      expect(IndexLevel.isFilterConcise({ protocol: 'protocol', protocolPath: 'path/to' }, queryOptionsWithoutCursor)).toBe(true);
+      expect(IndexLevel.isFilterConcise({ module: 'module', modulePath: 'path/to' }, queryOptionsWithoutCursor)).toBe(true);
     });
   });
 
   describe('compound indexes', () => {
     const compoundIndexes: CompoundIndexDefinition[] = [
       {
-        name         : 'protocol-protocolPath-messageTimestamp',
-        properties   : ['protocol', 'protocolPath'],
+        name         : 'module-modulePath-messageTimestamp',
+        properties   : ['module', 'modulePath'],
         sortProperty : 'messageTimestamp',
       },
       {
@@ -1761,17 +1761,17 @@ describe('IndexLevel', () => {
       it('should create compound index entries during put', async () => {
         const id = uuid();
         await compoundIndex.put(compoundTenant, id, {
-          protocol         : 'https://protocol.xyz',
-          protocolPath     : 'chat/message',
+          module           : 'https://module.xyz',
+          modulePath       : 'chat/message',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Message',
           dateCreated      : '2024-01-15T10:00:00.000000Z',
         });
 
-        // query using compound index (protocol + protocolPath sorted by messageTimestamp)
+        // query using compound index (module + modulePath sorted by messageTimestamp)
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          [{ module: 'https://module.xyz', modulePath: 'chat/message' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -1782,8 +1782,8 @@ describe('IndexLevel', () => {
       it('should delete compound index entries during delete', async () => {
         const id = uuid();
         await compoundIndex.put(compoundTenant, id, {
-          protocol         : 'https://protocol.xyz',
-          protocolPath     : 'chat/message',
+          module           : 'https://module.xyz',
+          modulePath       : 'chat/message',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Message',
           dateCreated      : '2024-01-15T10:00:00.000000Z',
@@ -1792,7 +1792,7 @@ describe('IndexLevel', () => {
         // verify it exists
         let results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          [{ module: 'https://module.xyz', modulePath: 'chat/message' }],
           { sortProperty: 'messageTimestamp' }
         );
         expect(results).toHaveLength(1);
@@ -1803,7 +1803,7 @@ describe('IndexLevel', () => {
         // verify compound index entries are removed
         results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://protocol.xyz', protocolPath: 'chat/message' }],
+          [{ module: 'https://module.xyz', modulePath: 'chat/message' }],
           { sortProperty: 'messageTimestamp' }
         );
         expect(results).toHaveLength(0);
@@ -1811,13 +1811,13 @@ describe('IndexLevel', () => {
 
       it('should skip compound index entries when required properties are missing', async () => {
         const id = uuid();
-        // only has schema, not protocol+protocolPath
+        // only has schema, not module+modulePath
         await compoundIndex.put(compoundTenant, id, {
           schema      : 'https://schema.org/Message',
           dateCreated : '2024-01-15T10:00:00.000000Z',
         });
 
-        // the protocol+protocolPath compound index should not have entries
+        // the module+modulePath compound index should not have entries
         // query via the schema compound index should still work
         const schemaResults = await compoundIndex.query(
           compoundTenant,
@@ -1840,15 +1840,15 @@ describe('IndexLevel', () => {
 
         for (let i = 0; i < ids.length; i++) {
           await compoundIndex.put(compoundTenant, ids[i], {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'thread/post',
+            module           : 'https://modules.example',
+            modulePath       : 'thread/post',
             messageTimestamp : timestamps[i],
           });
         }
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -1866,15 +1866,15 @@ describe('IndexLevel', () => {
 
         for (let i = 0; i < ids.length; i++) {
           await compoundIndex.put(compoundTenant, ids[i], {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'thread/post',
+            module           : 'https://modules.example',
+            modulePath       : 'thread/post',
             messageTimestamp : timestamps[i],
           });
         }
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending }
         );
 
@@ -1885,15 +1885,15 @@ describe('IndexLevel', () => {
       it('should support limit', async () => {
         for (let i = 0; i < 5; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
         }
 
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
 
@@ -1904,8 +1904,8 @@ describe('IndexLevel', () => {
       it('should support cursor pagination ascending', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
         }
@@ -1913,7 +1913,7 @@ describe('IndexLevel', () => {
         // first page
         const page1 = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', limit: 3 }
         );
         expect(page1).toHaveLength(3);
@@ -1923,7 +1923,7 @@ describe('IndexLevel', () => {
         const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
         const page2 = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', cursor }
         );
         expect(page2).toHaveLength(3);
@@ -1933,8 +1933,8 @@ describe('IndexLevel', () => {
       it('should support cursor pagination descending', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
         }
@@ -1942,7 +1942,7 @@ describe('IndexLevel', () => {
         // first page descending
         const page1 = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, limit: 3 }
         );
         expect(page1).toHaveLength(3);
@@ -1952,7 +1952,7 @@ describe('IndexLevel', () => {
         const cursor = IndexLevel.createCursorFromLastArrayItem(page1, 'messageTimestamp');
         const page2 = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp', sortDirection: SortDirection.Descending, cursor }
         );
         expect(page2).toHaveLength(3);
@@ -1960,21 +1960,21 @@ describe('IndexLevel', () => {
       });
 
       it('should verify residual filter properties in memory', async () => {
-        // insert records with same protocol+protocolPath but different 'published' values
+        // insert records with same module+modulePath but different 'published' values
         for (let i = 0; i < 4; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false
           });
         }
 
-        // compound index covers protocol+protocolPath+messageTimestamp but NOT published
+        // compound index covers module+modulePath+messageTimestamp but NOT published
         // published should be verified as a residual filter
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items', published: true }],
+          [{ module: 'https://modules.example', modulePath: 'items', published: true }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -1983,27 +1983,27 @@ describe('IndexLevel', () => {
       });
 
       it('should only return results matching the specific filter values', async () => {
-        // insert records with different protocol paths
+        // insert records with different module paths
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/post',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/reply',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-3', {
-          protocol         : 'https://other.xyz',
-          protocolPath     : 'thread/post',
+          module           : 'https://other.xyz',
+          modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T12:00:00.000000Z',
         });
 
-        // query for only protocol.xyz + thread/post
+        // query for only module.xyz + thread/post
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'thread/post' }],
+          [{ module: 'https://modules.example', modulePath: 'thread/post' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2013,13 +2013,13 @@ describe('IndexLevel', () => {
 
       it('should fall back to non-compound strategy for OR (multi-filter) queries', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/post',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/reply',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
 
@@ -2027,8 +2027,8 @@ describe('IndexLevel', () => {
         const results = await compoundIndex.query(
           compoundTenant,
           [
-            { protocol: 'https://proto.xyz', protocolPath: 'thread/post' },
-            { protocol: 'https://proto.xyz', protocolPath: 'thread/reply' },
+            { module: 'https://modules.example', modulePath: 'thread/post' },
+            { module: 'https://modules.example', modulePath: 'thread/reply' },
           ],
           { sortProperty: 'messageTimestamp' }
         );
@@ -2039,12 +2039,12 @@ describe('IndexLevel', () => {
       it('should prefer the compound index with the most properties', async () => {
         // both compound indexes could potentially match a query with schema + dateCreated
         // but only the schema-dateCreated one actually applies
-        // also, the protocol-protocolPath-messageTimestamp index should be preferred over
-        // a hypothetical single-property index when both protocol and protocolPath are present
+        // also, the module-modulePath-messageTimestamp index should be preferred over
+        // a hypothetical single-property index when both module and modulePath are present
 
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'items',
+          module           : 'https://modules.example',
+          modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Item',
           dateCreated      : '2024-01-15T10:00:00.000000Z',
@@ -2059,31 +2059,31 @@ describe('IndexLevel', () => {
         expect(schemaResults).toHaveLength(1);
         expect(schemaResults[0].messageCid).toBe('msg-1');
 
-        // query using protocol+protocolPath compound index
-        const protocolResults = await compoundIndex.query(
+        // query using module+modulePath compound index
+        const moduleResults = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
-        expect(protocolResults).toHaveLength(1);
-        expect(protocolResults[0].messageCid).toBe('msg-1');
+        expect(moduleResults).toHaveLength(1);
+        expect(moduleResults[0].messageCid).toBe('msg-1');
       });
 
       it('should not use compound index when sort property does not match', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'items',
+          module           : 'https://modules.example',
+          modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
           schema           : 'https://schema.org/Item',
           dateCreated      : '2024-01-15T10:00:00.000000Z',
         });
 
-        // query with protocol+protocolPath but sort by dateCreated (not messageTimestamp)
-        // this should NOT use the protocol-protocolPath-messageTimestamp compound index
+        // query with module+modulePath but sort by dateCreated (not messageTimestamp)
+        // this should NOT use the module-modulePath-messageTimestamp compound index
         // it should still return correct results via fallback strategy
         const results = await compoundIndex.query(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'dateCreated' }
         );
         expect(results).toHaveLength(1);
@@ -2094,8 +2094,8 @@ describe('IndexLevel', () => {
       it('should count items matching a compound index filter', async () => {
         for (let i = 0; i < 10; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
         }
@@ -2103,15 +2103,15 @@ describe('IndexLevel', () => {
         // add some non-matching records
         for (let i = 0; i < 5; i++) {
           await compoundIndex.put(compoundTenant, `other-${i}`, {
-            protocol         : 'https://other.xyz',
-            protocolPath     : 'items',
+            module           : 'https://other.xyz',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
           });
         }
 
         const count = await compoundIndex.count(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items' }],
+          [{ module: 'https://modules.example', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2121,8 +2121,8 @@ describe('IndexLevel', () => {
       it('should count items with residual filter verification', async () => {
         for (let i = 0; i < 6; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i % 2 === 0, // msg-0: true, msg-1: false, msg-2: true, msg-3: false, msg-4: true, msg-5: false
           });
@@ -2130,7 +2130,7 @@ describe('IndexLevel', () => {
 
         const count = await compoundIndex.count(
           compoundTenant,
-          [{ protocol: 'https://proto.xyz', protocolPath: 'items', published: true }],
+          [{ module: 'https://modules.example', modulePath: 'items', published: true }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2139,14 +2139,14 @@ describe('IndexLevel', () => {
 
       it('should return 0 when no items match', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'items',
+          module           : 'https://modules.example',
+          modulePath       : 'items',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
 
         const count = await compoundIndex.count(
           compoundTenant,
-          [{ protocol: 'https://nonexistent.xyz', protocolPath: 'items' }],
+          [{ module: 'https://nonexistent.xyz', modulePath: 'items' }],
           { sortProperty: 'messageTimestamp' }
         );
 
@@ -2156,8 +2156,8 @@ describe('IndexLevel', () => {
       it('should fall back to full query for non-compound-index filters', async () => {
         for (let i = 0; i < 4; i++) {
           await compoundIndex.put(compoundTenant, `msg-${i}`, {
-            protocol         : 'https://proto.xyz',
-            protocolPath     : 'items',
+            module           : 'https://modules.example',
+            modulePath       : 'items',
             messageTimestamp : `2024-01-15T1${i}:00:00.000000Z`,
             published        : i < 2,
           });
@@ -2175,18 +2175,18 @@ describe('IndexLevel', () => {
 
       it('should count correctly with OR (multi-filter) queries', async () => {
         await compoundIndex.put(compoundTenant, 'msg-1', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/post',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T10:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-2', {
-          protocol         : 'https://proto.xyz',
-          protocolPath     : 'thread/reply',
+          module           : 'https://modules.example',
+          modulePath       : 'thread/reply',
           messageTimestamp : '2024-01-15T11:00:00.000000Z',
         });
         await compoundIndex.put(compoundTenant, 'msg-3', {
-          protocol         : 'https://other.xyz',
-          protocolPath     : 'thread/post',
+          module           : 'https://other.xyz',
+          modulePath       : 'thread/post',
           messageTimestamp : '2024-01-15T12:00:00.000000Z',
         });
 
@@ -2194,8 +2194,8 @@ describe('IndexLevel', () => {
         const count = await compoundIndex.count(
           compoundTenant,
           [
-            { protocol: 'https://proto.xyz', protocolPath: 'thread/post' },
-            { protocol: 'https://proto.xyz', protocolPath: 'thread/reply' },
+            { module: 'https://modules.example', modulePath: 'thread/post' },
+            { module: 'https://modules.example', modulePath: 'thread/reply' },
           ],
           { sortProperty: 'messageTimestamp' }
         );

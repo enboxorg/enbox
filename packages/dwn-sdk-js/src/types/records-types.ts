@@ -24,8 +24,8 @@ export type RecordsWriteTagsFilter = StartsWithFilter | RangeFilter | string | n
 export type RecordsWriteDescriptor = {
   interface: DwnInterfaceName.Records;
   method: DwnMethodName.Write;
-  protocol: string;
-  protocolPath: string;
+  module: string;
+  modulePath: string;
   recipient?: string;
   schema?: string;
   tags?: RecordsWriteTags;
@@ -40,8 +40,8 @@ export type RecordsWriteDescriptor = {
   permissionGrantId?: string;
 
   /**
-   * When `true`, this record is a squash (snapshot) write. The protocol rule set at this record's
-   * `protocolPath` must have `$squash: true`; otherwise the message is rejected.
+   * When `true`, this record is a squash (snapshot) write. The module rule set at this record's
+   * `modulePath` must have `$squash: true`; otherwise the message is rejected.
    * A squash write must be an initial write (a new record, not an update).
    * This is an immutable property.
    */
@@ -149,8 +149,8 @@ export type RecordsFilter = {
   author?: string | string[];
   attester?: string;
   recipient?: string | string[];
-  protocol?: string;
-  protocolPath?: string;
+  module?: string;
+  modulePath?: string;
   published?: boolean;
 
   /**
@@ -236,7 +236,7 @@ export type RecordsReadReply = GenericMessageReply & {
 
 /**
  * A response-local dependency envelope without a feed position or redundant
- * protocol index; the signed message carries its protocol metadata.
+ * module index; the signed message carries its module metadata.
  * @internal
  */
 export type RecordsReadReplicationSupportEntry = {

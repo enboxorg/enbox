@@ -349,7 +349,7 @@ function MessageBrowser({ did }: { did: string }) {
   // Filters
   const [filterInterface, setFilterInterface] = useState('');
   const [filterMethod, setFilterMethod] = useState('');
-  const [filterProtocol, setFilterProtocol] = useState('');
+  const [filterModule, setFilterModule] = useState('');
 
   const PAGE_SIZE = 20;
 
@@ -357,7 +357,7 @@ function MessageBrowser({ did }: { did: string }) {
   useEffect(() => {
     setCursor(undefined);
     setPrevCursors([]);
-  }, [filterInterface, filterMethod, filterProtocol]);
+  }, [filterInterface, filterMethod, filterModule]);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,7 +368,7 @@ function MessageBrowser({ did }: { did: string }) {
       cursor,
       interface : filterInterface || undefined,
       method    : filterMethod || undefined,
-      protocol  : filterProtocol || undefined,
+      module  : filterModule || undefined,
     }).then((data) => {
       if (!cancelled) {
         setMessages(data);
@@ -380,7 +380,7 @@ function MessageBrowser({ did }: { did: string }) {
     });
 
     return () => { cancelled = true; };
-  }, [did, cursor, filterInterface, filterMethod, filterProtocol]);
+  }, [did, cursor, filterInterface, filterMethod, filterModule]);
 
   const messageItems = messages?.messages ?? [];
   const nextCursor = messages?.cursor;
@@ -397,7 +397,7 @@ function MessageBrowser({ did }: { did: string }) {
           <select value={filterInterface} onChange={(e: any) => setFilterInterface(e.target.value)}>
             <option value="">All interfaces</option>
             <option value="Records">Records</option>
-            <option value="Protocols">Protocols</option>
+            <option value="Modules">Modules</option>
             <option value="Messages">Messages</option>
             <option value="Permissions">Permissions</option>
           </select>
@@ -419,17 +419,17 @@ function MessageBrowser({ did }: { did: string }) {
         <div class="form-group" style="margin-bottom:0;flex:1;min-width:150px">
           <input
             type="text"
-            placeholder="Filter by protocol URI..."
-            value={filterProtocol}
-            onInput={(e: any) => setFilterProtocol(e.target.value)}
+            placeholder="Filter by module URI..."
+            value={filterModule}
+            onInput={(e: any) => setFilterModule(e.target.value)}
             style="margin-bottom:0"
           />
         </div>
-        {(filterInterface || filterMethod || filterProtocol) && (
+        {(filterInterface || filterMethod || filterModule) && (
           <button
             type="button"
             class="btn btn-sm"
-            onClick={() => { setFilterInterface(''); setFilterMethod(''); setFilterProtocol(''); }}
+            onClick={() => { setFilterInterface(''); setFilterMethod(''); setFilterModule(''); }}
           >
             Clear filters
           </button>
@@ -447,7 +447,7 @@ function MessageBrowser({ did }: { did: string }) {
                   <th>Message CID</th>
                   <th>Interface</th>
                   <th>Method</th>
-                  <th>Protocol</th>
+                  <th>Module</th>
                   <th>Schema</th>
                   <th>Data Format</th>
                   <th>Data Size</th>
@@ -459,7 +459,7 @@ function MessageBrowser({ did }: { did: string }) {
                   <tr>
                     <td colSpan={8}>
                       <div class="empty-state">
-                        {filterInterface || filterMethod || filterProtocol
+                        {filterInterface || filterMethod || filterModule
                           ? 'No messages match the current filters.'
                           : 'No messages found.'}
                       </div>
@@ -471,7 +471,7 @@ function MessageBrowser({ did }: { did: string }) {
                     <td class="mono">{truncateDid(m.messageCid ?? '', 20)}</td>
                     <td>{m.interface ?? '\u2014'}</td>
                     <td>{m.method ?? '\u2014'}</td>
-                    <td class="mono">{m.protocol ? truncateDid(m.protocol, 24) : '\u2014'}</td>
+                    <td class="mono">{m.module ? truncateDid(m.module, 24) : '\u2014'}</td>
                     <td class="mono" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={m.schema ?? ''}>
                       {m.schema ? truncateDid(m.schema, 20) : '\u2014'}
                     </td>
@@ -530,7 +530,7 @@ function MessageBrowser({ did }: { did: string }) {
 function TenantDetail({ did }: { did: string }) {
   const [tenant, setTenant] = useState<any>(null);
   const [quota, setQuota] = useState<any>(null);
-  const [protocols, setProtocols] = useState<any>(null);
+  const [modules, setModules] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -541,12 +541,12 @@ function TenantDetail({ did }: { did: string }) {
     Promise.all([
       api.getTenant(did),
       api.getQuota(did),
-      api.getTenantProtocols(did),
+      api.getTenantModules(did),
     ]).then(([t, q, p]) => {
       if (!cancelled) {
         setTenant(t);
         setQuota(q);
-        setProtocols(p);
+        setModules(p);
         setLoading(false);
       }
     }).catch((err) => {
@@ -594,7 +594,7 @@ function TenantDetail({ did }: { did: string }) {
     return <div class="loading">Loading...</div>;
   }
 
-  const protocolItems = protocols?.protocols ?? [];
+  const moduleItems = modules?.modules ?? [];
 
   return (
     <div>
@@ -653,25 +653,25 @@ function TenantDetail({ did }: { did: string }) {
             <div class="value">{formatBytes(tenant?.storage?.dataStorageBytes ?? 0)}</div>
           </div>
           <div class="stat-card">
-            <div class="label">Protocols</div>
-            <div class="value">{formatNumber(protocolItems.length)}</div>
+            <div class="label">Modules</div>
+            <div class="value">{formatNumber(moduleItems.length)}</div>
           </div>
         </div>
-        {protocolItems.length > 0 && (
+        {moduleItems.length > 0 && (
           <div style="margin-top:8px">
-            <div style="font-size:12px;font-weight:600;color:var(--color-text-muted);margin-bottom:6px">Installed Protocols</div>
+            <div style="font-size:12px;font-weight:600;color:var(--color-text-muted);margin-bottom:6px">Installed Modules</div>
             <div class="table-container">
               <table>
                 <thead>
                   <tr>
-                    <th>Protocol</th>
+                    <th>Module</th>
                     <th>Messages</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {protocolItems.map((p: any) => (
-                    <tr key={p.protocol}>
-                      <td class="mono">{p.protocol}</td>
+                  {moduleItems.map((p: any) => (
+                    <tr key={p.module}>
+                      <td class="mono">{p.module}</td>
                       <td>{formatNumber(p.messageCount ?? 0)}</td>
                     </tr>
                   ))}

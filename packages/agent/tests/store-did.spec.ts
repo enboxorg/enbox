@@ -8,7 +8,7 @@ import type { AgentDataStore, DwnDataStore } from '../src/store-data.js';
 
 import { AgentDidApi } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { IdentityProtocolDefinition } from '../src/store-data-protocols.js';
+import { IdentityModuleDefinition } from '../src/store-data-modules.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { TestAgent } from './utils/test-agent.js';
 import { DwnDidStore, InMemoryDidStore } from '../src/store-did.js';
@@ -206,7 +206,7 @@ describe('DidStore', () => {
         dwnIt('throws an error if the DID records exceed the DWN maximum data size for query results', async () => {
           const didBytes = Convert.string(new Array(102400 + 1).join('0')).toUint8Array();
 
-          // since we are writing directly to the dwn we first initialize the storage protocol
+          // since we are writing directly to the dwn we first initialize the storage module
           await (didStore as DwnDataStore<PortableDid>)['initialize']({ agent: testHarness.agent });
 
           // Store the DID in the DWN.
@@ -215,10 +215,10 @@ describe('DidStore', () => {
             target        : testHarness.agent.agentDid.uri,
             messageType   : DwnInterface.RecordsWrite,
             messageParams : {
-              dataFormat   : 'application/json',
-              protocol     : IdentityProtocolDefinition.protocol,
-              protocolPath : 'portableDid',
-              schema       : IdentityProtocolDefinition.types.portableDid.schema,
+              dataFormat : 'application/json',
+              module     : IdentityModuleDefinition.module,
+              modulePath : 'portableDid',
+              schema     : IdentityModuleDefinition.types.portableDid.schema,
             },
             dataStream: new Blob([didBytes], { type: 'application/json' })
           });

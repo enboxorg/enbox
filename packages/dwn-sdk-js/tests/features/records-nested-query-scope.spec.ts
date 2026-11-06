@@ -1,6 +1,6 @@
 import type { DidResolver } from '@enbox/dids';
 import type { EventLog } from '../../src/types/subscriptions.js';
-import type { DataStore, MessageStore, ProtocolDefinition, RecordsCountReply, RecordsQueryReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore } from '../../src/index.js';
+import type { DataStore, MessageStore, ModuleDefinition, RecordsCountReply, RecordsQueryReply, RecordsReadReply, RecordsSubscribeReply, ResumableTaskStore } from '../../src/index.js';
 import type { GenerateRecordsWriteOutput, Persona } from '../utils/test-data-generator.js';
 
 import sinon from 'sinon';
@@ -26,8 +26,8 @@ export function testRecordsNestedQueryScope(): void {
     let eventLog: EventLog;
     let dwn: Dwn;
 
-    const protocolDefinition: ProtocolDefinition = {
-      protocol  : 'http://nested-query-scope.xyz',
+    const moduleDefinition: ModuleDefinition = {
+      module    : 'http://nested-query-scope.xyz',
       published : true,
       types     : {
         avatar    : {},
@@ -72,43 +72,43 @@ export function testRecordsNestedQueryScope(): void {
       await dwn.close();
     });
 
-    async function installProtocol(author: Persona): Promise<void> {
-      const protocolConfig = await TestDataGenerator.generateProtocolsConfigure({
+    async function installModule(author: Persona): Promise<void> {
+      const moduleConfig = await TestDataGenerator.generateModulesConfigure({
         author,
-        protocolDefinition,
+        moduleDefinition,
       });
 
-      const reply = await dwn.processMessage(author.did, protocolConfig.message);
+      const reply = await dwn.processMessage(author.did, moduleConfig.message);
       expect(reply.status.code).toBe(202);
     }
 
     async function writeProfile(author: Persona, dateCreated: string): Promise<GenerateRecordsWriteOutput> {
-      return writeProtocolRecord({
+      return writeModuleRecord({
         author,
         dateCreated,
-        protocolPath: 'profile',
+        modulePath: 'profile',
       });
     }
 
     async function writeAvatar(author: Persona, parentContextId: string, dateCreated: string): Promise<GenerateRecordsWriteOutput> {
-      return writeProtocolRecord({
+      return writeModuleRecord({
         author,
         dateCreated,
         parentContextId,
-        protocolPath: 'profile/avatar',
+        modulePath: 'profile/avatar',
       });
     }
 
-    async function writeProtocolRecord(input: {
+    async function writeModuleRecord(input: {
       author: Persona;
       dateCreated: string;
       parentContextId?: string;
-      protocolPath: string;
+      modulePath: string;
     }): Promise<GenerateRecordsWriteOutput> {
       const record = await TestDataGenerator.generateRecordsWrite({
         author           : input.author,
-        protocol         : protocolDefinition.protocol,
-        protocolPath     : input.protocolPath,
+        module           : moduleDefinition.module,
+        modulePath       : input.modulePath,
         parentContextId  : input.parentContextId,
         dateCreated      : input.dateCreated,
         messageTimestamp : input.dateCreated,
@@ -128,7 +128,7 @@ export function testRecordsNestedQueryScope(): void {
       profile2Avatar: GenerateRecordsWriteOutput;
     }> {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await installProtocol(alice);
+      await installModule(alice);
 
       const profile1 = await writeProfile(alice, '2026-01-01T00:00:00.000000Z');
       const profile2 = await writeProfile(alice, '2026-01-02T00:00:00.000000Z');
@@ -149,42 +149,42 @@ export function testRecordsNestedQueryScope(): void {
       channel2Message: GenerateRecordsWriteOutput;
     }> {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await installProtocol(alice);
+      await installModule(alice);
 
-      const community = await writeProtocolRecord({
-        author       : alice,
-        dateCreated  : '2026-04-01T00:00:00.000000Z',
-        protocolPath : 'community',
+      const community = await writeModuleRecord({
+        author      : alice,
+        dateCreated : '2026-04-01T00:00:00.000000Z',
+        modulePath  : 'community',
       });
-      const channel1 = await writeProtocolRecord({
+      const channel1 = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-02T00:00:00.000000Z',
         parentContextId : community.message.contextId,
-        protocolPath    : 'community/channel',
+        modulePath      : 'community/channel',
       });
-      const channel2 = await writeProtocolRecord({
+      const channel2 = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-03T00:00:00.000000Z',
         parentContextId : community.message.contextId,
-        protocolPath    : 'community/channel',
+        modulePath      : 'community/channel',
       });
-      const channel1Message1 = await writeProtocolRecord({
+      const channel1Message1 = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-04T00:00:00.000000Z',
         parentContextId : channel1.message.contextId,
-        protocolPath    : 'community/channel/message',
+        modulePath      : 'community/channel/message',
       });
-      const channel1Message2 = await writeProtocolRecord({
+      const channel1Message2 = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-05T00:00:00.000000Z',
         parentContextId : channel1.message.contextId,
-        protocolPath    : 'community/channel/message',
+        modulePath      : 'community/channel/message',
       });
-      const channel2Message = await writeProtocolRecord({
+      const channel2Message = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-06T00:00:00.000000Z',
         parentContextId : channel2.message.contextId,
-        protocolPath    : 'community/channel/message',
+        modulePath      : 'community/channel/message',
       });
 
       return { alice, community, channel1, channel2, channel1Message1, channel1Message2, channel2Message };
@@ -196,9 +196,9 @@ export function testRecordsNestedQueryScope(): void {
       expectedRecordIds: string[];
     }): Promise<void> {
       const filter = {
-        contextId    : input.contextId,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'community/channel/message',
+        contextId  : input.contextId,
+        module     : moduleDefinition.module,
+        modulePath : 'community/channel/message',
       };
 
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: input.alice, filter });
@@ -222,12 +222,12 @@ export function testRecordsNestedQueryScope(): void {
 
     it('should reject missing, malformed, and too-deep context scopes for nested requests', async () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
-      await installProtocol(alice);
+      await installModule(alice);
 
       const expectInvalidScope = async (contextId?: string, parentId?: string): Promise<void> => {
         const filter = {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/channel/message',
+          module     : moduleDefinition.module,
+          modulePath : 'community/channel/message',
           ...(contextId === undefined ? {} : { contextId }),
           ...(parentId === undefined ? {} : { parentId }),
         };
@@ -235,19 +235,19 @@ export function testRecordsNestedQueryScope(): void {
         const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter });
         const queryReply = await dwn.processMessage(alice.did, recordsQuery.message) as RecordsQueryReply;
         expect(queryReply.status.code).toBe(400);
-        expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid);
+        expect(queryReply.status.detail).toContain(DwnErrorCode.RecordsQueryNestedModulePathContextIdInvalid);
         expect(queryReply.entries).toBeUndefined();
 
         const recordsCount = await TestDataGenerator.generateRecordsCount({ author: alice, filter });
         const countReply = await dwn.processMessage(alice.did, recordsCount.message) as RecordsCountReply;
         expect(countReply.status.code).toBe(400);
-        expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid);
+        expect(countReply.status.detail).toContain(DwnErrorCode.RecordsCountNestedModulePathContextIdInvalid);
         expect(countReply.count).toBeUndefined();
 
         const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: alice, filter });
         const subscribeReply = await dwn.processMessage(alice.did, recordsSubscribe.message) as RecordsSubscribeReply;
         expect(subscribeReply.status.code).toBe(400);
-        expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedProtocolPathContextIdInvalid);
+        expect(subscribeReply.status.detail).toContain(DwnErrorCode.RecordsSubscribeNestedModulePathContextIdInvalid);
         expect(subscribeReply.subscription).toBeUndefined();
         expect(subscribeReply.entries).toBeUndefined();
       };
@@ -259,8 +259,8 @@ export function testRecordsNestedQueryScope(): void {
       const boundedPathWideSubscribe = await TestDataGenerator.generateRecordsSubscribe({
         author : alice,
         filter : {
-          protocol     : protocolDefinition.protocol,
-          protocolPath : 'community/channel/message',
+          module     : moduleDefinition.module,
+          modulePath : 'community/channel/message',
         },
         pagination: { limit: 1 },
       });
@@ -273,9 +273,9 @@ export function testRecordsNestedQueryScope(): void {
       await boundedPathWideReply.subscription?.close();
 
       const malformedFilter = {
-        contextId    : 'community//channel',
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'community/channel/message',
+        contextId  : 'community//channel',
+        module     : moduleDefinition.module,
+        modulePath : 'community/channel/message',
       };
       await expect(TestDataGenerator.generateRecordsQuery({ author: alice, filter: malformedFilter })).rejects.toThrow('SchemaValidatorFailure');
       await expect(TestDataGenerator.generateRecordsCount({ author: alice, filter: malformedFilter })).rejects.toThrow('SchemaValidatorFailure');
@@ -309,9 +309,9 @@ export function testRecordsNestedQueryScope(): void {
     it('should paginate an ancestor scope without crossing a context segment boundary', async () => {
       const { alice, community, channel1, channel1Message1, channel1Message2, channel2Message } = await seedCommunityRecords();
       const filter = {
-        contextId    : community.message.contextId,
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'community/channel/message',
+        contextId  : community.message.contextId,
+        module     : moduleDefinition.module,
+        modulePath : 'community/channel/message',
       };
 
       const firstPageQuery = await TestDataGenerator.generateRecordsQuery({
@@ -374,11 +374,11 @@ export function testRecordsNestedQueryScope(): void {
       expect(boundarySubscribeReply.status.code).toBe(200);
       expect(boundarySubscribeReply.entries).toEqual([]);
 
-      const liveMessage = await writeProtocolRecord({
+      const liveMessage = await writeModuleRecord({
         author          : alice,
         dateCreated     : '2026-04-07T00:00:00.000000Z',
         parentContextId : channel1.message.contextId,
-        protocolPath    : 'community/channel/message',
+        modulePath      : 'community/channel/message',
       });
       await Poller.pollUntilSuccessOrTimeout(async () => {
         expect(matchingLiveRecordIds).toEqual([liveMessage.message.recordId]);
@@ -389,11 +389,11 @@ export function testRecordsNestedQueryScope(): void {
       await boundarySubscribeReply.subscription?.close();
     });
 
-    it('should keep top-level protocol queries unchanged with or without contextId', async () => {
+    it('should keep top-level module queries unchanged with or without contextId', async () => {
       const { alice, profile1, profile2 } = await seedNestedRecords();
       const rootFilter = {
-        protocol     : protocolDefinition.protocol,
-        protocolPath : 'profile',
+        module     : moduleDefinition.module,
+        modulePath : 'profile',
       };
 
       const recordsQuery = await TestDataGenerator.generateRecordsQuery({ author: alice, filter: rootFilter });

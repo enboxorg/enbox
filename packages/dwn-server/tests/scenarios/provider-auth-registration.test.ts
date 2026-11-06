@@ -12,7 +12,7 @@ import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, Jws, ProtocolsConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { DataStream, Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
 /**
@@ -141,7 +141,7 @@ describe('Provider auth registration scenarios', () => {
     expect(response.status).toBe(200);
 
     // 2. Alice can now write to the DWN.
-    await installDefaultTestProtocolViaHttp(dwnMessageEndpoint, alice);
+    await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
@@ -382,10 +382,10 @@ describe('Provider auth registration scenarios', () => {
 // Helpers (same as registration.test.ts)
 // ---------------------------------------------------------------------------
 
-async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Persona): Promise<void> {
-  const protocolsConfigure = await ProtocolsConfigure.create({
+async function installDefaultTestModuleViaHttp(endpoint: string, persona: Persona): Promise<void> {
+  const modulesConfigure = await ModulesConfigure.create({
     definition: {
-      protocol  : 'http://test-protocol.xyz',
+      module    : 'http://test-module.xyz',
       published : false,
       types     : { testRecord: {} },
       structure : { testRecord: {} },
@@ -395,7 +395,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
 
   const requestId = crypto.randomUUID();
   const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-    message : protocolsConfigure.toJSON(),
+    message : modulesConfigure.toJSON(),
     target  : persona.did,
   });
 
@@ -406,7 +406,7 @@ async function installDefaultTestProtocolViaHttp(endpoint: string, persona: Pers
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
   if (code !== 202) {
-    throw new Error(`Failed to install default test protocol via HTTP: ${code} ${detail}`);
+    throw new Error(`Failed to install default test module via HTTP: ${code} ${detail}`);
   }
 }
 

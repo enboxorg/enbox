@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import {
@@ -10,7 +10,7 @@ import {
   EnboxUserAgent,
 } from '@enbox/agent';
 
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { Enbox } from '../src/enbox.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
@@ -121,8 +121,8 @@ describe('Enbox API', () => {
     });
 
     describe('using()', () => {
-      const TestProtocolDef = {
-        protocol  : 'https://example.com/protocols/test',
+      const TestModuleDef = {
+        module    : 'https://example.com/modules/test',
         published : true,
         types     : {
           item: {
@@ -133,14 +133,14 @@ describe('Enbox API', () => {
         structure: {
           item: {},
         },
-      } as const satisfies ProtocolDefinition;
+      } as const satisfies ModuleDefinition;
 
-      const TestProtocol = defineProtocol(TestProtocolDef, {
+      const TestModule = defineModule(TestModuleDef, {
         item: recordCodecs.json<{ name: string }>(),
       });
 
-      const RoleProtocolDef = {
-        protocol  : 'https://example.com/protocols/roles',
+      const RoleModuleDef = {
+        module    : 'https://example.com/modules/roles',
         published : true,
         types     : {
           member : { dataFormats: ['application/json'] },
@@ -150,9 +150,9 @@ describe('Enbox API', () => {
           member : { $role: true },
           secret : {},
         },
-      } as const satisfies ProtocolDefinition;
+      } as const satisfies ModuleDefinition;
 
-      const RoleProtocol = defineProtocol(RoleProtocolDef, {
+      const RoleModule = defineModule(RoleModuleDef, {
         member : recordCodecs.json<{ name: string }>(),
         secret : recordCodecs.json<{ value: string }>(),
       });
@@ -167,30 +167,30 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : identity.did.uri,
         });
-        const registerDelivery = sinon.stub(testHarness.agent.dwn, 'registerAudienceKeyDeliveryProtocol');
+        const registerDelivery = sinon.stub(testHarness.agent.dwn, 'registerAudienceKeyDeliveryModule');
 
-        const first = enbox.using(TestProtocol);
-        const second = enbox.using(TestProtocol);
+        const first = enbox.using(TestModule);
+        const second = enbox.using(TestModule);
 
         expect(first).toBeInstanceOf(TypedEnbox);
         expect(first).toBe(second); // same reference
         expect(registerDelivery.notCalled).toBe(true);
 
-        enbox.using(RoleProtocol);
+        enbox.using(RoleModule);
 
         expect(registerDelivery.calledOnce).toBe(true);
         expect(registerDelivery.firstCall.args[0]).toMatchObject({
           granteeDid : undefined,
-          protocol   : RoleProtocolDef.protocol,
+          module     : RoleModuleDef.module,
           rolePaths  : ['member'],
           target     : identity.did.uri,
         });
         expect(registerDelivery.firstCall.args[0].signal).toBeInstanceOf(AbortSignal);
       });
 
-      it('should return different TypedEnbox instances for different protocols', async () => {
-        const OtherProtocolDef = {
-          protocol  : 'https://example.com/protocols/other',
+      it('should return different TypedEnbox instances for different modules', async () => {
+        const OtherModuleDef = {
+          module    : 'https://example.com/modules/other',
           published : true,
           types     : {
             thing: {
@@ -199,9 +199,9 @@ describe('Enbox API', () => {
             },
           },
           structure: { thing: {} },
-        } as const satisfies ProtocolDefinition;
+        } as const satisfies ModuleDefinition;
 
-        const OtherProtocol = defineProtocol(OtherProtocolDef, {
+        const OtherModule = defineModule(OtherModuleDef, {
           thing: recordCodecs.json<{ value: number }>(),
         });
 
@@ -215,15 +215,15 @@ describe('Enbox API', () => {
           connectedDid : identity.did.uri,
         });
 
-        const test = enbox.using(TestProtocol);
-        const other = enbox.using(OtherProtocol);
+        const test = enbox.using(TestModule);
+        const other = enbox.using(OtherModule);
 
         expect(test).not.toBe(other);
-        expect(test.protocol).toBe('https://example.com/protocols/test');
-        expect(other.protocol).toBe('https://example.com/protocols/other');
+        expect(test.module).toBe('https://example.com/modules/test');
+        expect(other.module).toBe('https://example.com/modules/other');
       });
 
-      it('should not alias distinct codec declarations that share one protocol URI', async () => {
+      it('should not alias distinct codec declarations that share one module URI', async () => {
         const identity = await testHarness.agent.identity.create({
           metadata  : { name: 'CodecIsolation' },
           didMethod : 'jwk',
@@ -232,14 +232,14 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : identity.did.uri,
         });
-        const firstProtocol = defineProtocol(TestProtocolDef, {
+        const firstModule = defineModule(TestModuleDef, {
           item: recordCodecs.json<{ name: string }>(),
         });
-        const secondProtocol = defineProtocol(TestProtocolDef, {
+        const secondModule = defineModule(TestModuleDef, {
           item: recordCodecs.json<{ label: string }>(),
         });
 
-        expect(enbox.using(firstProtocol)).not.toBe(enbox.using(secondProtocol));
+        expect(enbox.using(firstModule)).not.toBe(enbox.using(secondModule));
       });
 
       it('should cache per Enbox instance, not globally', async () => {
@@ -261,8 +261,8 @@ describe('Enbox API', () => {
           connectedDid : identity2.did.uri,
         });
 
-        const fromA = enboxA.using(TestProtocol);
-        const fromB = enboxB.using(TestProtocol);
+        const fromA = enboxA.using(TestModule);
+        const fromB = enboxB.using(TestModule);
 
         // Different Enbox instances must NOT share cached TypedEnbox instances.
         expect(fromA).not.toBe(fromB);
@@ -270,14 +270,14 @@ describe('Enbox API', () => {
     });
 
     describe('close()', () => {
-      const CloseProtocolDef = {
-        protocol  : 'https://example.com/protocols/close-test',
+      const CloseModuleDef = {
+        module    : 'https://example.com/modules/close-test',
         published : true,
         types     : { item: {} },
         structure : { item: {} },
-      } as const satisfies ProtocolDefinition;
+      } as const satisfies ModuleDefinition;
 
-      const CloseProtocol = defineProtocol(CloseProtocolDef, {
+      const CloseModule = defineModule(CloseModuleDef, {
         item: recordCodecs.json<unknown>(),
       });
 
@@ -295,7 +295,7 @@ describe('Enbox API', () => {
         });
 
         // Cache a TypedEnbox instance.
-        const typed = enbox.using(CloseProtocol);
+        const typed = enbox.using(CloseModule);
         expect(typed).toBeDefined();
         const rawDwn = enbox.dwn;
         expect((enbox as any)._lifetimeSignal.aborted).toBe(false);
@@ -309,7 +309,7 @@ describe('Enbox API', () => {
         expect(stopSync.called).toBe(false);
         expect((enbox as any)._typedInstances.size).toBe(0);
         expect(rawDwn).toBeDefined();
-        expect(() => enbox.using(CloseProtocol)).toThrow();
+        expect(() => enbox.using(CloseModule)).toThrow();
         expect(() => enbox.dwn).toThrow();
         expect(() => typed.dwn).toThrow();
         await expect(typed.configure()).rejects.toMatchObject({ name: 'AbortError' });
@@ -321,7 +321,7 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : testHarness.agent.agentDid.uri,
         });
-        const record = await enbox.using(CloseProtocol).records.create('item', {
+        const record = await enbox.using(CloseModule).records.create('item', {
           data: { value: 'current' },
         });
         const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
@@ -340,7 +340,7 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : testHarness.agent.agentDid.uri,
         });
-        const typed = enbox.using(CloseProtocol);
+        const typed = enbox.using(CloseModule);
         const processRequest = sinon.spy(testHarness.agent, 'processDwnRequest');
 
         enbox.close();
@@ -354,7 +354,7 @@ describe('Enbox API', () => {
           agent        : testHarness.agent,
           connectedDid : testHarness.agent.agentDid.uri,
         });
-        const typed = enbox.using(CloseProtocol);
+        const typed = enbox.using(CloseModule);
         let resolveReadiness!: () => void;
         const readiness = new Promise<void>((resolve): void => { resolveReadiness = resolve; });
         const ensureReady = sinon.stub(typed as any, '_autoConfigureOnce').returns(readiness);
@@ -388,9 +388,9 @@ describe('Enbox API', () => {
           didMethod : 'jwk',
         });
 
-        // Install free-for-all protocol for both identities.
+        // Install free-for-all module for both identities.
         const freeForAllDefinition = {
-          protocol  : 'http://free-for-all.xyz',
+          module    : 'http://free-for-all.xyz',
           published : true,
           types     : { post: {} },
           structure : { post: {} },
@@ -399,7 +399,7 @@ describe('Enbox API', () => {
           await testHarness.agent.dwn.processRequest({
             author        : identity.did.uri,
             target        : identity.did.uri,
-            messageType   : DwnInterface.ProtocolsConfigure,
+            messageType   : DwnInterface.ModulesConfigure,
             messageParams : { definition: freeForAllDefinition },
           });
         }
@@ -410,11 +410,11 @@ describe('Enbox API', () => {
           connectedDid : careerIdentity.did.uri,
         });
         const careerResult = await (enboxCareer as any)._dwn.records.write({
-          data         : 'Hello, world!',
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          schema       : 'foo/bar',
-          dataFormat   : 'text/plain',
+          data       : 'Hello, world!',
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain',
         });
         expect(careerResult.status.code).toBe(202);
         expect(careerResult.record).toBeDefined();
@@ -429,11 +429,11 @@ describe('Enbox API', () => {
           connectedDid : socialIdentity.did.uri,
         });
         const socialResult = await (enboxSocial as any)._dwn.records.write({
-          data         : 'Hello, everyone!',
-          protocol     : 'http://free-for-all.xyz',
-          protocolPath : 'post',
-          schema       : 'foo/bar',
-          dataFormat   : 'text/plain',
+          data       : 'Hello, everyone!',
+          module     : 'http://free-for-all.xyz',
+          modulePath : 'post',
+          schema     : 'foo/bar',
+          dataFormat : 'text/plain',
         });
         expect(socialResult.status.code).toBe(202);
         expect(socialResult.record).toBeDefined();

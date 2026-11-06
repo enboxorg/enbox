@@ -4,21 +4,21 @@ import { DwnInterface } from '@enbox/agent';
 import { Message } from '@enbox/dwn-sdk-js';
 
 import { DwnResponseError } from '../../src/dwn-response-error.js';
-import type { Protocol } from '../../src/protocol.js';
+import type { Module } from '../../src/module.js';
 import type { Record } from '../../src/record.js';
 
-/** Publish a locally stored protocol message through the raw agent escape hatch. */
-export async function publishProtocol(
+/** Publish a locally stored module message through the raw agent escape hatch. */
+export async function publishModule(
   agent: EnboxPlatformAgent,
-  protocol: Protocol,
+  module: Module,
   author: string,
   target: string,
 ): Promise<DwnResponseStatus> {
-  const messageCid = await Message.getCid(protocol.toJSON());
+  const messageCid = await Message.getCid(module.toJSON());
   const { reply } = await agent.sendDwnRequest({
     author,
     messageCid  : messageCid,
-    messageType : DwnInterface.ProtocolsConfigure,
+    messageType : DwnInterface.ModulesConfigure,
     target,
   });
   return { status: reply.status };

@@ -65,7 +65,7 @@ export async function prepareConnectAuthenticationProof(
 
 /**
  * Approve an identity-only Connect request without creating a delegate,
- * installing protocols, writing DWN grants, or opening an AgentSession.
+ * installing modules, writing DWN grants, or opening an AgentSession.
  */
 export async function executeConnectAuthentication(
   params: CreateConnectAuthenticationProofParams,

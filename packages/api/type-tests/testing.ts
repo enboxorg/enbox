@@ -1,5 +1,5 @@
 import type { AgentSession } from '@enbox/agent';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
   CreateEnboxTestContextOptions,
   CreateHostedDelegatedEnboxTestContextOptions,
@@ -8,30 +8,30 @@ import type {
 } from '@enbox/api/testing';
 
 import { createEnboxTestContext, createHostedDelegatedEnboxTestContext } from '@enbox/api/testing';
-import { defineApplicationManifest, defineProtocol, recordCodecs } from '@enbox/api';
+import { defineApplicationManifest, defineModule, recordCodecs } from '@enbox/api';
 
 const NotesDefinition = {
-  protocol  : 'https://example.com/protocols/testing-notes',
+  module    : 'https://example.com/modules/testing-notes',
   published : false,
   types     : {
     note: { dataFormats: ['application/json'], encryptionRequired: true },
   },
   structure: { note: {} },
-} as const satisfies ProtocolDefinition;
+} as const satisfies ModuleDefinition;
 
-const NotesProtocol = defineProtocol(NotesDefinition, {
+const NotesModule = defineModule(NotesDefinition, {
   note: recordCodecs.json<{ body: string }>(),
 });
-const application = defineApplicationManifest({ protocols: [NotesProtocol] } as const);
+const application = defineApplicationManifest({ modules: [NotesModule] } as const);
 const options: CreateEnboxTestContextOptions = { application };
 
 async function exerciseTestingContext(): Promise<void> {
   const context: EnboxTestContext = await createEnboxTestContext(options);
   const session: AgentSession = context.session;
-  const notes = context.enbox.using(NotesProtocol);
+  const notes = context.enbox.using(NotesModule);
 
   await notes.records.create('note', { data: { body: 'typed' } });
-  // @ts-expect-error the protocol codec requires a string body.
+  // @ts-expect-error the module codec requires a string body.
   await notes.records.create('note', { data: { body: 42 } });
   const closing: Promise<void> = context.close();
   await closing;
@@ -60,7 +60,7 @@ async function exerciseHostedTestingContext(): Promise<void> {
 void exerciseHostedTestingContext;
 
 // @ts-expect-error test contexts require a normalized application manifest.
-void createEnboxTestContext({ application: { protocols: [NotesDefinition] } });
+void createEnboxTestContext({ application: { modules: [NotesDefinition] } });
 
 // @ts-expect-error hosted contexts require at least the endpoint array property.
 void createHostedDelegatedEnboxTestContext({ application });

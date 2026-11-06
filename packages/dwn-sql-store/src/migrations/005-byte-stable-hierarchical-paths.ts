@@ -41,7 +41,7 @@ export const migration005ByteStableHierarchicalPaths: DwnMigrationFactory = (dia
       await sql`
         ALTER TABLE ${sql.table('messageStoreMessages')}
           ${dropContextIndex}
-          MODIFY COLUMN ${sql.ref('protocolPath')} VARCHAR(200)
+          MODIFY COLUMN ${sql.ref('modulePath')} VARCHAR(200)
             CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL,
           MODIFY COLUMN ${sql.ref('contextId')} VARCHAR(600)
             CHARACTER SET ascii COLLATE ascii_bin NULL,
@@ -57,7 +57,7 @@ export const migration005ByteStableHierarchicalPaths: DwnMigrationFactory = (dia
     await db.schema.dropIndex(CONTEXT_INDEX_NAME).ifExists().execute();
     await sql`
       ALTER TABLE ${sql.table('messageStoreMessages')}
-        ALTER COLUMN ${sql.ref('protocolPath')} TYPE VARCHAR(200) COLLATE "C",
+        ALTER COLUMN ${sql.ref('modulePath')} TYPE VARCHAR(200) COLLATE "C",
         ALTER COLUMN ${sql.ref('contextId')} TYPE VARCHAR(600) COLLATE "C"
     `.execute(db);
     await db.schema.createIndex(CONTEXT_INDEX_NAME)

@@ -15,7 +15,7 @@ describe('EncryptionControl', () => {
         tenant,
         incomingMessage       : makeIncomingMessage(),
         requester             : 'did:example:alice',
-        recordsWriteMessage   : makeRecordsWriteMessage({ protocolPath: 'thread/message' }),
+        recordsWriteMessage   : makeRecordsWriteMessage({ modulePath: 'thread/message' }),
         validationStateReader : {} as ValidationStateReader,
       });
 
@@ -27,7 +27,7 @@ describe('EncryptionControl', () => {
         tenant,
         incomingMessage       : makeIncomingMessage(),
         requester             : tenant,
-        recordsWriteMessage   : makeRecordsWriteMessage({ protocolPath: ENCRYPTION_CONTROL_AUDIENCE_PATH }),
+        recordsWriteMessage   : makeRecordsWriteMessage({ modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH }),
         validationStateReader : {} as ValidationStateReader,
       });
 
@@ -85,10 +85,10 @@ function makeIncomingMessage(): RecordsReadMessage {
   } as RecordsReadMessage;
 }
 
-function makeRecordsWriteMessage(options: { protocolPath: string }): RecordsWriteMessage {
+function makeRecordsWriteMessage(options: { modulePath: string }): RecordsWriteMessage {
   return {
     descriptor: {
-      protocolPath: options.protocolPath,
+      modulePath: options.modulePath,
     },
   } as RecordsWriteMessage;
 }
@@ -100,15 +100,15 @@ function makeAudienceRecordsWriteMessage(options: {
 }): RecordsWriteMessage {
   return {
     descriptor: {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol     : 'http://example.com/protocol',
-      protocolPath : ENCRYPTION_CONTROL_AUDIENCE_PATH,
-      dateCreated  : options.dateCreated,
-      tags         : {
+      interface   : DwnInterfaceName.Records,
+      method      : DwnMethodName.Write,
+      module      : 'http://example.com/module',
+      modulePath  : ENCRYPTION_CONTROL_AUDIENCE_PATH,
+      dateCreated : options.dateCreated,
+      tags        : {
         contextId : '',
         keyId     : options.keyId,
-        protocol  : 'http://example.com/protocol',
+        module    : 'http://example.com/module',
         rolePath  : 'member',
       },
     },

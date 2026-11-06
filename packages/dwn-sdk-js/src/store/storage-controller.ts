@@ -87,9 +87,9 @@ export class StorageController {
     );
 
     if (message.descriptor.prune) {
-      // purge/hard-delete all descendant records. Cascade is intentionally protocol-agnostic:
+      // purge/hard-delete all descendant records. Cascade is intentionally module-agnostic:
       // `parentContextId` is a structural link, and a prune removes the whole subtree regardless
-      // of which protocol a descendant lives in. Cross-protocol composing children (linked via
+      // of which module a descendant lives in. Cross-module composing children (linked via
       // `$ref`/`uses`) participate in the cascade. See issue #298 for the design discussion.
       await StorageController.purgeRecordDescendants(
         tenant, message.descriptor.recordId, this.messageStore, this.dataStore
@@ -101,7 +101,7 @@ export class StorageController {
 
   /**
    * Performs the squash processing for a `RecordsWrite` with `squash: true`.
-   * Deletes all sibling records at the same protocol path and parent context whose
+   * Deletes all sibling records at the same module path and parent context whose
    * `messageTimestamp` is strictly older than the squash record's `messageTimestamp`.
    * Unlike normal `RecordsDelete` tombstones, squash targets are fully purged — no initial writes
    * are retained.
@@ -109,14 +109,14 @@ export class StorageController {
    * This method is idempotent — it can be safely re-run on resume after a crash.
    */
   public async performRecordsSquash({ tenant, message }: ResumableRecordsSquashData): Promise<void> {
-    const { protocol, protocolPath, messageTimestamp } = message.descriptor;
+    const { module, modulePath, messageTimestamp } = message.descriptor;
 
-    // Build a filter to find all sibling records at the same protocol path and parent context.
+    // Build a filter to find all sibling records at the same module path and parent context.
     // We query by interface only (not method) so that both RecordsWrite and RecordsDelete messages are found.
     const filter: Filter = {
-      interface    : DwnInterfaceName.Records,
-      protocol,
-      protocolPath : protocolPath,
+      interface  : DwnInterfaceName.Records,
+      module,
+      modulePath : modulePath,
     };
 
     // Scope by parent context for nested records
@@ -156,7 +156,7 @@ export class StorageController {
   /**
    * Groups the given messages by `recordId` — RecordsWrite messages use `message.recordId`,
    * RecordsDelete messages use `message.descriptor.recordId`. Used by `performRecordsSquash()`
-   * to identify sibling records at the squash record's protocol path and parent context.
+   * to identify sibling records at the squash record's module path and parent context.
    */
   private static groupSquashSiblingsByRecordId(messages: GenericMessage[]): Map<string, GenericMessage[]> {
     const recordIdToMessages = new Map<string, GenericMessage[]>();
@@ -213,19 +213,19 @@ export class StorageController {
   /**
    * Purges (permanent hard-delete) all descendants of the given `recordId`, recursively.
    *
-   * The cascade is intentionally protocol-agnostic: `parentContextId` is a structural link,
-   * so pruning a parent removes every record hanging off it regardless of which protocol a
-   * descendant lives in. Cross-protocol composing children (records in a different protocol
+   * The cascade is intentionally module-agnostic: `parentContextId` is a structural link,
+   * so pruning a parent removes every record hanging off it regardless of which module a
+   * descendant lives in. Cross-module composing children (records in a different module
    * that reference the parent via `$ref` / `uses`) are included in the cascade.
    *
    * Rationale (closes #298 as working-as-intended):
    * - A DWN is tenant-owned storage. The tenant's prune authority extends across the whole
-   *   subtree they rooted, regardless of which protocol a descendant declares itself under.
-   * - Preserving cross-protocol orphans creates a half-alive state (readable but not
+   *   subtree they rooted, regardless of which module a descendant declares itself under.
+   * - Preserving cross-module orphans creates a half-alive state (readable but not
    *   updatable, since `validateReferentialIntegrity` requires the pruned parent) that is
    *   worse for callers than simply cascading.
-   * - Same-protocol cascade is already protocol-agnostic at every hop via `parentId`,
-   *   so treating cross-protocol boundaries differently was inconsistent.
+   * - Same-module cascade is already module-agnostic at every hop via `parentId`,
+   *   so treating cross-module boundaries differently was inconsistent.
    */
   public static async purgeRecordDescendants(
     tenant: string,

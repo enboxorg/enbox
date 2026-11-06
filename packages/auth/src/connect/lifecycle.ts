@@ -21,11 +21,11 @@ import type { AgentSessionIdentity, BearerIdentity, DwnDataEncodedRecordsWriteMe
 import type { AuthEventEmitter } from '../events.js';
 import type { PasswordProvider } from '../password-provider.js';
 import type { RevocationEntry } from './session-state.js';
-import type { IdentitySyncProtocols, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
+import type { IdentitySyncModules, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
 import { AgentSession, DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
 import { Convert, runWithCrossContextLock } from '@enbox/common';
-import { DataStream, PermissionsProtocol } from '@enbox/dwn-sdk-js';
+import { DataStream, PermissionsModule } from '@enbox/dwn-sdk-js';
 
 import { persistSessionBinding } from './session-state.js';
 import { RecoveryPhraseMismatchError } from '../errors.js';
@@ -59,7 +59,7 @@ export interface FlowContext {
   defaultPassword?: string;
   passwordProvider?: PasswordProvider;
   defaultSync?: SyncOption;
-  defaultIdentitySyncProtocols?: IdentitySyncProtocols;
+  defaultIdentitySyncModules?: IdentitySyncModules;
   defaultDwnEndpoints?: string[];
   registration?: RegistrationOptions;
   /** Throws when teardown invalidated this manager-owned flow. */
@@ -379,14 +379,14 @@ export function resolveIdentityDids(
 // ─── deriveSyncScopeFromGrants ──────────────────────────────────
 
 /**
- * Derive the sync protocol scope from a set of parsed permission grants.
+ * Derive the sync module scope from a set of parsed permission grants.
  *
  * Only `Messages.Read` grants authorize feed sync operations. Other grant types
- * (Records.Write, Protocols.Query, etc.) are ignored even if they contain a
- * `protocol` field — they do not authorize message-feed reads.
+ * (Records.Write, Modules.Query, etc.) are ignored even if they contain a
+ * `module` field — they do not authorize message-feed reads.
  *
- * - Unscoped `Messages.Read` (no `protocol`) → `'all'` (full replica)
- * - Scoped `Messages.Read` grants → collected protocol URIs
+ * - Unscoped `Messages.Read` (no `module`) → `'all'` (full replica)
+ * - Scoped `Messages.Read` grants → collected module URIs
  * - No sync-relevant grants → `[]` (caller should unregister)
  *
  * Expired grants are excluded.
@@ -395,12 +395,12 @@ export function resolveIdentityDids(
  */
 export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' | string[] {
   const now = new Date().toISOString();
-  const protocols = new Set<string>();
+  const modules = new Set<string>();
 
   for (const grant of grants) {
     // Only Messages.Read grants authorize sync. The discriminated union
-    // (`PermissionScope = Messages | Protocols | Records`) narrows
-    // `scope.protocol` to `string | undefined` after the interface +
+    // (`PermissionScope = Messages | Modules | Records`) narrows
+    // `scope.module` to `string | undefined` after the interface +
     // method checks — no cast needed.
     const { scope } = grant;
     if (scope.interface !== 'Messages' || scope.method !== 'Read') {
@@ -412,25 +412,25 @@ export function deriveSyncScopeFromGrants(grants: DwnPermissionGrant[]): 'all' |
       continue;
     }
 
-    const protocol = scope.protocol;
-    if (protocol === undefined) {
-      // Unrestricted Messages.Read — delegate can sync all protocols.
+    const module = scope.module;
+    if (module === undefined) {
+      // Unrestricted Messages.Read — delegate can sync all modules.
       return 'all';
     }
-    if (protocol !== PermissionsProtocol.uri) {
-      if (scope.protocolPath !== undefined || scope.contextId !== undefined) {
+    if (module !== PermissionsModule.uri) {
+      if (scope.modulePath !== undefined || scope.contextId !== undefined) {
         continue;
       }
-      protocols.add(protocol);
+      modules.add(module);
     }
   }
 
-  return [...protocols];
+  return [...modules];
 }
 
 /**
  * Query the delegate's stored grants and revocations, filter out revoked
- * and expired grants, and derive the sync protocol scope.
+ * and expired grants, and derive the sync module scope.
  *
  * Used by both `restoreSession()` and `switchIdentity()` to compute the
  * correct sync registration from persisted grant state. Callers may bound
@@ -500,10 +500,10 @@ export async function applyIdentitySyncScope(params: {
     return false;
   }
 
-  const protocols = scope as IdentitySyncProtocols;
+  const modules = scope as IdentitySyncModules;
   const options = delegateDid === undefined
-    ? { protocols }
-    : { delegateDid, protocols };
+    ? { modules }
+    : { delegateDid, modules };
   await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, lifecycleOptions);
   return true;
 }
@@ -511,16 +511,16 @@ export async function applyIdentitySyncScope(params: {
 // ─── registerSyncScopeForIdentity ───────────────────────────────
 
 /**
- * Set or clear an identity's sync registration based on its derived protocol
+ * Set or clear an identity's sync registration based on its derived module
  * scope.
  *
  * - For a **delegate session**: queries the delegate's active grants via
- *   {@link deriveActiveSyncScope}, then registers with `protocols: 'all'` or a
+ *   {@link deriveActiveSyncScope}, then registers with `modules: 'all'` or a
  *   scoped list when grants are present, or unregisters the identity when no
- *   sync-relevant grants remain so revoked protocols stop syncing.
+ *   sync-relevant grants remain so revoked modules stop syncing.
  *
  * - For a **local session** (no `delegateDid`): registers only when the
- *   caller supplied an explicit protocol scope. If no scope is supplied, auth
+ *   caller supplied an explicit module scope. If no scope is supplied, auth
  *   leaves local identity sync registration to the application.
  *
  * @returns Whether the identity was registered for sync.
@@ -530,14 +530,14 @@ export async function registerSyncScopeForIdentity(params: {
   userAgent: EnboxUserAgent;
   connectedDid: string;
   delegateDid?: string;
-  identitySyncProtocols?: IdentitySyncProtocols;
+  identitySyncModules?: IdentitySyncModules;
   lifecycleOptions?: SyncLifecycleOptions;
 }): Promise<boolean> {
-  const { userAgent, connectedDid, delegateDid, identitySyncProtocols, lifecycleOptions } = params;
+  const { userAgent, connectedDid, delegateDid, identitySyncModules, lifecycleOptions } = params;
   const repairStartedAt = Date.now();
   const timeout = lifecycleOptions?.timeout;
   const scope = delegateDid === undefined
-    ? identitySyncProtocols
+    ? identitySyncModules
     : await deriveActiveSyncScope(userAgent, delegateDid, timeout);
 
   const remainingLifecycleOptions = timeout === undefined
@@ -560,7 +560,7 @@ export async function registerSyncScopeForIdentity(params: {
  *
  * This is the agent-level equivalent of `Enbox.processConnectedGrants()`.
  * It stores each grant, signed as owner, and returns the deduplicated
- * list of protocol URIs represented by the grants.
+ * list of module URIs represented by the grants.
  *
  * @internal
  */
@@ -773,7 +773,7 @@ export async function processDelegateGrantsForExistingIdentity(params: {
   delegateGrants: DwnDataEncodedRecordsWriteMessage[];
 }): Promise<void> {
   const { userAgent, connectedDid, delegateDid, delegateGrants } = params;
-  const connectedProtocols = await processConnectedGrants({
+  const connectedModules = await processConnectedGrants({
     agent: userAgent, connectedDid, delegateDid, grants: delegateGrants,
   });
 
@@ -781,7 +781,7 @@ export async function processDelegateGrantsForExistingIdentity(params: {
     userAgent,
     connectedDid,
     delegateDid,
-    scope: connectedProtocols,
+    scope: connectedModules,
   });
 }
 

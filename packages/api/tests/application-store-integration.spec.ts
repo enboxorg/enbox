@@ -9,22 +9,22 @@ import { MemoryStorage } from '@enbox/auth';
 
 import { createApplication } from '../src/store/application.js';
 import { createConnectionStore } from '../src/connection-store.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { defineStore } from '../src/store/definition.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { testDwnUrl } from './utils/test-config.js';
 
-const NotesProtocol = defineProtocol({
-  protocol  : 'https://example.com/protocols/application-store-connection',
+const NotesModule = defineModule({
+  module    : 'https://example.com/modules/application-store-connection',
   published : false,
   types     : { note: { dataFormats: ['application/json'], encryptionRequired: true } },
   structure : { note: {} },
 } as const, { note: recordCodecs.json<{ title: string }>() });
 
 const NotesStore = defineStore({
-  protocols : { notes: NotesProtocol },
-  create    : ({ protocols }) => ({ notes: protocols.notes.collection('note') }),
+  modules : { notes: NotesModule },
+  create  : ({ modules }) => ({ notes: modules.notes.collection('note') }),
 });
 
 describe('application stores with the native connection lifecycle', () => {

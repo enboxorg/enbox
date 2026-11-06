@@ -43,17 +43,17 @@ export type X25519KeyEncryptionBase = {
   encryptedKey: string;
 };
 
-export type ProtocolPathKeyEncryption = X25519KeyEncryptionBase & {
-  derivationScheme: KeyDerivationScheme.ProtocolPath;
+export type ModulePathKeyEncryption = X25519KeyEncryptionBase & {
+  derivationScheme: KeyDerivationScheme.ModulePath;
 };
 
 export type SourceRoleAudienceKeyEncryption = X25519KeyEncryptionBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-  protocol: string;
+  module: string;
   rolePath: string;
 };
 
-export type X25519KeyEncryption = ProtocolPathKeyEncryption | SourceRoleAudienceKeyEncryption;
+export type X25519KeyEncryption = ModulePathKeyEncryption | SourceRoleAudienceKeyEncryption;
 
 export type SealKeyWrap = X25519KeyEncryptionBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
@@ -71,21 +71,21 @@ export type X25519KeyEncryptionInputBase = {
   publicKey: PublicKeyJwk;
 };
 
-export type ProtocolPathKeyEncryptionInput = X25519KeyEncryptionInputBase & {
-  derivationScheme: KeyDerivationScheme.ProtocolPath;
+export type ModulePathKeyEncryptionInput = X25519KeyEncryptionInputBase & {
+  derivationScheme: KeyDerivationScheme.ModulePath;
 };
 
 export type SourceRoleAudienceKeyEncryptionInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof ROLE_AUDIENCE_DERIVATION_SCHEME;
-  protocol: string;
+  module: string;
   rolePath: string;
 };
 
-export type X25519KeyEncryptionInput = ProtocolPathKeyEncryptionInput | SourceRoleAudienceKeyEncryptionInput;
+export type X25519KeyEncryptionInput = ModulePathKeyEncryptionInput | SourceRoleAudienceKeyEncryptionInput;
 
 export type SealKeyWrapInput = X25519KeyEncryptionInputBase & {
   derivationScheme: typeof SEAL_DERIVATION_SCHEME;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   audienceKeyId: string;
@@ -117,14 +117,14 @@ export type SealWrapInput = {
 export type SealUnwrapInput = {
   seal: SealKeyWrap;
   recipientPrivateKey: Jwk;
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   audienceKeyId: string;
 };
 
 type SealKeyUnwrapInfo = SealKeyWrap & {
-  protocol: string;
+  module: string;
   rolePath: string;
   contextId: string;
   audienceKeyId: string;
@@ -252,7 +252,7 @@ export class Encryption {
       ...input.seal,
       audienceKeyId : input.audienceKeyId,
       contextId     : input.contextId,
-      protocol      : input.protocol,
+      module        : input.module,
       rolePath      : input.rolePath,
     };
     const sharedSecret = await X25519.sharedSecret({
@@ -339,17 +339,17 @@ export class Encryption {
       keyId        : keyInput.keyId,
     };
 
-    if (keyInput.derivationScheme === KeyDerivationScheme.ProtocolPath) {
+    if (keyInput.derivationScheme === KeyDerivationScheme.ModulePath) {
       return {
         ...common,
-        derivationScheme: KeyDerivationScheme.ProtocolPath,
+        derivationScheme: KeyDerivationScheme.ModulePath,
       };
     }
 
     return {
       ...common,
       derivationScheme : ROLE_AUDIENCE_DERIVATION_SCHEME,
-      protocol         : keyInput.protocol,
+      module           : keyInput.module,
       rolePath         : keyInput.rolePath,
     };
   }
@@ -395,7 +395,7 @@ export class Encryption {
       return JSON.stringify([
         KEK_INFO_PREFIX,
         SEAL_DERIVATION_SCHEME,
-        keyEncryption.protocol,
+        keyEncryption.module,
         keyEncryption.rolePath,
         keyEncryption.contextId,
         keyEncryption.audienceKeyId,
@@ -406,13 +406,13 @@ export class Encryption {
       return JSON.stringify([
         KEK_INFO_PREFIX,
         ROLE_AUDIENCE_DERIVATION_SCHEME,
-        keyEncryption.protocol,
+        keyEncryption.module,
         keyEncryption.rolePath,
         keyEncryption.keyId,
       ]);
     }
 
-    return JSON.stringify([KEK_INFO_PREFIX, KeyDerivationScheme.ProtocolPath, keyEncryption.keyId]);
+    return JSON.stringify([KEK_INFO_PREFIX, KeyDerivationScheme.ModulePath, keyEncryption.keyId]);
   }
 
   private static validateContentEncryptionParameters(

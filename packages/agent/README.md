@@ -12,7 +12,7 @@ The agent is the core runtime that ties everything together. It manages:
 
 - **Identity vault** — BIP-39 seed phrase + password-encrypted agent DID (`HdIdentityVault`)
 - **Key management** — In-process key generation, import/export, HD derivation, ECIES decryption (`LocalKeyManager`)
-- **DWN operations** — Read/write/query records, protocol installation, encryption callbacks (`AgentDwnApi`)
+- **DWN operations** — Read/write/query records, module installation, encryption callbacks (`AgentDwnApi`)
 - **Identity lifecycle** — Create, list, import/export identities and DIDs (`AgentIdentityApi`, `AgentDidApi`)
 - **Sync** — Bidirectional sync between local and remote DWNs (`SyncEngineLevel`)
 - **Permissions** — DWN permission grants, requests, and revocations (`AgentPermissionsApi`)
@@ -66,7 +66,7 @@ await agent.sync.sync();
 approves an identity-only `requestType: 'authenticate'` request. It signs with
 the selected locally owned DID's authentication key through the key manager,
 and returns `authenticationProof` plus an ephemeral envelope signer. It does
-not create a data delegate, install protocols, write grants, or open a session.
+not create a data delegate, install modules, write grants, or open a session.
 Pass the result as `approval` to `ConnectProvider.sealAuthenticationResponse`.
 
 An authentication-bearing delegation request goes through
@@ -119,7 +119,7 @@ serialize them as part of the public authentication error response.
 
 Combined approval is not atomic across DWN writes and the final authentication
 signature. If signing fails after grant delivery, the promise rejects and no
-successful combined result is returned, but protocols or grants may already
+successful combined result is returned, but modules or grants may already
 exist. The caller must reconcile the outcome and revoke or reuse approved
 delegation as appropriate; it must not report rollback or retry grant creation
 blindly. The service must not complete login without a verified owner proof.

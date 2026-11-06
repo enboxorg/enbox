@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bu
 import { DidInterface } from '../src/did-api.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
-import freeForAllProtocolDefinition from './fixtures/protocol-definitions/free-for-all.json' with { type: 'json' };
+import freeForAllModuleDefinition from './fixtures/module-definitions/free-for-all.json' with { type: 'json' };
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
 import { testDwnUrl } from './utils/test-config.js';
 
@@ -224,8 +224,8 @@ describe('EnboxUserAgent', () => {
           await testHarness.agent.processDwnRequest({
             author        : alice.did.uri,
             target        : alice.did.uri,
-            messageType   : DwnInterface.ProtocolsConfigure,
-            messageParams : { definition: freeForAllProtocolDefinition }
+            messageType   : DwnInterface.ModulesConfigure,
+            messageParams : { definition: freeForAllModuleDefinition }
           });
         });
 
@@ -240,9 +240,9 @@ describe('EnboxUserAgent', () => {
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,
               messageParams : {
-                dataFormat   : 'text/plain',
-                protocol     : 'http://free-for-all.xyz',
-                protocolPath : 'post'
+                dataFormat : 'text/plain',
+                module     : 'http://free-for-all.xyz',
+                modulePath : 'post'
               },
               dataStream: new Blob([dataBytes])
             });
@@ -384,12 +384,12 @@ describe('EnboxUserAgent', () => {
             await testHarness.agent.sendDwnRequest({
               author        : alice.did.uri,
               target        : alice.did.uri,
-              messageType   : DwnInterface.ProtocolsConfigure,
-              messageParams : { definition: freeForAllProtocolDefinition }
+              messageType   : DwnInterface.ModulesConfigure,
+              messageParams : { definition: freeForAllModuleDefinition }
             });
           });
 
-          it('resolves the remote protocol before sending a Records Write request', async () => {
+          it('resolves the remote module before sending a Records Write request', async () => {
             // Create test data to write.
             const dataBytes = Convert.string('Hello, world!').toUint8Array();
 
@@ -399,9 +399,9 @@ describe('EnboxUserAgent', () => {
               target        : alice.did.uri,
               messageType   : DwnInterface.RecordsWrite,
               messageParams : {
-                dataFormat   : 'text/plain',
-                protocol     : 'http://free-for-all.xyz',
-                protocolPath : 'post'
+                dataFormat : 'text/plain',
+                module     : 'http://free-for-all.xyz',
+                modulePath : 'post'
               },
               dataStream: new Blob([dataBytes])
             });

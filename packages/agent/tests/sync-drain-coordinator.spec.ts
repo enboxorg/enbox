@@ -74,7 +74,7 @@ function replicationLink(target = ownerTarget()): ReplicationLinkState {
 }
 
 function validEntry(did = 'did:example:alice'): SyncIdentityStoreEntry {
-  return { status: 'valid', did, options: { protocols: 'all' } };
+  return { status: 'valid', did, options: { modules: 'all' } };
 }
 
 function quotaBlockEntry(syncTarget = ownerTarget()): SyncQuotaBlockEntry {
@@ -195,14 +195,14 @@ describe('SyncDrainCoordinator', () => {
   });
 
   it('isolates corrupt identities and target-resolution failures from healthy targets', async () => {
-    const protocol = 'https://example.com/protocol';
+    const module = 'https://example.com/module';
     const entries: SyncIdentityStoreEntry[] = [
       validEntry('did:example:alice'),
       { status: 'corrupt', did: 'did:example:corrupt', error: new SyntaxError('bad JSON') },
       {
         status  : 'valid',
         did     : 'did:example:bob',
-        options : { protocols: [protocol] },
+        options : { modules: [module] },
       },
     ];
     const { connectivityManager, coordinator, operations } = createFixture({ entries });
@@ -227,7 +227,7 @@ describe('SyncDrainCoordinator', () => {
       }),
       expect.objectContaining({
         tenantDid : 'did:example:bob',
-        scope     : { kind: 'protocolSet', protocols: [protocol] },
+        scope     : { kind: 'moduleSet', modules: [module] },
         completed : false,
         error     : 'grant resolution failed',
       }),

@@ -3,9 +3,9 @@ import type { StoreScope } from '../src/store/scope.js';
 import type { ExpandableRecordView, RecordViewState } from '../src/record-view.js';
 
 import { createEnboxTestContext } from '../src/testing.js';
-import { createProtocolStore } from '../src/store/protocol-store.js';
+import { createModuleStore } from '../src/store/module-store.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
-import { defineProtocol } from '../src/define-protocol.js';
+import { defineModule } from '../src/define-module.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { createObservationFactory, createObservedCollection } from '../src/store/observed-store.js';
@@ -550,8 +550,8 @@ describe('observed store selections', () => {
   });
 
   it('binds fresh family owners to canonical native collections and their real session lifetime', async () => {
-    const protocol = defineProtocol({
-      protocol  : 'https://example.com/protocols/collection-selection',
+    const module = defineModule({
+      module    : 'https://example.com/modules/collection-selection',
       published : true,
       types     : {
         folder : { dataFormats: ['application/json'] },
@@ -562,7 +562,7 @@ describe('observed store selections', () => {
       folder : recordCodecs.json<{ title: string }>(),
       note   : recordCodecs.json<{ text: string }>(),
     });
-    const context = await createEnboxTestContext({ application: defineApplicationManifest({ protocols: [protocol] }) });
+    const context = await createEnboxTestContext({ application: defineApplicationManifest({ modules: [module] }) });
     const callbacks = new Set<() => void | Promise<void>>();
     const scope: StoreScope = {
       signal        : context.session.signal,
@@ -573,7 +573,7 @@ describe('observed store selections', () => {
       onClose  : (callback): (() => void) => { callbacks.add(callback); return (): void => { callbacks.delete(callback); }; },
     };
     try {
-      const store = createProtocolStore(protocol, scope);
+      const store = createModuleStore(module, scope);
       const folders = store.collection('folder');
       const first = await folders.create.run({ title: 'A' });
       const second = await folders.create.run({ title: 'B' });

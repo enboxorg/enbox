@@ -6,14 +6,14 @@ import type { DataEncodedRecordsWriteMessage, RecordsFilter, RecordsQueryDescrip
 import { AbstractMessage } from '../core/abstract-message.js';
 import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
+import { validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 
 export type RecordsQueryOptions = {
   messageTimestamp?: string;
@@ -22,7 +22,7 @@ export type RecordsQueryOptions = {
   pagination?: Pagination;
   signer?: MessageSigner;
   permissionGrantId?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
@@ -52,23 +52,23 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
     }
 
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
-    Records.validateNestedProtocolPathScope(
+    Records.validateNestedModulePathScope(
       message.descriptor.filter,
-      DwnErrorCode.RecordsQueryNestedProtocolPathContextIdInvalid,
+      DwnErrorCode.RecordsQueryNestedModulePathContextIdInvalid,
       'RecordsQuery'
     );
 
-    if (signaturePayload?.protocolRole !== undefined) {
-      if (message.descriptor.filter.protocolPath === undefined) {
+    if (signaturePayload?.moduleRole !== undefined) {
+      if (message.descriptor.filter.modulePath === undefined) {
         throw new DwnError(
           DwnErrorCode.RecordsQueryFilterMissingRequiredProperties,
-          'Role-authorized queries must include `protocolPath` in the filter'
+          'Role-authorized queries must include `modulePath` in the filter'
         );
       }
     }
 
-    if (message.descriptor.filter.protocol !== undefined) {
-      validateProtocolUrlNormalized(message.descriptor.filter.protocol);
+    if (message.descriptor.filter.module !== undefined) {
+      validateModuleUrlNormalized(message.descriptor.filter.module);
     }
     if (message.descriptor.filter.schema !== undefined) {
       validateSchemaUrlNormalized(message.descriptor.filter.schema);
@@ -115,7 +115,7 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
         descriptor,
         signer,
         ...permissionGrantInvocation,
-        protocolRole   : options.protocolRole,
+        moduleRole     : options.moduleRole,
         delegatedGrant : options.delegatedGrant
       });
     }

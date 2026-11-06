@@ -1,40 +1,40 @@
-import type { GenericMessage, MessagesQueryReply, ProgressToken, ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { GenericMessage, MessagesQueryReply, ModuleDefinition, ProgressToken } from '@enbox/dwn-sdk-js';
 
 import type { NonEmptyStringArray, SyncIdentityOptions } from './types/sync.js';
 
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
-import { getProtocolClosureEdges } from './sync-scope-closure.js';
-import { lexicographicalCompare, syncScopeFromProtocols } from './types/sync.js';
+import { getModuleClosureEdges } from './sync-scope-closure.js';
+import { lexicographicalCompare, syncScopeFromModules } from './types/sync.js';
 
-/** Grant lookup required to inspect one delegated closure protocol. */
+/** Grant lookup required to inspect one delegated closure module. */
 export type SyncScopeClosureGrantQuery = {
   delegateDid: string;
   did: string;
-  protocol: string;
+  module: string;
 };
 
-/** Result of resolving delegated Messages.Read authorization for one protocol. */
+/** Result of resolving delegated Messages.Read authorization for one module. */
 export type SyncScopeClosureGrantResolution =
   | { kind: 'granted'; permissionGrantIds?: NonEmptyStringArray }
   | { kind: 'missing' };
 
-/** Backend-neutral query for one retained protocol-history page. */
-export type SyncScopeProtocolHistoryQuery = {
+/** Backend-neutral query for one retained module-history page. */
+export type SyncScopeModuleHistoryQuery = {
   cursor?: ProgressToken;
   delegateDid?: string;
   did: string;
   limit: number;
   permissionGrantIds?: NonEmptyStringArray;
-  protocol: string;
+  module: string;
 };
 
-/** Protocol-history reply fields consumed by closure validation. */
-export type SyncScopeProtocolHistoryPage = Pick<MessagesQueryReply, 'cursor' | 'drained' | 'entries' | 'status'>;
+/** Module-history reply fields consumed by closure validation. */
+export type SyncScopeModuleHistoryPage = Pick<MessagesQueryReply, 'cursor' | 'drained' | 'entries' | 'status'>;
 
 /** Engine-owned effects required by backend-neutral scope-closure policy. */
 export interface SyncScopeClosureValidatorOperations {
-  queryProtocolHistory(query: SyncScopeProtocolHistoryQuery): Promise<SyncScopeProtocolHistoryPage>;
+  queryModuleHistory(query: SyncScopeModuleHistoryQuery): Promise<SyncScopeModuleHistoryPage>;
 
   resolvePermissionGrantIds(query: SyncScopeClosureGrantQuery): Promise<SyncScopeClosureGrantResolution>;
 }
@@ -44,24 +44,24 @@ export type SyncScopeClosureValidatorParams = {
 };
 
 type SyncScopeClosureValidationState = {
-  requestedProtocols: Set<string>;
-  protocolsToScan: string[];
-  scannedProtocols: Set<string>;
-  missingGrantProtocols: Set<string>;
-  nonScopedUsesProtocols: Set<string>;
+  requestedModules: Set<string>;
+  modulesToScan: string[];
+  scannedModules: Set<string>;
+  missingGrantModules: Set<string>;
+  nonScopedUsesModules: Set<string>;
   splitDependencyEdges: Map<string, Set<string>>;
 };
 
 /**
- * Validates sync registration scopes against retained protocol history.
+ * Validates sync registration scopes against retained module history.
  *
  * Grant resolution and history access are injected so the traversal and
  * closure policy can be reused independently of an engine's persistence and
  * transport implementation.
  */
 export class SyncScopeClosureValidator {
-  /** Page size for local retained ProtocolsConfigure history scans. */
-  private static readonly PROTOCOL_HISTORY_PAGE_LIMIT = 500;
+  /** Page size for local retained ModulesConfigure history scans. */
+  private static readonly MODULE_HISTORY_PAGE_LIMIT = 500;
 
   private readonly _operations: SyncScopeClosureValidatorOperations;
 
@@ -71,25 +71,28 @@ export class SyncScopeClosureValidator {
 
   /** Validate the shape and non-empty scope contract of identity options. */
   public validateOptions(options: SyncIdentityOptions): void {
-    if (!options || !('protocols' in options)) {
-      throw new Error('SyncScopeClosureValidator: options.protocols is required — pass \'all\' for a full replica or a non-empty protocol list.');
+    if (!options || !('modules' in options)) {
+      throw new Error('SyncScopeClosureValidator: options.modules is required — pass \'all\' for a full replica or a non-empty module list.');
     }
-    if (options.protocols !== 'all' && !Array.isArray(options.protocols)) {
-      throw new Error('SyncScopeClosureValidator: protocols must be \'all\' or a non-empty string array.');
+    if (Object.keys(options).some(key => key !== 'modules' && key !== 'delegateDid')) {
+      throw new Error('SyncScopeClosureValidator: unrecognized sync identity option; use module-format options.');
     }
-    if (Array.isArray(options.protocols) && options.protocols.length === 0) {
-      throw new Error('SyncScopeClosureValidator: protocols must be \'all\' or a non-empty array of protocol URIs. An empty array is ambiguous.');
+    if (options.modules !== 'all' && !Array.isArray(options.modules)) {
+      throw new Error('SyncScopeClosureValidator: modules must be \'all\' or a non-empty string array.');
+    }
+    if (Array.isArray(options.modules) && options.modules.length === 0) {
+      throw new Error('SyncScopeClosureValidator: modules must be \'all\' or a non-empty array of module URIs. An empty array is ambiguous.');
     }
   }
 
-  /** Validate that a protocol-set scope contains its complete dependency closure. */
+  /** Validate that a module-set scope contains its complete dependency closure. */
   public async validateClosure(did: string, options: SyncIdentityOptions): Promise<void> {
-    const scope = syncScopeFromProtocols(options.protocols);
+    const scope = syncScopeFromModules(options.modules);
     if (scope.kind === 'full') {
       return;
     }
 
-    const state = SyncScopeClosureValidator.createValidationState(scope.protocols);
+    const state = SyncScopeClosureValidator.createValidationState(scope.modules);
     await this.scanClosure(did, options, state);
 
     const details = SyncScopeClosureValidator.errorDetails(options, state);
@@ -98,14 +101,14 @@ export class SyncScopeClosureValidator {
     }
   }
 
-  private static createValidationState(protocols: NonEmptyStringArray): SyncScopeClosureValidationState {
+  private static createValidationState(modules: NonEmptyStringArray): SyncScopeClosureValidationState {
     return {
-      requestedProtocols     : new Set(protocols),
-      protocolsToScan        : [...protocols],
-      scannedProtocols       : new Set(),
-      missingGrantProtocols  : new Set(),
-      nonScopedUsesProtocols : new Set(),
-      splitDependencyEdges   : new Map(),
+      requestedModules     : new Set(modules),
+      modulesToScan        : [...modules],
+      scannedModules       : new Set(),
+      missingGrantModules  : new Set(),
+      nonScopedUsesModules : new Set(),
+      splitDependencyEdges : new Map(),
     };
   }
 
@@ -114,39 +117,40 @@ export class SyncScopeClosureValidator {
     options: SyncIdentityOptions,
     state: SyncScopeClosureValidationState,
   ): Promise<void> {
-    while (state.protocolsToScan.length > 0) {
-      const protocol = state.protocolsToScan.shift();
-      if (protocol === undefined || state.scannedProtocols.has(protocol)) {
+    while (state.modulesToScan.length > 0) {
+      const moduleUri = state.modulesToScan.shift();
+      if (moduleUri === undefined || state.scannedModules.has(moduleUri)) {
         continue;
       }
 
-      await this.scanProtocol(did, options, protocol, state);
+      // Each scan discovers more dependencies; finish its retained history before advancing the queue.
+      await this.scanModule(did, options, moduleUri, state); // NOSONAR: S9382 — dependent traversal, one history buffer at a time.
     }
   }
 
-  private async scanProtocol(
+  private async scanModule(
     did: string,
     options: SyncIdentityOptions,
-    protocol: string,
+    module: string,
     state: SyncScopeClosureValidationState,
   ): Promise<void> {
-    state.scannedProtocols.add(protocol);
+    state.scannedModules.add(module);
 
     let permissionGrantIds: NonEmptyStringArray | undefined;
     if (options.delegateDid !== undefined) {
       const resolution = await this._operations.resolvePermissionGrantIds({
         delegateDid: options.delegateDid,
         did,
-        protocol,
+        module,
       });
       if (resolution.kind === 'missing') {
-        state.missingGrantProtocols.add(protocol);
+        state.missingGrantModules.add(module);
         return;
       }
       permissionGrantIds = resolution.permissionGrantIds;
     }
 
-    const definitions = await this.fetchProtocolHistory(did, protocol, options.delegateDid, permissionGrantIds);
+    const definitions = await this.fetchModuleHistory(did, module, options.delegateDid, permissionGrantIds);
     for (const definition of definitions) {
       SyncScopeClosureValidator.recordClosureEdges(state, definition);
     }
@@ -154,41 +158,41 @@ export class SyncScopeClosureValidator {
 
   private static recordClosureEdges(
     state: SyncScopeClosureValidationState,
-    definition: ProtocolDefinition,
+    definition: ModuleDefinition,
   ): void {
-    const edges = getProtocolClosureEdges(definition);
-    SyncScopeClosureValidator.recordUsesProtocols(state, edges.usesProtocols);
-    SyncScopeClosureValidator.recordDependencyProtocols(state, definition.protocol, edges.dependencyProtocols);
+    const edges = getModuleClosureEdges(definition);
+    SyncScopeClosureValidator.recordUsesModules(state, edges.usesModules);
+    SyncScopeClosureValidator.recordDependencyModules(state, definition.module, edges.dependencyModules);
   }
 
-  private static recordUsesProtocols(
+  private static recordUsesModules(
     state: SyncScopeClosureValidationState,
-    protocols: string[],
+    modules: string[],
   ): void {
-    for (const protocol of protocols) {
-      if (!state.requestedProtocols.has(protocol)) {
-        state.nonScopedUsesProtocols.add(protocol);
+    for (const module of modules) {
+      if (!state.requestedModules.has(module)) {
+        state.nonScopedUsesModules.add(module);
       }
-      SyncScopeClosureValidator.enqueueProtocol(state, protocol);
+      SyncScopeClosureValidator.enqueueModule(state, module);
     }
   }
 
-  private static recordDependencyProtocols(
+  private static recordDependencyModules(
     state: SyncScopeClosureValidationState,
-    sourceProtocol: string,
-    protocols: string[],
+    sourceModule: string,
+    modules: string[],
   ): void {
-    for (const protocol of protocols) {
-      if (!state.requestedProtocols.has(protocol)) {
-        SyncScopeClosureValidator.addProtocolEdge(state.splitDependencyEdges, sourceProtocol, protocol);
+    for (const module of modules) {
+      if (!state.requestedModules.has(module)) {
+        SyncScopeClosureValidator.addModuleEdge(state.splitDependencyEdges, sourceModule, module);
       }
-      SyncScopeClosureValidator.enqueueProtocol(state, protocol);
+      SyncScopeClosureValidator.enqueueModule(state, module);
     }
   }
 
-  private static enqueueProtocol(state: SyncScopeClosureValidationState, protocol: string): void {
-    if (!state.scannedProtocols.has(protocol)) {
-      state.protocolsToScan.push(protocol);
+  private static enqueueModule(state: SyncScopeClosureValidationState, module: string): void {
+    if (!state.scannedModules.has(module)) {
+      state.modulesToScan.push(module);
     }
   }
 
@@ -196,59 +200,59 @@ export class SyncScopeClosureValidator {
     options: SyncIdentityOptions,
     state: SyncScopeClosureValidationState,
   ): string[] {
-    if (state.missingGrantProtocols.size === 0 && state.splitDependencyEdges.size === 0) {
+    if (state.missingGrantModules.size === 0 && state.splitDependencyEdges.size === 0) {
       return [];
     }
 
     const details: string[] = [];
-    if (state.missingGrantProtocols.size > 0) {
+    if (state.missingGrantModules.size > 0) {
       details.push(
-        `delegate ${options.delegateDid} lacks Messages.Read grants for closure protocols: ` +
-        SyncScopeClosureValidator.formatStringSet(state.missingGrantProtocols)
+        `delegate ${options.delegateDid} lacks Messages.Read grants for closure modules: ` +
+        SyncScopeClosureValidator.formatStringSet(state.missingGrantModules)
       );
     }
     if (state.splitDependencyEdges.size > 0) {
       details.push(
-        `scope splits cross-protocol dependencies: ${SyncScopeClosureValidator.formatProtocolEdges(state.splitDependencyEdges)}`
+        `scope splits cross-module dependencies: ${SyncScopeClosureValidator.formatModuleEdges(state.splitDependencyEdges)}`
       );
     }
-    if (state.nonScopedUsesProtocols.size > 0) {
+    if (state.nonScopedUsesModules.size > 0) {
       details.push(
-        `uses protocols outside the sync scope: ${SyncScopeClosureValidator.formatStringSet(state.nonScopedUsesProtocols)}`
+        `uses modules outside the sync scope: ${SyncScopeClosureValidator.formatStringSet(state.nonScopedUsesModules)}`
       );
     }
 
     return details;
   }
 
-  private async fetchProtocolHistory(
+  private async fetchModuleHistory(
     did: string,
-    protocol: string,
+    module: string,
     delegateDid: string | undefined,
     permissionGrantIds: NonEmptyStringArray | undefined,
-  ): Promise<ProtocolDefinition[]> {
-    const definitions: ProtocolDefinition[] = [];
+  ): Promise<ModuleDefinition[]> {
+    const definitions: ModuleDefinition[] = [];
     let cursor: ProgressToken | undefined;
 
     for (;;) {
-      const page = await this._operations.queryProtocolHistory({
+      const page = await this._operations.queryModuleHistory({
         cursor,
         delegateDid,
         did,
-        limit: SyncScopeClosureValidator.PROTOCOL_HISTORY_PAGE_LIMIT,
+        limit: SyncScopeClosureValidator.MODULE_HISTORY_PAGE_LIMIT,
         permissionGrantIds,
-        protocol,
+        module,
       });
 
       if (page.status.code !== 200) {
         throw new Error(
-          `SyncScopeClosureValidator: local protocol history query failed for ${did} / ${protocol}: ` +
+          `SyncScopeClosureValidator: local module history query failed for ${did} / ${module}: ` +
           `${page.status.code} ${page.status.detail}`
         );
       }
 
       for (const entry of page.entries ?? []) {
-        const definition = SyncScopeClosureValidator.protocolDefinitionFromMessage(entry.message);
+        const definition = SyncScopeClosureValidator.moduleDefinitionFromMessage(entry.message);
         if (definition !== undefined) {
           definitions.push(definition);
         }
@@ -258,19 +262,19 @@ export class SyncScopeClosureValidator {
         return definitions;
       }
       if (page.cursor === undefined) {
-        throw new Error(`SyncScopeClosureValidator: local protocol history query returned no cursor before drain for ${did} / ${protocol}`);
+        throw new Error(`SyncScopeClosureValidator: local module history query returned no cursor before drain for ${did} / ${module}`);
       }
 
       cursor = page.cursor;
     }
   }
 
-  private static protocolDefinitionFromMessage(message: GenericMessage | undefined): ProtocolDefinition | undefined {
+  private static moduleDefinitionFromMessage(message: GenericMessage | undefined): ModuleDefinition | undefined {
     const descriptor = message?.descriptor as { interface?: string; method?: string; definition?: unknown } | undefined;
     if (
-      descriptor?.interface !== DwnInterfaceName.Protocols ||
+      descriptor?.interface !== DwnInterfaceName.Modules ||
       descriptor.method !== DwnMethodName.Configure ||
-      !SyncScopeClosureValidator.isProtocolDefinition(descriptor.definition)
+      !SyncScopeClosureValidator.isModuleDefinition(descriptor.definition)
     ) {
       return undefined;
     }
@@ -278,13 +282,13 @@ export class SyncScopeClosureValidator {
     return descriptor.definition;
   }
 
-  private static isProtocolDefinition(value: unknown): value is ProtocolDefinition {
+  private static isModuleDefinition(value: unknown): value is ModuleDefinition {
     return typeof value === 'object' &&
       value !== null &&
-      typeof (value as { protocol?: unknown }).protocol === 'string';
+      typeof (value as { module?: unknown }).module === 'string';
   }
 
-  private static addProtocolEdge(edges: Map<string, Set<string>>, from: string, to: string): void {
+  private static addModuleEdge(edges: Map<string, Set<string>>, from: string, to: string): void {
     let targets = edges.get(from);
     if (targets === undefined) {
       targets = new Set();
@@ -297,7 +301,7 @@ export class SyncScopeClosureValidator {
     return [...values].sort(lexicographicalCompare).join(', ');
   }
 
-  private static formatProtocolEdges(edges: Map<string, Set<string>>): string {
+  private static formatModuleEdges(edges: Map<string, Set<string>>): string {
     return [...edges.entries()]
       .sort(([a], [b]) => lexicographicalCompare(a, b))
       .flatMap(([from, targets]) => [...targets]

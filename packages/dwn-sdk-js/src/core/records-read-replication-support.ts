@@ -1,9 +1,9 @@
 import type { Filter } from '../types/query-types.js';
 import type { GenericMessage } from '../types/message-types.js';
 import type { HandlerDependencies } from '../types/method-handler.js';
-import type { ProtocolsConfigureMessage } from '../types/protocols-types.js';
-import type { ResolvedProtocolRole } from './protocol-authorization-action.js';
-import type { RoleRecordIdentity } from '../utils/protocols.js';
+import type { ModulesConfigureMessage } from '../types/modules-types.js';
+import type { ResolvedModuleRole } from './module-authorization-action.js';
+import type { RoleRecordIdentity } from '../utils/modules.js';
 import type { RecordsDeleteMessage, RecordsReadReplicationSupportEntry, RecordsWriteMessage } from '../types/records-types.js';
 
 import { ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
@@ -11,7 +11,7 @@ import { EncryptionControl } from './encryption-control.js';
 import { lexicographicalCompare } from '../utils/string.js';
 import { Message } from './message.js';
 import { Messages } from '../utils/messages.js';
-import { queryProtocolConfigure } from './protocol-configure-lookup.js';
+import { queryModuleConfigure } from './module-configure-lookup.js';
 import { Records } from '../utils/records.js';
 import { RecordsDelete } from '../interfaces/records-delete.js';
 import { RecordsWrite } from '../interfaces/records-write.js';
@@ -19,10 +19,10 @@ import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { SortDirection } from '../types/query-types.js';
 import { DwnError, DwnErrorCode } from './dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { getRecordsWriteRoleIdentity, getRoleAudienceContextId, getRoleRecordIdentity, isCrossProtocolRef } from '../utils/protocols.js';
+import { getRecordsWriteRoleIdentity, getRoleAudienceContextId, getRoleRecordIdentity, isCrossModuleRef } from '../utils/modules.js';
 
 const MAX_SUPPORT_RECORDS_PER_KIND = 16;
-const MAX_SUPPORT_PROTOCOL_CONFIGS = 64;
+const MAX_SUPPORT_MODULE_CONFIGS = 64;
 
 type AuthorRoleSelector = RoleRecordIdentity;
 
@@ -33,17 +33,17 @@ export class RecordsReadReplicationSupport {
     matchedRecordsWrite: RecordsWriteMessage;
     recordsDelete?: RecordsDeleteMessage;
     requester: string;
-    resolvedRole: ResolvedProtocolRole;
+    resolvedRole: ResolvedModuleRole;
     tenant: string;
   }): Promise<RecordsReadReplicationSupportEntry[]> {
     const { deps, matchedRecordsWrite, requester, resolvedRole, tenant } = input;
-    const protocol = matchedRecordsWrite.descriptor.protocol;
+    const module = matchedRecordsWrite.descriptor.module;
     const contextId = resolvedRole.contextIdPrefix;
     const roleRecordId = resolvedRole.roleRecordId;
 
-    if (resolvedRole.protocol !== protocol || contextId === undefined || roleRecordId === undefined) {
+    if (resolvedRole.module !== module || contextId === undefined || roleRecordId === undefined) {
       throw RecordsReadReplicationSupport.unsupported(
-        'replication support requires a context-scoped role in the record protocol with a concrete active assignment.'
+        'replication support requires a context-scoped role in the record module with a concrete active assignment.'
       );
     }
 
@@ -55,13 +55,13 @@ export class RecordsReadReplicationSupport {
         includeCurrentRoleAudience : input.recordsDelete === undefined,
         matchedRecordsWrite,
         contextId,
-        protocol,
-        rolePath                   : resolvedRole.protocolPath,
+        module,
+        rolePath                   : resolvedRole.modulePath,
         tenant,
       }),
     ]);
-    if (recordChain.some((record): boolean => record.descriptor.protocol !== protocol)) {
-      throw RecordsReadReplicationSupport.unsupported('cross-protocol record ancestry is not supported by this bootstrap response.');
+    if (recordChain.some((record): boolean => record.descriptor.module !== module)) {
+      throw RecordsReadReplicationSupport.unsupported('cross-module record ancestry is not supported by this bootstrap response.');
     }
     const authorRoleInitialWrites = await RecordsReadReplicationSupport.fetchAuthorRoleInitialWrites(
       input,
@@ -76,12 +76,12 @@ export class RecordsReadReplicationSupport {
       }
 
       const delivery = input.recordsDelete === undefined &&
-        rolePath === resolvedRole.protocolPath && audienceContextId === contextId
+        rolePath === resolvedRole.modulePath && audienceContextId === contextId
         ? await RecordsReadReplicationSupport.fetchDelivery({
           deps,
           tenant,
           requester,
-          protocol,
+          module,
           rolePath,
           contextId: audienceContextId,
           keyId,
@@ -89,10 +89,10 @@ export class RecordsReadReplicationSupport {
         : undefined;
       return { audienceRecord, delivery };
     }));
-    const protocolConfigures = await RecordsReadReplicationSupport.fetchProtocolConfigures(
+    const moduleConfigures = await RecordsReadReplicationSupport.fetchModuleConfigures(
       deps,
       tenant,
-      protocol,
+      module,
       [
         matchedRecordsWrite,
         ...(input.recordsDelete === undefined ? [] : [input.recordsDelete]),
@@ -106,11 +106,11 @@ export class RecordsReadReplicationSupport {
     );
 
     const entries: RecordsReadReplicationSupportEntry[] = [];
-    for (const protocolConfigure of protocolConfigures) {
+    for (const moduleConfigure of moduleConfigures) {
       await RecordsReadReplicationSupport.append(
         entries,
-        protocolConfigure.message,
-        protocolConfigure.isLatestBaseState,
+        moduleConfigure.message,
+        moduleConfigure.isLatestBaseState,
         true,
       );
     }
@@ -145,38 +145,38 @@ export class RecordsReadReplicationSupport {
     matchedRecordsWrite: RecordsWriteMessage;
     recordsDelete?: RecordsDeleteMessage;
     requester: string;
-    resolvedRole: ResolvedProtocolRole;
+    resolvedRole: ResolvedModuleRole;
     tenant: string;
   }, recordChain: readonly RecordsWriteMessage[]): Promise<RecordsWriteMessage[]> {
     const { deps, matchedRecordsWrite, recordsDelete, requester, resolvedRole, tenant } = input;
-    const protocol = matchedRecordsWrite.descriptor.protocol;
+    const module = matchedRecordsWrite.descriptor.module;
     const selectors = new Map<string, AuthorRoleSelector>();
     const addSelector = (
-      protocolRole: string | undefined,
+      moduleRole: string | undefined,
       recipient: string | undefined,
       contextId: string | undefined,
     ): void => {
-      if (protocolRole === undefined) {
+      if (moduleRole === undefined) {
         return;
       }
-      if (isCrossProtocolRef(protocolRole)) {
-        throw RecordsReadReplicationSupport.unsupported('cross-protocol author role proofs are not supported.');
+      if (isCrossModuleRef(moduleRole)) {
+        throw RecordsReadReplicationSupport.unsupported('cross-module author role proofs are not supported.');
       }
       if (recipient === undefined) {
         throw RecordsReadReplicationSupport.unsupported('role-authored record has no logical author.');
       }
       const identity = getRoleRecordIdentity({
         contextId,
-        protocol,
-        protocolPath: protocolRole,
+        module,
+        modulePath: moduleRole,
         recipient,
       });
-      if (identity.contextIdPrefix === undefined && protocolRole.includes('/')) {
-        throw RecordsReadReplicationSupport.unsupported(`record author role '${protocolRole}' has no context.`);
+      if (identity.contextIdPrefix === undefined && moduleRole.includes('/')) {
+        throw RecordsReadReplicationSupport.unsupported(`record author role '${moduleRole}' has no context.`);
       }
       if (recipient === requester &&
-        resolvedRole.protocol === protocol &&
-        resolvedRole.protocolPath === protocolRole &&
+        resolvedRole.module === module &&
+        resolvedRole.modulePath === moduleRole &&
         resolvedRole.contextIdPrefix === identity.contextIdPrefix) {
         return;
       }
@@ -186,7 +186,7 @@ export class RecordsReadReplicationSupport {
     for (const record of [matchedRecordsWrite, ...recordChain]) {
       const parsed = await RecordsWrite.parse(record);
       addSelector(
-        parsed.signaturePayload?.protocolRole,
+        parsed.signaturePayload?.moduleRole,
         parsed.author,
         record.contextId,
       );
@@ -194,7 +194,7 @@ export class RecordsReadReplicationSupport {
     if (recordsDelete !== undefined) {
       const parsed = await RecordsDelete.parse(recordsDelete);
       addSelector(
-        parsed.signaturePayload?.protocolRole,
+        parsed.signaturePayload?.moduleRole,
         parsed.author,
         matchedRecordsWrite.contextId,
       );
@@ -215,7 +215,7 @@ export class RecordsReadReplicationSupport {
       );
       if (initialWrite === undefined) {
         throw RecordsReadReplicationSupport.unsupported(
-          `record author role '${selector.protocolPath}' is unavailable for replication.`,
+          `record author role '${selector.modulePath}' is unavailable for replication.`,
         );
       }
       return initialWrite;
@@ -228,11 +228,11 @@ export class RecordsReadReplicationSupport {
     selector: AuthorRoleSelector,
   ): Promise<RecordsWriteMessage | undefined> {
     const filter: Filter = {
-      interface    : DwnInterfaceName.Records,
-      method       : DwnMethodName.Write,
-      protocol     : selector.protocol,
-      protocolPath : selector.protocolPath,
-      recipient    : selector.recipient,
+      interface  : DwnInterfaceName.Records,
+      method     : DwnMethodName.Write,
+      module     : selector.module,
+      modulePath : selector.modulePath,
+      recipient  : selector.recipient,
     };
     if (selector.contextIdPrefix !== undefined) {
       filter.contextId = { subtree: selector.contextIdPrefix };
@@ -250,7 +250,7 @@ export class RecordsReadReplicationSupport {
       if (candidate === undefined) {
         continue;
       }
-      // Root roles intentionally match by protocol, path, and recipient only;
+      // Root roles intentionally match by module, path, and recipient only;
       // unlike nested roles, they have no context dimension.
       if (candidate.key === selector.key) {
         return message;
@@ -264,13 +264,13 @@ export class RecordsReadReplicationSupport {
     includeCurrentRoleAudience: boolean;
     matchedRecordsWrite: RecordsWriteMessage;
     tenant: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
   }): Promise<RecordsWriteMessage[]> {
     const rootAudienceEntries = input.matchedRecordsWrite.encryption?.keyEncryption
       .filter((entry): boolean => entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME &&
-        'protocol' in entry && entry.protocol === input.protocol) ?? [];
+        'module' in entry && entry.module === input.module) ?? [];
     if (input.includeCurrentRoleAudience && input.matchedRecordsWrite.encryption !== undefined &&
       !rootAudienceEntries.some((entry): boolean => 'rolePath' in entry && entry.rolePath === input.rolePath)) {
       throw RecordsReadReplicationSupport.unsupported('the encrypted record is not wrapped for the invoked role.');
@@ -280,7 +280,7 @@ export class RecordsReadReplicationSupport {
       ? await EncryptionControl.resolveCurrentAudienceRecord({
         contextId    : input.contextId,
         messageStore : input.deps.messageStore,
-        protocol     : input.protocol,
+        module       : input.module,
         rolePath     : input.rolePath,
         tenant       : input.tenant,
       })
@@ -309,7 +309,7 @@ export class RecordsReadReplicationSupport {
       const exact = await input.deps.validationStateReader.queryAudienceRecords({
         contextId : audienceContextId,
         keyId     : entry.keyId,
-        protocol  : input.protocol,
+        module    : input.module,
         rolePath  : entry.rolePath,
         tenant    : input.tenant,
       });
@@ -328,25 +328,25 @@ export class RecordsReadReplicationSupport {
     return records;
   }
 
-  private static async fetchProtocolConfigures(
+  private static async fetchModuleConfigures(
     deps: HandlerDependencies,
     tenant: string,
-    protocol: string,
+    module: string,
     records: readonly { descriptor: { messageTimestamp: string } }[],
-  ): Promise<{ isLatestBaseState: boolean; message: ProtocolsConfigureMessage }[]> {
-    const latest = await RecordsReadReplicationSupport.fetchProtocolConfigure(deps, tenant, protocol);
+  ): Promise<{ isLatestBaseState: boolean; message: ModulesConfigureMessage }[]> {
+    const latest = await RecordsReadReplicationSupport.fetchModuleConfigure(deps, tenant, module);
     const timestamps = [...new Set(records.map((record): string => record.descriptor.messageTimestamp))]
       .sort(lexicographicalCompare);
     const historical = await Promise.all(timestamps.map((messageTimestamp) =>
-      RecordsReadReplicationSupport.fetchProtocolConfigure(deps, tenant, protocol, messageTimestamp)));
+      RecordsReadReplicationSupport.fetchModuleConfigure(deps, tenant, module, messageTimestamp)));
     const latestCid = await Message.getCid(latest);
-    const unique = new Map<string, ProtocolsConfigureMessage>();
+    const unique = new Map<string, ModulesConfigureMessage>();
     for (const configure of [...historical, latest]) {
       unique.set(await Message.getCid(configure), configure);
     }
-    if (unique.size > MAX_SUPPORT_PROTOCOL_CONFIGS) {
+    if (unique.size > MAX_SUPPORT_MODULE_CONFIGS) {
       throw RecordsReadReplicationSupport.unsupported(
-        `replication support requires more than ${MAX_SUPPORT_PROTOCOL_CONFIGS} protocol configurations.`
+        `replication support requires more than ${MAX_SUPPORT_MODULE_CONFIGS} module configurations.`
       );
     }
 
@@ -356,17 +356,17 @@ export class RecordsReadReplicationSupport {
     }));
   }
 
-  private static async fetchProtocolConfigure(
+  private static async fetchModuleConfigure(
     deps: HandlerDependencies,
     tenant: string,
-    protocol: string,
+    module: string,
     messageTimestamp?: string,
-  ): Promise<ProtocolsConfigureMessage> {
-    const protocolConfigure = await queryProtocolConfigure(deps.messageStore, tenant, protocol, messageTimestamp);
-    if (protocolConfigure === undefined) {
-      throw RecordsReadReplicationSupport.unsupported(`no stored protocol configuration exists for '${protocol}'.`);
+  ): Promise<ModulesConfigureMessage> {
+    const moduleConfigure = await queryModuleConfigure(deps.messageStore, tenant, module, messageTimestamp);
+    if (moduleConfigure === undefined) {
+      throw RecordsReadReplicationSupport.unsupported(`no stored module configuration exists for '${module}'.`);
     }
-    return protocolConfigure;
+    return moduleConfigure;
   }
 
   private static async fetchRoleRecord(
@@ -391,7 +391,7 @@ export class RecordsReadReplicationSupport {
     deps: HandlerDependencies;
     tenant: string;
     requester: string;
-    protocol: string;
+    module: string;
     rolePath: string;
     contextId: string;
     keyId: string;
@@ -400,10 +400,10 @@ export class RecordsReadReplicationSupport {
       interface         : DwnInterfaceName.Records,
       method            : DwnMethodName.Write,
       isLatestBaseState : true,
-      protocol          : input.protocol,
-      protocolPath      : ENCRYPTION_CONTROL_DELIVERY_PATH,
+      module            : input.module,
+      modulePath        : ENCRYPTION_CONTROL_DELIVERY_PATH,
       recipient         : input.requester,
-      'tag.protocol'    : input.protocol,
+      'tag.module'      : input.module,
       'tag.rolePath'    : input.rolePath,
       'tag.contextId'   : input.contextId,
       'tag.keyId'       : input.keyId,

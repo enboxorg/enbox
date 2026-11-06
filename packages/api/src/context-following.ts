@@ -1,14 +1,14 @@
-import type { ContextFollowIntent } from './shared-context-protocol.js';
+import type { ContextFollowIntent } from './shared-context-module.js';
 import type { ContextFollowTarget } from './typed-enbox.js';
 import type { ExpandableRecordView } from './record-view.js';
-import type { ProtocolDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { SavedContextFollow } from './context-view.js';
 import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { ContextRetiredError } from './context-errors.js';
-import { protocolContextKey } from './shared-context-protocol.js';
-import { FilterUtility, resolveProtocolContextRoles } from '@enbox/dwn-sdk-js';
-import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual, syncEventCoversProtocol } from '@enbox/agent';
+import { moduleContextKey } from './shared-context-module.js';
+import { FilterUtility, resolveModuleContextRoles } from '@enbox/dwn-sdk-js';
+import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual, syncEventCoversModule } from '@enbox/agent';
 
 /** One decoded immutable decision in the recipient's private following journal. */
 export type ContextFollowRecord = Readonly<{
@@ -17,7 +17,7 @@ export type ContextFollowRecord = Readonly<{
   value: ContextFollowIntent;
 }>;
 
-/** Coordinates and the exact protocol context root selected by contexts.follow(). */
+/** Coordinates and the exact module context root selected by contexts.follow(). */
 type FollowRequest = ContextFollowTarget & Readonly<{
   path: string;
 }>;
@@ -27,7 +27,7 @@ type FollowSync = Pick<SyncEngine, 'followSource' | 'getFollowedSource' | 'listF
 export type ContextFollowingOptions = {
   actorDid: string;
   append(intent: ContextFollowIntent, after?: string): Promise<ContextFollowRecord>;
-  definition: ProtocolDefinition;
+  definition: ModuleDefinition;
   openView(signal: AbortSignal): Promise<ExpandableRecordView<ContextFollowRecord>>;
   read(): Promise<readonly ContextFollowRecord[]>;
   signal?: AbortSignal;
@@ -79,7 +79,7 @@ export class ContextFollowing {
 
   /** Verify an explicit follow, then persist the user's decision before returning success. */
   public follow(request: FollowRequest): Promise<FollowedSyncSource> {
-    const key = protocolContextKey(request.ownerDid, request.id);
+    const key = moduleContextKey(request.ownerDid, request.id);
     return this.serializeContextOperation(key, async (): Promise<FollowedSyncSource> => {
       const roles = this.resolveContextRoles(request.path, request.id);
       const initialDecision = (await this.readLatestIntents()).get(key);
@@ -99,7 +99,7 @@ export class ContextFollowing {
 
   /** Save the user's forget choice even when no local acceptance or reachable owner exists. */
   public forgetContext(target: ContextFollowTarget): Promise<void> {
-    const key = protocolContextKey(target.ownerDid, target.id);
+    const key = moduleContextKey(target.ownerDid, target.id);
     return this.serializeContextOperation(key, async (): Promise<void> => {
       const previous = (await this.readLatestIntents()).get(key);
       await this.saveForgetDecision(target, previous);
@@ -112,7 +112,7 @@ export class ContextFollowing {
    */
   public forget(source: FollowedSyncSource, withdrawRole?: () => Promise<void>): Promise<void> {
     const target = { id: source.contextId, ownerDid: source.sourceDid };
-    const key = protocolContextKey(target.ownerDid, target.id);
+    const key = moduleContextKey(target.ownerDid, target.id);
     return this.serializeContextOperation(key, async (): Promise<void> => {
       const current = await this._options.sync.getFollowedSource(source.id);
       this.assertActive();
@@ -163,7 +163,7 @@ export class ContextFollowing {
       default:
         return;
     }
-    if (!syncEventCoversProtocol(event, this._options.definition.protocol)) { return; }
+    if (!syncEventCoversModule(event, this._options.definition.module)) { return; }
     const observation = this._observation;
     if (observation === undefined || !this.isObserving(observation)) { return; }
     if (event.tenantDid === this._options.actorDid) {
@@ -216,7 +216,7 @@ export class ContextFollowing {
 
   /** Save a forget once, then retire access only while that choice still wins. */
   private async saveForgetDecision(target: ContextFollowTarget, previous: ContextFollowRecord | undefined): Promise<void> {
-    const key = protocolContextKey(target.ownerDid, target.id);
+    const key = moduleContextKey(target.ownerDid, target.id);
     // A repeated forget only needs cleanup; a newer follow received meanwhile must remain authoritative.
     if (previous?.value.following !== false && this._latestIntentRecords.get(key)?.value.following !== false) {
       this.rememberLatestIntents([await this._options.append({
@@ -237,7 +237,7 @@ export class ContextFollowing {
     return this._options.sync.followSource({
       actorDid  : this._options.actorDid,
       contextId : request.id,
-      protocol  : this._options.definition.protocol,
+      module    : this._options.definition.module,
       roles     : [...roles],
       sourceDid : request.ownerDid,
     });
@@ -248,7 +248,7 @@ export class ContextFollowing {
     request: FollowRequest,
     initialDecision: ContextFollowRecord | undefined,
   ): Promise<boolean> {
-    const key = protocolContextKey(request.ownerDid, request.id);
+    const key = moduleContextKey(request.ownerDid, request.id);
     const latest = (await this.readLatestIntents()).get(key);
     if (latest?.value.following === true && latest.value.path === request.path) {
       return false;
@@ -279,7 +279,7 @@ export class ContextFollowing {
       try {
         await this._options.sync.deleteFollowedSource(source);
         // Reverify the current saved policy after rollback; never reinstall captured authority.
-        this._observation?.attemptedRecordIds.delete(protocolContextKey(source.sourceDid, source.contextId));
+        this._observation?.attemptedRecordIds.delete(moduleContextKey(source.sourceDid, source.contextId));
       } catch (retireError: unknown) {
         throw new AggregateError([error, retireError], 'ContextFollowing: unable to complete or retire the new acceptance.');
       }
@@ -289,7 +289,7 @@ export class ContextFollowing {
 
   /** A saved forget retires access; positive discovery choices never revoke verified authority. */
   private async rejectFollowIfForgotten(request: FollowRequest): Promise<void> {
-    const latest = this._latestIntentRecords.get(protocolContextKey(request.ownerDid, request.id));
+    const latest = this._latestIntentRecords.get(moduleContextKey(request.ownerDid, request.id));
     if (latest?.value.following === false) {
       await this.removeForgottenAcceptances(latest);
       throw new ContextRetiredError(request.id);
@@ -423,7 +423,7 @@ export class ContextFollowing {
 
   /** Exact deletion can lose a race to role recovery; finish the current forget without cancelling newer intent. */
   private async removeForgottenAcceptances(record: ContextFollowRecord): Promise<void> {
-    const key = protocolContextKey(record.value.ownerDid, record.value.contextId);
+    const key = moduleContextKey(record.value.ownerDid, record.value.contextId);
     let sources = await this.listAcceptedContextSources(record.value);
     while (sources.length > 0 && this._latestIntentRecords.get(key)?.value.following === false) {
       await Promise.all(sources.map((source): Promise<void> => this._options.sync.deleteFollowedSource(source)));
@@ -437,7 +437,7 @@ export class ContextFollowing {
     const sources = await this._options.sync.listFollowedSources();
     this.assertActive();
     return sources.filter((source): boolean =>
-      source.actorDid === this._options.actorDid && source.protocol === this._options.definition.protocol
+      source.actorDid === this._options.actorDid && source.module === this._options.definition.module
       && source.sourceDid === intent.ownerDid && source.contextId === intent.contextId);
   }
 
@@ -445,7 +445,7 @@ export class ContextFollowing {
   private rememberLatestIntents(records: readonly ContextFollowRecord[]): void {
     let changed = false;
     for (const record of records) {
-      const key = protocolContextKey(record.value.ownerDid, record.value.contextId);
+      const key = moduleContextKey(record.value.ownerDid, record.value.contextId);
       const previous = this._latestIntentRecords.get(key);
       if (previous === undefined || record.timestamp > previous.timestamp
         || (record.timestamp === previous.timestamp && record.id > previous.id)) {
@@ -472,7 +472,7 @@ export class ContextFollowing {
     if (path.split('/').length !== contextId.split('/').length) {
       throw new TypeError(`ContextFollowing: context ID does not identify a '${path}' root.`);
     }
-    const roles = resolveProtocolContextRoles(this._options.definition, path);
+    const roles = resolveModuleContextRoles(this._options.definition, path);
     if (roles.length === 0) {
       throw new TypeError(`ContextFollowing: '${path}' is not a shared context root.`);
     }

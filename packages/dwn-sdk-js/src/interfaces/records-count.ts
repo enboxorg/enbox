@@ -4,21 +4,21 @@ import type { DataEncodedRecordsWriteMessage, RecordsCountDescriptor, RecordsCou
 
 import { AbstractMessage } from '../core/abstract-message.js';
 import { Message } from '../core/message.js';
-import { PermissionGrant } from '../protocols/permission-grant.js';
+import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
 import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
-import { validateProtocolUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
+import { validateModuleUrlNormalized, validateSchemaUrlNormalized } from '../utils/url.js';
 
 export type RecordsCountOptions = {
   messageTimestamp?: string;
   filter: RecordsFilter;
   signer?: MessageSigner;
   permissionGrantId?: string;
-  protocolRole?: string;
+  moduleRole?: string;
 
   /**
    * The delegated grant to sign on behalf of the logical author, which is the grantor (`grantedBy`) of the delegated grant.
@@ -38,23 +38,23 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
     }
 
     await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
-    Records.validateNestedProtocolPathScope(
+    Records.validateNestedModulePathScope(
       message.descriptor.filter,
-      DwnErrorCode.RecordsCountNestedProtocolPathContextIdInvalid,
+      DwnErrorCode.RecordsCountNestedModulePathContextIdInvalid,
       'RecordsCount'
     );
 
-    if (signaturePayload?.protocolRole !== undefined) {
-      if (message.descriptor.filter.protocolPath === undefined) {
+    if (signaturePayload?.moduleRole !== undefined) {
+      if (message.descriptor.filter.modulePath === undefined) {
         throw new DwnError(
           DwnErrorCode.RecordsCountFilterMissingRequiredProperties,
-          'Role-authorized counts must include `protocolPath` in the filter'
+          'Role-authorized counts must include `modulePath` in the filter'
         );
       }
     }
 
-    if (message.descriptor.filter.protocol !== undefined) {
-      validateProtocolUrlNormalized(message.descriptor.filter.protocol);
+    if (message.descriptor.filter.module !== undefined) {
+      validateModuleUrlNormalized(message.descriptor.filter.module);
     }
     if (message.descriptor.filter.schema !== undefined) {
       validateSchemaUrlNormalized(message.descriptor.filter.schema);
@@ -90,7 +90,7 @@ export class RecordsCount extends AbstractMessage<RecordsCountMessage> {
         descriptor,
         signer,
         ...permissionGrantInvocation,
-        protocolRole   : options.protocolRole,
+        moduleRole     : options.moduleRole,
         delegatedGrant : options.delegatedGrant
       });
     }

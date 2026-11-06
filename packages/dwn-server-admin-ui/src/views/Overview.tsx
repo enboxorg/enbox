@@ -126,8 +126,8 @@ export function Overview() {
             <div class="value">{formatBytes(stats.storage?.totalDataBytes ?? 0)}</div>
           </div>
           <div class="stat-card">
-            <div class="label">Protocols</div>
-            <div class="value">{formatNumber(stats.storage?.totalProtocols ?? 0)}</div>
+            <div class="label">Modules</div>
+            <div class="value">{formatNumber(stats.storage?.totalModules ?? 0)}</div>
           </div>
           <div class="stat-card">
             <div class="label">WebSocket</div>
