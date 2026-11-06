@@ -3364,8 +3364,12 @@ export class TypedEnbox<
       if (!installedModuleDefinitionsEqual(local.modules[0]?.definition, module.definition)) {
         throw new Error(`TypedEnbox: wallet module '${uri}' was imported but is not the active local definition.`);
       }
-      imported.set(uri, result);
-      return result;
+      // A duplicate is ready only after the active local policy and keys match.
+      const verified = result.status.code === 409
+        ? { status: { code: 200, detail: 'OK' }, module: local.modules[0] }
+        : result;
+      imported.set(uri, verified);
+      return verified;
     };
     const result = await importModule(remoteModule);
     this._configured = true;
