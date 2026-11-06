@@ -1,5 +1,11 @@
 # @enbox/api
 
+## 0.6.95
+
+### Patch Changes
+
+- [#1832](https://github.com/enboxorg/enbox/pull/1832) [`984deb9`](https://github.com/enboxorg/enbox/commit/984deb927a21e7e1d807ac9787d4ff2f7544a1f0) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Treat a duplicate delegated module import as ready only after verifying the active local definition and encryption keys, and return the active local module. This prevents connection readiness from rejecting configurations already imported by bootstrap or sync.
+
 ## 0.6.94
 
 ### Patch Changes
