@@ -42,7 +42,7 @@ function walletUriPayload(totalLength: number): string {
 }
 
 const PAYLOADS: Array<{ name: string; text: string }> = [
-  { name: 'short URL (low version)', text: 'https://enbox.org' },
+  { name: 'short URL (low version)', text: 'https://enbox.id' },
   { name: 'medium wallet URI (mid version)', text: walletUriPayload(120) },
   { name: 'long wallet URI (16-bit count field, version 10)', text: walletUriPayload(200) },
 ];
@@ -80,7 +80,7 @@ describe('encodeQr', () => {
     // sanity for the penalty implementation (ties may differ from other
     // encoders; exact equality with the oracle is covered above by forcing
     // the oracle to our mask).
-    const text = 'https://enbox.org/connect';
+    const text = 'https://enbox.id/connect';
     const auto = encodeQr(text);
     expect(auto.mask).toBeGreaterThanOrEqual(0);
     expect(auto.mask).toBeLessThanOrEqual(7);
@@ -94,7 +94,7 @@ describe('encodeQr', () => {
 
 describe('qrToSvg', () => {
   it('renders a crisp standalone SVG element with a quiet zone', () => {
-    const qr = encodeQr('https://enbox.org');
+    const qr = encodeQr('https://enbox.id');
     const svg = qrToSvg(qr, { dark: '#111111', light: 'transparent', quietZone: 2 });
 
     expect(svg).toBeInstanceOf(SVGSVGElement);
@@ -105,7 +105,7 @@ describe('qrToSvg', () => {
   });
 
   it('treats hostile colour options as inert attribute values, never markup', () => {
-    const qr = encodeQr('https://enbox.org');
+    const qr = encodeQr('https://enbox.id');
     const hostile = '"><img src=x onerror=alert(1)>';
     const svg = qrToSvg(qr, { dark: hostile });
 
