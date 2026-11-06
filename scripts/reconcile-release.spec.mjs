@@ -42,6 +42,7 @@ describe('release metadata recovery', () => {
     expect(registryVisibilityRetryDelay({ code: 1, stdout: '{}' }, 0, 600_000)).toBeUndefined();
   });
 
+  // This includes a real one-second backoff and Git/npm subprocesses; allow headroom on shared CI runners.
   it('waits for an acknowledged publication to become visible without republishing', async () => {
     const fixture = await createFixture();
     const result = await reconcile(fixture, {
@@ -53,7 +54,7 @@ describe('release metadata recovery', () => {
     const calls = (await readFile(fixture.calls, 'utf8')).trim().split('\n');
     expect(calls.filter(line => line.startsWith('view @enbox/common@1.0.0 --json'))).toHaveLength(2);
     expect(calls.filter(line => line.startsWith('publish '))).toHaveLength(2);
-  });
+  }, 15_000);
 
   it('does not wait for missing metadata without publication acknowledgement', async () => {
     const fixture = await createFixture();
