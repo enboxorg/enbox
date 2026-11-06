@@ -30,7 +30,7 @@ const commentsDefinition = {
   structure: {
     note: {
       $ref    : 'core:notebook/note',
-      comment : { $actions: [{ role: 'core:notebook/member', can: ['read'] }] },
+      comment : { $actions: [{ role: 'core:notebook/member', can: ['create', 'read'] }] },
     },
   },
 };
