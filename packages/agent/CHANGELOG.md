@@ -1,5 +1,40 @@
 # @enbox/agent
 
+## 0.8.53
+
+### Patch Changes
+
+- [#1829](https://github.com/enboxorg/enbox/pull/1829) [`c9ac9f4`](https://github.com/enboxorg/enbox/commit/c9ac9f49cc6211bd605896acc09629bc9d570d38) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Resolve application owner sync scopes through module dependencies and retained configuration history, preserving explicit scopes and delegate grants. Restore hosted providers before a cold connection can install packaged configurations, and make explicit sync wait for in-flight link initialization. Add end-to-end coverage for encrypted composition, delegation, offline replay, and live recovery.
+
+- [#1825](https://github.com/enboxorg/enbox/pull/1825) [`d389231`](https://github.com/enboxorg/enbox/commit/d389231a2a1e877e92cce0e555d4c4278f308687) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Add module inheritance and composition through one canonical dependency graph.
+  Resolve deep and chained attachments, shared roles and actor references to their
+  owning modules and physical record contexts. Preserve imported contracts across
+  same-URI updates, including retained records, and integrate canonical coordinates
+  with encrypted audiences, delegation, replication and delivery.
+  
+  Typed modules use `defineModule({ definition, codecs, dependencies })`, exact local
+  codecs and explicit typed dependency artifacts. Installation prepares providers in
+  dependency order, reuses compatible installed providers and never grants provider
+  data access implicitly. Codegen supports explicit local dependency registries.
+
+- [#1828](https://github.com/enboxorg/enbox/pull/1828) [`70bdbb3`](https://github.com/enboxorg/enbox/commit/70bdbb37350d2ad42381d4637ef96326320d4f69) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Remove the obsolete CrossModuleRef replication dependency variant in favor of
+  canonical Parent and Ancestor dependencies. Keep provider-only installation
+  readiness internal to TypedEnbox and remove its redundant constructor flag.
+  Remove unused private metadata fields without changing encryption or DID behavior.
+
+- [#1826](https://github.com/enboxorg/enbox/pull/1826) [`6c99fa1`](https://github.com/enboxorg/enbox/commit/6c99fa1675db5b1411a23cccb2b96164b549bcdb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace the protocol vocabulary with data modules across signed messages, storage,
+  SDKs, connect, sync, encryption identifiers, packages, and tooling. This is a
+  coordinated breaking cutover requiring fresh stores, sessions, configurations,
+  records, grants, and encryption material. Old wire formats and package aliases
+  are not supported.
+  
+  The codegen package exports `generateModuleCode` to generate TypeScript source
+  from a DWN module definition and its schemas.
+- Updated dependencies [[`d389231`](https://github.com/enboxorg/enbox/commit/d389231a2a1e877e92cce0e555d4c4278f308687), [`70bdbb3`](https://github.com/enboxorg/enbox/commit/70bdbb37350d2ad42381d4637ef96326320d4f69), [`6c99fa1`](https://github.com/enboxorg/enbox/commit/6c99fa1675db5b1411a23cccb2b96164b549bcdb)]:
+  - @enbox/dwn-sdk-js@0.4.31
+  - @enbox/connect@0.1.28
+  - @enbox/dwn-clients@0.4.39
+
 ## 0.8.52
 
 ### Patch Changes

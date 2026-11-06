@@ -1,5 +1,18 @@
 # @enbox/dwn-server-admin-ui
 
+## 0.1.3
+
+### Patch Changes
+
+- [#1826](https://github.com/enboxorg/enbox/pull/1826) [`6c99fa1`](https://github.com/enboxorg/enbox/commit/6c99fa1675db5b1411a23cccb2b96164b549bcdb) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Replace the protocol vocabulary with data modules across signed messages, storage,
+  SDKs, connect, sync, encryption identifiers, packages, and tooling. This is a
+  coordinated breaking cutover requiring fresh stores, sessions, configurations,
+  records, grants, and encryption material. Old wire formats and package aliases
+  are not supported.
+  
+  The codegen package exports `generateModuleCode` to generate TypeScript source
+  from a DWN module definition and its schemas.
+
 ## 0.1.2
 
 ### Patch Changes
