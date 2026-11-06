@@ -56,9 +56,18 @@ export type SyncOption =
  *
  * Auth never chooses `'all'` implicitly. Applications that truly want a
  * full-DWN replica must pass `'all'` explicitly; product-scoped apps should
- * pass the module URI list they own.
+ * pass an exact module URI list, or `{ roots }` to include its retained dependency closure.
  */
-export type IdentitySyncModules = 'all' | [string, ...string[]];
+export type IdentitySyncModules = 'all' | [string, ...string[]] | OwnerSyncModuleRoots;
+
+/**
+ * Owner registration policy that resolves these roots through retained local
+ * module history each time auth registers the identity. It never expands a
+ * delegate's grant-derived scope. ConnectionStore also reconciles its managed
+ * defaults after installation and cold pull; direct AuthManager callers can
+ * re-register when newly admitted metadata changes the closure.
+ */
+export type OwnerSyncModuleRoots = { roots: [string, ...string[]] };
 
 // ─── Auth State Machine ─────────────────────────────────────────
 

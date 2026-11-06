@@ -700,6 +700,32 @@ describe('importDelegateAndSetupSync', () => {
 });
 
 describe('registerSyncScopeForIdentity', () => {
+  test('resolves an owner roots policy but leaves literal and delegated scopes exact', async () => {
+    const syncCalls: any[] = [];
+    const resolutions: any[] = [];
+    const roots: [string, ...string[]] = ['https://example.com/consumer'];
+    const closure: [string, ...string[]] = ['https://example.com/provider', roots[0]];
+    const agent = createMockAgent({
+      syncResolveOwnerModuleScope : async params => { resolutions.push(params); return closure; },
+      syncSetIdentityOptions      : async params => { syncCalls.push(params); },
+      permissionsFetchGrants      : async () => [buildGrantEntry('https://example.com/approved', 'grant-approved')],
+    });
+    await registerSyncScopeForIdentity({ userAgent: agent, connectedDid: 'did:example:owner', identitySyncModules: { roots } });
+    expect(syncCalls.at(-1).options).toEqual({ modules: closure });
+    expect(resolutions).toEqual([{ did: 'did:example:owner', roots }]);
+    expect(roots).toEqual(['https://example.com/consumer']);
+
+    await registerSyncScopeForIdentity({ userAgent: agent, connectedDid: 'did:example:owner', identitySyncModules: roots });
+    expect(syncCalls.at(-1).options).toEqual({ modules: roots });
+    await registerSyncScopeForIdentity({ userAgent: agent, connectedDid: 'did:example:owner', identitySyncModules: 'all' });
+    expect(syncCalls.at(-1).options).toEqual({ modules: 'all' });
+    await registerSyncScopeForIdentity({
+      userAgent: agent, connectedDid: 'did:example:owner', delegateDid: 'did:example:delegate', identitySyncModules: { roots },
+    });
+    expect(syncCalls.at(-1).options).toEqual({ delegateDid: 'did:example:delegate', modules: ['https://example.com/approved'] });
+    expect(resolutions).toHaveLength(1);
+  });
+
   test('delegate with scoped grants: calls setIdentityOptions with the right modules', async () => {
     const syncCalls: any[] = [];
     const agent = createMockAgent({

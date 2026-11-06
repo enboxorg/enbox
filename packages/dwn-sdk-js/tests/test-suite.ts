@@ -12,6 +12,7 @@ import { testMessagesReadHandler } from './handlers/messages-read.spec.js';
 import { testMessagesSubscribeHandler } from './handlers/messages-subscribe.spec.js';
 import { testMessageStore } from './store/message-store.spec.js';
 import { testModuleComposition } from './features/module-composition.spec.js';
+import { testModuleCompositionAcceptance } from './features/module-composition-acceptance.spec.js';
 import { testModuleCreateAction } from './features/module-create-action.spec.js';
 import { testModuleDeleteAction } from './features/module-delete-action.spec.js';
 import { testModuleExampleApps } from './features/module-example-apps.spec.js';
@@ -91,6 +92,7 @@ export class TestSuite {
     testOwnerSignature();
     testPermissions();
     testModuleComposition();
+    testModuleCompositionAcceptance();
     testModuleExampleApps();
     testModuleHistoryRevalidation();
     testModuleUpgrades();

@@ -5,7 +5,7 @@ import type { SyncTarget } from './sync-target-resolver.js';
 import type { PushFailure, SyncDirection, SyncRunOptions } from './types/sync.js';
 
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
-import { SyncPushFailuresError, SyncRunFailedError } from './sync-runtime-errors.js';
+import { SyncPushFailuresError, SyncRunCancelledError, SyncRunFailedError } from './sync-runtime-errors.js';
 
 export type { SyncRunOptions } from './types/sync.js';
 
@@ -161,6 +161,9 @@ export class SyncRunCoordinator {
       try {
         attempted = await runTarget(target) || attempted;
       } catch (error: unknown) {
+        if (error instanceof SyncRunCancelledError) {
+          throw error;
+        }
         const failureReported = !isDidResolutionUnavailableError(error);
         if (failureReported) {
           this._operations.reportError(
@@ -238,6 +241,9 @@ export class SyncRunCoordinator {
     result: PromiseSettledResult<SyncTargetGroupRunResult>,
   ): void {
     if (result.status === 'rejected') {
+      if (result.reason instanceof SyncRunCancelledError) {
+        throw result.reason;
+      }
       summary.groupsFailed++;
       return;
     }

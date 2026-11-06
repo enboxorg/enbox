@@ -1,4 +1,6 @@
+import type { Deferred } from './utils/deferred.js';
 import type { ReplicationLinkState } from '../src/types/sync.js';
+import type { SinonStub } from 'sinon';
 import type { SyncLinkController } from '../src/sync-link-controller.js';
 import type { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
 import type { SyncTarget } from '../src/sync-target-resolver.js';
@@ -52,6 +54,57 @@ function activateAdministrativeLink(
     activateLink(key: string, state: ReplicationLinkState): SyncLinkController;
   }).activateLink(linkKey, link);
   return { controller, target };
+}
+
+/** Start the real initialization path while holding only its subscription I/O boundary. */
+function beginGatedLinkInitialization(engine: SyncEngineLevel, outcome: 'ready' | 'failed' | 'paused' = 'ready'): {
+  entered: Deferred;
+  release: Deferred;
+  initialization: Promise<{ status: string }>;
+  link: ReplicationLinkState;
+  reconcile: SinonStub;
+  target: SyncTarget;
+} {
+  const target: SyncTarget = {
+    did                : 'did:example:sync-starting',
+    dwnUrl             : 'https://dwn.example.com',
+    scope              : { kind: 'full' },
+    authorization      : { kind: 'owner' },
+    authorizationEpoch : 'owner-epoch',
+    projectionId       : 'projection-id',
+  };
+  const link: ReplicationLinkState = {
+    authorization      : target.authorization,
+    authorizationEpoch : target.authorizationEpoch,
+    connectivity       : 'unknown',
+    projectionId       : target.projectionId,
+    pull               : {},
+    push               : {},
+    remoteEndpoint     : target.dwnUrl,
+    scope              : target.scope,
+    status             : 'initializing',
+    tenantDid          : target.did,
+  };
+  const entered = createDeferred();
+  const release = createDeferred();
+  engine['_runtime'] = new SyncRuntime(true);
+  sinon.stub(engine as never, 'getSyncTargets').resolves([target]);
+  sinon.stub(engine as never, 'getOrCreateReplicationLink').resolves(link);
+  const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({ pullDrained: true });
+  sinon.stub(engine as never, 'openLinkSubscriptions').callsFake(async (): Promise<string> => {
+    entered.resolve();
+    await release.promise;
+    if (outcome === 'failed') {
+      throw new Error('subscription connection failed');
+    }
+    if (outcome === 'paused') {
+      const key = buildLinkKey(target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch);
+      await engine['_linkRecoveryCoordinator'].transitionToPaused(key, link);
+      return 'inactive';
+    }
+    return 'readyForLive';
+  });
+  return { entered, release, initialization: engine['initializeLinkTarget'](target), link, reconcile, target };
 }
 
 describe('SyncEngineLevel lifecycle', () => {
@@ -1681,34 +1734,93 @@ describe('SyncEngineLevel lifecycle', () => {
     }
   });
 
-  it('should let one-shot sync skip an initializing link while its baseline owns reconciliation', async () => {
+  it('should wait for real link initialization before completing an explicit pull', async () => {
     const engine = new SyncEngineLevel({ db });
-    const { controller, target } = activateAdministrativeLink(engine, 'did:example:sync-initializing', 'initializing');
-
-    sinon.stub(engine as any, 'getSyncTargets').resolves([target]);
-    sinon.stub(engine as any, 'getOrCreateReplicationLink').resolves(controller.link);
-    const reconcile = sinon.stub(engine['_durableFeedReconciler'], 'reconcile').resolves({
-      pushFailures: [],
-    });
-
+    const fixture = beginGatedLinkInitialization(engine);
+    await fixture.entered.promise;
+    let completed = false;
+    const sync = engine.sync('pull').then((): void => { completed = true; });
     try {
-      await engine.sync();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(completed).toBe(false);
+      expect(fixture.reconcile.notCalled).toBe(true);
+      expect(engine['_lifecycle'].isSyncInProgress).toBe(true);
+      fixture.release.resolve();
+      await Promise.all([fixture.initialization, sync]);
 
-      expect(reconcile.notCalled).toBe(true);
-      const acquiredSync = engine['_lifecycle'].tryAcquireSync();
-      if (acquiredSync) {
-        engine['_lifecycle'].releaseSync();
-      }
-      expect(acquiredSync).toBe(true);
-
-      // Initialization remains the sole owner of the baseline. An
-      // administrative executor call must fail fast instead of parking.
-      const initializationTurn = sinon.stub().resolves();
-      expect(await controller.executor.enqueue(initializationTurn)).toBeUndefined();
-      expect(initializationTurn.notCalled).toBe(true);
+      expect(completed).toBe(true);
+      expect(fixture.reconcile.callCount).toBe(2);
+      expect(fixture.reconcile.firstCall.args[2]).toBeUndefined();
+      expect(fixture.reconcile.secondCall.args[2]).toEqual({ direction: 'pull', verifyConvergence: undefined });
+      expect(fixture.link.status).toBe('live');
+      expect(engine['_lifecycle'].isSyncInProgress).toBe(false);
     } finally {
-      await controller.dispose();
+      fixture.release.resolve();
+      await Promise.allSettled([fixture.initialization, sync]);
+      await engine.stopSync();
     }
+  });
+
+  it('should retain ordinary HTTP reconciliation when an awaited subscription startup fails', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const fixture = beginGatedLinkInitialization(engine, 'failed');
+    const reported = sinon.stub(console, 'error');
+    await fixture.entered.promise;
+    const sync = engine.sync('pull');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      fixture.release.resolve();
+      expect((await fixture.initialization).status).toBe('failed');
+      await sync;
+      expect(reported.calledOnce).toBe(true);
+      expect(fixture.reconcile.calledOnce).toBe(true);
+      expect(fixture.reconcile.firstCall.args[2]).toEqual({ direction: 'pull', verifyConvergence: undefined });
+      expect(engine['_linkControllers'].size).toBe(0);
+    } finally {
+      fixture.release.resolve();
+      await Promise.allSettled([fixture.initialization, sync]);
+      await engine.stopSync();
+    }
+  });
+
+  it('should preserve a terminal pause applied while explicit sync waits for initialization', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const fixture = beginGatedLinkInitialization(engine, 'paused');
+    await fixture.entered.promise;
+    const sync = engine.sync('pull');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      fixture.release.resolve();
+      await Promise.all([fixture.initialization, sync]);
+      expect(fixture.link.status).toBe('paused');
+      expect(fixture.reconcile.notCalled).toBe(true);
+      expect(engine['_lifecycle'].isSyncInProgress).toBe(false);
+    } finally {
+      fixture.release.resolve();
+      await Promise.allSettled([fixture.initialization, sync]);
+      await engine.stopSync();
+    }
+  });
+
+  it('should cancel explicit sync when stop disposes the initialization it is waiting for', async () => {
+    const engine = new SyncEngineLevel({ db });
+    const fixture = beginGatedLinkInitialization(engine);
+    const reported = sinon.stub(console, 'error');
+    await fixture.entered.promise;
+    const sync = engine.sync('pull');
+    const rejection = sync.catch((error: unknown): unknown => error);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(engine['_lifecycle'].isSyncInProgress).toBe(true);
+    const stop = engine.stopSync();
+    fixture.release.resolve();
+    await Promise.all([fixture.initialization, stop]);
+
+    expect(await rejection).toBeInstanceOf(SyncRunCancelledError);
+    expect(fixture.reconcile.notCalled).toBe(true);
+    expect(reported.notCalled).toBe(true);
+    expect(engine['_linkControllers'].size).toBe(0);
+    expect(engine['_lifecycle'].isSyncInProgress).toBe(false);
+    expect(engine['_runtime'].live).toBe(false);
   });
 
   it('should skip a settle tick entirely while the pass, including its re-initialization, is in flight', async () => {

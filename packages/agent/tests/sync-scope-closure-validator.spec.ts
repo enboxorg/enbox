@@ -132,6 +132,45 @@ describe('SyncScopeClosureValidator', () => {
     expect(operations.resolvePermissionGrantIds.callCount).toBe(3);
   });
 
+  it('resolves owner roots through current and retained transitive definitions without widening explicit scopes', async () => {
+    const { operations, validator } = createHarness();
+    const historical = 'https://example.com/historical';
+    const current = 'https://example.com/current';
+    operations.queryModuleHistory.callsFake(async ({ module, cursor: pageCursor }) => {
+      if (module === commentsModule) {
+        return historyPage({ drained: true, entries: [historyEntry(moduleMessage(composedModuleDefinition()))] });
+      }
+      if (module === profilesModule && pageCursor === undefined) {
+        return historyPage({
+          drained : false, cursor  : cursor('1'),
+          entries : [historyEntry(moduleMessage({ module, uses: { old: historical }, types: {}, structure: {} }))],
+        });
+      }
+      if (module === profilesModule) {
+        return historyPage({
+          drained : true,
+          entries : [historyEntry(moduleMessage({ module, uses: { current }, types: {}, structure: {} }))],
+        });
+      }
+      if (module === threadsModule) {
+        return historyPage({
+          drained : true,
+          entries : [historyEntry(moduleMessage({ module, uses: { shared: historical }, types: {}, structure: {} }))],
+        });
+      }
+      return historyPage({ drained: true });
+    });
+    const roots: [string, ...string[]] = [commentsModule];
+
+    expect(await validator.resolveOwnerModuleScope('did:example:owner', roots))
+      .toEqual([commentsModule, current, historical, profilesModule, threadsModule].sort((a, b) => a.localeCompare(b)));
+    expect(roots).toEqual([commentsModule]);
+    expect(operations.resolvePermissionGrantIds.called).toBe(false);
+    expect(operations.queryModuleHistory.getCalls().filter(call => call.args[0].module === historical)).toHaveLength(1);
+    expect(operations.queryModuleHistory.getCalls().every(call => call.args[0].delegateDid === undefined)).toBe(true);
+    await expect(validator.validateClosure('did:example:owner', { modules: roots })).rejects.toThrow('scope splits cross-module dependencies');
+  });
+
   it('preserves module-history status failures', async () => {
     const { operations, validator } = createHarness();
     operations.queryModuleHistory.resolves(historyPage({

@@ -142,10 +142,14 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
     settledLinkReads : 0,
     sync             : undefined as unknown as SyncEngine,
   };
-  state.sync = {
+  const statusEngine: Pick<SyncEngine,
+    'connectivityState' | 'resolveOwnerModuleScope' | 'getIdentityOptions' | 'getIdentitySyncStatus' |
+    'retryRemoteNow' | 'on' | 'refreshIdentityRouting' | 'setIdentityOptions' | 'ensureIdentityOptions'
+  > = {
     get connectivityState(): SyncConnectivityState { return state.connectivityState; },
-    getIdentityOptions    : async (): Promise<SyncIdentityOptions | undefined> => state.options,
-    getIdentitySyncStatus : async (): Promise<SyncIdentityStatus> => {
+    resolveOwnerModuleScope : async ({ roots }): Promise<[string, ...string[]]> => [...roots],
+    getIdentityOptions      : async (): Promise<SyncIdentityOptions | undefined> => state.options,
+    getIdentitySyncStatus   : async (): Promise<SyncIdentityStatus> => {
       const links = await readLinks();
       return identitySyncStatus(state.options, links, state.remotes, state.connectivityState);
     },
@@ -163,7 +167,15 @@ function createSyncStatusEngine(): FakeSyncStatusEngine {
       state.optionUpdates.push({ did, options });
       state.options = options;
     },
-  } as SyncEngine;
+    ensureIdentityOptions: async (params): Promise<boolean> => {
+      if (JSON.stringify(state.options) === JSON.stringify(params.options)) {
+        return false;
+      }
+      await state.sync.setIdentityOptions(params);
+      return true;
+    },
+  };
+  state.sync = statusEngine as SyncEngine;
 
   async function readLinks(): Promise<ReplicationLinkSnapshot[]> {
     state.linkReads++;
@@ -264,6 +276,7 @@ type FakeAuthManager = {
   emitter: AuthEventEmitter;
   state: AuthState;
   session: AgentSession | undefined;
+  ownerSyncModuleRoots?: Readonly<[string, ...string[]]>;
   stopMonitorSpy: sinon.SinonSpy;
   on: AuthManager['on'];
   restoreSession: sinon.SinonStub;
@@ -470,6 +483,196 @@ describe('createConnectionStore()', () => {
       fake.emitter.emit('vault-unlocked', {});
 
       expect(notifications).toBe(1);
+    });
+  });
+
+  describe('owner sync scope reconciliation', () => {
+    const rootModule = ApplicationDefinition.module;
+    const providerModule = 'https://example.com/connection-store/discovered-provider';
+
+    function deferred<Value>(): { promise: Promise<Value>; resolve(value: Value): void } {
+      let resolve!: (value: Value) => void;
+      const promise = new Promise<Value>((complete): void => { resolve = complete; });
+      return { promise, resolve };
+    }
+
+    function publishCaughtUp(engine: FakeSyncStatusEngine): void {
+      const modules = engine.options!.modules;
+      engine.links = [syncLink({
+        scope         : modules === 'all' ? { kind: 'full' } : { kind: 'moduleSet', modules },
+        status        : 'live', connectivity  : 'online', isPullCurrent : true,
+      })];
+      engine.emit({
+        type: 'pull:currentness-change', tenantDid: OWNER_DID, remoteEndpoint: 'https://dwn.example', from: false, to: true,
+      });
+    }
+
+    async function createOwnedRootConnection(): Promise<{
+      auth: FakeAuthManager;
+      engine: FakeSyncStatusEngine;
+      store: ConnectionStore;
+    }> {
+      const engine = createSyncStatusEngine();
+      engine.options = { modules: [rootModule] };
+      engine.links = [syncLink({ scope: { kind: 'moduleSet', modules: [rootModule] } })];
+      const auth = createFakeAuth();
+      const agent = agentWithSync(engine.sync);
+      auth.agent = agent;
+      const roots = Object.freeze([rootModule] as [string, ...string[]]);
+      let effectiveRoots: typeof roots | undefined;
+      let replacementActive = false;
+      let lifetime: AbortController | undefined;
+      Object.defineProperty(auth, 'ownerSyncModuleRoots', {
+        get: (): typeof roots | undefined => replacementActive || auth.session === undefined ||
+          auth.session.signal.aborted || auth.session.delegateDid !== undefined ? undefined : effectiveRoots,
+      });
+      engine.sync.setIdentityOptions = async ({ did, options }): Promise<void> => {
+        engine.optionUpdates.push({ did, options });
+        engine.options = options;
+        engine.links = [syncLink({
+          scope         : options.modules === 'all' ? { kind: 'full' } : { kind: 'moduleSet', modules: options.modules },
+          status        : 'initializing', connectivity  : 'online', isPullCurrent : false,
+        })];
+        emitRegistrationChange(engine, options, did);
+      };
+      auth.connectVault.callsFake(async (options?: { identitySyncModules?: 'all' | [string, ...string[]] }): Promise<AgentSession> => {
+        replacementActive = true;
+        try {
+          effectiveRoots = options?.identitySyncModules === undefined ? roots : undefined;
+          await engine.sync.setIdentityOptions({ did: OWNER_DID, options: { modules: options?.identitySyncModules ?? [...roots] } });
+          const previousLifetime = lifetime;
+          lifetime = new AbortController();
+          const session = createSession({ agent, signal: lifetime.signal });
+          auth.session = session;
+          previousLifetime?.abort();
+          return session;
+        } finally {
+          replacementActive = false;
+        }
+      });
+      const endSession = async (): Promise<void> => {
+        effectiveRoots = undefined;
+        auth.session = undefined;
+        lifetime?.abort();
+      };
+      auth.disconnect.callsFake(endSession);
+      auth.shutdown.callsFake(endSession);
+      sinon.stub(AuthManager, 'create').resolves(asAuth(auth));
+      const store = createStore({ monitor: false });
+      const connected = await store.connectVault();
+      expect(connected.phase).toBe('connected');
+      await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('syncing'); });
+      engine.optionUpdates.length = 0;
+      return { auth, engine, store };
+    }
+
+    it('does not register a stale expanded owner scope after disconnect', async () => {
+      const { auth, engine, store } = await createOwnedRootConnection();
+      const closure = deferred<[string, ...string[]]>();
+      let settled = false;
+      const resolveScope = sinon.stub(engine.sync, 'resolveOwnerModuleScope').returns(closure.promise.then(modules => {
+        settled = true;
+        return modules;
+      }));
+      const ensureScope = sinon.spy(engine.sync, 'ensureIdentityOptions');
+      try {
+        publishCaughtUp(engine);
+        await waitFor(() => { expect(resolveScope.calledOnce).toBe(true); });
+        const disconnected = await store.disconnect();
+        expect(disconnected.phase).toBe('disconnected');
+        expect(auth.ownerSyncModuleRoots).toBeUndefined();
+
+        closure.resolve([rootModule, providerModule]);
+        await waitFor(() => { expect(settled).toBe(true); });
+        expect(ensureScope.called).toBe(false);
+        expect(engine.optionUpdates).toEqual([]);
+        expect(store.getSnapshot().session).toBeUndefined();
+        expect(store.getSnapshot().sync).toBeUndefined();
+      } finally {
+        closure.resolve([rootModule, providerModule]);
+        await store.dispose();
+      }
+    });
+
+    const explicitScopes: { name: string; modules: 'all' | [string, ...string[]] }[] = [
+      { name: 'literal', modules: ['https://example.com/connection-store/explicit-only'] },
+      { name: 'full', modules: 'all' },
+    ];
+    for (const { name, modules: explicitModules } of explicitScopes) {
+      it(`keeps a per-call ${name} owner scope after an earlier closure lookup resolves`, async () => {
+        const { auth, engine, store } = await createOwnedRootConnection();
+        const closure = deferred<[string, ...string[]]>();
+        let settled = false;
+        const resolveScope = sinon.stub(engine.sync, 'resolveOwnerModuleScope');
+        resolveScope.callsFake(async ({ roots }): Promise<[string, ...string[]]> => [...roots]);
+        resolveScope.onFirstCall().returns(closure.promise.then(modules => { settled = true; return modules; }));
+        const ensureScope = sinon.spy(engine.sync, 'ensureIdentityOptions');
+        const setScope = sinon.spy(engine.sync, 'setIdentityOptions');
+        try {
+          publishCaughtUp(engine);
+          await waitFor(() => { expect(resolveScope.calledOnce).toBe(true); });
+          const replacement = store.connectVault({ identitySyncModules: explicitModules });
+          await waitFor(() => { expect(auth.connectVault.calledTwice).toBe(true); });
+          closure.resolve([rootModule, providerModule]);
+          expect((await replacement).phase).toBe('connected');
+          await waitFor(() => { expect(settled).toBe(true); });
+
+          expect(auth.ownerSyncModuleRoots).toBeUndefined();
+          expect(ensureScope.called).toBe(false);
+          expect(engine.options).toEqual({ modules: explicitModules });
+          expect(setScope.calledOnceWithExactly({ did: OWNER_DID, options: { modules: explicitModules } })).toBe(true);
+        } finally {
+          closure.resolve([rootModule, providerModule]);
+          await store.dispose();
+        }
+      });
+    }
+
+    it('does not publish caught-up state before a discovered owner scope is registered and its new links catch up', async () => {
+      const { engine, store } = await createOwnedRootConnection();
+      const expanded: [string, ...string[]] = [rootModule, providerModule];
+      const closure = deferred<[string, ...string[]]>();
+      const registration = deferred<void>();
+      const resolveScope = sinon.stub(engine.sync, 'resolveOwnerModuleScope').returns(closure.promise);
+      const originalEnsure = engine.sync.ensureIdentityOptions.bind(engine.sync);
+      const ensureScope = sinon.stub(engine.sync, 'ensureIdentityOptions').callsFake(async (params): Promise<boolean> => {
+        await registration.promise;
+        return originalEnsure(params);
+      });
+      const publishedStates: string[] = [];
+      const unsubscribe = store.subscribe(snapshot => {
+        if (snapshot.sync !== undefined) {
+          publishedStates.push(snapshot.sync.state);
+        }
+      });
+      try {
+        publishCaughtUp(engine);
+        await waitFor(() => { expect(resolveScope.calledOnce).toBe(true); });
+        expect(store.getSnapshot().sync?.state).toBe('syncing');
+        expect(publishedStates).not.toContain('caught-up');
+
+        closure.resolve(expanded);
+        await waitFor(() => { expect(ensureScope.calledOnce).toBe(true); });
+        expect(ensureScope.firstCall.args[0]).toEqual({ did: OWNER_DID, options: { modules: expanded } });
+        expect(engine.options).toEqual({ modules: [rootModule] });
+        expect(publishedStates).not.toContain('caught-up');
+
+        registration.resolve();
+        await waitFor(() => {
+          expect(engine.options).toEqual({ modules: expanded });
+          expect(engine.settledLinkReads).toBeGreaterThan(2);
+        });
+        expect(store.getSnapshot().sync?.state).toBe('syncing');
+        expect(publishedStates).not.toContain('caught-up');
+
+        publishCaughtUp(engine);
+        await waitFor(() => { expect(store.getSnapshot().sync?.state).toBe('caught-up'); });
+      } finally {
+        closure.resolve(expanded);
+        registration.resolve();
+        unsubscribe();
+        await store.dispose();
+      }
     });
   });
 
@@ -1894,10 +2097,10 @@ describe('createConnectionStore()', () => {
         didMethod : 'jwk',
       });
       const session = new AgentSession({
-        agent  : testHarness.agent,
-        did    : identity.did.uri,
-        identity,
-        signal : new AbortController().signal,
+        agent    : testHarness.agent,
+        did      : identity.did.uri,
+        identity : { didUri: identity.did.uri, name: identity.metadata.name },
+        signal   : new AbortController().signal,
       });
       const localAuth = createFakeAuth();
       localAuth.connectVault.callsFake(async (): Promise<AgentSession> => {
@@ -2774,7 +2977,7 @@ describe('createConnectionStore()', () => {
       expect(create.firstCall.args[0]).toEqual({
         password            : 'pw',
         sync                : 'off',
-        identitySyncModules : [ApplicationDefinition.module],
+        identitySyncModules : { roots: [ApplicationDefinition.module] },
       });
       expect(fake.restoreSession.firstCall.args[0]).toEqual({ password: 'restore-pw' });
     });
@@ -2795,7 +2998,7 @@ describe('createConnectionStore()', () => {
       expect(snapshot.phase).toBe('connected');
       expect(create.firstCall.args[0]).toEqual({
         sync                : 'off',
-        identitySyncModules : [ApplicationDefinition.module, WriteOnlyDefinition.module],
+        identitySyncModules : { roots: [ApplicationDefinition.module, WriteOnlyDefinition.module] },
       });
       expect(nativeAction.calledOnce).toBe(true);
     });
@@ -2823,7 +3026,7 @@ describe('createConnectionStore()', () => {
 
       await store.connectVault(options);
 
-      expect(create.firstCall.args[0].identitySyncModules).toEqual([ApplicationDefinition.module]);
+      expect(create.firstCall.args[0].identitySyncModules).toEqual({ roots: [ApplicationDefinition.module] });
       expect(fake.connectVault.firstCall.args[0]).toBe(options);
     });
 

@@ -23,7 +23,7 @@ import type { PasswordProvider } from '../password-provider.js';
 import type { RevocationEntry } from './session-state.js';
 import type { IdentitySyncModules, RegistrationOptions, StorageAdapter, SyncOption } from '../types.js';
 
-import { AgentSession, DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError } from '@enbox/agent';
+import { AgentSession, DwnInterface, DwnPermissionGrant, HdIdentityVaultRecoveryPhraseMismatchError, normalizeSyncModules } from '@enbox/agent';
 import { Convert, runWithCrossContextLock } from '@enbox/common';
 import { DataStream, PermissionsModule } from '@enbox/dwn-sdk-js';
 
@@ -36,6 +36,24 @@ const AUTH_SESSION_LIFECYCLE_LOCK = 'enbox:auth:session-lifecycle';
 /** Serialize persisted auth-session transitions across browser contexts or callers in one process. */
 export async function runAuthSessionLifecycle<T>(operation: () => Promise<T>): Promise<T> {
   return runWithCrossContextLock(AUTH_SESSION_LIFECYCLE_LOCK, operation);
+}
+
+const ownerSyncRootsBySession = new WeakMap<AgentSession, Readonly<[string, ...string[]]>>();
+
+/** @internal Effective opted-in owner roots for one exact session; absent for literal scopes and delegates. */
+export function getOwnerSyncModuleRootsForSession(session: AgentSession): Readonly<[string, ...string[]]> | undefined {
+  return ownerSyncRootsBySession.get(session);
+}
+
+/** Validate and snapshot the owner policy without broadening literal scopes. */
+function ownerRootsFromPolicy(scope: IdentitySyncModules | undefined): Readonly<[string, ...string[]]> | undefined {
+  if (scope === undefined || scope === 'all' || Array.isArray(scope)) {
+    return undefined;
+  }
+  if (scope === null || typeof scope !== 'object' || Object.keys(scope).some(key => key !== 'roots') || !Array.isArray(scope.roots)) {
+    throw new TypeError('Owner module scope must specify roots as a non-empty module URI array.');
+  }
+  return Object.freeze(normalizeSyncModules(scope.roots));
 }
 
 // ─── FlowContext ─────────────────────────────────────────────────
@@ -487,24 +505,37 @@ export async function applyIdentitySyncScope(params: {
   userAgent: EnboxUserAgent;
   connectedDid: string;
   delegateDid?: string;
-  scope: 'all' | string[] | undefined;
+  scope: IdentitySyncModules | string[] | undefined;
   lifecycleOptions?: SyncLifecycleOptions;
 }): Promise<boolean> {
   const { userAgent, connectedDid, delegateDid, scope, lifecycleOptions } = params;
-
   if (scope === undefined) {
     return false;
   }
-  if (delegateDid !== undefined && scope !== 'all' && scope.length === 0) {
+  if (delegateDid !== undefined && Array.isArray(scope) && scope.length === 0) {
     await userAgent.sync.removeIdentity(connectedDid, lifecycleOptions);
     return false;
   }
 
-  const modules = scope as IdentitySyncModules;
+  let modules: 'all' | [string, ...string[]];
+  let registrationOptions = lifecycleOptions;
+  if (scope === 'all' || Array.isArray(scope)) {
+    modules = scope as 'all' | [string, ...string[]];
+  } else {
+    if (delegateDid !== undefined) {
+      throw new TypeError('Owner module roots cannot replace a delegate grant-derived sync scope.');
+    }
+    const roots = ownerRootsFromPolicy(scope)!;
+    const startedAt = Date.now();
+    modules = await userAgent.sync.resolveOwnerModuleScope({ did: connectedDid, roots: [...roots] }, lifecycleOptions);
+    if (lifecycleOptions?.timeout !== undefined) {
+      registrationOptions = { timeout: Math.max(0, lifecycleOptions.timeout - (Date.now() - startedAt)) };
+    }
+  }
   const options = delegateDid === undefined
     ? { modules }
     : { delegateDid, modules };
-  await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, lifecycleOptions);
+  await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, registrationOptions);
   return true;
 }
 
@@ -856,6 +887,7 @@ export async function finalizeSession(params: {
   delegateDid?: string;
   recoveryPhrase?: string;
   identityName?: string;
+  identitySyncModules?: IdentitySyncModules;
   identityConnectedDid?: string;
   emitIdentityAdded?: boolean;
   signal: AbortSignal;
@@ -893,6 +925,13 @@ export async function finalizeSession(params: {
     identity : identityInfo,
     signal,
   });
+  if (delegateDid === undefined && identityName !== undefined) {
+    const roots = ownerRootsFromPolicy(params.identitySyncModules);
+    if (roots !== undefined) {
+      ownerSyncRootsBySession.set(session, roots);
+    }
+  }
+
 
   if (emitIdentityAdded && identityName !== undefined) {
     emitter.emit('identity-added', { identity: identityInfo });

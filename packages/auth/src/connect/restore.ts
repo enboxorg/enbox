@@ -292,6 +292,7 @@ async function finalizeRestoredSession(
     delegateDid,
     signal               : ctx.sessionSignal,
     identityName         : identity.metadata.name,
+    identitySyncModules  : ctx.defaultIdentitySyncModules,
     identityConnectedDid : identity.metadata.connectedDid,
     emitIdentityAdded    : false,
   });

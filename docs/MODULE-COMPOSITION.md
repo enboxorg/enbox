@@ -108,6 +108,21 @@ Historical configurations retain governing-time validation. A historical import
 that does not become active is not substituted into current dependents. A first
 installation that becomes active must also have a valid current dependency graph.
 
+Owner sync must include the provider and consumer modules. Application-backed
+`ConnectionStore` defaults resolve the typed dependency graph and retained local
+configuration history, then reconcile the scope after installation and pulls.
+Explicit URI arrays remain exact. Delegates need approved feed grants for every
+module in the scope and provider read access for role verification and key
+delivery; installing a dependency does not grant access to its records.
+
+The transport integration tests use separate local stores and a real HTTP and
+WebSocket DWN. They cover cold replication, missing-reference repair, encrypted
+owner and delegated reads, sync-engine restart with durable checkpoints, queued
+offline ciphertext, cross-module pruning, and writes committed during a socket
+disconnect. Typed API tests exercise scoped observation and child mutations on
+the replicated graph. All four examples below also round-trip through cold owner
+replicas using their literal JSON definitions.
+
 Managed invitation/follow records remain limited to local contexts under local
 non-reference roots. Composition does not add a cross-owner tree, a new followed
 source authority model, exact path-and-context grant intersections, historical

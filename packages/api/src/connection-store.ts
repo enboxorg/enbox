@@ -30,6 +30,7 @@
 
 import type { ApplicationManifest } from './application-manifest.js';
 import type { DwnEndpointResolution } from '@enbox/dids';
+import type { ModulesConfigureMessage } from '@enbox/dwn-sdk-js';
 import type { ObservableStore } from './observable-store.js';
 import type {
   AgentSession,
@@ -53,9 +54,12 @@ import type {
 
 import { AuthManager } from '@enbox/auth/auth-manager';
 import { isConnectDeniedError } from '@enbox/auth';
+import { Message } from '@enbox/dwn-sdk-js';
 import { omitUndefined } from '@enbox/common';
 import {
+  DwnInterface,
   isServiceConfigNoticeDelivery,
+  mapConcurrent,
   syncRegistrationCoversModule,
 } from '@enbox/agent';
 
@@ -63,6 +67,8 @@ import { Enbox } from './enbox.js';
 import { getApplicationModuleRequests } from './application-manifest.js';
 import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ModuleReadinessError } from './module-readiness.js';
+import { orderTypedModuleDependencies } from './define-module.js';
+import { requireDwnSuccess } from './dwn-response-error.js';
 import { WalletReapprovalRequiredError } from './typed-enbox.js';
 
 /**
@@ -489,6 +495,63 @@ function manifestRegistrationCoversSession(
     ));
 }
 
+/** Find implicit providers whose packaged definitions would otherwise be installed automatically. */
+async function queryMissingOwnerProviders(enbox: Enbox, application: ApplicationManifest): Promise<string[]> {
+  const requested = new Set(application.modules.map(entry => entry.module.definition.module));
+  const providers = orderTypedModuleDependencies(application.modules.map(entry => entry.module))
+    .filter(module => !requested.has(module.definition.module));
+  const missing = await mapConcurrent(providers, 8, async module => {
+    const local = await enbox.dwn.modules.query({ filter: { module: module.definition.module } });
+    requireDwnSuccess('Query local provider before owner readiness', local);
+    return local.modules.length === 0 ? module.definition.module : undefined;
+  });
+  return missing.filter((module): module is string => module !== undefined);
+}
+
+/** Authenticate provider configurations at every advertised endpoint before interpreting absence. */
+async function queryHostedOwnerProviders(
+  session: AgentSession,
+  modules: readonly string[],
+  endpoints: readonly string[],
+): Promise<ModulesConfigureMessage[]> {
+  const configurations = await mapConcurrent(modules, 4, async module => {
+    const replies = await mapConcurrent(endpoints, 4, async remoteEndpoint => {
+      const { reply } = await session.agent.sendDwnRequest({
+        author        : session.did,
+        target        : session.did,
+        messageType   : DwnInterface.ModulesQuery,
+        messageParams : { filter: { module } },
+        remoteEndpoint,
+      });
+      // The agent authenticates owner signatures and request-filter membership.
+      // Absence additionally requires the expected query status and response shape.
+      if (reply.status.code !== 200 || !Array.isArray(reply.entries)) {
+        throw new Error(`Hosted provider query '${module}' at '${remoteEndpoint}' did not return status 200 with an entries array.`);
+      }
+      return reply.entries;
+    });
+    return replies.flat();
+  });
+  return configurations.flat();
+}
+
+/** A completed pull is insufficient: require the exact hosted messages in the local DWN. */
+async function verifyAdmittedOwnerProviders(session: AgentSession, configurations: readonly ModulesConfigureMessage[]): Promise<void> {
+  await mapConcurrent(configurations, 8, async message => {
+    const messageCid = await Message.getCid(message);
+    const local = await session.agent.processDwnRequest({
+      author        : session.did,
+      target        : session.did,
+      messageType   : DwnInterface.MessagesRead,
+      messageParams : { messageCid },
+    });
+    if (local.reply.status.code !== 200 || local.reply.entry?.message === undefined ||
+        await Message.getCid(local.reply.entry.message) !== messageCid) {
+      throw new Error(`Hosted provider '${message.descriptor.definition.module}' was not admitted during owner bootstrap.`);
+    }
+  });
+}
+
 type SyncStatusBinding = {
   dwnRefresh?: Promise<Error | boolean>;
   dwnRefreshRequested: boolean;
@@ -547,6 +610,7 @@ class HeadlessConnectionStore implements ConnectionStore {
   private _manifestCoverageBinding?: ManifestCoverageBinding;
   private _manifestCoverageMissing = false;
   private _syncBinding?: SyncStatusBinding;
+  private _ownerScopeReconciliation?: { session: AgentSession; actionGeneration: number; promise: Promise<boolean> };
 
   public constructor(options: ConnectionStoreOptions) {
     if (Object.hasOwn(options, 'agent')) {
@@ -555,7 +619,7 @@ class HeadlessConnectionStore implements ConnectionStore {
       );
     }
     const { application, auth, monitor, requireHostedReadiness, restore, ...authManagerOptions } = options;
-    const [firstModule, ...remainingModules] = application.modules;
+    const [firstModule] = application.modules;
     if (firstModule === undefined) {
       throw new TypeError('[@enbox/api] createConnectionStore requires at least one application module.');
     }
@@ -569,11 +633,9 @@ class HeadlessConnectionStore implements ConnectionStore {
     this._monitor = monitor ?? {};
     this._requireHostedReadiness = requireHostedReadiness ?? false;
     this._restore = restore;
-    if (auth === undefined) {
-      authManagerOptions.identitySyncModules ??= [
-        firstModule.module.definition.module,
-        ...remainingModules.map(({ module }): string => module.definition.module),
-      ];
+    if (auth === undefined && authManagerOptions.identitySyncModules === undefined) {
+      const modules = orderTypedModuleDependencies(application.modules.map(entry => entry.module));
+      authManagerOptions.identitySyncModules = { roots: modules.map(module => module.definition.module) as [string, ...string[]] };
     }
     this._authManagerOptions = authManagerOptions;
   }
@@ -996,7 +1058,7 @@ class HeadlessConnectionStore implements ConnectionStore {
         this._manifestCoverageMissing = false;
       }
 
-      const readinessError = await this._getApplicationReadinessError(patch.enbox, this._application);
+      const readinessError = await this._getApplicationReadinessError(patch.enbox, this._application, activeSession, generation);
       if (this._isStale(generation)) {
         return this._snapshot;
       }
@@ -1186,12 +1248,129 @@ class HeadlessConnectionStore implements ConnectionStore {
   private async _getApplicationReadinessError(
     enbox: Enbox,
     application: ApplicationManifest,
+    session: AgentSession,
+    generation: number,
   ): Promise<Error | undefined> {
     try {
+      await this._restoreMissingOwnerProviders(enbox, application, session, generation).catch((cause: unknown): never => {
+        throw new ModuleReadinessError({
+          cause,
+          operation : 'query',
+          module    : application.modules[0].module.definition.module,
+          targetDid : session.did,
+        });
+      });
+      if (this._isStale(generation) || !this._isAuthoritativeSession(session)) {
+        return undefined;
+      }
       await enbox.modules.ensureReady({ application, publish: this._requireHostedReadiness });
+      await this._reconcileOwnerSyncScope(session, generation);
+      await this._assertOwnerSyncScopeClosed(session, generation);
       return undefined;
     } catch (cause: unknown) {
       return toError(cause);
+    }
+  }
+
+  /** Restore existing hosted prerequisites before a cold owner can author newer packaged definitions. */
+  private async _restoreMissingOwnerProviders(
+    enbox: Enbox,
+    application: ApplicationManifest,
+    session: AgentSession,
+    actionGeneration: number,
+  ): Promise<void> {
+    if (session.delegateDid !== undefined) {
+      return;
+    }
+    const current = (): boolean => !this._isStale(actionGeneration) && this._isAuthoritativeSession(session);
+    const missing = await queryMissingOwnerProviders(enbox, application);
+    if (missing.length === 0 || !current()) {
+      return;
+    }
+    const endpoints = await session.agent.identity.getDwnEndpointStatus({ didUri: session.did, refresh: true });
+    if (!current() || endpoints.status === 'service-missing') {
+      return;
+    }
+    if (endpoints.status !== 'ready') {
+      throw new Error('Cold owner module readiness cannot verify hosted providers until DWN endpoint resolution succeeds.');
+    }
+    const configurations = await queryHostedOwnerProviders(session, missing, endpoints.endpoints);
+    if (configurations.length === 0 || !current()) {
+      // Every advertised endpoint answered successfully: no existing provider
+      // will be replaced by installing the packaged definition.
+      return;
+    }
+    const registration = await session.agent.sync.getIdentityOptions(session.did);
+    if (!current()) {
+      return;
+    }
+    if (registration === undefined || registration.delegateDid !== undefined) {
+      throw new Error('Cold owner module readiness requires an owner sync registration to bootstrap existing hosted providers.');
+    }
+    await session.agent.sync.sync('pull', { did: session.did });
+    if (!current()) {
+      return;
+    }
+    await verifyAdmittedOwnerProviders(session, configurations);
+  }
+
+  /** Resolve managed owner defaults after installation or newly admitted configuration history. */
+  private _reconcileOwnerSyncScope(session: AgentSession, generation: number): Promise<boolean> {
+    const roots = this._auth?.ownerSyncModuleRoots;
+    if (this._providedAuth !== undefined || session.delegateDid !== undefined || roots === undefined ||
+        this._isStale(generation) || !this._isAuthoritativeSession(session)) {
+      return Promise.resolve(false);
+    }
+    const pending = this._ownerScopeReconciliation;
+    if (pending?.session === session && pending.actionGeneration === generation) {
+      return pending.promise;
+    }
+    const current = (): boolean => !this._isStale(generation) && this._isAuthoritativeSession(session)
+      && this._auth?.ownerSyncModuleRoots === roots;
+    const reconciliation = { session, actionGeneration: generation, promise: Promise.resolve(false) };
+    reconciliation.promise = (async (): Promise<boolean> => {
+      const modules = await session.agent.sync.resolveOwnerModuleScope({ did: session.did, roots: [...roots] });
+      if (!current()) {
+        return false;
+      }
+      const registration = await session.agent.sync.getIdentityOptions(session.did);
+      if (!current() || registration?.delegateDid !== undefined) {
+        return false;
+      }
+      // The session/generation checks happen immediately before joining the
+      // engine's serialized identity queue; subsequent explicit flows queue after this one.
+      return session.agent.sync.ensureIdentityOptions({ did: session.did, options: { modules } });
+    })().finally((): void => {
+      if (this._ownerScopeReconciliation === reconciliation) {
+        this._ownerScopeReconciliation = undefined;
+      }
+    });
+    this._ownerScopeReconciliation = reconciliation;
+    return reconciliation.promise;
+  }
+
+  /** Literal scopes stay literal: reject a split rather than silently widening the caller's registration. */
+  private async _assertOwnerSyncScopeClosed(session: AgentSession, actionGeneration: number): Promise<void> {
+    if (session.delegateDid !== undefined || this._isStale(actionGeneration) || !this._isAuthoritativeSession(session)) {
+      return;
+    }
+    const registration = await session.agent.sync.getIdentityOptions(session.did);
+    if (registration === undefined || registration.delegateDid !== undefined || registration.modules === 'all') {
+      return;
+    }
+    const closure = await session.agent.sync.resolveOwnerModuleScope({ did: session.did, roots: registration.modules });
+    if (this._isStale(actionGeneration) || !this._isAuthoritativeSession(session)) {
+      return;
+    }
+    const scope = new Set(registration.modules);
+    const missing = closure.filter(module => !scope.has(module));
+    if (missing.length > 0) {
+      throw new ModuleReadinessError({
+        operation : 'query',
+        module    : registration.modules[0],
+        targetDid : session.did,
+        cause     : new Error(`Explicit owner sync scope omits required dependency modules: ${missing.join(', ')}.`),
+      });
     }
   }
 
@@ -1547,8 +1726,18 @@ class HeadlessConnectionStore implements ConnectionStore {
   private async _readSyncStatus(binding: SyncStatusBinding): Promise<SyncStatusSnapshot> {
     const { session } = binding;
     try {
+      const generation = this._actionGeneration;
       const status = await session.agent.sync.getIdentitySyncStatus(session.did);
       const remotes = projectRemoteSyncRows(status.remotes, this._snapshot.remoteDwn);
+      if (status.currentness === 'caught-up' && await this._reconcileOwnerSyncScope(session, generation)) {
+        // Scope expansion creates new projection work. Never publish the old
+        // projection's caught-up state while those dependencies are outstanding.
+        binding.refreshRequested = true;
+        return immutableSyncStatus({ state: 'syncing', connectivity: status.connectivity, remotes });
+      }
+      if (status.currentness === 'caught-up') {
+        await this._assertOwnerSyncScopeClosed(session, generation);
+      }
       return status.registration === undefined
         ? immutableSyncStatus({ state: 'caught-up', connectivity: 'unknown', remotes })
         : projectSyncStatus(status.currentness, status.connectivity, status.lastActivityAt, status.links, remotes);

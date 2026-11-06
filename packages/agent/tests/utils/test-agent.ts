@@ -11,13 +11,14 @@ import type { IdentityVault } from '../../src/types/identity-vault.js';
 import type { SecretStore } from '../../src/secret-store.js';
 import type { SyncEngine } from '../../src/types/sync.js';
 import type { AgentDidApi, DidInterface } from '../../src/did-api.js';
-import type { DidRequest, DidResponse } from '../../src/did-api.js';
 import type {
+  DecryptRecordDataParams,
   DwnInterface,
   DwnResponse,
   ProcessDwnRequest,
   SendDwnRequest,
 } from '../../src/types/dwn.js';
+import type { DidRequest, DidResponse } from '../../src/did-api.js';
 
 import { InMemorySecretStore } from '../../src/secret-store.js';
 
@@ -86,6 +87,10 @@ export class TestAgent<TKeyManager extends AgentKeyManager> implements EnboxPlat
 
   public async initialize(_params: { passphrase: string; }): Promise<void> {
     throw new Error('Not implemented');
+  }
+
+  public async decryptRecordData(params: DecryptRecordDataParams): Promise<ReadableStream<Uint8Array>> {
+    return this.dwn.decryptRecordData(params);
   }
 
   public async processDidRequest<T extends DidInterface>(

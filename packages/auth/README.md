@@ -35,6 +35,20 @@ import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
 directly. It exports the browser auth surface plus `PasswordProvider.fromCallback()`
 and `PasswordProvider.chain()`.
 
+## Owner sync scope
+
+Set `identitySyncModules` to an exact non-empty module URI array, `'all'` for
+a full owner replica, or `{ roots: [ConsumerModule.definition.module] }` to
+include dependencies from retained local module configuration history. Root
+resolution includes dependencies of older configurations needed to replay
+existing records. It runs when auth registers the owner identity; direct
+`AuthManager` callers must re-register after importing history that adds
+dependencies.
+
+An application-backed `ConnectionStore` supplies and reconciles its own owner
+default from the typed module dependencies. Delegate sync scopes continue to
+come from approved grants; owner roots never expand delegate access.
+
 ## Delegated Module Requests
 
 Handler-based connect accepts raw module definitions and structural

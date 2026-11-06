@@ -5,7 +5,7 @@ import type { NonEmptyStringArray, SyncIdentityOptions } from './types/sync.js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { getModuleClosureEdges } from './sync-scope-closure.js';
-import { lexicographicalCompare, syncScopeFromModules } from './types/sync.js';
+import { lexicographicalCompare, normalizeSyncModules, syncScopeFromModules } from './types/sync.js';
 
 /** Grant lookup required to inspect one delegated closure module. */
 export type SyncScopeClosureGrantQuery = {
@@ -99,6 +99,14 @@ export class SyncScopeClosureValidator {
     if (details.length > 0) {
       throw new Error(`SyncScopeClosureValidator: sync scope closure validation failed for ${did}: ${details.join('; ')}`);
     }
+  }
+
+  /** Resolve an owner's roots through all retained definition history without changing registration or grants. */
+  public async resolveOwnerModuleScope(did: string, roots: NonEmptyStringArray): Promise<NonEmptyStringArray> {
+    const modules = normalizeSyncModules(roots);
+    const state = SyncScopeClosureValidator.createValidationState(modules);
+    await this.scanClosure(did, { modules }, state);
+    return normalizeSyncModules([...state.scannedModules]);
   }
 
   private static createValidationState(modules: NonEmptyStringArray): SyncScopeClosureValidationState {

@@ -896,6 +896,17 @@ export interface SyncEngine {
   readonly hasActiveSubscriptions: boolean;
 
   /**
+   * Read the complete retained local module dependency closure for an owner.
+   * Signs history queries as `did`; it does not use delegate grants, change
+   * sync registration, or grant access. Callers still register the returned
+   * flat scope through setIdentityOptions/ensureIdentityOptions.
+   */
+  resolveOwnerModuleScope(
+    params: { did: string; roots: NonEmptyStringArray },
+    lifecycleOptions?: SyncLifecycleOptions,
+  ): Promise<NonEmptyStringArray>;
+
+  /**
    * Create or replace an identity's sync options.
    * Callers must explicitly specify which modules to sync (`'all'` for a
    * full replica, or a list of module URIs) so that sync scope is always

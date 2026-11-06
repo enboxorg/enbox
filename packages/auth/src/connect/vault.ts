@@ -267,6 +267,7 @@ export async function vaultConnect(
       recoveryPhrase,
       signal               : ctx.sessionSignal,
       identityName         : identity?.metadata.name,
+      identitySyncModules  : sync !== 'off' || isRecovery ? identitySyncModules : undefined,
       identityConnectedDid : identity?.metadata.connectedDid,
     });
 
