@@ -71,6 +71,8 @@ type RoleReplicationSupportParams = DelegatedRoleReadParams & {
   runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
   sourceDid: string;
+  /** Read an already admitted replica through the same actor/role authorization boundary. */
+  local?: boolean;
 };
 
 type ExactRoleReadFilter = {
@@ -201,7 +203,7 @@ async function requestRoleReplicationSupport(
   delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined,
   message: RecordsReadMessage,
 ): Promise<RecordsReadReply> {
-  const requestDwnUrl = await resolveRoleReadUrl(params);
+  const requestDwnUrl = params.local === true ? params.dwnUrl : await resolveRoleReadUrl(params);
   if (params.rootData !== undefined) {
     const reply = await sendRecordsRead(params, requestDwnUrl, message);
     if (reply.status.code === 200 && reply.entry !== undefined) {
@@ -237,6 +239,11 @@ function sendRecordsRead(
   dwnUrl: string,
   message: RecordsReadMessage,
 ): Promise<RecordsReadReply> {
+  if (params.local === true) {
+    return params.agent.dwn.processRequest({
+      author: params.actorDid, target: params.sourceDid, messageType: DwnInterface.RecordsRead, rawMessage: message,
+    }).then(result => result.reply);
+  }
   return runSyncRemoteRequest(params.runRemoteRequest, (signal): Promise<RecordsReadReply> =>
     params.agent.rpc.sendDwnRequest({
       dwnUrl,

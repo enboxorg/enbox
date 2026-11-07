@@ -22,11 +22,13 @@ export type ContextFollowRecord = Readonly<{
 type FollowRequest = ContextFollowTarget & Readonly<{
   path: string;
 }>;
-type FollowSync = Pick<SyncEngine, 'followSource' | 'getFollowedSource' | 'listFollowedSources' | 'deleteFollowedSource'>;
+type FollowSync = Pick<SyncEngine, 'followSource' | 'getFollowedSource' | 'listFollowedSources' | 'deleteFollowedSource' | 'ensureFollowedSourceModules'>;
 
 /** @internal Native records supply persistence; the sync engine verifies remote authority. */
 export type ContextFollowingOptions = {
   actorDid: string;
+  /** Explicit application bindings, never discovered from installed reverse dependencies. */
+  additionalModules?(path: string): readonly string[];
   append(intent: ContextFollowIntent, after?: string): Promise<ContextFollowRecord>;
   definition: ModuleDefinition;
   resolvedGraph?: ResolvedModuleGraph;
@@ -65,6 +67,7 @@ export class ContextFollowing {
   /** Newest known decision per context, ordered by signed timestamp and then record ID. */
   private readonly _latestIntentRecords = new Map<string, ContextFollowRecord>();
   private _observation?: Observation;
+  private readonly _projectionReconciliations = new Map<string, Promise<void>>();
 
   public constructor(options: ContextFollowingOptions) {
     this._options = options;
@@ -98,6 +101,7 @@ export class ContextFollowing {
         await this.readLatestIntents();
       }
       await this.rejectFollowIfForgotten(request);
+      this.reconcileAdditionalModules(source, request.path);
       return source;
     });
   }
@@ -246,6 +250,20 @@ export class ContextFollowing {
       roles     : [...roles],
       sourceDid : request.ownerDid,
     });
+  }
+
+  /** Optional consumer setup never delays a usable root or writes another following decision. */
+  private reconcileAdditionalModules(source: FollowedSyncSource, path: string): void {
+    const modules = this._options.additionalModules?.(path) ?? [];
+    if (modules.length === 0 || this._options.signal?.aborted) { return; }
+    const key = JSON.stringify([source.id, source.acceptanceId, modules]);
+    if (this._projectionReconciliations.has(key)) { return; }
+    const pending = this._options.sync.ensureFollowedSourceModules(source, modules).then((): void => {}, (error: unknown): void => {
+      if (!this._options.signal?.aborted && !(error instanceof FollowedSourceNotReadyError)) {
+        console.warn('[@enbox/api] Unable to prepare optional context modules; the root follow remains unchanged.', error);
+      }
+    }).finally((): void => { this._projectionReconciliations.delete(key); });
+    this._projectionReconciliations.set(key, pending);
   }
 
   /** Skip an equivalent choice or newer forget; return whether this call appended a follow decision. */
@@ -404,13 +422,19 @@ export class ContextFollowing {
       throw error;
     }
     const sources = await this.listAcceptedContextSources(intent);
-    if (!sources.some((source): boolean => sameRoles(source.roles, roles))) {
+    const existing = sources.find((source): boolean => sameRoles(source.roles, roles));
+    if (existing !== undefined) {
+      this.reconcileAdditionalModules(existing, intent.path);
+    } else {
       await this.verifyAndAcceptContext({
         path     : intent.path,
         id       : intent.contextId,
         ownerDid : intent.ownerDid,
       }, roles).then(
-        () => this.readLatestIntents(),
+        (source) => {
+          this.reconcileAdditionalModules(source, intent.path);
+          return this.readLatestIntents();
+        },
         (error: unknown): void => {
           this.assertActive();
           if (!(error instanceof FollowedSourceNotReadyError)) {

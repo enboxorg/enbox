@@ -847,6 +847,53 @@ The journal is immutable and append-only. This version reads its local history i
 pages and does not compact it automatically. Any retention policy must preserve
 effective forget decisions so an older offline follow cannot reappear.
 
+### Composed features in a shared context
+
+Select the typed extensions your application needs before opening, following, or
+observing contexts. Each extension must attach to the exact context root through
+`$ref`; its children retain their own module URI and declared paths.
+
+```ts
+const contexts = notebooks.contexts.withModules({
+  realtime: NotebookRealtimeModule,
+});
+const shared = await contexts.follow('notebook/page', { ownerDid, id: contextId });
+const realtime = shared.using(NotebookRealtimeModule);
+const adverts = await realtime.records.observe('page/live', {
+  pagination: { limit: 1 },
+});
+
+// The same selection applies to contexts returned by observation and invitations.
+const catalog = await contexts.observe();
+const invitations = await contexts.invitations.observe();
+```
+
+`withModules()` and `context.using()` are inert bindings. They do not create a
+follow decision, discover installed extensions, or grant permissions. A saved
+root follow remains the single recipient decision; each device applies the
+module selection declared by its application. Forgetting the context removes
+all its selected replication links.
+
+Consumer records use the same owner, accepted endpoint, physical context, and
+verified root role as the page. The owner must publish the consumer definition.
+Delegates need approved feed and record-read access to each consumer as well as
+the provider access needed for membership and keys.
+For encrypted records, provider definitions must also be queryable by the
+member; receiving private provider metadata through replication support alone
+does not yet satisfy the audience-key loader.
+
+An unavailable extension does not block the page. Its operations report
+`ContextNotReadyError` while metadata, grants, keys, or replication are missing.
+Its observed views recover on sync events, with their own `status` and `current`
+state. A replacement root acceptance retires all bindings; obtain a fresh context
+from the catalog. Never treat the root's currentness as proof that an optional
+consumer is current.
+
+Use separate views for page data and consumer records. `materialize.children`
+continues to accept children from the view's own module. Attachment paths are
+virtual, so `realtime.records` operates on concrete paths such as `page/live`
+and `page/live/session`, not on `page` itself.
+
 ### One owned-and-shared catalog
 
 ```ts

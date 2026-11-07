@@ -11,6 +11,7 @@ import type {
 } from './types/sync.js';
 
 import { DwnInterface } from './types/dwn.js';
+import { getFollowedSyncProjection } from './followed-sync-source.js';
 import { computeAuthorizationEpoch, computeProjectionId, syncScopeFromModules } from './types/sync.js';
 import { permissionGrantIdsFromEntries, resolveMessagesScopes, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -154,18 +155,23 @@ export class SyncTargetResolver {
   public async buildTargetForSource(
     source: FollowedSyncSource,
     delegateDid?: string,
+    module = source.module,
   ): Promise<SyncTarget> {
+    const projection = getFollowedSyncProjection(source, module);
+    if (projection === undefined) {
+      throw new Error(`SyncTargetResolver: module '${module}' is not a verified followed projection.`);
+    }
     const scope = {
       kind        : 'context' as const,
-      module      : source.module,
+      module      : projection.module,
       contextId   : source.contextId,
-      modulePaths : source.modulePaths,
+      modulePaths : projection.modulePaths,
     };
 
     const authorization: Extract<SyncAuthorization, { kind: 'role' }> = {
       kind         : 'role',
       actorDid     : source.actorDid,
-      moduleRole   : source.moduleRole,
+      moduleRole   : projection.moduleRole,
       roleRecordId : source.id,
     };
 
@@ -180,6 +186,12 @@ export class SyncTargetResolver {
       authorization,
       authorizationEpoch,
     };
+  }
+
+  /** Each consumer owns a distinct feed and checkpoint pair under the root acceptance. */
+  public buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> {
+    return Promise.all([source.module, ...(source.projections?.map(projection => projection.module) ?? [])]
+      .map(module => this.buildTargetForSource(source, delegateDid, module)));
   }
 
   /** Attach the current full delegate grant immediately before a role request. */

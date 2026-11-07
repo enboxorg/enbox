@@ -32,6 +32,8 @@ export type RecordExecutionContext = Readonly<{
   followedSourceAcceptanceId?: string;
   /** Role record backing this followed context. */
   followedSourceId?: string;
+  /** Root module whose acceptance owns every selected consumer projection. */
+  followedSourceModule?: string;
   /** Role invoked for every operation when this is a followed context. */
   moduleRole?: string;
   /** Hosted endpoint accepted for authoritative followed-context mutations. */

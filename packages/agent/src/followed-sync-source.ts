@@ -2,6 +2,14 @@ import type { ResolvedRoleReference } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
+/** One verified consumer feed beneath the same accepted root and role assignment. */
+export type FollowedSyncProjection = {
+  module: string;
+  moduleRole: string;
+  attachmentPath: string;
+  modulePaths: [string, ...string[]];
+};
+
 /** Durable description of one foreign context accepted through a role record. */
 export type FollowedSyncSource = {
   /** Opaque local acceptance ID. A re-follow never revives handles from a former acceptance. */
@@ -22,6 +30,10 @@ export type FollowedSyncSource = {
   modulePaths: [string, ...string[]];
   /** Candidate role paths in declared preference order for this context. */
   roles: [string, ...string[]];
+  /** Explicit consumer selections retained even when metadata or authority is unavailable. */
+  additionalModules?: readonly string[];
+  /** Verified consumer feeds; missing selections remain unavailable without retiring the root. */
+  projections?: FollowedSyncProjection[];
 };
 
 /** Foreign context details supplied before its active role record is resolved. */
@@ -31,6 +43,7 @@ export type FollowedSyncSourceInput = Pick<
 > & {
   /** Role candidates tried in declared preference order during this explicit follow. */
   roles: [string, ...string[]];
+  additionalModules?: readonly string[];
 };
 
 /** One independently decoded entry returned by a {@link FollowedSyncSourceStore}. */
@@ -78,12 +91,14 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
     throw new TypeError('FollowedSyncSource: every role must authorize the same context root.');
   }
 
+  const additionalModules = normalizeAdditionalModules(source.additionalModules, source.module);
   return {
     actorDid  : source.actorDid,
     contextId : source.contextId,
     module    : source.module,
     roles,
     sourceDid : source.sourceDid,
+    ...(additionalModules.length === 0 ? {} : { additionalModules }),
   };
 }
 
@@ -97,11 +112,12 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
   }
 
   const details = normalizeFollowedSyncSourceInput({
-    actorDid  : source.actorDid,
-    contextId : source.contextId,
-    module    : source.module,
-    roles     : source.roles,
-    sourceDid : source.sourceDid,
+    actorDid          : source.actorDid,
+    contextId         : source.contextId,
+    module            : source.module,
+    roles             : source.roles,
+    sourceDid         : source.sourceDid,
+    additionalModules : source.additionalModules,
   });
   const moduleRole = normalizeFollowedSyncRole(source.moduleRole);
   if (!details.roles.includes(moduleRole)) {
@@ -117,6 +133,11 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
       `FollowedSyncSource: role '${moduleRole}' does not authorize its context root '${modulePath}'.`,
     );
   }
+  const projections = (source.projections ?? []).map(projection => normalizeProjection(projection, details));
+  if (new Set(projections.map(projection => projection.module)).size !== projections.length) {
+    throw new TypeError('FollowedSyncSource: consumer projections must have distinct modules.');
+  }
+  projections.sort((left, right) => lexicographicalCompare(left.module, right.module));
   return {
     acceptanceId   : source.acceptanceId,
     id             : source.id,
@@ -124,6 +145,7 @@ export function normalizeFollowedSyncSource(source: FollowedSyncSource): Followe
     modulePaths,
     moduleRole,
     remoteEndpoint : source.remoteEndpoint,
+    ...(projections.length === 0 ? {} : { projections }),
   };
 }
 
@@ -143,6 +165,52 @@ export function followedSyncSourceAuthorityEqual(a: FollowedSyncSource, b: Follo
 /** Equality for one acceptance and its exact remote authority. */
 export function followedSyncSourceActiveEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   return a.acceptanceId === b.acceptanceId && followedSyncSourceAuthorityEqual(a, b);
+}
+
+/** Consumer handles fence their projection independently of the root acceptance. */
+export function followedSyncProjectionEqual(a: FollowedSyncProjection, b: FollowedSyncProjection): boolean {
+  return a.module === b.module && a.moduleRole === b.moduleRole && a.attachmentPath === b.attachmentPath &&
+    sameStrings(a.modulePaths, b.modulePaths);
+}
+
+/** Full durable state equality; projection changes leave root authority equality unchanged. */
+export function followedSyncSourceStateEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
+  const left = a.projections ?? [];
+  const right = b.projections ?? [];
+  return followedSyncSourceActiveEqual(a, b) && sameStrings(a.additionalModules ?? [], b.additionalModules ?? []) &&
+    left.length === right.length && left.every((projection, index) => followedSyncProjectionEqual(projection, right[index]));
+}
+
+/** Return the exact root or verified consumer projection without inventing an unavailable selection. */
+export function getFollowedSyncProjection(source: FollowedSyncSource, module: string): FollowedSyncProjection | undefined {
+  return module === source.module ? {
+    module,
+    moduleRole     : source.moduleRole,
+    modulePaths    : source.modulePaths,
+    attachmentPath : resolveFollowedSyncRoleRoot(source.contextId, source.moduleRole).modulePath,
+  } : source.projections?.find(projection => projection.module === module);
+}
+
+/** Canonical additive consumer selections; the root is always selected separately. */
+export function normalizeAdditionalModules(modules: readonly string[] | undefined, rootModule: string): string[] {
+  if (modules === undefined) {return [];}
+  if (!Array.isArray(modules) || modules.some(module => typeof module !== 'string' || module.length === 0)) {
+    throw new TypeError('FollowedSyncSource: additionalModules must contain non-empty module URIs.');
+  }
+  return [...new Set(modules)].filter(module => module !== rootModule).sort(lexicographicalCompare);
+}
+
+function normalizeProjection(projection: FollowedSyncProjection, source: FollowedSyncSourceInput): FollowedSyncProjection {
+  if (!source.additionalModules?.includes(projection.module) ||
+      typeof projection.moduleRole !== 'string' || projection.moduleRole.length === 0 ||
+      typeof projection.attachmentPath !== 'string' || projection.attachmentPath.length === 0) {
+    throw new TypeError('FollowedSyncSource: consumer projections require a selected module, role, and attachment path.');
+  }
+  const modulePaths = normalizeModulePaths(projection.modulePaths);
+  if (modulePaths.some(path => !path.startsWith(`${projection.attachmentPath}/`))) {
+    throw new TypeError('FollowedSyncSource: consumer records must be descendants of their attachment.');
+  }
+  return { module: projection.module, moduleRole: projection.moduleRole, attachmentPath: projection.attachmentPath, modulePaths };
 }
 
 /** Resolve the immediate parent from canonical metadata, or validate a native local context request. */

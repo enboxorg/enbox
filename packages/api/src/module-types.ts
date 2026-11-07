@@ -103,14 +103,66 @@ type RuleSetAtPath<R, Path extends string> =
         : never
       : never;
 
-// ---------------------------------------------------------------------------
-// Role extraction
-// ---------------------------------------------------------------------------
-
+/** Declared paths include attachments, which are excluded from writable record paths. */
 type DeclaredPaths<R, Prefix extends string = ''> = string extends keyof R ? string : {
   [K in Extract<keyof R, string>]: K extends `$${string}` ? never
     : R[K] extends ModuleRuleSet ? `${Prefix}${K}` | DeclaredPaths<R[K], `${Prefix}${K}/`> : never;
 }[Extract<keyof R, string>];
+
+// ---------------------------------------------------------------------------
+// Attachment resolution
+// ---------------------------------------------------------------------------
+
+type AttachmentTarget = { module: string; path: string };
+
+/** Look up the complete declared path before following a terminal reference in its own module's aliases. */
+type ResolveAttachmentTarget<
+  M extends ModuleDependency,
+  Path extends string,
+  Seen extends string = never,
+> = string extends keyof M['definition']['structure'] ? AttachmentTarget
+  : string extends Path ? AttachmentTarget
+    : M['definition']['module'] extends Seen ? never
+      : RuleSetAtPath<M['definition']['structure'], Path> extends infer Node
+        ? [Node] extends [never] ? never
+          : Node extends { readonly $ref: infer Reference extends string }
+            ? string extends Reference ? AttachmentTarget
+              : Reference extends `${infer Alias}:${infer Target}`
+                ? Alias extends keyof M['dependencies']
+                  ? ResolveAttachmentTarget<M['dependencies'][Alias], Target,
+                    Seen | (string extends M['definition']['module'] ? never : M['definition']['module'])>
+                  : never
+                : never
+            : { module: M['definition']['module']; path: Path }
+        : never;
+
+/** Widened coordinates remain runtime-checked; distinct literal coordinates cannot match. */
+type MatchesAttachmentTarget<Target, ModuleUri extends string, ModulePath extends string> =
+  Target extends AttachmentTarget
+    ? [Target['module'] & ModuleUri] extends [never] ? false
+      : [Target['path'] & ModulePath] extends [never] ? false : true
+    : false;
+
+/**
+ * Local attachment paths that resolve to an exact owning module and declared record path.
+ * References may chain through typed dependencies, but do not import undeclared provider children.
+ * A definition widened to the generic ModuleDefinition retains a runtime-checked string path.
+ */
+export type ModuleAttachmentPaths<
+  M extends TypedModule,
+  OwningModuleUri extends string,
+  OwningModulePath extends string,
+> = string extends keyof M['definition']['structure'] ? string : {
+  [Path in DeclaredPaths<M['definition']['structure']>]:
+    RuleSetAtPath<M['definition']['structure'], Path> extends { readonly $ref: string }
+      ? true extends MatchesAttachmentTarget<ResolveAttachmentTarget<M, Path>, OwningModuleUri, OwningModulePath>
+        ? Path : never
+      : never;
+}[DeclaredPaths<M['definition']['structure']>];
+
+// ---------------------------------------------------------------------------
+// Role extraction
+// ---------------------------------------------------------------------------
 
 type ResolvedRoleAtPath<
   D extends ModuleDefinition,

@@ -115,6 +115,7 @@ function fixture(initial: ContextFollowRecord[] = []): {
   append: sinon.SinonSpy<[ContextFollowIntent, string?], Promise<ContextFollowRecord>>;
   coordinator: ContextFollowing;
   entries: ContextFollowRecord[];
+  ensureModules: sinon.SinonStub<[FollowedSyncSource, readonly string[]], Promise<FollowedSyncSource>>;
   follow: sinon.SinonStub<[FollowedSyncSourceInput], Promise<FollowedSyncSource>>;
   openView: sinon.SinonStub<[AbortSignal], Promise<ExpandableRecordView<ContextFollowRecord>>>;
   options: ContextFollowingOptions;
@@ -147,6 +148,13 @@ function fixture(initial: ContextFollowRecord[] = []): {
   });
   const openView = sinon.stub<[AbortSignal], Promise<ExpandableRecordView<ContextFollowRecord>>>()
     .callsFake(async (): Promise<ExpandableRecordView<ContextFollowRecord>> => new IntentView(entries));
+  const ensureModules = sinon.stub<[FollowedSyncSource, readonly string[]], Promise<FollowedSyncSource>>()
+    .callsFake(async (source, modules): Promise<FollowedSyncSource> => {
+      const current = sources.get(source.id)!;
+      const next = { ...current, additionalModules: [...new Set([...(current.additionalModules ?? []), ...modules])] };
+      sources.set(source.id, next);
+      return next;
+    });
   const options: ContextFollowingOptions = {
     actorDid,
     append,
@@ -158,12 +166,13 @@ function fixture(initial: ContextFollowRecord[] = []): {
         const current = sources.get(source.id);
         if (current !== undefined && followedSyncSourceActiveEqual(current, source)) { sources.delete(source.id); }
       },
-      followSource        : follow,
-      getFollowedSource   : async (id): Promise<FollowedSyncSource | undefined> => sources.get(id),
-      listFollowedSources : async (): Promise<FollowedSyncSource[]> => [...sources.values()],
+      ensureFollowedSourceModules : ensureModules,
+      followSource                : follow,
+      getFollowedSource           : async (id): Promise<FollowedSyncSource | undefined> => sources.get(id),
+      listFollowedSources         : async (): Promise<FollowedSyncSource[]> => [...sources.values()],
     },
   };
-  return { acceptSource, append, coordinator: new ContextFollowing(options), entries, follow, openView, options, sources };
+  return { acceptSource, append, coordinator: new ContextFollowing(options), entries, ensureModules, follow, openView, options, sources };
 }
 
 describe('ContextFollowing', () => {
@@ -171,6 +180,49 @@ describe('ContextFollowing', () => {
   const recipientRecovery: SyncEvent = {
     type: 'reconcile:completed', tenantDid: actorDid, remoteEndpoint: 'https://member.example', module,
   };
+
+  it('reconciles explicit consumer selection for an existing positive root without a new follow decision', async () => {
+    const test = fixture([decision(1)]);
+    const accepted = test.acceptSource({ actorDid, sourceDid: ownerDid, module, contextId: request.id, roles: [...roles] });
+    test.options.additionalModules = (): readonly string[] => ['https://example.com/realtime'];
+
+    await test.coordinator.restore();
+
+    expect(test.follow.callCount).toBe(0);
+    expect(test.append.callCount).toBe(0);
+    expect(test.ensureModules.calledOnceWith(accepted, ['https://example.com/realtime'])).toBe(true);
+    expect(test.sources.get(accepted.id)?.acceptanceId).toBe(accepted.acceptanceId);
+  });
+
+  it('returns a usable root while optional consumer verification remains pending', async () => {
+    const test = fixture();
+    const pending = deferred<FollowedSyncSource>();
+    test.options.additionalModules = (): readonly string[] => ['https://example.com/realtime'];
+    test.ensureModules.returns(pending.promise);
+
+    const accepted = await test.coordinator.follow(request);
+
+    expect(test.append.callCount).toBe(1);
+    expect(test.ensureModules.callCount).toBe(1);
+    expect(test.sources.get(accepted.id)).toBe(accepted);
+    pending.resolve(accepted);
+  });
+
+  it('does not add consumer selections for a forgotten root or an unbound native context', async () => {
+    const forgotten = fixture([decision(1, { following: false })]);
+    forgotten.options.additionalModules = (): readonly string[] => ['https://example.com/realtime'];
+    await forgotten.coordinator.restore();
+    expect(forgotten.ensureModules.callCount).toBe(0);
+    expect(forgotten.follow.callCount).toBe(0);
+    expect(forgotten.append.callCount).toBe(0);
+
+    const native = fixture([decision(1)]);
+    const accepted = native.acceptSource({ actorDid, sourceDid: ownerDid, module, contextId: request.id, roles: [...roles] });
+    native.sources.set(accepted.id, { ...accepted, additionalModules: ['https://example.com/other-selection'] });
+    await native.coordinator.restore();
+    expect(native.ensureModules.callCount).toBe(0);
+    expect(native.sources.get(accepted.id)?.additionalModules).toEqual(['https://example.com/other-selection']);
+  });
 
   it('persists verified intent once and restores it on a fresh device', async () => {
     const first = fixture();

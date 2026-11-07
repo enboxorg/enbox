@@ -1,5 +1,6 @@
 import type { ModuleDefinition, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
+import { deepStrictEqual } from 'node:assert';
 import sinon from 'sinon';
 
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -906,7 +907,8 @@ describe('sync-messages', () => {
 
         rootAttempts++;
         expect(data).toBeInstanceOf(ReadableStream);
-        expect(await readStreamBytes(data!)).toEqual(payload);
+        // Compare every byte without the generic matcher's per-property overhead for a megabyte payload.
+        deepStrictEqual(await readStreamBytes(data!), payload);
         if (rootAttempts === 1) {
           messagesByCid.delete(messageCid);
         }
@@ -1077,7 +1079,7 @@ describe('sync-messages', () => {
         Message.getCid(args[0].message)));
       const parentApply = applyStub.getCalls()[applyCids.lastIndexOf(parentCid)];
       expect(parentApply).toBeDefined();
-      expect(await readStreamBytes(parentApply!.args[0].data as ReadableStream<Uint8Array>)).toEqual(payload);
+      deepStrictEqual(await readStreamBytes(parentApply!.args[0].data as ReadableStream<Uint8Array>), payload);
     });
 
     it('should return a retryable failure when a queried dependency payload read rejects', async () => {
