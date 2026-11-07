@@ -75,10 +75,13 @@ function harness(): {
     },
     listeners,
     session : new AbortController(),
-    sync    : { on: (listener: SyncEventListener): (() => void) => {
-      listeners.add(listener);
-      return (): void => { listeners.delete(listener); };
-    } } as unknown as SyncEngine,
+    sync    : {
+      getFollowedSource : async (id: string): Promise<FollowedSyncSource | undefined> => id === source.id ? source : undefined,
+      on                : (listener: SyncEventListener): (() => void) => {
+        listeners.add(listener);
+        return (): void => { listeners.delete(listener); };
+      },
+    } as unknown as SyncEngine,
   };
 }
 
@@ -146,6 +149,110 @@ describe('projected record views', () => {
     expect(first.closeCount).toBe(1);
     expect(next.closeCount).toBe(1);
     expect(test.listeners.size).toBe(0);
+  });
+
+  it('keeps an unknown root-store failure retryable without opening a generation prematurely', async () => {
+    const test = harness();
+    const native = new NativeView('recovered');
+    const failure = new Error('root store temporarily unavailable');
+    let unavailable = true;
+    let generations = 0;
+    test.sync.getFollowedSource = async (): Promise<FollowedSyncSource> => {
+      if (unavailable) { throw failure; }
+      return source;
+    };
+    const view = await createProjectedRecordView({
+      module     : consumer, source, sync       : test.sync,
+      generation : (): ProjectionViewGeneration<string> => {
+        generations++;
+        return { signal: new AbortController().signal, open: async () => native };
+      },
+    });
+    await settled(() => view.getSnapshot().status === 'error');
+    expect(view.getSnapshot()).toMatchObject({ error: failure, current: false });
+    expect(generations).toBe(0);
+    unavailable = false;
+    test.emit();
+    await settled(() => view.getSnapshot().status === 'ready');
+    expect(generations).toBe(1);
+    await view.close();
+  });
+
+  it.each(['forget', 'caller-abort', 'session-abort'] as const)(
+    'closes promptly after %s while the root lookup is stalled and ignores its late result', async (reason) => {
+      const test = harness();
+      const caller = new AbortController();
+      const lookup = deferred<FollowedSyncSource>();
+      let reading = false;
+      let generations = 0;
+      test.sync.getFollowedSource = (): Promise<FollowedSyncSource> => { reading = true; return lookup.promise; };
+      const view = await createProjectedRecordView({
+        module       : consumer, source, sync         : test.sync, callerSignal : caller.signal, signal       : test.session.signal,
+        generation   : (): never => { generations++; throw new Error('cancelled lookup must not open a generation'); },
+      });
+      await settled(() => reading);
+      if (reason === 'forget') { test.emit(false); }
+      else if (reason === 'caller-abort') { caller.abort(); }
+      else { test.session.abort(); }
+      let closed = false;
+      const closing = view.close().then((): void => { closed = true; });
+      try {
+        await settled(() => closed);
+        expect(generations).toBe(0);
+        expect(test.listeners.size).toBe(0);
+      } finally {
+        lookup.resolve(source);
+        await closing;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(generations).toBe(0);
+      expect(view.getSnapshot().current).toBe(false);
+    },
+  );
+
+  it('treats a missing root as terminal even when a wake queued another opening', async () => {
+    const test = harness();
+    const lookup = deferred<FollowedSyncSource | undefined>();
+    let reads = 0;
+    let generations = 0;
+    test.sync.getFollowedSource = (): Promise<FollowedSyncSource | undefined> => { reads++; return lookup.promise; };
+    const view = await createProjectedRecordView({
+      module     : consumer, source, sync       : test.sync,
+      generation : (): never => { generations++; throw new Error('missing root must not open a generation'); },
+    });
+    await settled(() => reads === 1);
+    test.emit();
+    lookup.resolve(undefined);
+    await settled(() => test.listeners.size === 0);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(reads).toBe(1);
+    expect(generations).toBe(0);
+    expect(view.getSnapshot()).toMatchObject({ status: 'error', current: false, error: expect.any(ContextRetiredError) });
+    await view.close();
+  });
+
+  it('recovers consumer retirement during a pending opening when the root remains active', async () => {
+    const test = harness();
+    const oldScope = new AbortController();
+    const pending = deferred<ExpandableRecordView<string>>();
+    const late = new NativeView('retired');
+    const next = new NativeView('current');
+    let opening = false;
+    let generation: ProjectionViewGeneration<string> = {
+      signal : oldScope.signal,
+      open   : (): Promise<ExpandableRecordView<string>> => { opening = true; return pending.promise; },
+    };
+    const view = await createProjectedRecordView({ module: consumer, source, sync: test.sync, generation: () => generation });
+    await settled(() => opening);
+    generation = { signal: new AbortController().signal, open: async (): Promise<ExpandableRecordView<string>> => next };
+    oldScope.abort(new ContextRetiredError(source.contextId));
+    await settled(() => view.getSnapshot().records[0] === 'current');
+    expect(view.getSnapshot().current).toBe(true);
+    pending.resolve(late);
+    await settled(() => late.closed);
+    expect(view.getSnapshot().records).toEqual(['current']);
+    expect(test.listeners.size).toBe(1);
+    await view.close();
   });
 
   it('publishes noncurrent before closing a lost generation and reopens without replacing root intent', async () => {

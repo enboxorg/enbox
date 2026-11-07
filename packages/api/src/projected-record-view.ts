@@ -3,9 +3,9 @@ import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
 
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { ObservedView } from './observed-view.js';
-import { syncEventCoversModule } from '@enbox/agent';
 import { combineAbortSignals, openView, whileSignalsActive } from './view-opening.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
+import { followedSyncSourceActiveEqual, syncEventCoversModule } from '@enbox/agent';
 
 export type ProjectionViewGeneration<Item> = {
   open(signal: AbortSignal): Promise<ExpandableRecordView<Item>>;
@@ -79,12 +79,33 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     if (this._cleanupFailure !== undefined) { throw this._cleanupFailure.reason; }
   }
 
+  /** A missed root-retirement notification must not restart optional consumer recovery indefinitely. */
+  private async verifyRootBeforeOpening(): Promise<boolean> {
+    const { source, sync } = this._options;
+    let currentRoot: FollowedSyncSource | undefined;
+    try {
+      currentRoot = await whileSignalsActive(() => sync.getFollowedSource(source.id),
+        [this._closeController.signal, this._callerSignal, this._sessionSignal]);
+    } catch (error: unknown) {
+      if (!this.isClosed) { this.fail(error); }
+      return false;
+    }
+    if (this.isClosed) { return false; }
+    if (currentRoot === undefined || !followedSyncSourceActiveEqual(source, currentRoot)) {
+      this.fail(new ContextRetiredError(source.contextId));
+      void this.close().catch((): void => {});
+      return false;
+    }
+    return true;
+  }
+
   private requestOpen(): void {
     if (this.isClosed || this._inner !== undefined) { return; }
     if (this._opening !== undefined) { this._reopen = true; return; }
     this._reopen = false;
     const pending = Promise.resolve().then(async (): Promise<void> => {
       if (this.isClosed) { return; }
+      if (!await this.verifyRootBeforeOpening() || this.isClosed) { return; }
       const generation = this._options.generation();
       const controller = new AbortController();
       const signal = combineAbortSignals(this._closeController.signal, this._callerSignal, this._sessionSignal, controller.signal)!;

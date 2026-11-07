@@ -681,6 +681,48 @@ describe('TypedEnbox contexts', () => {
     await view.close();
   });
 
+  it.each(['missing', 'replaced'] as const)(
+    'stops consumer recovery when the durable root is silently %s without a sync event', async (change) => {
+      const context = await typed.contexts.withModules({ realtime: RealtimeModule })
+        .follow('workspace', { id: contextId, ownerDid: sourceDid });
+      const realtime = context.using(RealtimeModule);
+      const lifetime = new AbortController();
+      const close = sinon.stub().resolves();
+      agent.processDwnRequest.withArgs(sinon.match({
+        messageType   : DwnInterface.RecordsSubscribe, target        : sourceDid,
+        messageParams : { filter: { module: RealtimeModule.definition.module } },
+      })).resolves({ reply: { status: { code: 200, detail: 'OK' }, roleRecordId: current!.id, subscription: { close } } });
+      const view = await realtime.records.observe('workspace/live', {
+        signal: lifetime.signal, materialize: true, pagination: { limit: 1 },
+      });
+      try {
+        await view.ready();
+        current = change === 'missing' ? undefined : { ...current!, acceptanceId: 'replacement-acceptance' };
+        ensureModules.callsFake(async (): Promise<FollowedSyncSource> => {
+          throw new FollowedSourceNotReadyError('the original root acceptance is unavailable');
+        });
+        let reads = 0;
+        get.callsFake(async (id: string): Promise<FollowedSyncSource | undefined> => {
+          // Bound the pre-fix microtask loop so this adversarial test cannot starve its runner.
+          if (++reads > 6) { lifetime.abort(new Error('unbounded consumer reopen')); }
+          return current?.id === id ? current : undefined;
+        });
+        const requestsBefore = agent.processDwnRequest.callCount;
+        await expect(realtime.records.query('workspace/live')).rejects.toBeInstanceOf(ContextRetiredError);
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(lifetime.signal.aborted).toBe(false);
+        expect(reads).toBeLessThanOrEqual(3);
+        expect(view.getSnapshot()).toMatchObject({ status: 'error', current: false });
+        expect(agent.processDwnRequest.callCount).toBe(requestsBefore);
+        expect(follow.callCount).toBe(1);
+        expect(intentRecords).toHaveLength(1);
+      } finally {
+        lifetime.abort();
+        await view.close();
+      }
+    },
+  );
+
   it('binds owner and member contexts to the same records contract', async () => {
     const owned = await typed.contexts.open('workspace', contextId);
 
