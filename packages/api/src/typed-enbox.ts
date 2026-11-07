@@ -677,7 +677,10 @@ export type ContextsApi<
   D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = Readonly<{
-  /** Select explicit consumer modules without installing, granting, or following anything. */
+  /**
+   * Select explicit consumers without installing, granting, or following anything.
+   * Map keys are application registration names, not ModuleDefinition.uses aliases.
+   */
   withModules(modules: Readonly<globalThis.Record<string, TypedModule>>): ContextsApi<D, C>;
   open<Root extends Exclude<ModulePaths<D> & string, ModuleRolePaths<D>>>(
     path: Root,

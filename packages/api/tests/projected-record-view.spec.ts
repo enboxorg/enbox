@@ -255,6 +255,49 @@ describe('projected record views', () => {
     await view.close();
   });
 
+  it('coalesces repeated wakes through the shared drain without overlapping generation opens', async () => {
+    const test = harness();
+    const first = deferred<ExpandableRecordView<string>>();
+    const second = deferred<ExpandableRecordView<string>>();
+    const native = new NativeView('ready');
+    let opens = 0;
+    let active = 0;
+    let maximumActive = 0;
+    const view = await createProjectedRecordView({
+      module     : consumer, source, sync       : test.sync,
+      generation : () => ({
+        signal : new AbortController().signal,
+        open   : async (): Promise<ExpandableRecordView<string>> => {
+          const pending = opens++ === 0 ? first.promise : second.promise;
+          active++;
+          maximumActive = Math.max(maximumActive, active);
+          try { return await pending; }
+          finally { active--; }
+        },
+      }),
+    });
+    try {
+      await settled(() => opens === 1);
+      for (let wake = 0; wake < 10; wake++) { test.emit(); }
+      expect(opens).toBe(1);
+      first.reject(new Error('transient open failure'));
+      await settled(() => opens === 2);
+      expect(maximumActive).toBe(1);
+      for (let wake = 0; wake < 10; wake++) { test.emit(); }
+      expect(opens).toBe(2);
+      second.resolve(native);
+      await settled(() => view.getSnapshot().status === 'ready');
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(opens).toBe(2);
+      expect(maximumActive).toBe(1);
+      expect(view.getSnapshot().records).toEqual(['ready']);
+    } finally {
+      first.resolve(native);
+      second.resolve(native);
+      await view.close();
+    }
+  });
+
   it('publishes noncurrent before closing a lost generation and reopens without replacing root intent', async () => {
     const test = harness();
     const first = new NativeView('first');

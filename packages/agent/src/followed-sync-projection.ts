@@ -6,6 +6,7 @@ import type { RoleReplicationSupportBatch } from './sync-role-replication-suppor
 import type { FollowedSyncProjection, FollowedSyncSource } from './followed-sync-source.js';
 
 import { DwnInterface } from './types/dwn.js';
+import { orderMessagesForAdmission } from './sync-admission-order.js';
 import { DwnInterfaceName, DwnMethodName, preloadModuleDefinitions, resolveModuleGraph, resolveModuleRoleProjection } from '@enbox/dwn-sdk-js';
 import { queryLocalMessageFeed, queryRemoteMessageFeed } from './sync-messages.js';
 
@@ -115,16 +116,9 @@ export async function prepareFollowedSyncProjection(params: {
     throw new FollowedSyncProjectionUnavailableError(`module '${module}' did not prove the accepted root role.`);
   }
 
-  const configurations: ModulesConfigureMessage[] = [];
-  const visited = new Set<string>();
-  const append = (uri: string): void => {
-    if (visited.has(uri)) {return;}
-    visited.add(uri);
-    const message = messages.get(uri)!;
-    for (const target of Object.values(message.descriptor.definition.uses ?? {})) {append(target);}
-    configurations.push(message);
-  };
-  append(module);
+  const configurations = orderMessagesForAdmission(
+    [...definitions.keys()].map(uri => ({ message: messages.get(uri)! })),
+  ).map(entry => entry.message);
   return { configurations, projection, graph };
 }
 

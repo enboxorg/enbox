@@ -1,3 +1,5 @@
+import type { ModuleDefinition, ModuleRuleSet } from '@enbox/dwn-sdk-js';
+
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { FollowedSyncProjection, FollowedSyncSource } from '../src/followed-sync-source.js';
 
@@ -73,6 +75,58 @@ describe('Followed context consumer projections', () => {
   afterEach(async () => {
     sinon.restore();
     await engine.close();
+  });
+
+  it('orders a diamond of signed consumer configurations without admitting unrelated root-support metadata', async () => {
+    const owner = await TestDataGenerator.generatePersona();
+    const actor = await TestDataGenerator.generatePersona();
+    const graph = projectionGraph();
+    const notebook = structuredClone(graph.definitionsByUri.get(MODULE)!);
+    notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
+    (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
+    const shared = `${MODULE}/shared`;
+    const left = `${MODULE}/left`;
+    const right = `${MODULE}/right`;
+    const unrelated = `${MODULE}/unrelated`;
+    const consumer = structuredClone(graph.definitionsByUri.get(REALTIME)!);
+    consumer.uses = { ...consumer.uses, left, right };
+    const definition = (module: string, uses?: Record<string, string>): ModuleDefinition => ({
+      module, published: true, types: { item: {} }, structure: { item: {} }, ...(uses === undefined ? {} : { uses }),
+    });
+    const messages = await Promise.all([
+      notebook, consumer, definition(left, { shared }), definition(right, { shared }), definition(shared), definition(unrelated),
+    ].map(async moduleDefinition => (await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition })).message));
+    const byModule = new Map(messages.map(message => [message.descriptor.definition.module, message]));
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies  : [MODULE, unrelated].map(module => ({ message: byModule.get(module), isLatestBaseState: true })),
+      resolvedGraph : resolveModuleGraph(notebook, () => undefined), root          : {},
+    });
+    const sendRequest = sinon.stub().callsFake(async ({ messageParams }: { messageParams: { filter: { module: string } } }) => ({
+      reply: { status: { code: 200, detail: 'OK' }, entries: [byModule.get(messageParams.filter.module)] },
+    }));
+    const query = await TestDataGenerator.generateMessagesQuery({ author: actor });
+    sinon.stub(engine, 'agent').get(() => ({
+      dwn               : { sendRequest },
+      processDwnRequest : sinon.stub().resolves({ message: query.message }),
+      rpc               : { sendDwnRequest: sinon.stub().resolves({ status: { code: 200 }, entries: [], roleRecordId: root.id }) },
+    } as unknown as EnboxPlatformAgent));
+    const source = { ...root, sourceDid: owner.did, actorDid: actor.did, additionalModules: [REALTIME] };
+
+    const result = await engine['prepareFollowedProjectionUpdates'](source, undefined, () => true);
+
+    expect(result.unavailable).toEqual([]);
+    expect(result.pending).toEqual([]);
+    expect(result.prepared).toHaveLength(1);
+    const configurations = result.prepared[0].configurations;
+    const ordered = configurations.map(message => message.descriptor.definition.module);
+    expect([...ordered].sort()).toEqual([MODULE, REALTIME, shared, left, right].sort());
+    expect(ordered.indexOf(shared)).toBeLessThan(ordered.indexOf(left));
+    expect(ordered.indexOf(shared)).toBeLessThan(ordered.indexOf(right));
+    for (const provider of [MODULE, left, right]) {
+      expect(ordered.indexOf(provider)).toBeLessThan(ordered.indexOf(REALTIME));
+    }
+    for (const message of configurations) {expect(message).toBe(byModule.get(message.descriptor.definition.module)!);}
+    expect(sendRequest.callCount).toBe(4);
   });
 
   it('prepares independent consumers with bounded requests and releases shared support only after they settle', async () => {
@@ -236,6 +290,80 @@ describe('Followed context consumer projections', () => {
     });
   });
 
+  for (const change of ['forget', 'projection removal', 'projection replacement', 'acceptance replacement'] as const) {
+    it(`prunes a cached graph after external ${change} while retaining other accepted graphs`, async () => {
+      const graph = projectionGraph();
+      sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({
+        prepared: [{ projection: projection(), configurations: [], graph }], unavailable: [], pending: [],
+      });
+      sinon.stub(engine as never, 'admitFollowedProjection').resolves();
+      const selected = await engine.ensureFollowedSourceModules(root, [REALTIME]);
+      const other = { ...root, id: 'another-role', contextId: 'another-notebook' };
+      await engine['_followedSourceStore'].replace(other);
+      const otherSelected = await engine.ensureFollowedSourceModules(other, [REALTIME]);
+      expect(engine['_followedProjectionGraphs'].size).toBe(2);
+
+      if (change === 'forget') {
+        await engine['_followedSourceStore'].delete(root.id);
+      } else {
+        const changed = { ...selected };
+        if (change === 'projection removal') {
+          changed.projections = undefined;
+        } else if (change === 'acceptance replacement') {
+          changed.acceptanceId = 'new-acceptance';
+        } else {
+          changed.projections = [{ ...projection(), modulePaths: ['notebook/another-path'] }];
+        }
+        await engine['_followedSourceStore'].replace(changed);
+      }
+      await engine['refreshFollowedSourceState']();
+
+      expect(engine['_followedProjectionGraphs'].size).toBe(1);
+      const load = sinon.spy(engine as never, 'loadFollowedProjectionGraph');
+      expect(await engine.resolveFollowedSourceModuleGraph(otherSelected, REALTIME)).toBe(graph);
+      expect(load.notCalled).toBe(true);
+    });
+  }
+
+  it('keeps accepted graphs when paused or stopped offline and clears them with durable sync state', async () => {
+    const graph = projectionGraph();
+    sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({
+      prepared: [{ projection: projection(), configurations: [], graph }], unavailable: [], pending: [],
+    });
+    sinon.stub(engine as never, 'admitFollowedProjection').resolves();
+    const selected = await engine.ensureFollowedSourceModules(root, [REALTIME]);
+    const target = await engine['targetResolver'].buildTargetForSource(selected, undefined, REALTIME);
+    await engine['getOrCreateReplicationLink'](target);
+    await engine['pauseRoleLinksForActor'](root.actorDid);
+    expect(engine['_followedProjectionGraphs'].size).toBe(1);
+    await engine.stopSync();
+    expect(engine['_followedProjectionGraphs'].size).toBe(1);
+    const load = sinon.spy(engine as never, 'loadFollowedProjectionGraph');
+    expect(await engine.resolveFollowedSourceModuleGraph(selected, REALTIME)).toBe(graph);
+    expect(load.notCalled).toBe(true);
+
+    await engine.clear();
+    expect(engine['_followedProjectionGraphs'].size).toBe(0);
+    expect(await engine.listFollowedSources()).toEqual([]);
+  });
+
+  it('prunes a cached consumer when its new metadata cannot be admitted', async () => {
+    const prepare = sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({
+      prepared: [{ projection: projection(), configurations: [], graph: projectionGraph() }], unavailable: [], pending: [],
+    });
+    const admit = sinon.stub(engine as never, 'admitFollowedProjection').resolves();
+    const selected = await engine.ensureFollowedSourceModules(root, [REALTIME]);
+    expect(engine['_followedProjectionGraphs'].size).toBe(1);
+    admit.rejects(new Error('incompatible configuration'));
+    sinon.stub(console, 'warn');
+
+    const updated = await engine['reconcileFollowedSourceModules'](selected, [], true);
+    expect(prepare.callCount).toBe(2);
+    expect(updated.projections).toBeUndefined();
+    expect(engine['_followedProjectionGraphs'].size).toBe(0);
+    expect(followedSyncSourceActiveEqual(root, updated)).toBe(true);
+  });
+
   it('retains unavailable selections without blocking root refresh or claiming a consumer is current', async () => {
     sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({ prepared: [], unavailable: [REALTIME], pending: [] });
     const selected = await engine.ensureFollowedSourceModules(root, [REALTIME]);
@@ -346,10 +474,14 @@ describe('Followed context consumer projections', () => {
     for (const target of await engine['targetResolver'].buildTargetsForSource(selected)) {
       await engine['getOrCreateReplicationLink'](target);
     }
+    engine['_followedProjectionGraphs'].set(SyncEngineLevel['followedProjectionGraphKey'](selected, REALTIME), {
+      projection: projection(), graph: projectionGraph(),
+    });
 
     await engine.deleteFollowedSource(root);
     expect(await engine.getFollowedSource(root.id)).toBeUndefined();
     expect(await engine['replicationLinkStore'].getAllLinks()).toEqual([]);
+    expect(engine['_followedProjectionGraphs'].size).toBe(0);
   });
 
   it('cannot restore projections after the root is forgotten during preparation', async () => {

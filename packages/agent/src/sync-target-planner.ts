@@ -21,10 +21,6 @@ export interface SyncTargetPlanningResolver {
     options: SyncIdentityOptions,
     resolvedTargets?: SyncTargetResolution[],
   ): Promise<SyncTarget[]>;
-  buildTargetForSource(
-    source: FollowedSyncSource,
-    delegateDid?: string,
-  ): Promise<SyncTarget>;
   buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]>;
 }
 

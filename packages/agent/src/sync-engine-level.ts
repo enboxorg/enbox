@@ -818,6 +818,7 @@ export class SyncEngineLevel implements SyncEngine {
         await this.clearSyncDb();
         this._pausedIdentities.clear();
         this._followedSourceSnapshot.clear();
+        this._followedProjectionGraphs.clear();
         this._followedSourceSnapshotInitialized = true;
         this.invalidateSyncTargetsCache();
         for (const source of followedSources) {
@@ -1518,7 +1519,6 @@ export class SyncEngineLevel implements SyncEngine {
       const projections = new Map((current.projections ?? []).map(projection => [projection.module, projection]));
       for (const module of result.unavailable) {
         projections.delete(module);
-        this._followedProjectionGraphs.delete(SyncEngineLevel.followedProjectionGraphKey(current, module));
       }
       for (const prepared of result.prepared) {
         try {
@@ -1779,6 +1779,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (changed) {
       await this._followedSourceStore.replace(source, replaced.map(previous => previous.id));
       this._followedSourceSnapshot.set(SyncEngineLevel.followedContextKey(source), source);
+      this.pruneFollowedProjectionGraphs([...sources.filter(previous => !SyncEngineLevel.sameFollowedContext(previous, source)), source]);
       this.invalidateSyncTargetsCache();
       this.emitFollowedSourceChange(source, source.id, true, SyncEngineLevel.changedProjectionModules(existing, source));
     }
@@ -1787,11 +1788,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Remove links for followed sources replaced by a durable commit. */
   private async removeFollowedSourceLinksForSources(sources: readonly FollowedSyncSource[]): Promise<void> {
-    for (const source of sources) {
-      for (const module of [source.module, ...(source.additionalModules ?? [])]) {
-        this._followedProjectionGraphs.delete(SyncEngineLevel.followedProjectionGraphKey(source, module));
-      }
-    }
     const targets = (await Promise.all(sources.map(source => this.targetResolver.buildTargetsForSource(source)))).flat();
     await Promise.allSettled(targets.map(target => this.removeFollowedSourceLink(target)));
   }
@@ -1944,9 +1940,11 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async commitFollowedSourceRemoval(source: FollowedSyncSource): Promise<void> {
-    this.initializeFollowedSourceSnapshot(await this.readFollowedSources());
+    const sources = await this.readFollowedSources();
+    this.initializeFollowedSourceSnapshot(sources);
     await this._followedSourceStore.delete(source.id);
     this._followedSourceSnapshot.delete(SyncEngineLevel.followedContextKey(source));
+    this.pruneFollowedProjectionGraphs(sources.filter(current => current.id !== source.id));
     this.invalidateSyncTargetsCache();
     this.emitFollowedSourceChange(source, undefined, true, SyncEngineLevel.changedProjectionModules(source, undefined));
   }
@@ -2012,6 +2010,22 @@ export class SyncEngineLevel implements SyncEngine {
     }).sort(lexicographicalCompare);
   }
 
+  /** Retain cached graphs only for the exact projections in the durable accepted-source catalog. */
+  private pruneFollowedProjectionGraphs(sources: readonly FollowedSyncSource[]): void {
+    const active = new Map<string, FollowedSyncProjection>();
+    for (const source of sources) {
+      for (const module of [source.module, ...(source.projections?.map(projection => projection.module) ?? [])]) {
+        active.set(SyncEngineLevel.followedProjectionGraphKey(source, module), getFollowedSyncProjection(source, module)!);
+      }
+    }
+    for (const [key, cached] of this._followedProjectionGraphs) {
+      const projection = active.get(key);
+      if (projection === undefined || !followedSyncProjectionEqual(cached.projection, projection)) {
+        this._followedProjectionGraphs.delete(key);
+      }
+    }
+  }
+
   /** Apply durable catalog changes to this engine's events and replication sessions. */
   private async refreshFollowedSourceState(): Promise<FollowedSyncSource[]> {
     let sources: FollowedSyncSource[];
@@ -2019,6 +2033,7 @@ export class SyncEngineLevel implements SyncEngine {
     await this._lifecycle.acquireSync();
     try {
       sources = await this.readFollowedSources();
+      this.pruneFollowedProjectionGraphs(sources);
       const current = new Map(sources.map(source => [SyncEngineLevel.followedContextKey(source), source]));
       const changes: Array<{ source: FollowedSyncSource; followedSourceId: string | undefined; affectedModules: string[] }> = [];
       for (const key of new Set([...this._followedSourceSnapshot.keys(), ...current.keys()])) {

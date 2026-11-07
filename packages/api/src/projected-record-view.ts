@@ -35,7 +35,6 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
   private _generation?: { controller: AbortController; detach(): void; pendingView?: ExpandableRecordView<Item> };
   private _inner?: ExpandableRecordView<Item>;
   private _opening?: Promise<void>;
-  private _reopen = false;
   private _unsubscribe?: () => void;
 
   public constructor(options: ProjectedRecordViewOptions<Item>) {
@@ -46,7 +45,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
 
   public open(): Promise<void> {
     this._unsubscribe = this._options.sync.on((event): void => this.handleEvent(event));
-    this.requestOpen();
+    this.requestMaterialization();
     return Promise.resolve();
   }
 
@@ -54,7 +53,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     if (this._inner !== undefined) { return this._inner.refresh(); }
     const state = this.getSnapshot();
     this.publish(Object.freeze({ status: 'loading', current: false, hasMore: state.hasMore, records: state.records }));
-    this.requestOpen();
+    this.requestMaterialization();
     return this.ready();
   }
 
@@ -64,7 +63,11 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
   }
 
   protected async materialize(): Promise<void> {
-    if (this._inner !== undefined) { this.publish(this._inner.getSnapshot()); }
+    if (this._inner !== undefined || this.isClosed) { return; }
+    const opening = Promise.resolve().then(() => this.openGeneration());
+    this._opening = opening;
+    try { await opening; }
+    finally { if (this._opening === opening) { this._opening = undefined; } }
   }
 
   protected handleLifetimeAbort(reason: unknown, sessionEnded: boolean): void {
@@ -99,11 +102,9 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     return true;
   }
 
-  private requestOpen(): void {
-    if (this.isClosed || this._inner !== undefined) { return; }
-    if (this._opening !== undefined) { this._reopen = true; return; }
-    this._reopen = false;
-    const pending = Promise.resolve().then(async (): Promise<void> => {
+  private async openGeneration(): Promise<void> {
+    let attempted: NonNullable<typeof this._generation> | undefined;
+    try {
       if (this.isClosed) { return; }
       if (!await this.verifyRootBeforeOpening() || this.isClosed) { return; }
       const generation = this._options.generation();
@@ -113,11 +114,12 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
         if (this.isClosed || this._generation !== current) { return; }
         this.fail(new ContextNotReadyError(generation.signal.reason));
         this.clearGeneration();
-        this.requestOpen();
+        this.requestMaterialization();
       };
       const current: NonNullable<typeof this._generation> = {
         controller, detach: (): void => generation.signal.removeEventListener('abort', retired),
       };
+      attempted = current;
       this._generation = current;
       generation.signal.addEventListener('abort', retired, { once: true });
       if (generation.signal.aborted) { retired(); return; }
@@ -144,19 +146,14 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
       const detach = current.detach;
       current.detach = (): void => { detach(); unsubscribe(); };
       this.publish(view.getSnapshot());
-    }).catch((error: unknown): void => {
-      if (!this.isClosed && (this._generation !== undefined || !this._reopen)) {
-        this.fail(error);
-        this.clearGeneration();
-        if (this._sessionSignal?.aborted || error instanceof ContextRetiredError) {
-          void this.close().catch((): void => {});
-        }
+    } catch (error: unknown) {
+      if (this.isClosed || (attempted !== undefined && this._generation !== attempted)) { return; }
+      this.fail(error);
+      this.clearGeneration();
+      if (this._sessionSignal?.aborted || error instanceof ContextRetiredError) {
+        void this.close().catch((): void => {});
       }
-    }).finally((): void => {
-      if (this._opening === pending) { this._opening = undefined; }
-      if (this._reopen) { this.requestOpen(); }
-    });
-    this._opening = pending;
+    }
   }
 
   private clearGeneration(): void {
@@ -192,7 +189,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     } else if (!syncEventCoversModule(event, module)) {
       return;
     }
-    if (this._inner === undefined) { this.requestOpen(); }
+    if (this._inner === undefined) { this.requestMaterialization(); }
   }
 
   private fail(cause: unknown): void {
