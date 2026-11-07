@@ -609,7 +609,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
     await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
 
-    expect(buildTarget.calledOnceWithExactly(followed, undefined)).toBe(true);
+    expect(buildTarget.calledOnceWithExactly(followed, undefined, followed.module)).toBe(true);
     expect(reconcile.calledOnceWithMatch(target, { direction: 'pull' }, sinon.match.func)).toBe(true);
   });
 

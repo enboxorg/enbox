@@ -32,6 +32,7 @@ import type { ContextFollowRecord } from './context-following.js';
 import type { ContextView } from './context-view.js';
 import type { MaterializedMemberContext as MaterializedMemberContextRow } from './materialized-member-context-view.js';
 import type { Module } from './module.js';
+import type { ProjectionViewGeneration } from './projected-record-view.js';
 import type {
   AudienceKeyDeliveryOutcome,
   DwnPaginationCursor,
@@ -46,6 +47,7 @@ import type {
   ContextRolesAtPath,
   ContextRootPath,
   DirectSingletonChildPaths,
+  ModuleAttachmentPaths,
   ModuleDependencies,
   ModuleDependency,
   ModulePaths,
@@ -66,8 +68,10 @@ import type { RecordFilter, RecordQuery } from './record-query.js';
 import { ContextFollowing } from './context-following.js';
 import { createContextView } from './context-view.js';
 import { createMaterializedMemberContextView } from './materialized-member-context-view.js';
+import { createProjectedRecordView } from './projected-record-view.js';
 import { Did } from '@enbox/dids';
 import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
+import { FollowedContextProjection } from './followed-context-projection.js';
 import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { mergeRecordPatch } from './record-patch.js';
 import { RecordConflictError } from './record-conflict-error.js';
@@ -81,9 +85,11 @@ import {
   getTypeName,
   Modules,
   preloadModuleDefinitions,
+  resolveModuleAttachment,
   resolveModuleContextRoles,
   resolveModuleGraph,
   resolveModuleRoleContextScope,
+  resolveModuleRoleProjection,
   Time,
   validateImportedModuleContracts,
 } from '@enbox/dwn-sdk-js';
@@ -423,11 +429,17 @@ export type RecordObserveRequest<
 type TypedEnboxOptions = {
   /** Shared installation bindings used when a module prepares its explicit providers. */
   dependencyApis?: Map<ModuleDependency, TypedEnbox>;
+  /** Explicit consumer modules allowed to project this module's shared contexts. */
+  contextModules?: Readonly<globalThis.Record<string, TypedModule>>;
   /** Tenant and root scope injected by an owner or member context. */
   context?: {
     contextId: string;
     modulePath: string;
     modulePaths: ReadonlySet<string>;
+    /** Verify the optional projection before an ordinary record operation. */
+    prepare?(): Promise<void>;
+    /** Wait on existing sync wakes before opening a consumer observation. */
+    waitUntilReady?(signal?: AbortSignal): Promise<void>;
   };
 
   /** Session-owned role-delivery projection and retry operations. */
@@ -543,6 +555,17 @@ export type ContextMembersApi<
   ): Promise<ContextMember<D, C, SelectedRole>>;
 }>;
 
+/** A selected module's local records bound beneath one existing owner or member context. */
+export type ContextModuleBinding<
+  M extends TypedModule = TypedModule,
+  OwningModuleUri extends string = string,
+  OwningModulePath extends string = string,
+> = Readonly<{
+  module: M['definition']['module'];
+  path: ModuleAttachmentPaths<M, OwningModuleUri, OwningModulePath>;
+  records: ContextRecordsApi<M['definition'], M['codecs'], ModuleAttachmentPaths<M, OwningModuleUri, OwningModulePath>>;
+}>;
+
 type ContextBase<
   D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
@@ -558,6 +581,8 @@ type ContextBase<
   path: Root;
   /** Typed records API with this context's tenant and root scope already bound. */
   records: ContextRecordsApi<D, C, Root>;
+  /** Bind a consumer selected by contexts.withModules(); this never creates follow intent. */
+  using<M extends TypedModule>(module: M): ContextModuleBinding<M, D['module'], Root>;
   /** Record ID of the context root at `path`. */
   rootRecordId: string;
 };
@@ -652,6 +677,8 @@ export type ContextsApi<
   D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
 > = Readonly<{
+  /** Select explicit consumer modules without installing, granting, or following anything. */
+  withModules(modules: Readonly<globalThis.Record<string, TypedModule>>): ContextsApi<D, C>;
   open<Root extends Exclude<ModulePaths<D> & string, ModuleRolePaths<D>>>(
     path: Root,
     id: string,
@@ -990,7 +1017,7 @@ export type TypedDeleteRequest = {
 
 type ContextRecordPaths<
   D extends ModuleDefinition,
-  Root extends ModulePaths<D> & string,
+  Root extends string,
 > = Exclude<
   Extract<ModulePaths<D> & string, Root | `${Root}/${string}`>,
   ModuleRolePaths<D>
@@ -1005,7 +1032,7 @@ type ContextRecordMaterialization<
 
 type ContextDescendantPaths<
   D extends ModuleDefinition,
-  Root extends ModulePaths<D> & string,
+  Root extends string,
 > = Root extends string
   ? Exclude<ContextRecordPaths<D, Root>, Root>
   : never;
@@ -1141,7 +1168,7 @@ type TypedRecordsApi<
 export type ContextRecordsApi<
   D extends ModuleDefinition = ModuleDefinition,
   C extends RecordCodecMap = RecordCodecMap,
-  Root extends ModulePaths<D> & string = ModulePaths<D> & string,
+  Root extends string = ModulePaths<D> & string,
 > = TypedRecordsApi<
   D,
   C,
@@ -1292,6 +1319,10 @@ export class TypedEnbox<
   private _ensureReadyPromise: Promise<void> | null = null;
   /** @internal */
   private _contexts?: ContextsApi<D, C>;
+  private readonly _contextBindings: {
+    modules: Readonly<globalThis.Record<string, TypedModule>>;
+    contexts: ContextsApi<D, C>;
+  }[] = [];
   /** @internal */
   private readonly _validPaths: Set<string>;
   /** @internal */
@@ -1480,14 +1511,15 @@ export class TypedEnbox<
         throw new TypeError('TypedEnbox.contexts: this module does not support saved following choices.');
       }
       following ??= new ContextFollowing({
-        actorDid      : this._dwn.connectedDid,
-        append        : (intent, after): Promise<ContextFollowRecord> => this.appendContextFollow(intent, after),
-        openView      : (signal): Promise<ExpandableRecordView<ContextFollowRecord>> => this.observeContextFollows(signal),
-        definition    : this._definition,
-        resolvedGraph : this._resolvedGraph,
-        read          : (): Promise<ContextFollowRecord[]> => this.readContextFollows(),
-        signal        : this._options.signal,
-        sync          : this._options.sync,
+        actorDid          : this._dwn.connectedDid,
+        append            : (intent, after): Promise<ContextFollowRecord> => this.appendContextFollow(intent, after),
+        openView          : (signal): Promise<ExpandableRecordView<ContextFollowRecord>> => this.observeContextFollows(signal),
+        definition        : this._definition,
+        resolvedGraph     : this._resolvedGraph,
+        additionalModules : (path): readonly string[] => this.contextModulesAt(path).map(module => module.definition.module),
+        read              : (): Promise<ContextFollowRecord[]> => this.readContextFollows(),
+        signal            : this._options.signal,
+        sync              : this._options.sync,
       });
       return following;
     };
@@ -1577,7 +1609,8 @@ export class TypedEnbox<
         path         : normalizedPath,
         records,
         rootRecordId : contextRootRecordId(id),
-      }) as OwnedContext<D, C, Root>;
+        using        : this.createContextModuleAccessor(normalizedPath, id),
+      }) as unknown as OwnedContext<D, C, Root>;
       boundOwners.set(key, context);
       return context;
     };
@@ -1590,7 +1623,7 @@ export class TypedEnbox<
       if (isModuleRolePath(this._definition, normalizedPath)) {
         throw new TypeError('TypedEnbox.contexts.open cannot open a role record as a context.');
       }
-      if (id.split('/').length !== normalizedPath.split('/').length) {
+      if (id.split('/').length !== this.resolveRecordNode(normalizedPath).physicalDepth) {
         throw new TypeError(`TypedEnbox.contexts.open: id must identify a '${normalizedPath}' context.`);
       }
       assertValidRecordWithin(this.resolveRecordNode(normalizedPath), id, true);
@@ -1746,9 +1779,10 @@ export class TypedEnbox<
     });
 
     this._contexts = {
-      open   : openContext,
-      follow : followContext as ContextsApi<D, C>['follow'],
-      forget : async (request: ContextFollowTarget): Promise<void> => {
+      withModules : (modules): ContextsApi<D, C> => this.withContextModules(modules),
+      open        : openContext,
+      follow      : followContext as ContextsApi<D, C>['follow'],
+      forget      : async (request: ContextFollowTarget): Promise<void> => {
         this._options.signal?.throwIfAborted();
         const target = normalizeContextFollowTarget(request, 'TypedEnbox.contexts.forget');
         await getFollowing().forgetContext(target);
@@ -2154,6 +2188,9 @@ export class TypedEnbox<
       throw new TypeError('TypedEnbox.records.subscribe: at least one module path is required.');
     }
     const paths = [...new Set(requestedPaths.map(normalizePath))];
+    if (this._options.context?.waitUntilReady !== undefined) {
+      await whileSignalsActive(() => this._options.context!.waitUntilReady!(signal), [signal, this._options.signal]);
+    }
     await whileSignalsActive(
       () => Promise.all(paths.map(path => this._ensureReady(path))),
       [signal],
@@ -2190,7 +2227,7 @@ export class TypedEnbox<
           event.type === 'followed-context:change' &&
           event.actorDid === this._dwn.connectedDid &&
           event.contextId === contextId &&
-          event.module === this.module &&
+          event.module === (this._dwn.followedSourceModule ?? this.module) &&
           event.tenantDid === this._dwn.recordTenantDid &&
           followedContextChangeRetiresSource({
             acceptanceId : followedSourceAcceptanceId!,
@@ -2498,6 +2535,57 @@ export class TypedEnbox<
       return { state: 'pending' };
     }
     return 'reason' in state ? { reason: state.reason, state: state.state } : { state: state.state };
+  }
+
+  /** Reuse a context catalog only for the same explicit artifacts and codec identities. */
+  private withContextModules(modules: Readonly<globalThis.Record<string, TypedModule>>): ContextsApi<D, C> {
+    this._assertActive();
+    if (modules === null || typeof modules !== 'object' || Array.isArray(modules)) {
+      throw new TypeError('ContextsApi.withModules requires a named map of typed consumer modules.');
+    }
+    const selected = Object.freeze({ ...this._options.contextModules, ...modules });
+    const names = Object.keys(selected).sort(compareCodeUnits);
+    if (names.length === 0) { return this.contexts; }
+    const uris = new Set<string>();
+    for (const name of names) {
+      const module = selected[name];
+      const graph = resolveTypedModuleGraph(module);
+      if (module.definition.module === this.module || uris.has(module.definition.module)) {
+        throw new TypeError('ContextsApi.withModules requires distinct consumer module URIs.');
+      }
+      uris.add(module.definition.module);
+      if (![...this._resolvedGraph.nodesByDeclaredPath.values()].some(root =>
+        this.hasContextModuleAttachment(graph, root))) {
+        throw new TypeError(`ContextsApi.withModules: '${module.definition.module}' does not attach to an owned root of '${this.module}'.`);
+      }
+    }
+    const cached = this._contextBindings.find(binding => Object.keys(binding.modules).length === names.length
+      && names.every(name => binding.modules[name] === selected[name]));
+    if (cached !== undefined) { return cached.contexts; }
+    const contexts = new TypedEnbox<D, C>(this._dwn, {
+      definition: this._definition, codecs: this._codecs, dependencies: this._dependencies, resolvedGraph: this._resolvedGraph,
+    }, { ...this._options, dependencyApis: this._dependencyApis, contextModules: selected }).contexts;
+    this._contextBindings.push({ modules: selected, contexts });
+    return contexts;
+  }
+
+  /** Optional bindings may target any concrete owner root, without inventing membership authority. */
+  private hasContextModuleAttachment(graph: ResolvedModuleGraph, root: ResolvedModuleNode): boolean {
+    if (root.kind !== 'record' || root.ruleSet.$role === true || root.owningModuleUri !== this.module) { return false; }
+    try {
+      resolveModuleAttachment(graph, root);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof TypeError) { return false; }
+      throw error;
+    }
+  }
+
+  /** Only declared attachments at this exact canonical root participate in its projection selection. */
+  private contextModulesAt(path: string): TypedModule[] {
+    const root = this.resolveRecordNode(path);
+    return Object.values(this._options.contextModules ?? {}).filter(module =>
+      this.hasContextModuleAttachment(resolveTypedModuleGraph(module), root));
   }
 
   /** Resolve the exact feed and operation paths governed by one contextual role. */
@@ -2998,6 +3086,7 @@ export class TypedEnbox<
       contextId                  : source.contextId,
       followedSourceAcceptanceId : source.acceptanceId,
       followedSourceId           : source.id,
+      followedSourceModule       : source.module,
       invalidateReplica          : async (): Promise<void> => {
         await sync.markFollowedSourcePullPending(source);
       },
@@ -3064,8 +3153,139 @@ export class TypedEnbox<
       }, signal),
       role         : scope.role,
       rootRecordId : contextRootRecordId(source.contextId),
+      using        : this.createContextModuleAccessor(scope.modulePath, source.contextId, source, signal),
       refresh,
     }) as unknown as MemberContext<D, C>;
+  }
+
+  /** Select only registered artifacts; adding a binding never appends following intent. */
+  private createContextModuleAccessor<Root extends string>(
+    rootPath: Root,
+    contextId: string,
+    source?: FollowedSyncSource,
+    signal: AbortSignal | undefined = this._options.signal,
+  ): <M extends TypedModule>(module: M) => ContextModuleBinding<M, D['module'], Root> {
+    type Binding = { binding: ContextModuleBinding; records: ContextModuleBinding['records']; signal?: AbortSignal };
+    const bindings = new Map<TypedModule, Binding>();
+    const getBinding = (module: TypedModule): Binding => {
+      this._assertActive();
+      signal?.throwIfAborted();
+      if (!Object.values(this._options.contextModules ?? {}).includes(module)) {
+        throw new TypeError('Context.using requires a consumer explicitly selected with contexts.withModules().');
+      }
+      const existing = bindings.get(module);
+      if (existing !== undefined && existing.signal?.aborted !== true) { return existing; }
+      const result = this.bindContextModule(module, rootPath, contextId, source, signal);
+      const records = result.binding.records;
+      let binding = result.binding;
+      if (source !== undefined) {
+        const observe = ((path: string, request: RecordObserveRequest<ModuleDefinition, string>): Promise<ExpandableRecordView<unknown>> => {
+          result.signal?.throwIfAborted();
+          return createProjectedRecordView({
+            callerSignal : request.signal,
+            module       : module.definition.module,
+            signal,
+            source,
+            sync         : this._options.sync!,
+            generation   : (): ProjectionViewGeneration<unknown> => {
+              const current = getBinding(module);
+              return {
+                signal : current.signal!,
+                open   : (viewSignal: AbortSignal): Promise<ExpandableRecordView<unknown>> =>
+                  current.records.observe(path, { ...request, signal: viewSignal }),
+              };
+            },
+          });
+        }) as typeof records.observe;
+        binding = Object.freeze({ ...result.binding, records: Object.freeze({ ...records, observe }) });
+      }
+      const entry = { ...result, binding, records };
+      bindings.set(module, entry);
+      return entry;
+    };
+    return <M extends TypedModule>(module: M): ContextModuleBinding<M, D['module'], Root> =>
+      getBinding(module).binding as unknown as ContextModuleBinding<M, D['module'], Root>;
+  }
+
+  /** Reuse typed record operations under an exact concrete provider root. */
+  private bindContextModule(
+    module: TypedModule,
+    rootPath: string,
+    contextId: string,
+    source: FollowedSyncSource | undefined,
+    signal: AbortSignal | undefined,
+  ): { binding: ContextModuleBinding; signal?: AbortSignal } {
+    const graph = resolveTypedModuleGraph(module);
+    const attachment = resolveModuleAttachment(graph, this.resolveRecordNode(rootPath));
+    const attachmentPath = attachment.declaringModulePath;
+    const modulePaths = new Set([...graph.nodesByDeclaredPath.values()].filter(node => node.kind === 'record'
+      && node.declaringModulePath.startsWith(`${attachmentPath}/`) && node.ruleSet.$role !== true)
+      .map(node => node.declaringModulePath));
+    let dwn: DwnApi;
+    let prepare: () => Promise<void>;
+    let waitUntilReady: ((signal?: AbortSignal) => Promise<void>) | undefined;
+    let boundSignal = signal;
+    if (source === undefined) {
+      const native = new TypedEnbox(this._dwn, module, { signal, sync: this._options.sync, dependencyApis: this._dependencyApis });
+      prepare = (): Promise<void> => native._ensureReady([...modulePaths][0]);
+      dwn = this._dwn.withRecordExecutionContext({
+        assertActive : async (): Promise<void> => signal?.throwIfAborted(),
+        contextId,
+        tenantDid    : this._dwn.connectedDid,
+      });
+    } else {
+      const scope = resolveModuleRoleProjection(graph, this._resolvedGraph.resolveInvokedRole(source.moduleRole));
+      modulePaths.clear();
+      for (const path of scope.allowedPaths) { modulePaths.add(path); }
+      const projection = new FollowedContextProjection({
+        module    : module.definition.module,
+        source,
+        signal,
+        sync      : this._options.sync!,
+        onCapture : async (accepted, verifiedSource): Promise<void> => {
+          if (accepted.attachmentPath !== attachmentPath) {
+            throw new ContextNotReadyError(new Error('The verified consumer mount differs from the typed context binding.'));
+          }
+          const actualGraph = await this._options.sync!.resolveFollowedSourceModuleGraph(verifiedSource, module.definition.module);
+          if (actualGraph.rootModuleUri !== module.definition.module) {
+            throw new Error('The verified context graph belongs to a different module.');
+          }
+          const rootRole = this._resolvedGraph.resolveInvokedRole(source.moduleRole);
+          const actualRole = actualGraph.resolveInvokedRole(accepted.moduleRole);
+          if (actualRole.owningModuleUri !== rootRole.owningModuleUri || actualRole.owningModulePath !== rootRole.owningModulePath) {
+            throw new Error('The verified consumer role no longer identifies the accepted root membership.');
+          }
+          const actualScope = resolveModuleRoleProjection(actualGraph, rootRole);
+          const acceptedPaths = new Set(accepted.modulePaths);
+          const readable = new Set(actualScope.readablePaths);
+          const permitted = [...scope.allowedPaths].filter(path => actualScope.allowedPaths.has(path)
+            && (!readable.has(path) || acceptedPaths.has(path)));
+          for (const path of permitted) {
+            const actual = actualGraph.nodesByDeclaredPath.get(path);
+            if (actual?.kind !== 'record' || !installedModuleDefinitionsEqual(
+              consumedRecordRepresentation(graph.nodesByDeclaredPath.get(path)!), consumedRecordRepresentation(actual),
+            )) {
+              throw new Error(`Context.using: owner module '${module.definition.module}' changed the consumed representation at '${path}'.`);
+            }
+          }
+          modulePaths.clear();
+          for (const path of permitted) { modulePaths.add(path); }
+        },
+      });
+      boundSignal = projection.signal;
+      prepare = (): Promise<void> => projection.assertActive();
+      waitUntilReady = (callerSignal): Promise<void> => projection.waitUntilReady(callerSignal);
+      dwn = this._dwn.withRecordExecutionContext(projection.executionContext);
+    }
+    const bound = new TypedEnbox(dwn, module, {
+      context : { contextId, modulePath: attachmentPath, modulePaths, prepare, waitUntilReady },
+      signal  : boundSignal,
+      sync    : this._options.sync,
+    });
+    return {
+      binding : Object.freeze({ module: module.definition.module, path: attachmentPath, records: bound.records }) as unknown as ContextModuleBinding,
+      signal  : boundSignal,
+    };
   }
 
   /** Reuse one typed records implementation with tenant and root routing already bound. */
@@ -3104,6 +3324,10 @@ export class TypedEnbox<
    */
   private async _ensureReady(path: string): Promise<void> {
     this._assertActive();
+    if (this._options.context?.prepare !== undefined) {
+      await this._options.context.prepare();
+      this._assertActive();
+    }
     this.assertContextPath(path);
     if (this._configured) {
       this._assertValidPath(path);
@@ -3625,6 +3849,9 @@ export class TypedEnbox<
           undefined,
           within,
         ));
+        if (this._options.context?.waitUntilReady !== undefined) {
+          await whileSignalsActive(() => this._options.context!.waitUntilReady!(signal), [signal, this._options.signal]);
+        }
         await whileSignalsActive(
           () => this._ensureReady(normalizedPath),
           [signal, this._options.signal],

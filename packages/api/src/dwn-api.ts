@@ -748,6 +748,11 @@ export class DwnApi {
     return this.recordExecutionContext?.followedSourceId;
   }
 
+  /** @internal Root module whose acceptance controls this projected records API. */
+  public get followedSourceModule(): string | undefined {
+    return this.recordExecutionContext?.followedSourceModule;
+  }
+
   /** (optional) The DID of the signer when signing with permissions */
   private readonly delegateDid?: string;
 

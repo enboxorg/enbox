@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, moduleContextKey } from '../src/shared-context-module.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
-import { Poller, Time } from '@enbox/dwn-sdk-js';
+import { Poller, resolveModuleGraph, Time } from '@enbox/dwn-sdk-js';
 import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
 
 const connectedDid = 'did:example:member';
@@ -109,6 +109,21 @@ const SharedModule = defineModule({ definition : SharedDefinition, codecs     : 
   workspace   : recordCodecs.json<unknown>(),
   writeOnly   : recordCodecs.json<unknown>(),
 } });
+
+const RealtimeModule = defineModule({
+  definition: {
+    module    : 'https://example.com/modules/shared-realtime', published : true,
+    uses      : { base: SharedDefinition.module },
+    types     : { live: { dataFormats: ['application/json'] }, session: { dataFormats: ['application/json'] } },
+    structure : { workspace: { $ref : 'base:workspace', live : {
+      $recordLimit : { max: 1 },
+      $actions     : [{ role: 'base:workspace/member', can: ['read'] }],
+      session      : { $actions: [{ role: 'base:workspace/member', can: ['create', 'read', 'delete'] }] },
+    } } },
+  },
+  codecs       : { live: recordCodecs.json<{ topic: string }>(), session: recordCodecs.json<{ peer: string }>() },
+  dependencies : { base: SharedModule },
+});
 
 const NestedDefinition = {
   module    : `${SharedDefinition.module}/nested`,
@@ -333,6 +348,7 @@ describe('TypedEnbox contexts', () => {
   let follow: sinon.SinonStub;
   let get: sinon.SinonStub;
   let getRoleDelivery: sinon.SinonStub;
+  let ensureModules: sinon.SinonStub;
   let intentRecords: Array<DwnMessage<DwnInterface.RecordsWrite> & { encodedData: string }>;
   let list: sinon.SinonStub;
   let listeners: Set<SyncEventListener>;
@@ -466,15 +482,24 @@ describe('TypedEnbox contexts', () => {
       }
     });
 
+    ensureModules = sinon.stub().callsFake(async (_source: FollowedSyncSource, modules: readonly string[]): Promise<FollowedSyncSource> => {
+      current = { ...current!, additionalModules : [...modules], projections       : [{
+        module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
+        moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live', 'workspace/live/session'],
+      }] };
+      return current;
+    });
     sync = {
       deleteFollowedSource,
-      followSource        : follow,
-      getFollowedSource   : get,
-      getIdentityOptions  : async (): Promise<undefined> => undefined,
-      getReplicationLinks : async () => [],
-      listFollowedSources : list,
+      ensureFollowedSourceModules      : ensureModules,
+      resolveFollowedSourceModuleGraph : sinon.stub().resolves(RealtimeModule.resolvedGraph),
+      followSource                     : follow,
+      getFollowedSource                : get,
+      getIdentityOptions               : async (): Promise<undefined> => undefined,
+      getReplicationLinks              : async () => [],
+      listFollowedSources              : list,
       markFollowedSourcePullPending,
-      on                  : (listener: SyncEventListener): (() => void) => {
+      on                               : (listener: SyncEventListener): (() => void) => {
         listeners.add(listener);
         return (): void => { listeners.delete(listener); };
       },
@@ -505,6 +530,155 @@ describe('TypedEnbox contexts', () => {
     expect(moduleContextKey('did:example:a/root', 'child')).not.toBe(
       moduleContextKey('did:example:a', 'root/child'),
     );
+  });
+
+  it('selects context consumers inertly and preserves one native root follow decision', async () => {
+    const contexts = typed.contexts.withModules({ realtime: RealtimeModule });
+    expect(contexts).toBe(typed.contexts.withModules({ realtime: RealtimeModule }));
+    expect(agent.processDwnRequest.callCount).toBe(0);
+    expect(agent.sendDwnRequest.callCount).toBe(0);
+    expect(ensureModules.callCount).toBe(0);
+
+    const context = await contexts.follow('workspace', { id: contextId, ownerDid: sourceDid });
+    const realtime = context.using(RealtimeModule);
+    expect(realtime).toBe(context.using(RealtimeModule));
+    expect(context.role).toBe(moduleRole);
+    expect(realtime.path).toBe('workspace');
+    await realtime.records.query('workspace/live');
+    const rootBeforeProjection = await follow.firstCall.returnValue as FollowedSyncSource;
+    expect(rootBeforeProjection.projections).toBeUndefined();
+    const graphLookup = sync.resolveFollowedSourceModuleGraph as sinon.SinonStub;
+    expect(graphLookup.firstCall.args[0].projections).toEqual(current!.projections);
+    expect(graphLookup.firstCall.args[0]).not.toBe(rootBeforeProjection);
+    expect(agent.processDwnRequest.lastCall.args[0]).toMatchObject({
+      target        : sourceDid,
+      messageParams : { moduleRole : 'base:workspace/member', filter     : {
+        module: RealtimeModule.definition.module, modulePath: 'workspace/live', contextId,
+      } },
+    });
+    await context.records.query('workspace/note');
+    expect(agent.processDwnRequest.lastCall.args[0].messageParams.moduleRole).toBe(moduleRole);
+    expect(follow.callCount).toBe(1);
+    expect(intentRecords).toHaveLength(1);
+
+    const raw = realtime.records as unknown as { query(path: string, options?: unknown): Promise<unknown> };
+    await expect(raw.query('workspace')).rejects.toThrow('do not expose path');
+    await expect(raw.query('workspace/live', { from: 'did:example:other' })).rejects.toThrow('another tenant');
+    await expect(raw.query('workspace/live', { moduleRole })).rejects.toThrow('another module role');
+    await expect(raw.query('workspace/live', { within: 'outside' })).rejects.toThrow('escape their context');
+  });
+
+  it.each(['schema', 'format', 'encryption', 'ancestry', 'attachment', 'role'] as const)(
+    'rejects an actual owner graph with changed %s before issuing consumer data operations', async (change) => {
+      const actual = structuredClone(RealtimeModule.definition) as ModuleDefinition;
+      const provider = structuredClone(SharedModule.definition) as ModuleDefinition;
+      const foreign: ModuleDefinition = {
+        module    : 'https://example.com/modules/foreign-container', published : true,
+        types     : { container: {}, workspace: {} }, structure : { container: { workspace: {} } },
+      };
+      if (change === 'schema') { actual.types.live.schema = 'https://example.com/changed-live-schema'; }
+      if (change === 'format') { actual.types.live.dataFormats = ['text/plain']; }
+      if (change === 'encryption') { actual.types.live.encryptionRequired = true; }
+      if (change === 'attachment') { actual.structure = { mount: actual.structure.workspace }; }
+      if (change === 'ancestry') {
+        // Preserve the role's module/path while moving its physical ancestors.
+        provider.uses = { parent: foreign.module };
+        provider.structure.workspace = { $ref: 'parent:container/workspace', member: { $role: true } };
+      }
+      const graph = resolveModuleGraph(actual, uri =>
+        uri === provider.module ? provider : uri === foreign.module ? foreign : undefined,
+      { requireKeyAgreement: false });
+      (sync.resolveFollowedSourceModuleGraph as sinon.SinonStub).resolves(graph);
+      const context = await typed.contexts.withModules({ realtime: RealtimeModule })
+        .follow('workspace', { id: contextId, ownerDid: sourceDid });
+      if (change === 'role') {
+        current = { ...current!, projections: [{ ...current!.projections![0], moduleRole: 'base:workspace/viewer' }] };
+      }
+      const realtime = context.using(RealtimeModule);
+      await expect(realtime.records.query('workspace/live')).rejects.toThrow();
+      expect(agent.processDwnRequest.getCalls().filter(call =>
+        call.args[0].messageType === DwnInterface.RecordsQuery
+        && call.args[0].messageParams.filter.module === RealtimeModule.definition.module)).toHaveLength(0);
+      expect(agent.sendDwnRequest.callCount).toBe(0);
+      await context.records.query('workspace/note');
+      expect(intentRecords).toHaveLength(1);
+    },
+  );
+
+  it('accepts a consumer alias change when canonical root membership and representation are identical', async () => {
+    const actual = structuredClone(RealtimeModule.definition) as ModuleDefinition;
+    actual.uses = { notebook: SharedDefinition.module };
+    actual.structure.workspace.$ref = 'notebook:workspace';
+    const live = actual.structure.workspace.live as Record<string, unknown>;
+    live.$actions = [{ role: 'notebook:workspace/member', can: ['read'] }];
+    (live.session as Record<string, unknown>).$actions = [{ role: 'notebook:workspace/member', can: ['create', 'read', 'delete'] }];
+    const graph = resolveModuleGraph(actual, uri => uri === SharedDefinition.module ? SharedModule.definition : undefined,
+      { requireKeyAgreement: false });
+    (sync.resolveFollowedSourceModuleGraph as sinon.SinonStub).resolves(graph);
+    const context = await typed.contexts.withModules({ realtime: RealtimeModule })
+      .follow('workspace', { id: contextId, ownerDid: sourceDid });
+    current = { ...current!, projections: [{ ...current!.projections![0], moduleRole: 'notebook:workspace/member' }] };
+    await context.using(RealtimeModule).records.query('workspace/live');
+    expect(agent.processDwnRequest.lastCall.args[0].messageParams.moduleRole).toBe('notebook:workspace/member');
+    expect(context.role).toBe(moduleRole);
+    expect(intentRecords).toHaveLength(1);
+  });
+
+  it('requires explicit consumer selection before binding a member context', async () => {
+    const context = await typed.contexts.follow('workspace', { id: contextId, ownerDid: sourceDid });
+    expect(() => context.using(RealtimeModule)).toThrow('explicitly selected');
+    expect(ensureModules.callCount).toBe(0);
+    expect(intentRecords).toHaveLength(1);
+  });
+
+  it('opens an unavailable consumer view after verification without blocking or refollowing its root', async () => {
+    ensureModules.callsFake(async (): Promise<FollowedSyncSource> => current!);
+    const context = await typed.contexts.withModules({ realtime: RealtimeModule })
+      .follow('workspace', { id: contextId, ownerDid: sourceDid });
+    const realtime = context.using(RealtimeModule);
+    await expect(realtime.records.query('workspace/live')).rejects.toBeInstanceOf(ContextNotReadyError);
+    await context.records.query('workspace/note');
+    const close = sinon.stub().resolves();
+    agent.processDwnRequest.withArgs(sinon.match({
+      messageType   : DwnInterface.RecordsSubscribe, target        : sourceDid,
+      messageParams : { filter: { module: RealtimeModule.definition.module } },
+    })).resolves({ reply: { status: { code: 200, detail: 'OK' }, roleRecordId: current!.id, subscription: { close } } });
+    const opening = realtime.records.observe('workspace/live', { materialize: true, pagination: { limit: 1 } });
+    await context.records.query('workspace/note');
+    current = { ...current!, projections: [{
+      module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
+      moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live', 'workspace/live/session'],
+    }] };
+    for (const listener of [...listeners]) { listener(followedContextChange(current)); }
+    const view = await opening;
+    await view.ready();
+    expect(view.getSnapshot().status).toBe('ready');
+    expect(intentRecords).toHaveLength(1);
+    expect(follow.callCount).toBe(1);
+    const unchanged = current;
+    current = { ...unchanged, projections: [] };
+    for (const listener of [...listeners]) { listener(followedContextChange(current)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getSnapshot().status).toBe('error');
+      expect(view.getSnapshot().current).toBe(false);
+    }, Poller.pollRetrySleep, 1_000);
+    await context.records.query('workspace/note');
+    expect(context.role).toBe(moduleRole);
+    await expect(realtime.records.query('workspace/live')).rejects.toBeInstanceOf(ContextRetiredError);
+    current = { ...unchanged, projections: [{
+      module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
+      moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live'],
+    }] };
+    for (const listener of [...listeners]) { listener(followedContextChange(current)); }
+    await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+      expect(view.getSnapshot().status).toBe('ready');
+    }, Poller.pollRetrySleep, 1_000);
+    const rebound = context.using(RealtimeModule);
+    expect(rebound).not.toBe(realtime);
+    await expect(rebound.records.query('workspace/live/session')).rejects.toThrow('do not expose path');
+    expect(intentRecords).toHaveLength(1);
+    expect(follow.callCount).toBe(1);
+    await view.close();
   });
 
   it('binds owner and member contexts to the same records contract', async () => {

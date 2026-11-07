@@ -119,7 +119,10 @@ function createPlanner({
     authorizationEpoch : 'role-epoch',
     projectionId       : 'role-projection',
   }));
-  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
+  const buildTargetsForSource = async (source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> => [
+    await buildTargetForSource(source, delegateDid),
+  ];
+  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetForSource, buildTargetsForSource, getEndpointUrls };
   const getTargetResolver = sinon.stub().returns(resolver);
   const warn = sinon.stub();
   let currentTime = 1_000;

@@ -400,25 +400,22 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
+    // The root acceptance retires every selected module before per-module wake filtering.
+    if (this._followedSourceId !== undefined && event.type === 'followed-context:change'
+      && event.actorDid === this._dwn.connectedDid && event.contextId === this._followedContextId
+      && event.module === (this._dwn.followedSourceModule ?? this._query.filter.module)
+      && followedContextChangeRetiresSource({
+        acceptanceId: this._followedSourceAcceptanceId!, id: this._followedSourceId,
+      }, event)) {
+      this.publishError(new ContextRetiredError(this._followedContextId!));
+      void this.close().catch((): void => {});
+      return;
+    }
     if (!syncEventCoversModule(event, this._query.filter.module)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;
     }
-
-    // An exact source change retires this view; other context changes requery.
     if (this._followedSourceId !== undefined) {
-      if (
-        event.type === 'followed-context:change' &&
-        event.actorDid === this._dwn.connectedDid &&
-        followedContextChangeRetiresSource({
-          acceptanceId : this._followedSourceAcceptanceId!,
-          id           : this._followedSourceId,
-        }, event)
-      ) {
-        this.publishError(new ContextRetiredError(this._followedContextId!));
-        void this.close().catch((): void => {});
-        return;
-      }
       this.requestMaterialization();
       return;
     }

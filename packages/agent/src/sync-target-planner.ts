@@ -24,6 +24,7 @@ export interface SyncTargetPlanningResolver {
     source: FollowedSyncSource,
     delegateDid?: string,
   ): Promise<SyncTarget>;
+  buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]>;
 }
 
 export type SyncTargetPlannerParams = {
@@ -153,7 +154,11 @@ export class SyncTargetPlanner {
       if (this._isIdentityPaused(entry.source.actorDid, identity.delegateDid)) {
         continue;
       }
-      targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
+      if (entry.source.additionalModules?.some(module =>
+        !entry.source.projections?.some(projection => projection.module === module))) {
+        anyTargetUnavailable = true;
+      }
+      targets.push(...await this._getTargetResolver().buildTargetsForSource(entry.source, identity.delegateDid));
     }
 
     await this.cacheCompleteTargets({

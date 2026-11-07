@@ -1,4 +1,4 @@
-import type { MessagesFilter, ProgressToken, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
+import type { MessagesFilter, ProgressToken, ReplicationApplyResult, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import type { EnboxPlatformAgent } from './agent.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
@@ -681,6 +681,8 @@ export type SyncEvent =
     /** Opaque local acceptance carried by this transition. */
     followedSourceAcceptanceId: string;
     followedSourceId: string | undefined;
+    /** Verified consumer projections added, removed, or changed without replacing the root acceptance. */
+    affectedModules?: readonly string[];
     module: string;
     tenantDid: string;
   }
@@ -977,6 +979,10 @@ export interface SyncEngine {
   getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined>;
   /** Resolve and follow one role-authorized foreign context. */
   followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
+  /** Add explicitly selected consumer modules without saving a new root following decision. */
+  ensureFollowedSourceModules(source: FollowedSyncSource, modules: readonly string[]): Promise<FollowedSyncSource>;
+  /** Resolve the verified owner graph for an already selected projection without changing saved following intent. */
+  resolveFollowedSourceModuleGraph(source: FollowedSyncSource, module: string): Promise<ResolvedModuleGraph>;
   /** Read one followed foreign context by accepted role-record ID. */
   getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;
   /** List followed foreign contexts, excluding corrupt private store entries. */
@@ -989,7 +995,7 @@ export interface SyncEngine {
    *
    * @internal Used by the typed shared-context mutation boundary.
    */
-  markFollowedSourcePullPending(source: FollowedSyncSource): Promise<boolean>;
+  markFollowedSourcePullPending(source: FollowedSyncSource, module?: string): Promise<boolean>;
   /**
    * Pull one exact accepted foreign context from its accepted hosted endpoint.
    * Returns `true` only when that feed reached its head while the acceptance
@@ -997,7 +1003,7 @@ export interface SyncEngine {
    *
    * @internal Used by the typed shared-context readiness boundary.
    */
-  pullFollowedSource(source: FollowedSyncSource): Promise<boolean>;
+  pullFollowedSource(source: FollowedSyncSource, module?: string): Promise<boolean>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *

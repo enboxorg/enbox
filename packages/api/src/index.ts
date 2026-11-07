@@ -63,6 +63,7 @@ export type {
   DefineModuleOptions,
   ExactModuleCodecs,
   ExactModuleDependencies,
+  ModuleAttachmentPaths,
   ModuleDependencies,
   ModuleDependenciesFor,
   ModuleDependency,
