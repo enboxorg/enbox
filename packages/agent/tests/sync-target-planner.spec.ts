@@ -13,6 +13,7 @@ import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
 
+import { deferred } from './utils/deferred.js';
 import { SyncTargetPlanner } from '../src/sync-target-planner.js';
 
 type PlannerFixtureParams = {
@@ -152,6 +153,60 @@ function createPlanner({
 }
 
 describe('SyncTargetPlanner', () => {
+  it('bounds independent followed-source resolution and preserves source order', async () => {
+    const sources = Array.from({ length: 6 }, (_, index) => followedSource(`role-${index}`));
+    const { buildTargetForSource, planner } = createPlanner({
+      entries         : [],
+      identityOptions : { [sources[0].actorDid]: { modules: 'all' } },
+      sourceEntries   : sources.map(source => ({ status: 'valid', source })),
+    });
+    const entered = deferred();
+    const release = deferred();
+    let active = 0;
+    let maximum = 0;
+    buildTargetForSource.callsFake(async (source: FollowedSyncSource): Promise<SyncTarget> => {
+      active++;
+      maximum = Math.max(maximum, active);
+      if (active === 4) {entered.resolve();}
+      await release.promise;
+      active--;
+      return { ...ownerTarget(source.sourceDid, source.remoteEndpoint), projectionId: source.id };
+    });
+
+    const planning = planner.getTargets();
+    await entered.promise;
+    expect(buildTargetForSource.callCount).toBe(4);
+    release.resolve();
+    expect((await planning).map(target => target.projectionId)).toEqual(sources.map(source => source.id));
+    expect(maximum).toBe(4);
+    expect(planner.lastResolutionComplete).toBe(true);
+  });
+
+  it('settles independent source reads before rejecting and never caches a failed plan', async () => {
+    const sources = [followedSource('role-first'), followedSource('role-second')];
+    const { buildTargetForSource, planner } = createPlanner({
+      entries         : [],
+      identityOptions : { [sources[0].actorDid]: { modules: 'all' } },
+      sourceEntries   : sources.map(source => ({ status: 'valid', source })),
+    });
+    const entered = deferred();
+    const release = deferred();
+    const failure = new Error('first source failed');
+    buildTargetForSource.onFirstCall().rejects(failure);
+    buildTargetForSource.onSecondCall().callsFake(async (): Promise<SyncTarget> => {
+      entered.resolve();
+      await release.promise;
+      throw new Error('second source failed');
+    });
+    let settled = false;
+    const outcome = planner.getTargets().catch((error: unknown) => {settled = true; return error;});
+    await entered.promise;
+    expect(settled).toBe(false);
+    release.resolve();
+    expect(await outcome).toBe(failure);
+    expect(planner.lastResolutionComplete).toBe(false);
+  });
+
   it('should plan and cache a complete target snapshot', async () => {
     const { entries, getEndpointUrls, planner } = createPlanner({
       entries: [validEntry('did:example:alice'), validEntry('did:example:bob')],

@@ -2,8 +2,8 @@ import type { ProjectionViewGeneration } from '../src/projected-record-view.js';
 import type { ExpandableRecordView, RecordViewState } from '../src/record-view.js';
 import type { FollowedSyncSource, SyncEngine, SyncEvent, SyncEventListener } from '@enbox/agent';
 
-import { ContextRetiredError } from '../src/context-errors.js';
 import { createProjectedRecordView } from '../src/projected-record-view.js';
+import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 import { describe, expect, it } from 'bun:test';
 
 const source: FollowedSyncSource = {
@@ -18,6 +18,7 @@ class NativeView implements ExpandableRecordView<string> {
   public readonly listeners = new Set<(state: State) => void>();
   public closed = false;
   public closeCount = 0;
+  public loadMoreCount = 0;
   public onClose?: () => void;
   private _state: State;
 
@@ -34,7 +35,7 @@ class NativeView implements ExpandableRecordView<string> {
     return this._state;
   }
   public async refresh(): Promise<Extract<State, { status: 'ready' }>> { return this.ready(); }
-  public async loadMore(): Promise<void> {}
+  public async loadMore(): Promise<void> { this.loadMoreCount++; }
   public async close(): Promise<void> {
     if (this.closed) { return; }
     this.closed = true;
@@ -44,10 +45,11 @@ class NativeView implements ExpandableRecordView<string> {
   }
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(reason?: unknown): void } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(complete => { resolve = complete; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((complete, fail): void => { resolve = complete; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 async function settled(predicate: () => boolean): Promise<void> {
@@ -81,6 +83,71 @@ function harness(): {
 }
 
 describe('projected record views', () => {
+  it('preserves synchronous subscription setup failures through the public opening promise', async () => {
+    const test = harness();
+    const failure = new Error('sync event subscription failed');
+    test.sync.on = (): never => { throw failure; };
+    await expect(createProjectedRecordView({
+      module     : consumer, source, sync       : test.sync,
+      generation : (): never => { throw new Error('opening must not continue'); },
+    })).rejects.toBe(failure);
+    expect(test.listeners.size).toBe(0);
+  });
+
+  it('rejects expansion while unavailable and delegates it only to the current verified generation', async () => {
+    const test = harness();
+    const pending = deferred<ExpandableRecordView<string>>();
+    const native = new NativeView('ready');
+    const view = await createProjectedRecordView({
+      module     : consumer, source, sync       : test.sync,
+      generation : () => ({ signal: new AbortController().signal, open: (): Promise<ExpandableRecordView<string>> => pending.promise }),
+    });
+    await expect(view.loadMore()).rejects.toBeInstanceOf(ContextNotReadyError);
+    expect(native.loadMoreCount).toBe(0);
+    pending.resolve(native);
+    await view.ready();
+    await view.loadMore();
+    expect(native.loadMoreCount).toBe(1);
+    await view.close();
+  });
+
+  it.each([
+    ['Error', new Error('first close failed')],
+    ['undefined', undefined],
+    ['null', null],
+  ] as const)('drains every closing generation and preserves the first %s cleanup failure', async (_label, reason) => {
+    const test = harness();
+    const first = new NativeView('first');
+    const next = new NativeView('next');
+    const firstClose = deferred<void>();
+    const nextClose = deferred<void>();
+    const closeFirst = first.close.bind(first);
+    const closeNext = next.close.bind(next);
+    first.close = async (): Promise<void> => { await closeFirst(); await firstClose.promise; };
+    next.close = async (): Promise<void> => { await closeNext(); await nextClose.promise; };
+    const firstScope = new AbortController();
+    let generation: ProjectionViewGeneration<string> = { signal: firstScope.signal, open: async () => first };
+    const view = await createProjectedRecordView({ module: consumer, source, sync: test.sync, generation: () => generation });
+    await view.ready();
+    generation = { signal: new AbortController().signal, open: async (): Promise<ExpandableRecordView<string>> => next };
+    firstScope.abort();
+    await settled(() => view.getSnapshot().records[0] === 'next');
+    let closed = false;
+    const closing = Promise.allSettled([view.close()]).then((outcomes): PromiseSettledResult<void> => { closed = true; return outcomes[0]; });
+    await settled(() => next.closed);
+    firstClose.reject(reason);
+    await firstClose.promise.catch((): void => {});
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    nextClose.reject(new Error('later cleanup failure'));
+    const outcome = await closing;
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') { expect(outcome.reason).toBe(reason); }
+    expect(first.closeCount).toBe(1);
+    expect(next.closeCount).toBe(1);
+    expect(test.listeners.size).toBe(0);
+  });
+
   it('publishes noncurrent before closing a lost generation and reopens without replacing root intent', async () => {
     const test = harness();
     const first = new NativeView('first');

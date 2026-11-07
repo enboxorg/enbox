@@ -67,6 +67,7 @@ import { DwnInterface } from './types/dwn.js';
 import { fetchConnectionStatus } from './connect-status.js';
 import { FollowedSyncSourceStoreLevel } from './followed-sync-source-store-level.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+import { mapConcurrentSettled } from './utils.js';
 import { recordsWriteRequiresData } from './sync-fetch-helpers.js';
 import { SyncConnectivityManager } from './sync-connectivity-manager.js';
 import { SyncDeadLetterStoreLevel } from './sync-dead-letter-store-level.js';
@@ -181,6 +182,7 @@ type PendingSyncRun = {
 };
 
 export class SyncEngineLevel implements SyncEngine {
+  private static readonly FOLLOWED_SOURCE_CONCURRENCY = 4;
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `SyncEngineLevel`. This agent is used to interact with other Enbox agent components. It's
@@ -1520,7 +1522,8 @@ export class SyncEngineLevel implements SyncEngine {
       }
       for (const prepared of result.prepared) {
         try {
-          await this.admitFollowedProjection(current, prepared, identity.delegateDid);
+          // Consumer closures can overlap the same mutable provider configurations.
+          await this.admitFollowedProjection(current, prepared, identity.delegateDid); // NOSONAR: S9382 — serialize shared metadata writes.
           projections.set(prepared.projection.module, prepared.projection);
           this._followedProjectionGraphs.set(SyncEngineLevel.followedProjectionGraphKey(current, prepared.projection.module), {
             projection : prepared.projection,
@@ -1537,7 +1540,11 @@ export class SyncEngineLevel implements SyncEngine {
     if (!fence()) {throw new FollowedSourceNotReadyError('consumer setup was cancelled');}
     await this.removeObsoleteFollowedSourceLinks();
     this.activateFollowedSource(accepted, identity.delegateDid, runIdentityTask);
-    for (const module of result.pending) {await this.markFollowedSourcePullPending(accepted, module);}
+    const pendingUpdates = await mapConcurrentSettled(result.pending, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+      module => this.markFollowedSourcePullPending(accepted, module));
+    for (const update of pendingUpdates) {
+      if (update.status === 'rejected') {throw update.reason;}
+    }
     return accepted;
   }
 
@@ -1559,20 +1566,22 @@ export class SyncEngineLevel implements SyncEngine {
         : { prepared, unavailable, pending: desired };
     }
     try {
-      for (const module of desired) {
-        try {
-          prepared.push(await prepareFollowedSyncProjection({
-            agent          : this.agent,
-            delegateDid,
-            module,
-            permissionsApi : this._permissionsApi,
-            rootBatch,
-            source,
-            shouldContinue,
-          }));
-        } catch (error: unknown) {
-          (error instanceof FollowedSyncProjectionUnavailableError || error instanceof PermissionGrantNotFoundError
-            ? unavailable : pending).push(module);
+      const results = await mapConcurrentSettled(desired, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+        module => prepareFollowedSyncProjection({
+          agent          : this.agent,
+          delegateDid,
+          module,
+          permissionsApi : this._permissionsApi,
+          rootBatch,
+          source,
+          shouldContinue,
+        }));
+      for (const [index, result] of results.entries()) {
+        if (result.status === 'fulfilled') {
+          prepared.push(result.value);
+        } else {
+          (result.reason instanceof FollowedSyncProjectionUnavailableError || result.reason instanceof PermissionGrantNotFoundError
+            ? unavailable : pending).push(desired[index]);
         }
       }
     } finally {
@@ -1588,7 +1597,8 @@ export class SyncEngineLevel implements SyncEngine {
     delegateDid: string | undefined,
   ): Promise<void> {
     for (const message of prepared.configurations) {
-      const result = await this.agent.dwn.applyReplicatedMessage(source.sourceDid, message);
+      // A failed prerequisite must stop admission before its consuming configuration.
+      const result = await this.agent.dwn.applyReplicatedMessage(source.sourceDid, message); // NOSONAR: S9382 — admit providers first.
       if (result.kind !== 'Applied' && result.kind !== 'Duplicate' && result.kind !== 'Superseded') {
         throw new Error(`consumer module '${message.descriptor.definition.module}' could not be admitted (${result.kind}).`);
       }
@@ -5818,12 +5828,19 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async addCurrentFollowedSourceKeys(identityKeys: Set<string>): Promise<void> {
+    const sources: FollowedSyncSource[] = [];
     for (const entry of await this._followedSourceStore.list()) {
       if (entry.status === 'corrupt') {
         console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
         continue;
       }
-      for (const target of await this.targetResolver.buildTargetsForSource(entry.source)) {
+      sources.push(entry.source);
+    }
+    const results = await mapConcurrentSettled(sources, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+      source => this.targetResolver.buildTargetsForSource(source));
+    for (const result of results) {
+      if (result.status === 'rejected') {throw result.reason;}
+      for (const target of result.value) {
         identityKeys.add(buildCurrentLinkIdentityKey(
           target.did, target.dwnUrl, target.projectionId, target.authorizationEpoch, target.authorization.kind,
         ));

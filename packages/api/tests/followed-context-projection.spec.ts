@@ -23,7 +23,7 @@ function source(): FollowedSyncSource {
   };
 }
 
-function fixture(verified = false): {
+function fixture(verified = false, options: { beforeRead?(): void } = {}): {
   binding: FollowedContextProjection;
   capture: sinon.SinonSpy;
   ensure: sinon.SinonStub;
@@ -38,7 +38,10 @@ function fixture(verified = false): {
   const root = source();
   const state = { current: { ...root, ...(verified ? { projections: [projection] } : {}) } as FollowedSyncSource | undefined };
   const listeners = new Set<SyncEventListener>();
-  const get = sinon.spy(async (): Promise<FollowedSyncSource | undefined> => state.current);
+  const get = sinon.spy(async (): Promise<FollowedSyncSource | undefined> => {
+    options.beforeRead?.();
+    return state.current;
+  });
   const ensure = sinon.stub().callsFake(async (): Promise<FollowedSyncSource> => state.current!);
   const session = new AbortController();
   const capture = sinon.spy();
@@ -80,6 +83,96 @@ describe('FollowedContextProjection', () => {
     expect(test.binding.signal.aborted).toBe(false);
     expect(test.session.signal.aborted).toBe(false);
     test.session.abort();
+  });
+
+  it('reads the captured role lazily even when execution context was requested before verification', async () => {
+    const test = fixture(true);
+    const execution = test.binding.executionContext;
+    expect(test.get.callCount).toBe(0);
+    expect(() => execution.moduleRole).toThrow(ContextNotReadyError);
+    await execution.assertActive();
+    expect(execution.moduleRole).toBe(projection.moduleRole);
+    test.session.abort();
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['object', { kind: 'provider-failure' }],
+    ['string', 'provider-failure'],
+  ] as const)('preserves an exact %s preparation failure instead of reporting readiness', async (_label, reason) => {
+    const test = fixture();
+    test.ensure.callsFake(async (): Promise<FollowedSyncSource> => { throw reason; });
+    const [outcome] = await Promise.allSettled([test.binding.waitUntilReady()]);
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') { expect(outcome.reason).toBe(reason); }
+    expect(test.capture.callCount).toBe(0);
+    expect(test.binding.signal.aborted).toBe(false);
+    test.session.abort();
+  });
+
+  it('keeps the first settled provider failure when the caller aborts before the await resumes', async () => {
+    const test = fixture();
+    const caller = new AbortController();
+    const failure = { kind: 'first-provider-failure' };
+    const laterAbort = new Error('later caller abort');
+    let rejectPrepare!: (reason: unknown) => void;
+    test.ensure.returns(new Promise<FollowedSyncSource>((_resolve, reject): void => { rejectPrepare = reject; }));
+    const waiting = test.binding.waitUntilReady(caller.signal);
+    await settled(() => test.ensure.called);
+    rejectPrepare(failure);
+    // prepare() has a finally reaction before the readiness gate's rejection handler.
+    queueMicrotask((): void => { queueMicrotask((): void => caller.abort(laterAbort)); });
+    const [outcome] = await Promise.allSettled([waiting]);
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') { expect(outcome.reason).toBe(failure); }
+    expect(caller.signal.reason).toBe(laterAbort);
+    test.session.abort();
+  });
+
+  it('preserves a non-Error caller cancellation reason', async () => {
+    const test = fixture();
+    const caller = new AbortController();
+    const reason = { kind: 'caller-cancelled' };
+    const waiting = test.binding.waitUntilReady(caller.signal);
+    caller.abort(reason);
+    const [outcome] = await Promise.allSettled([waiting]);
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') { expect(outcome.reason).toBe(reason); }
+    expect(test.session.signal.aborted).toBe(false);
+    test.session.abort();
+  });
+
+  it('does not redeliver a wake to a waiter added reentrantly during that notification', async () => {
+    let addWaiter = false;
+    let second: Promise<void> | undefined;
+    const test = fixture(false, {
+      beforeRead: (): void => {
+        if (addWaiter) {
+          addWaiter = false;
+          second = test.binding.waitUntilReady();
+        }
+      },
+    });
+    let finishPrepare!: (value: FollowedSyncSource) => void;
+    test.ensure.returns(new Promise<FollowedSyncSource>((resolve): void => { finishPrepare = resolve; }));
+    const first = test.binding.waitUntilReady();
+    // Let the initial read finish while the optional provider remains unavailable.
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    test.get.resetHistory();
+    addWaiter = true;
+    test.publish();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(second).toBeDefined();
+    expect(test.get.callCount).toBe(2);
+    const reason = new Error('close both waiters');
+    test.session.abort(reason);
+    const outcomes = await Promise.allSettled([first, second!]);
+    expect(outcomes.map(outcome => outcome.status)).toEqual(['rejected', 'rejected']);
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') { expect(outcome.reason).toBe(reason); }
+    }
+    finishPrepare(test.root);
   });
 
   it('opens consumer observations after a root catalog wake verifies the projection', async () => {

@@ -31,7 +31,7 @@ export async function createProjectedRecordView<Item>(options: ProjectedRecordVi
 class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> implements ExpandableRecordView<Item> {
   private readonly _options: ProjectedRecordViewOptions<Item>;
   private readonly _closing = new Set<Promise<void>>();
-  private _cleanupError?: unknown;
+  private _cleanupFailure?: { reason: unknown };
   private _generation?: { controller: AbortController; detach(): void; pendingView?: ExpandableRecordView<Item> };
   private _inner?: ExpandableRecordView<Item>;
   private _opening?: Promise<void>;
@@ -44,9 +44,10 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     this._options = options;
   }
 
-  public async open(): Promise<void> {
+  public open(): Promise<void> {
     this._unsubscribe = this._options.sync.on((event): void => this.handleEvent(event));
     this.requestOpen();
+    return Promise.resolve();
   }
 
   public async refresh(): Promise<Extract<RecordViewState<Item>, { status: 'ready' }>> {
@@ -74,8 +75,8 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     this._unsubscribe?.();
     this.clearGeneration();
     await this._opening;
-    await Promise.all([...this._closing]);
-    if (this._cleanupError !== undefined) { throw this._cleanupError; }
+    await Promise.all(this._closing);
+    if (this._cleanupFailure !== undefined) { throw this._cleanupFailure.reason; }
   }
 
   private requestOpen(): void {
@@ -152,7 +153,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
   }
 
   private closeInner(view: ExpandableRecordView<Item>): void {
-    const closing = view.close().catch((error: unknown): void => { this._cleanupError ??= error; })
+    const closing = view.close().catch((error: unknown): void => { this._cleanupFailure ??= { reason: error }; })
       .finally((): void => { this._closing.delete(closing); });
     this._closing.add(closing);
   }

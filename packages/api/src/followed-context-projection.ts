@@ -6,6 +6,8 @@ import { followedContextChangeRetiresSource } from './followed-context-lifecycle
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { followedSyncProjectionEqual, followedSyncSourceActiveEqual, getFollowedSyncProjection, syncEventCoversModule } from '@enbox/agent';
 
+type ReadinessOutcome = { ready: true } | { ready: false; error: unknown };
+
 type ProjectionOptions = {
   module: string;
   onCapture(projection: FollowedSyncProjection, source: FollowedSyncSource): void | Promise<void>;
@@ -32,7 +34,10 @@ export class FollowedContextProjection {
 
   /** Context routing is read only after assertActive has captured verified metadata. */
   public get executionContext(): RecordExecutionContext {
-    const binding = this;
+    const readModuleRole = (): string => {
+      if (this._captured === undefined) { throw this.notReady(); }
+      return this._captured.moduleRole;
+    };
     const { module, source, sync } = this._options;
     return {
       assertActive               : (): Promise<void> => this.assertActive(),
@@ -46,8 +51,7 @@ export class FollowedContextProjection {
         await sync.markFollowedSourcePullPending(current, module);
       },
       get moduleRole(): string {
-        if (binding._captured === undefined) { throw binding.notReady(); }
-        return binding._captured.moduleRole;
+        return readModuleRole();
       },
       remoteEndpoint : source.remoteEndpoint,
       tenantDid      : source.sourceDid,
@@ -71,26 +75,27 @@ export class FollowedContextProjection {
     this.start();
     const signal = combineAbortSignals(this.signal, callerSignal)!;
     signal.throwIfAborted();
-    await new Promise<void>((resolve, reject): void => {
+    const outcome = await new Promise<ReadinessOutcome>((resolve): void => {
       let running = false;
       let requested = false;
       let finished = false;
-      const finish = (error?: unknown): void => {
+      const finish = (result: ReadinessOutcome): void => {
         if (finished) { return; }
         finished = true;
         this._wakes.delete(check);
         signal.removeEventListener('abort', abort);
-        if (error === undefined) { resolve(); } else { reject(error); }
+        resolve(result);
       };
-      const abort = (): void => finish(signal.reason);
+      const fail = (error: unknown): void => finish({ ready: false, error });
+      const abort = (): void => fail(signal.reason);
       const check = (): void => {
         if (finished) { return; }
         if (running) { requested = true; return; }
         running = true;
         requested = false;
         void this.readCurrent().then(async (projection): Promise<void> => {
-          if (projection !== undefined) { await this.capture(projection); finish(); }
-        }).catch(finish).finally((): void => {
+          if (projection !== undefined) { await this.capture(projection); finish({ ready: true }); }
+        }).catch(fail).finally((): void => {
           running = false;
           if (requested) { check(); }
         });
@@ -99,8 +104,9 @@ export class FollowedContextProjection {
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) { abort(); return; }
       check();
-      void this.prepare().then(check, finish);
+      void this.prepare().then(check, fail);
     });
+    if (outcome.ready === false) { throw outcome.error; }
     signal.throwIfAborted();
   }
 
@@ -177,7 +183,7 @@ export class FollowedContextProjection {
         if (error instanceof ContextRetiredError) { this._controller.abort(error); }
       });
     }
-    for (const wake of [...this._wakes]) { wake(); }
+    for (const wake of [...this._wakes]) { wake(); } // NOSONAR: S7747 - snapshot excludes waiters added by reentrant callbacks.
   }
 
   private notReady(): ContextNotReadyError {

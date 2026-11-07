@@ -1,9 +1,10 @@
+import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { FollowedSyncProjection, FollowedSyncSource } from '../src/followed-sync-source.js';
 
 import { Level } from 'level';
-import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
 import sinon from 'sinon';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { resolveModuleGraph, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { deferred } from './utils/deferred.js';
 import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
@@ -72,6 +73,99 @@ describe('Followed context consumer projections', () => {
   afterEach(async () => {
     sinon.restore();
     await engine.close();
+  });
+
+  it('prepares independent consumers with bounded requests and releases shared support only after they settle', async () => {
+    const modules = Array.from({ length: 6 }, (_, index) => `${REALTIME}-${index}`);
+    const entered = deferred();
+    const release = deferred();
+    const cancel = sinon.stub();
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies: [], root: { dataStream: new ReadableStream({ cancel }) },
+    });
+    let active = 0;
+    let maximum = 0;
+    const sendRequest = sinon.stub().callsFake(async () => {
+      active++;
+      maximum = Math.max(maximum, active);
+      if (active === 4) {entered.resolve();}
+      await release.promise;
+      active--;
+      return { reply: { status: { code: 503, detail: 'temporarily unavailable' } } };
+    });
+    sinon.stub(engine, 'agent').get(() => ({ dwn: { sendRequest } } as unknown as EnboxPlatformAgent));
+
+    const preparing = engine['prepareFollowedProjectionUpdates']({ ...root, additionalModules: modules }, undefined, () => true);
+    await entered.promise;
+    expect(sendRequest.callCount).toBe(4);
+    expect(cancel.notCalled).toBe(true);
+    release.resolve();
+    expect(await preparing).toEqual({ prepared: [], unavailable: [], pending: modules });
+    expect(maximum).toBe(4);
+    expect(cancel.calledOnce).toBe(true);
+  });
+
+  it('finishes each shared metadata closure before admitting the next consumer', async () => {
+    const consumers = [projection(), projection(`${REALTIME}-second`)];
+    sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({
+      prepared    : consumers.map(consumer => ({ projection: consumer, configurations: [], graph: projectionGraph() })),
+      unavailable : [], pending     : [],
+    });
+    const entered = deferred();
+    const release = deferred();
+    const admit = sinon.stub(engine as never, 'admitFollowedProjection').resolves();
+    admit.onFirstCall().callsFake(async (): Promise<void> => {
+      entered.resolve();
+      await release.promise;
+      throw new Error('the first consumer metadata failed admission');
+    });
+    sinon.stub(console, 'warn');
+    const selecting = engine.ensureFollowedSourceModules(root, consumers.map(consumer => consumer.module));
+    await entered.promise;
+    expect(admit.callCount).toBe(1);
+    release.resolve();
+    const selected = await selecting;
+    expect(admit.callCount).toBe(2);
+    expect(selected.projections).toEqual([consumers[1]]);
+    expect(selected.acceptanceId).toBe(root.acceptanceId);
+  });
+
+  it('admits providers before consumers and stops when a provider cannot be admitted', async () => {
+    const provider = (await TestDataGenerator.generateModulesConfigure({ moduleDefinition: {
+      module: MODULE, published: true, types: { notebook: {} }, structure: { notebook: {} },
+    } })).message;
+    const consumer = (await TestDataGenerator.generateModulesConfigure({ moduleDefinition: {
+      module    : REALTIME, published : true, uses      : { notebook: MODULE }, types     : { live: {} },
+      structure : { notebook: { $ref: 'notebook:notebook', live: {} } },
+    } })).message;
+    const entered = deferred();
+    const release = deferred();
+    const applyReplicatedMessage = sinon.stub().resolves({ kind: 'Applied' });
+    applyReplicatedMessage.onFirstCall().callsFake(async () => {
+      entered.resolve();
+      await release.promise;
+      return { kind: 'Applied' };
+    });
+    const processRequest = sinon.stub().resolves({ reply: { status: { code: 200 }, entries: [consumer] } });
+    sinon.stub(engine, 'agent').get(() => ({ dwn: { applyReplicatedMessage, processRequest } } as unknown as EnboxPlatformAgent));
+    const prepared = { configurations: [provider, consumer], projection: projection(), graph: projectionGraph() };
+    const admitting = engine['admitFollowedProjection'](root, prepared, undefined);
+    await entered.promise;
+    expect(applyReplicatedMessage.callCount).toBe(1);
+    expect(applyReplicatedMessage.firstCall.args).toEqual([root.sourceDid, provider]);
+    expect(processRequest.notCalled).toBe(true);
+    release.resolve();
+    await admitting;
+    expect(applyReplicatedMessage.secondCall.args).toEqual([root.sourceDid, consumer]);
+    expect(processRequest.calledOnce).toBe(true);
+
+    applyReplicatedMessage.resetHistory();
+    applyReplicatedMessage.resetBehavior();
+    applyReplicatedMessage.resolves({ kind: 'Invalid' });
+    processRequest.resetHistory();
+    await expect(engine['admitFollowedProjection'](root, prepared, undefined)).rejects.toThrow('could not be admitted (Invalid)');
+    expect(applyReplicatedMessage.callCount).toBe(1);
+    expect(processRequest.notCalled).toBe(true);
   });
 
   it('adds a separately scoped consumer while preserving root authority and acceptance', async () => {
@@ -181,6 +275,69 @@ describe('Followed context consumer projections', () => {
     const current = await engine['reconcileFollowedSourceModules'](selected, [], true);
     expect(current).toEqual(selected);
     expect(pending.calledOnceWithExactly(current, REALTIME)).toBe(true);
+  });
+
+  it('settles independent pending-link updates before reporting an update failure', async () => {
+    const consumers = [projection(), projection(`${REALTIME}-second`)];
+    const selected = { ...root, additionalModules: consumers.map(consumer => consumer.module), projections: consumers };
+    await engine['_followedSourceStore'].replace(selected);
+    sinon.stub(engine as never, 'prepareFollowedProjectionUpdates').resolves({
+      prepared: [], unavailable: [], pending: selected.additionalModules,
+    });
+    const entered = deferred();
+    const release = deferred();
+    const failure = new Error('pending link update failed');
+    const markPending = sinon.stub(engine, 'markFollowedSourcePullPending');
+    markPending.onFirstCall().rejects(failure);
+    markPending.onSecondCall().callsFake(async (): Promise<boolean> => {
+      entered.resolve();
+      await release.promise;
+      return true;
+    });
+    let settled = false;
+    const updating = engine['reconcileFollowedSourceModules'](selected, [], true)
+      .catch((error: unknown) => {settled = true; return error;});
+    await entered.promise;
+    expect(settled).toBe(false);
+    release.resolve();
+    expect(await updating).toBe(failure);
+    expect(await engine.getFollowedSource(root.id)).toEqual(selected);
+  });
+
+  it('collects independent source health keys in bounded batches and preserves all projections', async () => {
+    const sources = Array.from({ length: 6 }, (_, index) => ({ ...root, id: `role-${index}`, contextId: `notebook-${index}` }));
+    await engine['_followedSourceStore'].replace(sources[0], [root.id]);
+    for (const source of sources.slice(1)) {await engine['_followedSourceStore'].replace(source);}
+    const resolveTargets = engine['targetResolver'].buildTargetsForSource.bind(engine['targetResolver']);
+    const entered = deferred();
+    const release = deferred();
+    let active = 0;
+    let maximum = 0;
+    const resolve = sinon.stub(engine['targetResolver'], 'buildTargetsForSource').callsFake(async source => {
+      active++;
+      maximum = Math.max(maximum, active);
+      if (active === 4) {entered.resolve();}
+      await release.promise;
+      const targets = await resolveTargets(source);
+      active--;
+      return targets;
+    });
+    const keys = new Set<string>();
+    const collecting = engine['addCurrentFollowedSourceKeys'](keys);
+    await entered.promise;
+    expect(resolve.callCount).toBe(4);
+    release.resolve();
+    await collecting;
+    expect(maximum).toBe(4);
+    expect(keys.size).toBe(6);
+  });
+
+  it('does not keep health targets from a failed followed-source resolution', async () => {
+    const failure = new Error('source target computation failed');
+    sinon.stub(engine['targetResolver'], 'buildTargetsForSource').rejects(failure);
+    const keys = new Set<string>();
+    await expect(engine['addCurrentFollowedSourceKeys'](keys)).rejects.toBe(failure);
+    expect(keys.size).toBe(0);
   });
 
   it('forgets all consumer links through a root handle captured before they were added', async () => {
