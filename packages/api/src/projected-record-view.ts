@@ -1,11 +1,11 @@
+import type { FollowedModuleLease } from './followed-module-lease.js';
 import type { ExpandableRecordView, RecordViewState } from './record-view.js';
 import type { FollowedSyncSource, SyncEngine, SyncEvent } from '@enbox/agent';
 
-import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { ObservedView } from './observed-view.js';
+import { syncEventCoversModule } from '@enbox/agent';
 import { combineAbortSignals, openView, whileSignalsActive } from './view-opening.js';
 import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
-import { followedSyncSourceActiveEqual, syncEventCoversModule } from '@enbox/agent';
 
 export type ProjectionViewGeneration<Item> = {
   open(signal: AbortSignal): Promise<ExpandableRecordView<Item>>;
@@ -18,6 +18,7 @@ type ProjectedRecordViewOptions<Item> = {
   module: string;
   signal?: AbortSignal;
   source: FollowedSyncSource;
+  root: Pick<FollowedModuleLease, 'currentSource'>;
   sync: SyncEngine;
 };
 
@@ -84,21 +85,14 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
 
   /** A missed root-retirement notification must not restart optional consumer recovery indefinitely. */
   private async verifyRootBeforeOpening(): Promise<boolean> {
-    const { source, sync } = this._options;
-    let currentRoot: FollowedSyncSource | undefined;
     try {
-      currentRoot = await whileSignalsActive(() => sync.getFollowedSource(source.id),
+      await whileSignalsActive(() => this._options.root.currentSource(),
         [this._closeController.signal, this._callerSignal, this._sessionSignal]);
     } catch (error: unknown) {
       if (!this.isClosed) { this.fail(error); }
       return false;
     }
     if (this.isClosed) { return false; }
-    if (currentRoot === undefined || !followedSyncSourceActiveEqual(source, currentRoot)) {
-      this.fail(new ContextRetiredError(source.contextId));
-      void this.close().catch((): void => {});
-      return false;
-    }
     return true;
   }
 
@@ -148,7 +142,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
       this.publish(view.getSnapshot());
     } catch (error: unknown) {
       if (this.isClosed || (attempted !== undefined && this._generation !== attempted)) { return; }
-      this.fail(error);
+      if (!(error instanceof ContextNotReadyError)) { this.fail(error); }
       this.clearGeneration();
       if (this._sessionSignal?.aborted || error instanceof ContextRetiredError) {
         void this.close().catch((): void => {});
@@ -180,15 +174,7 @@ class ProjectedRecordView<Item> extends ObservedView<RecordViewState<Item>> impl
     const { source, module } = this._options;
     if (this.isClosed || event.tenantDid !== source.sourceDid || event.type === 'identity:registration-change'
       || event.type === 'dead-letter:change' || (event.contextId !== undefined && event.contextId !== source.contextId)) { return; }
-    if (event.type === 'followed-context:change' && event.actorDid === source.actorDid && event.module === source.module) {
-      if (followedContextChangeRetiresSource(source, event)) {
-        this.fail(new ContextRetiredError(source.contextId));
-        void this.close().catch((): void => {});
-        return;
-      }
-    } else if (!syncEventCoversModule(event, module)) {
-      return;
-    }
+    if (!syncEventCoversModule(event, module) && event.module !== source.rootModule) { return; }
     if (this._inner === undefined) { this.requestMaterialization(); }
   }
 

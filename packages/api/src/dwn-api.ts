@@ -738,19 +738,9 @@ export class DwnApi {
       : this.recordExecutionContext.contextId;
   }
 
-  /** @internal Opaque local acceptance backing this records API. */
-  public get followedSourceAcceptanceId(): string | undefined {
-    return this.recordExecutionContext?.followedSourceAcceptanceId;
-  }
-
   /** @internal Role record backing this followed-context records API. */
   public get followedSourceId(): string | undefined {
     return this.recordExecutionContext?.followedSourceId;
-  }
-
-  /** @internal Root module whose acceptance controls this projected records API. */
-  public get followedSourceModule(): string | undefined {
-    return this.recordExecutionContext?.followedSourceModule;
   }
 
   /** (optional) The DID of the signer when signing with permissions */

@@ -5,8 +5,8 @@ export type * from './types/identity-vault.js';
 export type * from './types/key-manager.js';
 export type * from './types/permissions.js';
 export type * from './types/sync.js';
-export type { FollowedSyncProjection, FollowedSyncSource, FollowedSyncSourceInput } from './followed-sync-source.js';
-export { followedSyncProjectionEqual, getFollowedSyncProjection } from './followed-sync-source.js';
+export type { FollowedModuleScope, FollowedSyncSource, FollowedSyncSourceInput } from './followed-sync-source.js';
+export { followedModuleScopeEqual } from './followed-sync-source.js';
 export { followedSyncSourceActiveEqual } from './followed-sync-source.js';
 export { FollowedSourceNotReadyError } from './sync-role-replication-support.js';
 export {

@@ -3,15 +3,21 @@ import type { ExpandableRecordView, RecordViewState } from '../src/record-view.j
 import type { FollowedSyncSource, SyncEngine, SyncEvent, SyncEventListener } from '@enbox/agent';
 
 import { createProjectedRecordView } from '../src/projected-record-view.js';
+import { FollowedModuleLease } from '../src/followed-module-lease.js';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
-import { describe, expect, it } from 'bun:test';
 
-const source: FollowedSyncSource = {
-  acceptanceId   : 'accepted', actorDid       : 'did:example:member', contextId      : 'page', id             : 'role',
-  module         : 'https://example.com/notebook', modulePaths    : ['page'], moduleRole     : 'page/editor',
-  remoteEndpoint : 'https://owner.example', roles          : ['page/editor'], sourceDid      : 'did:example:owner',
-};
 const consumer = 'https://example.com/realtime';
+const rootModule = 'https://example.com/notebook';
+const source: FollowedSyncSource = {
+  acceptanceId : 'accepted', actorDid     : 'did:example:member', contextId    : 'page', id           : 'role',
+  rootModule,
+  modules      : {
+    [rootModule] : { contextPath: 'page', modulePaths: ['page'], moduleRole: 'page/editor' },
+    [consumer]   : { contextPath: 'page', modulePaths: ['page/live'], moduleRole: 'notebook:page/editor' },
+  },
+  remoteEndpoint: 'https://owner.example', roles: ['page/editor'], sourceDid: 'did:example:owner',
+};
 
 type State = RecordViewState<string>;
 class NativeView implements ExpandableRecordView<string> {
@@ -57,41 +63,53 @@ async function settled(predicate: () => boolean): Promise<void> {
   expect(predicate()).toBe(true);
 }
 
+const sessions = new Set<AbortController>();
+
 function harness(): {
   emit(active?: boolean): void;
   listeners: Set<SyncEventListener>;
+  root: FollowedModuleLease;
   session: AbortController;
   sync: SyncEngine;
   } {
   const listeners = new Set<SyncEventListener>();
+  const session = new AbortController();
+  sessions.add(session);
+  let accepted: FollowedSyncSource | undefined = source;
+  const sync = {
+    getFollowedSource : async (id: string): Promise<FollowedSyncSource | undefined> => id === source.id ? accepted : undefined,
+    on                : (listener: SyncEventListener): (() => void) => {
+      listeners.add(listener);
+      return (): void => {listeners.delete(listener);};
+    },
+  } as unknown as SyncEngine;
+  const root = new FollowedModuleLease({ module: source.rootModule, source, sync, signal: session.signal });
   return {
     emit: (active = true): void => {
+      accepted = active ? source : undefined;
       const event: SyncEvent = {
         type                       : 'followed-context:change', actorDid                   : source.actorDid, contextId                  : source.contextId,
         followedSourceAcceptanceId : source.acceptanceId, followedSourceId           : active ? source.id : undefined,
-        module                     : source.module, tenantDid                  : source.sourceDid,
+        module                     : source.rootModule, tenantDid                  : source.sourceDid,
       };
-      for (const listener of listeners) { listener(event); }
+      for (const listener of listeners) {listener(event);}
     },
-    listeners,
-    session : new AbortController(),
-    sync    : {
-      getFollowedSource : async (id: string): Promise<FollowedSyncSource | undefined> => id === source.id ? source : undefined,
-      on                : (listener: SyncEventListener): (() => void) => {
-        listeners.add(listener);
-        return (): void => { listeners.delete(listener); };
-      },
-    } as unknown as SyncEngine,
+    listeners, root, session, sync,
   };
 }
 
 describe('projected record views', () => {
+  afterEach(() => {
+    for (const session of sessions) {session.abort();}
+    sessions.clear();
+  });
+
   it('preserves synchronous subscription setup failures through the public opening promise', async () => {
     const test = harness();
     const failure = new Error('sync event subscription failed');
     test.sync.on = (): never => { throw failure; };
     await expect(createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : (): never => { throw new Error('opening must not continue'); },
     })).rejects.toBe(failure);
     expect(test.listeners.size).toBe(0);
@@ -102,7 +120,7 @@ describe('projected record views', () => {
     const pending = deferred<ExpandableRecordView<string>>();
     const native = new NativeView('ready');
     const view = await createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : () => ({ signal: new AbortController().signal, open: (): Promise<ExpandableRecordView<string>> => pending.promise }),
     });
     await expect(view.loadMore()).rejects.toBeInstanceOf(ContextNotReadyError);
@@ -130,7 +148,9 @@ describe('projected record views', () => {
     next.close = async (): Promise<void> => { await closeNext(); await nextClose.promise; };
     const firstScope = new AbortController();
     let generation: ProjectionViewGeneration<string> = { signal: firstScope.signal, open: async () => first };
-    const view = await createProjectedRecordView({ module: consumer, source, sync: test.sync, generation: () => generation });
+    const view = await createProjectedRecordView({
+      module: consumer, source, sync: test.sync, root: test.root, signal: test.root.signal, generation: () => generation,
+    });
     await view.ready();
     generation = { signal: new AbortController().signal, open: async (): Promise<ExpandableRecordView<string>> => next };
     firstScope.abort();
@@ -148,6 +168,9 @@ describe('projected record views', () => {
     if (outcome.status === 'rejected') { expect(outcome.reason).toBe(reason); }
     expect(first.closeCount).toBe(1);
     expect(next.closeCount).toBe(1);
+    expect(test.listeners.size).toBe(1);
+    expect(test.root.signal.aborted).toBe(false);
+    test.session.abort();
     expect(test.listeners.size).toBe(0);
   });
 
@@ -162,7 +185,7 @@ describe('projected record views', () => {
       return source;
     };
     const view = await createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : (): ProjectionViewGeneration<string> => {
         generations++;
         return { signal: new AbortController().signal, open: async () => native };
@@ -187,7 +210,8 @@ describe('projected record views', () => {
       let generations = 0;
       test.sync.getFollowedSource = (): Promise<FollowedSyncSource> => { reading = true; return lookup.promise; };
       const view = await createProjectedRecordView({
-        module       : consumer, source, sync         : test.sync, callerSignal : caller.signal, signal       : test.session.signal,
+        module       : consumer, source, sync         : test.sync, root         : test.root,
+        callerSignal : caller.signal, signal       : test.root.signal,
         generation   : (): never => { generations++; throw new Error('cancelled lookup must not open a generation'); },
       });
       await settled(() => reading);
@@ -199,6 +223,8 @@ describe('projected record views', () => {
       try {
         await settled(() => closed);
         expect(generations).toBe(0);
+        expect(test.listeners.size).toBe(reason === 'caller-abort' ? 1 : 0);
+        test.session.abort();
         expect(test.listeners.size).toBe(0);
       } finally {
         lookup.resolve(source);
@@ -217,15 +243,17 @@ describe('projected record views', () => {
     let generations = 0;
     test.sync.getFollowedSource = (): Promise<FollowedSyncSource | undefined> => { reads++; return lookup.promise; };
     const view = await createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : (): never => { generations++; throw new Error('missing root must not open a generation'); },
     });
     await settled(() => reads === 1);
     test.emit();
+    // The shared authority watch also checks the wake; neither read may restart after retirement.
+    await settled(() => reads === 2);
     lookup.resolve(undefined);
     await settled(() => test.listeners.size === 0);
     await new Promise<void>(resolve => setTimeout(resolve, 0));
-    expect(reads).toBe(1);
+    expect(reads).toBe(2);
     expect(generations).toBe(0);
     expect(view.getSnapshot()).toMatchObject({ status: 'error', current: false, error: expect.any(ContextRetiredError) });
     await view.close();
@@ -242,7 +270,9 @@ describe('projected record views', () => {
       signal : oldScope.signal,
       open   : (): Promise<ExpandableRecordView<string>> => { opening = true; return pending.promise; },
     };
-    const view = await createProjectedRecordView({ module: consumer, source, sync: test.sync, generation: () => generation });
+    const view = await createProjectedRecordView({
+      module: consumer, source, sync: test.sync, root: test.root, signal: test.root.signal, generation: () => generation,
+    });
     await settled(() => opening);
     generation = { signal: new AbortController().signal, open: async (): Promise<ExpandableRecordView<string>> => next };
     oldScope.abort(new ContextRetiredError(source.contextId));
@@ -251,8 +281,11 @@ describe('projected record views', () => {
     pending.resolve(late);
     await settled(() => late.closed);
     expect(view.getSnapshot().records).toEqual(['current']);
-    expect(test.listeners.size).toBe(1);
+    expect(test.listeners.size).toBe(2);
     await view.close();
+    expect(test.listeners.size).toBe(1);
+    test.session.abort();
+    expect(test.listeners.size).toBe(0);
   });
 
   it('coalesces repeated wakes through the shared drain without overlapping generation opens', async () => {
@@ -264,7 +297,7 @@ describe('projected record views', () => {
     let active = 0;
     let maximumActive = 0;
     const view = await createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : () => ({
         signal : new AbortController().signal,
         open   : async (): Promise<ExpandableRecordView<string>> => {
@@ -307,7 +340,7 @@ describe('projected record views', () => {
     const pending = deferred<ExpandableRecordView<string>>();
     let generation: ProjectionViewGeneration<string> = { signal: firstScope.signal, open: async () => first };
     const view = await createProjectedRecordView({
-      module: consumer, source, signal: test.session.signal, sync: test.sync, generation: () => generation,
+      module: consumer, source, signal: test.root.signal, sync: test.sync, root: test.root, generation: () => generation,
     });
     await view.ready();
     const lateListeners = [...first.listeners];
@@ -325,6 +358,9 @@ describe('projected record views', () => {
     expect(test.session.signal.aborted).toBe(false);
     await view.close();
     expect(next.closeCount).toBe(1);
+    expect(test.listeners.size).toBe(1);
+    expect(test.root.signal.aborted).toBe(false);
+    test.session.abort();
     expect(test.listeners.size).toBe(0);
   });
 
@@ -335,7 +371,9 @@ describe('projected record views', () => {
     const oldScope = new AbortController();
     const pending = deferred<ExpandableRecordView<string>>();
     let generation: ProjectionViewGeneration<string> = { signal: oldScope.signal, open: async () => first };
-    const view = await createProjectedRecordView({ module: consumer, source, sync: test.sync, generation: () => generation });
+    const view = await createProjectedRecordView({
+      module: consumer, source, sync: test.sync, root: test.root, signal: test.root.signal, generation: () => generation,
+    });
     await view.ready();
     generation = { signal: new AbortController().signal, open: (): Promise<ExpandableRecordView<string>> => pending.promise };
     oldScope.abort();
@@ -353,7 +391,7 @@ describe('projected record views', () => {
     let unavailable = true;
     let attempts = 0;
     const view = await createProjectedRecordView({
-      module     : consumer, source, sync       : test.sync,
+      module     : consumer, source, sync       : test.sync, root       : test.root, signal     : test.root.signal,
       generation : (): ProjectionViewGeneration<string> => {
         attempts++;
         if (unavailable) { throw failure; }
@@ -380,7 +418,7 @@ describe('projected record views', () => {
     let opening = false;
     let generation: ProjectionViewGeneration<string> = { signal: oldScope.signal, open: async () => first };
     const view = await createProjectedRecordView({
-      module: consumer, source, sync: test.sync, callerSignal: caller.signal, signal: test.session.signal, generation: () => generation,
+      module: consumer, source, sync: test.sync, root: test.root, callerSignal: caller.signal, signal: test.root.signal, generation: () => generation,
     });
     await view.ready();
     generation = {
@@ -396,6 +434,8 @@ describe('projected record views', () => {
     expect(view.getSnapshot().current).toBe(false);
     expect(view.getSnapshot().records).not.toEqual(['late']);
     expect(late.closeCount).toBe(1);
+    expect(test.listeners.size).toBe(reason === 'caller-abort' ? 1 : 0);
+    test.session.abort();
     expect(test.listeners.size).toBe(0);
   });
 });

@@ -32,6 +32,7 @@ export default defineConfig({
     testTimeout : 10_000,
     coverage: {
       include: [
+        'src/followed-sync-module.ts',
         'src/followed-sync-source.ts',
         'src/sync-admit-closure.ts',
         'src/sync-durable-feed-reconciler.ts',

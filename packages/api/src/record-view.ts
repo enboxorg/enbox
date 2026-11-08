@@ -6,8 +6,6 @@ import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-
 import type { ModuleDefinition, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agent';
 
-import { ContextRetiredError } from './context-errors.js';
-import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
@@ -148,7 +146,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
   private readonly _followedContextId?: string;
-  private readonly _followedSourceAcceptanceId?: string;
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
@@ -183,7 +180,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._sync = this._isDirectRemote ? undefined : options.sync;
     this._tenantDid = options.dwn.recordTenantDid;
     this._followedContextId = options.dwn.followedContextId;
-    this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
@@ -400,17 +396,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       return;
     }
 
-    // The root acceptance retires every selected module before per-module wake filtering.
-    if (this._followedSourceId !== undefined && event.type === 'followed-context:change'
-      && event.actorDid === this._dwn.connectedDid && event.contextId === this._followedContextId
-      && event.module === (this._dwn.followedSourceModule ?? this._query.filter.module)
-      && followedContextChangeRetiresSource({
-        acceptanceId: this._followedSourceAcceptanceId!, id: this._followedSourceId,
-      }, event)) {
-      this.publishError(new ContextRetiredError(this._followedContextId!));
-      void this.close().catch((): void => {});
-      return;
-    }
     if (!syncEventCoversModule(event, this._query.filter.module)
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;

@@ -309,14 +309,14 @@ describe('SyncTargetResolver', () => {
         dwnUrl : source.remoteEndpoint,
         scope  : {
           kind        : 'context',
-          module      : source.module,
+          module      : source.rootModule,
           contextId   : source.contextId,
-          modulePaths : source.modulePaths,
+          modulePaths : source.modules[source.rootModule]!.modulePaths,
         },
         authorization: {
           kind         : 'role',
           actorDid     : source.actorDid,
-          moduleRole   : source.moduleRole,
+          moduleRole   : source.modules[source.rootModule]!.moduleRole,
           roleRecordId : source.id,
         },
       });
@@ -338,7 +338,7 @@ describe('SyncTargetResolver', () => {
       expect(target.authorization).toEqual({
         kind         : 'role',
         actorDid     : source.actorDid,
-        moduleRole   : source.moduleRole,
+        moduleRole   : source.modules[source.rootModule]!.moduleRole,
         roleRecordId : source.id,
       });
       expect(target.authorDelegatedGrant).toBeUndefined();
@@ -348,7 +348,7 @@ describe('SyncTargetResolver', () => {
     it('should refresh the full role delegate grant without changing durable target identity', async () => {
       const delegateDid = 'did:example:delegate';
       const source = followedSource();
-      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.module);
+      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.rootModule);
       const refreshedGrant = { ...initialGrant, message: { recordId: 'fresh-grant' } } as PermissionGrantEntry;
       const { getPermissionForRequest, resolver } = createResolver({
         remoteEndpoints: ['https://owner.example.com'],
@@ -381,10 +381,9 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    module         : 'https://example.com/notebooks',
+    rootModule     : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    moduleRole     : 'notebook/viewer',
-    modulePaths    : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    modules        : { 'https://example.com/notebooks': { contextPath: 'notebook', moduleRole: 'notebook/viewer', modulePaths: ['notebook', 'notebook/page', 'notebook/page/delta'] } },
     roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };

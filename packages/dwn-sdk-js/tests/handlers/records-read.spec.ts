@@ -22,6 +22,7 @@ import { ModuleAuthorization } from '../../src/core/module-authorization.js';
 import { RecordsReadHandler } from '../../src/handlers/records-read.js';
 import { RecordsReadReplicationSupport } from '../../src/core/records-read-replication-support.js';
 import { resolveModuleContextRoles } from '../../src/index.js';
+import { resolveModuleGraph } from '../../src/core/module-graph.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { TestEventLog } from '../test-event-stream.js';
 import { TestStores } from '../test-stores.js';
@@ -1694,7 +1695,7 @@ export function testRecordsReadHandler(): void {
               expect(stored.status.code).toBe(200);
               expect(stored.entries).toHaveLength(1);
               const installed = (stored.entries![0] as ModulesConfigureMessage).descriptor.definition;
-              expect(resolveModuleContextRoles(installed, 'notebook/page')).toEqual(expectedRoles);
+              expect(resolveModuleContextRoles(resolveModuleGraph(installed, () => undefined), 'notebook/page')).toEqual(expectedRoles);
 
               for (const [moduleRole, status] of [['notebook/page/viewer', 200], ['notebook/page/editor', 401]] as const) {
                 const read = await RecordsRead.create({

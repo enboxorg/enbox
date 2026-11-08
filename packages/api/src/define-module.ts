@@ -58,19 +58,18 @@ export function defineModule<
   const effective = hasManagedSharedContext(snapshot)
     ? addSharedContextModule(snapshot, codecs)
     : { definition: snapshot, codecs: { ...codecs } };
-  const resolvedGraph = resolveTypedModuleGraph({ ...effective, dependencies });
+  resolveTypedModuleGraph({ ...effective, dependencies });
   freezeDefinition(effective.definition);
   return Object.freeze({
     definition : effective.definition as D,
     codecs     : Object.freeze(effective.codecs) as C,
     dependencies,
-    resolvedGraph,
   });
 }
 
 /** @internal Whether a runtime value satisfies the module shape required by typed APIs. */
 export function isTypedModule(value: unknown): value is TypedModule {
-  if (!isObjectRecord(value) || !isObjectRecord(value.resolvedGraph)) {
+  if (!isObjectRecord(value)) {
     return false;
   }
 
@@ -82,7 +81,7 @@ export function isTypedModule(value: unknown): value is TypedModule {
   }
 }
 
-/** @internal Validate and resolve an effective typed artifact without trusting supplied graph metadata. */
+/** @internal Derive the canonical graph from the artifact's definitions and dependency bindings. */
 export function resolveTypedModuleGraph(value: unknown): ResolvedModuleGraph {
   if (!isObjectRecord(value)) {
     throw new TypeError('defineModule: module artifact must be an object.');

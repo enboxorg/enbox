@@ -102,7 +102,7 @@ export default defineConfig({
       'tests/utils/jws.spec.ts',
       'tests/utils/memory-cache.spec.ts',
       'tests/utils/messages.spec.ts',
-      'tests/utils/module-role-projection.spec.ts',
+      'tests/utils/module-context-attachment.spec.ts',
       'tests/utils/module-role-scope.spec.ts',
       // object.spec.ts removed: `@enbox/common` now owns these helpers
       // and tests them in `packages/common/tests/object.test.ts` (a

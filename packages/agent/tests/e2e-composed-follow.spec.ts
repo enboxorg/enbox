@@ -134,25 +134,23 @@ describe('E2E: one managed root with a composed consumer feed', () => {
 
   it('accepts the root independently and verifies an empty consumer through its actual role-authorized feed', async () => {
     accepted = await member.agent.sync.followSource({
-      actorDid          : bob.did.uri,
-      sourceDid         : alice.did.uri,
-      module            : notebook.module,
-      contextId         : page.contextId!,
-      roles             : ['page/member'],
-      additionalModules : [realtime.module],
+      actorDid    : bob.did.uri,
+      sourceDid   : alice.did.uri,
+      rootModule  : notebook.module,
+      contextPath : 'page',
+      contextId   : page.contextId!,
+      roles       : ['page/member'],
+      modules     : [realtime.module],
     });
-    expect(accepted.projections).toBeUndefined();
-    expect(accepted.additionalModules).toEqual([realtime.module]);
-    expect(await member.agent.sync.pullFollowedSource(accepted)).toBe(true);
+    expect(accepted.modules[realtime.module]).toBeNull();
+    expect(Object.keys(accepted.modules).sort()).toEqual([notebook.module, realtime.module].sort());
+    expect(await member.agent.sync.pullFollowedSource(accepted, accepted.rootModule)).toBe(true);
     selected = await member.agent.sync.ensureFollowedSourceModules(accepted, [realtime.module]);
     expect(selected.id).toBe(accepted.id);
     expect(selected.acceptanceId).toBe(accepted.acceptanceId);
-    expect(selected.projections).toEqual([{
-      module         : realtime.module,
-      attachmentPath : 'page',
-      moduleRole     : 'notebook:page/member',
-      modulePaths    : ['page/live'],
-    }]);
+    expect(selected.modules[realtime.module]).toEqual({
+      contextPath: 'page', moduleRole: 'notebook:page/member', modulePaths: ['page/live'],
+    });
     expect(await member.agent.sync.pullFollowedSource(selected, realtime.module)).toBe(true);
     expect(await member.agent.sync.listFollowedSources()).toHaveLength(1);
     const links = await (member.agent.sync as SyncEngineLevel).getReplicationLinks(alice.did.uri);
@@ -253,27 +251,28 @@ describe('E2E: one managed root with a composed consumer feed', () => {
     await delegate.agent.sync.setIdentityOptions({ did: bob.did.uri, options: { delegateDid: carol.did.uri, modules: [notebook.module] } });
     await delegate.agent.sync.sync('pull', { did: bob.did.uri });
     const source = await delegate.agent.sync.followSource({
-      actorDid  : bob.did.uri,
-      sourceDid : alice.did.uri,
-      module    : notebook.module,
-      contextId : page.contextId!,
-      roles     : ['page/member'],
+      actorDid    : bob.did.uri,
+      sourceDid   : alice.did.uri,
+      rootModule  : notebook.module,
+      contextPath : 'page', modules     : [],
+      contextId   : page.contextId!,
+      roles       : ['page/member'],
     });
     let consumer = await delegate.agent.sync.ensureFollowedSourceModules(source, [realtime.module]);
-    expect(consumer.projections).toBeUndefined();
-    expect(await delegate.agent.sync.pullFollowedSource(source)).toBe(true);
+    expect(consumer.modules[realtime.module]).toBeNull();
+    expect(await delegate.agent.sync.pullFollowedSource(source, source.rootModule)).toBe(true);
 
     const consumerFeed = await grantToDelegate(carol.did.uri,
       { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: realtime.module });
     consumer = await delegate.agent.sync.ensureFollowedSourceModules(source, [realtime.module]);
-    expect(consumer.projections).toBeUndefined();
-    expect(await delegate.agent.sync.pullFollowedSource(source)).toBe(true);
+    expect(consumer.modules[realtime.module]).toBeNull();
+    expect(await delegate.agent.sync.pullFollowedSource(source, source.rootModule)).toBe(true);
 
     const consumerRead = await grantToDelegate(carol.did.uri,
       { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: realtime.module });
     const requests = sinon.spy(delegate.agent.rpc, 'sendDwnRequest');
     consumer = await delegate.agent.sync.ensureFollowedSourceModules(source, [realtime.module]);
-    expect(consumer.projections).toHaveLength(1);
+    expect(consumer.modules[realtime.module]).not.toBeNull();
     expect(consumer.acceptanceId).toBe(source.acceptanceId);
     expect(await delegate.agent.sync.pullFollowedSource(consumer, realtime.module)).toBe(true);
     const consumerRequests = requests.getCalls().map(call => call.args[0].message).filter(message => {
@@ -314,11 +313,12 @@ describe('E2E: one managed root with a composed consumer feed', () => {
 
   it('retains a private consumer selection as unavailable while the accepted root remains refreshable', async () => {
     selected = await member.agent.sync.ensureFollowedSourceModules(selected, [privateRealtime.module]);
-    expect(selected.additionalModules).toEqual([privateRealtime.module, realtime.module].sort());
-    expect(selected.projections?.map(projection => projection.module)).toEqual([realtime.module]);
+    expect(Object.keys(selected.modules).sort()).toEqual([notebook.module, privateRealtime.module, realtime.module].sort());
+    expect(selected.modules[privateRealtime.module]).toBeNull();
+    expect(selected.modules[realtime.module]).not.toBeNull();
     expect(selected.acceptanceId).toBe(accepted.acceptanceId);
     expect(await member.agent.sync.pullFollowedSource(selected, privateRealtime.module)).toBe(false);
-    expect(await member.agent.sync.pullFollowedSource(accepted)).toBe(true);
+    expect(await member.agent.sync.pullFollowedSource(accepted, accepted.rootModule)).toBe(true);
   }, 60_000);
 
   it('retires every module link through the original root acceptance', async () => {
@@ -330,12 +330,13 @@ describe('E2E: one managed root with a composed consumer feed', () => {
 
   it('rebinds every consumer after a root role downgrade and retires them after role deletion', async () => {
     const refollowed = await member.agent.sync.followSource({
-      actorDid          : bob.did.uri,
-      sourceDid         : alice.did.uri,
-      module            : notebook.module,
-      contextId         : page.contextId!,
-      roles             : ['page/member', 'page/viewer'],
-      additionalModules : [realtime.module],
+      actorDid    : bob.did.uri,
+      sourceDid   : alice.did.uri,
+      rootModule  : notebook.module,
+      contextPath : 'page',
+      contextId   : page.contextId!,
+      roles       : ['page/member', 'page/viewer'],
+      modules     : [realtime.module],
     });
     const previous = await member.agent.sync.ensureFollowedSourceModules(refollowed, [realtime.module]);
     expect(previous.acceptanceId).not.toBe(accepted.acceptanceId);
@@ -367,13 +368,13 @@ describe('E2E: one managed root with a composed consumer feed', () => {
     expect(assignedViewer.audienceKeyDelivery?.delivered).toBe(true);
     await owner.agent.sync.sync('push');
     await waitFor(async () => (await member.agent.sync.listFollowedSources()).some(source =>
-      source.moduleRole === 'page/viewer' && source.projections?.some(projection => projection.moduleRole === 'notebook:page/viewer')));
+      source.modules[source.rootModule]!.moduleRole === 'page/viewer' && source.modules[realtime.module]?.moduleRole === 'notebook:page/viewer'));
     const downgraded = (await member.agent.sync.listFollowedSources())[0];
     expect(downgraded.id).toBe(assignedViewer.message!.recordId);
     expect(downgraded.acceptanceId).not.toBe(previous.acceptanceId);
     expect(await member.agent.sync.pullFollowedSource(previous, realtime.module)).toBe(false);
     await expect(member.agent.sync.resolveFollowedSourceModuleGraph(previous, realtime.module)).rejects.toThrow();
-    expect(await member.agent.sync.pullFollowedSource(downgraded)).toBe(true);
+    expect(await member.agent.sync.pullFollowedSource(downgraded, downgraded.rootModule)).toBe(true);
     expect(await member.agent.sync.pullFollowedSource(downgraded, realtime.module)).toBe(true);
 
     const removedViewer = await owner.agent.dwn.processRequest({
@@ -439,14 +440,15 @@ describe('E2E: one managed root with a composed consumer feed', () => {
     expect(granted.audienceKeyDelivery?.delivered).toBe(true);
     await owner.agent.sync.sync('push');
     const privateRoot = await member.agent.sync.followSource({
-      actorDid  : bob.did.uri,
-      sourceDid : alice.did.uri,
-      module    : privateNotebook.module,
-      contextId : created.message!.contextId!,
-      roles     : ['page/member'],
+      actorDid    : bob.did.uri,
+      sourceDid   : alice.did.uri,
+      rootModule  : privateNotebook.module,
+      contextPath : 'page', modules     : [],
+      contextId   : created.message!.contextId!,
+      roles       : ['page/member'],
     });
     const privateProjection = await member.agent.sync.ensureFollowedSourceModules(privateRoot, [publicConsumer.module]);
-    expect(privateProjection.projections).toHaveLength(1);
+    expect(privateProjection.modules[publicConsumer.module]).not.toBeNull();
     const location = (member.syncStore as Level<string, string>).location;
     await (member.agent.sync as SyncEngineLevel).close();
     member.syncStore = new Level(location);

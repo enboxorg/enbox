@@ -8,7 +8,7 @@ import { describe, expect, it } from 'bun:test';
 import { compileRecordQuery } from '../src/record-query.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { defineModule, isTypedModule, orderTypedModuleDependencies } from '../src/define-module.js';
+import { defineModule, isTypedModule, orderTypedModuleDependencies, resolveTypedModuleGraph } from '../src/define-module.js';
 
 const BaseDefinition = {
   module    : 'https://example.com/modules/composition-base',
@@ -70,24 +70,24 @@ describe('typed module composition', () => {
     const module = discussion();
     expect(isTypedModule(module)).toBe(true);
     expect(Object.keys(module.codecs)).toEqual(['comment']);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note')).toMatchObject({
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note')).toMatchObject({
       kind             : 'ref',
       owningModuleUri  : BaseDefinition.module,
       owningModulePath : 'workspace/note',
     });
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note/comment')).toMatchObject({
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note/comment')).toMatchObject({
       physicalDepth       : 3,
       parentPhysicalDepth : 2,
       owningModuleUri     : DiscussionDefinition.module,
     });
-    expect(compileRecordQuery(module.resolvedGraph, 'note/comment', { within: 'W/N/C' }).filter).toEqual({
+    expect(compileRecordQuery(resolveTypedModuleGraph(module), 'note/comment', { within: 'W/N/C' }).filter).toEqual({
       module     : DiscussionDefinition.module,
       modulePath : 'note/comment',
       contextId  : 'W/N/C',
       schema     : 'https://example.com/schemas/comment',
     });
-    expect(() => compileRecordQuery(module.resolvedGraph, 'note')).toThrow('not a locally owned record path');
-    expect(() => compileRecordQuery(module.resolvedGraph, 'note/comment', { within: 'W/N/C/X' }))
+    expect(() => compileRecordQuery(resolveTypedModuleGraph(module), 'note')).toThrow('not a locally owned record path');
+    expect(() => compileRecordQuery(resolveTypedModuleGraph(module), 'note/comment', { within: 'W/N/C/X' }))
       .toThrow('cannot be deeper');
   });
 
@@ -131,8 +131,8 @@ describe('typed module composition', () => {
       dependencies: { base: BaseModule },
     });
     expect(module.codecs.note).toBe(text);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note')?.recordType.dataFormats).toEqual(['application/json']);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('folder/note')?.recordType.dataFormats).toEqual(['text/plain']);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note')?.recordType.dataFormats).toEqual(['application/json']);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('folder/note')?.recordType.dataFormats).toEqual(['text/plain']);
   });
 
   it('does not require codecs for unused types or imported attachment nodes', () => {
@@ -170,7 +170,7 @@ describe('typed module composition', () => {
       },
     } as const satisfies ModuleDefinition;
     const module = defineModule({ definition, codecs: BaseModule.codecs });
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('enboxContextFollow')?.kind).toBe('record');
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('enboxContextFollow')?.kind).toBe('record');
     expect(isTypedModule(module)).toBe(true);
 
     const extension = defineModule({

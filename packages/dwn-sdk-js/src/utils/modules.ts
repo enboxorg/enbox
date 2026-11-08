@@ -3,8 +3,6 @@ import type { ModuleDefinition, ModuleRuleSet } from '../types/modules-types.js'
 
 import { canonicalJsonStringify } from '@enbox/common';
 import { KeyDerivationScheme } from '../utils/hd-key.js';
-import { lexicographicalCompare } from './string.js';
-import { ModuleAction } from '../types/modules-types.js';
 
 /**
  * Result of parsing a cross-module reference in `alias:path` format.
@@ -127,88 +125,6 @@ export function walkModuleRuleSets(
     }
   };
   walk(structure, '');
-}
-
-/**
- * Resolve local context roles in the order of the root's read action rules.
- * Only roles directly beneath the requested context qualify; ancestor and
- * cross-module roles are not resolved. An empty result means no roles qualify.
- *
- * This selection order does not change authorization or establish exclusivity
- * between assignments. The definition must already be validated.
- *
- * @param definition - The validated module definition.
- * @param contextPath - The canonical module path of a non-role record.
- * @returns A new array in authored `$actions` order.
- * @throws {TypeError} If the path is not canonical, does not exist, or names a role.
- */
-export function resolveModuleContextRoles(definition: ModuleDefinition, contextPath: string): readonly string[] {
-  if (contextPath.split('/').some(segment => segment === '' || segment.startsWith('$'))) {
-    throw new TypeError(`Context path '${contextPath}' must be a canonical module path.`);
-  }
-  const context = getRuleSetAtPath(contextPath, definition.structure);
-  if (context === undefined || context.$role === true) {
-    throw new TypeError(`Context path '${contextPath}' must identify a non-role record.`);
-  }
-  if (context.$ref !== undefined) {
-    return [];
-  }
-
-  const roles: string[] = [];
-  for (const action of context.$actions ?? []) {
-    const role = action.role;
-    if (role !== undefined && !isCrossModuleRef(role) && action.can.includes(ModuleAction.Read)
-      && role.split('/').slice(0, -1).join('/') === contextPath
-      && getRuleSetAtPath(role, definition.structure)?.$role === true) {
-      roles.push(role);
-    }
-  }
-  return roles;
-}
-
-/** Resolve the non-role content scope governed by one nested module role. */
-export function resolveModuleRoleContextScope(
-  definition: ModuleDefinition,
-  rolePath: string,
-): {
-  allowedPaths: ReadonlySet<string>;
-  modulePath: string;
-  readablePaths: [string, ...string[]];
-} {
-  if (getRuleSetAtPath(rolePath, definition.structure)?.$role !== true) {
-    throw new TypeError(`Context role '${rolePath}' is not a module role path.`);
-  }
-
-  const modulePath = rolePath.split('/').slice(0, -1).join('/');
-  if (modulePath === '') {
-    throw new TypeError('Context roles must be nested below a context root.');
-  }
-  const allowedPaths: string[] = [];
-  const readablePaths: string[] = [];
-  walkModuleRuleSets(definition.structure as ModuleRuleSet, (path, child): void => {
-    const contentPath = child.$role !== true && child.$ref === undefined &&
-      (path === modulePath || path.startsWith(`${modulePath}/`));
-    if (contentPath) {
-      const actions = (child.$actions ?? []).filter(rule => rule.role === rolePath);
-      if (actions.length > 0) {
-        allowedPaths.push(path);
-      }
-      if (actions.some(rule => rule.can.includes(ModuleAction.Read))) {
-        readablePaths.push(path);
-      }
-    }
-  });
-  allowedPaths.sort(lexicographicalCompare);
-  readablePaths.sort(lexicographicalCompare);
-  if (!readablePaths.includes(modulePath)) {
-    throw new TypeError(`Context role '${rolePath}' must authorize reading its parent context '${modulePath}'.`);
-  }
-
-  return {
-    allowedPaths  : new Set(allowedPaths),
-    modulePath,
-    readablePaths : readablePaths as [string, ...string[]],
-  };
 }
 
 /**

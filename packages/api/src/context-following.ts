@@ -244,11 +244,13 @@ export class ContextFollowing {
   private verifyAndAcceptContext(request: FollowRequest, roles: readonly [string, ...string[]]): Promise<FollowedSyncSource> {
     this.assertActive();
     return this._options.sync.followSource({
-      actorDid  : this._options.actorDid,
-      contextId : request.id,
-      module    : this._options.definition.module,
-      roles     : [...roles],
-      sourceDid : request.ownerDid,
+      actorDid    : this._options.actorDid,
+      contextId   : request.id,
+      rootModule  : this._options.definition.module,
+      contextPath : request.path,
+      modules     : this._options.additionalModules?.(request.path) ?? [],
+      roles       : [...roles],
+      sourceDid   : request.ownerDid,
     });
   }
 
@@ -466,7 +468,7 @@ export class ContextFollowing {
     const sources = await this._options.sync.listFollowedSources();
     this.assertActive();
     return sources.filter((source): boolean =>
-      source.actorDid === this._options.actorDid && source.module === this._options.definition.module
+      source.actorDid === this._options.actorDid && source.rootModule === this._options.definition.module
       && source.sourceDid === intent.ownerDid && source.contextId === intent.contextId);
   }
 
@@ -501,7 +503,7 @@ export class ContextFollowing {
     if (resolveRecordQueryNode(this._resolvedGraph, path).physicalDepth !== contextId.split('/').length) {
       throw new TypeError(`ContextFollowing: context ID does not identify a '${path}' root.`);
     }
-    const roles = resolveModuleContextRoles(this._options.definition, path);
+    const roles = resolveModuleContextRoles(this._resolvedGraph, path);
     if (roles.length === 0) {
       throw new TypeError(`ContextFollowing: '${path}' is not a shared context root.`);
     }

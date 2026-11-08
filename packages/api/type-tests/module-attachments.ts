@@ -1,5 +1,5 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { ContextModuleBinding, ContextRootPath, Enbox, ModuleAttachmentPaths, ModulePaths, TypedModule } from '@enbox/api';
-import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import { defineModule, recordCodecs } from '@enbox/api';
 
@@ -36,6 +36,9 @@ const OtherNotebook = defineModule({
   definition : { ...Notebook.definition, module: 'https://example.com/attachments/other-notebook' },
   codecs     : Notebook.codecs,
 });
+
+// @ts-expect-error Graphs are derived from definitions; artifacts do not retain a second graph representation.
+Notebook.resolvedGraph;
 
 const Realtime = defineModule({
   definition: {
@@ -142,7 +145,6 @@ type CyclicModule = {
   };
   readonly codecs: { event: typeof _Activity.codecs.event };
   readonly dependencies: { readonly self: CyclicModule };
-  readonly resolvedGraph: ResolvedModuleGraph;
 };
 type _CyclesTerminate = Assert<Equal<
   ModuleAttachmentPaths<CyclicModule, typeof Notebook.definition.module, 'notebook/page'>,

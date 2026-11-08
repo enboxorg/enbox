@@ -5,7 +5,7 @@
  * These types are purely compile-time — they produce no runtime code.
  */
 
-import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 // ---------------------------------------------------------------------------
@@ -328,7 +328,6 @@ export type ModuleDependency = {
   readonly definition: ModuleDefinition;
   readonly codecs: RecordCodecMap;
   readonly dependencies: ModuleDependencies;
-  readonly resolvedGraph: ResolvedModuleGraph;
 };
 
 /** Aliases are lexical to the module that declares them. */
@@ -377,6 +376,4 @@ export type TypedModule<
   /** Complete typed artifacts for exactly the module's own `uses` aliases. */
   readonly dependencies: Deps;
 
-  /** Canonical authored graph; installed cryptographic readiness is checked separately. */
-  readonly resolvedGraph: ResolvedModuleGraph;
 };

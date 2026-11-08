@@ -63,6 +63,16 @@ describe('SyncEngineLevel persisted format', () => {
     expect(await db.get(SYNC_STORE_FORMAT_KEY)).toBe('unsupported-format');
   });
 
+  it('rejects the former single-module source format without migrating its records', async () => {
+    await db.put(SYNC_STORE_FORMAT_KEY, 'modules-v1');
+    const previous = JSON.stringify({ module: 'https://example.com/notebook', moduleRole: 'notebook/member' });
+    await db.sublevel('followedSyncSources').put('role-a', previous);
+
+    await expect(engine.listFollowedSources()).rejects.toThrow('incompatible persisted sync format');
+    expect(await db.get(SYNC_STORE_FORMAT_KEY)).toBe('modules-v1');
+    expect(await db.sublevel('followedSyncSources').get('role-a')).toBe(previous);
+  });
+
   it('preserves the format marker when clearing current state', async () => {
     await engine.getIdentityOptions('did:example:format-owner');
     await engine.clear();

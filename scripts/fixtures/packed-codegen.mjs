@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { generateModuleCode } from '@enbox/module-codegen';
 import { RecordValidationError } from '@enbox/api';
+import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 const coreDefinition = {
   module    : 'https://example.com/packed-codegen/core',
@@ -93,11 +94,14 @@ async function verifyGeneratedModules() {
   assert.deepEqual(Object.keys(CommentsModule.codecs), ['comment']);
   assert.equal(CommentsModule.definition.$keyAgreement, undefined);
 
-  const attachment = CommentsModule.resolvedGraph.nodesByDeclaredPath.get('note');
+  const graph = resolveModuleGraph(CommentsModule.definition,
+    uri => uri === CoreModule.definition.module ? CoreModule.definition : undefined,
+    { requireKeyAgreement: false });
+  const attachment = graph.nodesByDeclaredPath.get('note');
   assert.equal(attachment.kind, 'ref');
   assert.equal(attachment.owningModuleUri, CoreModule.definition.module);
   assert.equal(attachment.owningModulePath, 'notebook/note');
-  const comment = CommentsModule.resolvedGraph.nodesByDeclaredPath.get('note/comment');
+  const comment = graph.nodesByDeclaredPath.get('note/comment');
   assert.equal(comment.kind, 'record');
   assert.equal(comment.owningModuleUri, commentsDefinition.module);
   assert.equal(comment.owningModulePath, 'note/comment');

@@ -52,7 +52,7 @@ The owner assigns page roles. Editors can read and edit the owner's page through
 `co-update`; viewers can only read it:
 
 ```ts
-import { resolveModuleContextRoles, type ModuleDefinition } from '@enbox/dwn-sdk-js';
+import { resolveModuleContextRoles, resolveModuleGraph, type ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 const definition = {
   module: 'https://example.com/modules/notebook',
@@ -77,7 +77,9 @@ const definition = {
   },
 } satisfies ModuleDefinition;
 
-resolveModuleContextRoles(definition, 'notebook/page');
+// Authoring metadata does not contain tenant keys.
+const graph = resolveModuleGraph(definition, () => undefined, { requireKeyAgreement: false });
+resolveModuleContextRoles(graph, 'notebook/page');
 // ['notebook/page/editor', 'notebook/page/viewer']
 ```
 

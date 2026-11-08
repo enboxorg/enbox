@@ -54,10 +54,9 @@ function followedSource(id = 'role-a'): FollowedSyncSource {
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    module         : 'https://example.com/notebooks',
+    rootModule     : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    moduleRole     : 'notebook/viewer',
-    modulePaths    : ['notebook', 'notebook/page'],
+    modules        : { 'https://example.com/notebooks': { contextPath: 'notebook', moduleRole: 'notebook/viewer', modulePaths: ['notebook', 'notebook/page'] } },
     roles          : ['notebook/collaborator', 'notebook/viewer'],
   };
 }
@@ -107,14 +106,14 @@ function createPlanner({
     delegateDid,
     scope  : {
       kind        : 'context',
-      module      : source.module,
+      module      : source.rootModule,
       contextId   : source.contextId,
-      modulePaths : source.modulePaths,
+      modulePaths : source.modules[source.rootModule]!.modulePaths,
     },
     authorization: {
       kind         : 'role',
       actorDid     : source.actorDid,
-      moduleRole   : source.moduleRole,
+      moduleRole   : source.modules[source.rootModule]!.moduleRole,
       roleRecordId : source.id,
     },
     authorizationEpoch : 'role-epoch',

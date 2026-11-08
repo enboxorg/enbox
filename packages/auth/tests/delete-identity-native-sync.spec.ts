@@ -1,8 +1,8 @@
 import type { EnboxUserAgent as AuthUserAgent } from '@enbox/agent';
 import type { BearerIdentity } from '../../agent/src/bearer-identity.js';
 import type { DwnRpcRequest } from '@enbox/dwn-clients';
-import type { FollowedSyncSource } from '../../agent/src/followed-sync-source.js';
 import type { SyncLinkController } from '../../agent/src/sync-link-controller.js';
+import type { FollowedSyncSource, FollowedSyncSourceInput } from '../../agent/src/followed-sync-source.js';
 import type { GenericMessage, MessagesSubscribeReply } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
@@ -152,21 +152,22 @@ function expectFirstDelegateSigned(fixture: Fixture, gate: ReturnType<typeof gat
 async function createRoleSource(fixture: Fixture, stored = true): Promise<FollowedSyncSource> {
   const foreign = await fixture.harness.createIdentity({ name: 'Source', publish: false, testDwnUrls: ['http://localhost:9999'] });
   const source: FollowedSyncSource = {
-    acceptanceId   : 'role-acceptance',
-    actorDid       : fixture.owner.did.uri,
-    contextId      : 'roleroot',
-    id             : 'member-role',
-    module         : 'https://example.com/role-removal',
-    modulePaths    : ['root'],
-    moduleRole     : 'root/member',
+    acceptanceId : 'role-acceptance',
+    actorDid     : fixture.owner.did.uri,
+    contextId    : 'roleroot',
+    id           : 'member-role',
+    rootModule   : 'https://example.com/role-removal',
+    modules      : {
+      'https://example.com/role-removal': { contextPath: 'root', modulePaths: ['root'], moduleRole: 'root/member' },
+    },
     remoteEndpoint : 'http://localhost:9999',
     roles          : ['root/member'],
     sourceDid      : foreign.did.uri,
   };
   for (const delegate of [fixture.first, fixture.second]) {
     for (const scope of [
-      { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: source.module },
-      { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: source.module },
+      { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: source.rootModule },
+      { interface: DwnInterfaceName.Messages, method: DwnMethodName.Read, module: source.rootModule },
     ]) {
       const grant = await fixture.agent.permissions.createGrant({
         author      : source.actorDid,
@@ -190,12 +191,16 @@ async function createRoleSource(fixture: Fixture, stored = true): Promise<Follow
   }
   if (stored) {
     await fixture.engine['_followedSourceStore'].replace(source);
-    fixture.engine['_followedSourceSnapshot'].set(JSON.stringify([source.sourceDid, source.actorDid, source.module, source.contextId]), source);
+    fixture.engine['_followedSourceSnapshot'].set(JSON.stringify([source.sourceDid, source.actorDid, source.rootModule, source.contextId]), source);
     const target = await fixture.engine['targetResolver'].buildTargetForSource(source, fixture.first.did.uri);
     const link = await fixture.engine['getOrCreateReplicationLink'](target);
     await fixture.engine['replicationLinkStore'].setStatus(link, 'paused');
   }
   return source;
+}
+
+function followRequest(source: FollowedSyncSource): FollowedSyncSourceInput {
+  return { ...source, contextPath: source.modules[source.rootModule]!.contextPath, modules: [] };
 }
 
 async function replaceAndActivate(fixture: Fixture, initializeOwnedOnly = false): Promise<SyncLinkController> {
@@ -262,7 +267,7 @@ describe('delegate identity removal with native live subscriptions', () => {
     'should restore foreground role inspection after a timed-out stop and %s', async (registration): Promise<void> => {
       const source = await createRoleSource(fixture, false);
       const gate = gateFirstQuery(fixture, DwnInterface.RecordsRead);
-      const following = fixture.engine.followSource(source).catch((error: unknown): unknown => error);
+      const following = fixture.engine.followSource(followRequest(source)).catch((error: unknown): unknown => error);
       await gate.entered;
 
       await expect(fixture.engine.stopSync(0)).rejects.toThrow('Background sync operations did not complete');
@@ -279,7 +284,7 @@ describe('delegate identity removal with native live subscriptions', () => {
       expect(await fixture.engine.getIdentityOptions(fixture.owner.did.uri)).toEqual(options);
 
       const signedBeforeRetry = gate.messages.length;
-      await expect(fixture.engine.followSource(source)).rejects.toThrow('Role replication support read failed (404): Not Found');
+      await expect(fixture.engine.followSource(followRequest(source))).rejects.toThrow('Role replication support read failed (404): Not Found');
       expect(gate.messages.length).toBeGreaterThan(signedBeforeRetry);
       expectFirstDelegateSigned(fixture, gate);
     },
@@ -407,7 +412,9 @@ describe('delegate identity removal with native live subscriptions', () => {
       fixture.engine['scheduleFollowedSourceRefresh']();
       operation = fixture.engine['_followedSourceRefresh']!;
     } else {
-      operation = mode === 'follow' ? fixture.engine.followSource(source) : fixture.engine.pullFollowedSource(source);
+      operation = mode === 'follow'
+        ? fixture.engine.followSource(followRequest(source))
+        : fixture.engine.pullFollowedSource(source, source.rootModule);
     }
     const preparation = operation.catch((error: unknown): unknown => error);
     await gate.entered;

@@ -11,7 +11,6 @@ import type {
 } from './types/sync.js';
 
 import { DwnInterface } from './types/dwn.js';
-import { getFollowedSyncProjection } from './followed-sync-source.js';
 import { computeAuthorizationEpoch, computeProjectionId, syncScopeFromModules } from './types/sync.js';
 import { permissionGrantIdsFromEntries, resolveMessagesScopes, toSyncAuthorizationGrants } from './sync-permission-grants.js';
 
@@ -155,15 +154,15 @@ export class SyncTargetResolver {
   public async buildTargetForSource(
     source: FollowedSyncSource,
     delegateDid?: string,
-    module = source.module,
+    module = source.rootModule,
   ): Promise<SyncTarget> {
-    const projection = getFollowedSyncProjection(source, module);
-    if (projection === undefined) {
+    const projection = source.modules[module];
+    if (projection === undefined || projection === null) {
       throw new Error(`SyncTargetResolver: module '${module}' is not a verified followed projection.`);
     }
     const scope = {
       kind        : 'context' as const,
-      module      : projection.module,
+      module,
       contextId   : source.contextId,
       modulePaths : projection.modulePaths,
     };
@@ -190,7 +189,7 @@ export class SyncTargetResolver {
 
   /** Each consumer owns a distinct feed and checkpoint pair under the root acceptance. */
   public buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> {
-    return Promise.all([source.module, ...(source.projections?.map(projection => projection.module) ?? [])]
+    return Promise.all(Object.keys(source.modules).filter(module => source.modules[module] !== null)
       .map(module => this.buildTargetForSource(source, delegateDid, module)));
   }
 

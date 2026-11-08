@@ -3,7 +3,7 @@ import type { AbstractLevel } from 'abstract-level';
 import { runWithCrossContextLock } from '@enbox/common';
 
 export const SYNC_STORE_FORMAT_KEY = 'enbox:sync-store-format';
-export const SYNC_STORE_FORMAT = 'modules-v1';
+export const SYNC_STORE_FORMAT = 'modules-v2';
 
 /** Require a fresh module-format sync store before reading or changing durable state. */
 export async function ensureSyncStoreFormat(
@@ -36,5 +36,5 @@ export async function ensureSyncStoreFormat(
 }
 
 function incompatibleSyncStore(): Error {
-  return new Error('SyncEngineLevel: incompatible persisted sync format; reinitialize the sync store before using modules.');
+  return new Error('SyncEngineLevel: incompatible persisted sync format; reinitialize the sync store before using the current sync model.');
 }

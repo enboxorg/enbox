@@ -170,6 +170,7 @@ describe('TypedModule API', () => {
       expect(TodoModule.definition).not.toBe(TodoModuleDefinition);
       expect(Object.isFrozen(TodoModule.definition)).toBe(true);
       expect(TodoModule.definition.module).toBe('https://example.com/modules/todo');
+      expect(Object.hasOwn(TodoModule, 'resolvedGraph')).toBe(false);
     });
 
     it('should preserve the types and structure', () => {

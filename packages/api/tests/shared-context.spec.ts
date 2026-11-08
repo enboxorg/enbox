@@ -4,6 +4,7 @@ import type {
   AgentPermissionsApi,
   DwnMessage,
   EnboxAgent,
+  FollowedModuleScope,
   FollowedSyncSource,
   FollowedSyncSourceInput,
   ProcessDwnRequest,
@@ -15,13 +16,13 @@ import type {
 import { ContextFollowing } from '../src/context-following.js';
 import { Convert } from '@enbox/common';
 import { createContextView } from '../src/context-view.js';
-import { defineModule } from '../src/define-module.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { recordCodecs } from '../src/record-codec.js';
 import sinon from 'sinon';
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { CONTEXT_FOLLOW_PATH, CONTEXT_INVITATION_PATH, moduleContextKey } from '../src/shared-context-module.js';
 import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
+import { defineModule, resolveTypedModuleGraph } from '../src/define-module.js';
 import { DwnInterface, FollowedSourceNotReadyError } from '@enbox/agent';
 import { Poller, resolveModuleGraph, Time } from '@enbox/dwn-sdk-js';
 import { type RoleDeliveryState, TypedEnbox } from '../src/typed-enbox.js';
@@ -164,18 +165,12 @@ function authorization(did: string): DwnMessage[DwnInterface.RecordsWrite]['auth
   };
 }
 
-function source(overrides: Partial<FollowedSyncSource> = {}): FollowedSyncSource {
+function source({ rootScope, ...overrides }: Partial<FollowedSyncSource> & { rootScope?: Partial<FollowedModuleScope> } = {}): FollowedSyncSource {
+  const rootModule = overrides.rootModule ?? SharedDefinition.module;
   return {
-    acceptanceId   : 'acceptance-a',
-    actorDid       : connectedDid,
-    contextId,
-    id             : 'role-record',
-    module         : SharedDefinition.module,
-    modulePaths    : ['workspace', 'workspace/note', 'workspace/title'],
-    moduleRole,
-    remoteEndpoint : 'https://dwn.example',
-    roles          : [moduleRole, viewerRole],
-    sourceDid,
+    acceptanceId   : 'acceptance-a', actorDid       : connectedDid, contextId, id             : 'role-record', rootModule,
+    remoteEndpoint : 'https://dwn.example', roles          : [moduleRole, viewerRole], sourceDid,
+    modules        : { [rootModule]: { contextPath: 'workspace', moduleRole, modulePaths: ['workspace', 'workspace/note', 'workspace/title'], ...rootScope } },
     ...overrides,
   };
 }
@@ -187,7 +182,7 @@ function followedContextChange(changed: FollowedSyncSource, active = true): Sync
     contextId                  : changed.contextId,
     followedSourceAcceptanceId : changed.acceptanceId,
     followedSourceId           : active ? changed.id : undefined,
-    module                     : changed.module,
+    module                     : changed.rootModule,
     tenantDid                  : changed.sourceDid,
   };
 }
@@ -356,12 +351,16 @@ describe('TypedEnbox contexts', () => {
   let pullFollowedSource: sinon.SinonStub;
   let retryRoleDelivery: sinon.SinonStub;
   let sync: SyncEngine;
+  let lifetime: AbortController;
   let typed: TypedEnbox<
     typeof SharedDefinition,
     typeof SharedModule.codecs
   >;
 
+  afterEach(() => { lifetime.abort(); });
+
   beforeEach(() => {
+    lifetime = new AbortController();
     current = undefined;
     deliveryListeners = new Set();
     listeners = new Set();
@@ -463,11 +462,7 @@ describe('TypedEnbox contexts', () => {
     });
     follow = sinon.stub().callsFake(async (input: FollowedSyncSourceInput): Promise<FollowedSyncSource> => {
       const active = input.roles[0];
-      current = source({
-        modulePaths : ['workspace', 'workspace/note', 'workspace/title'],
-        moduleRole  : active,
-        roles       : [...input.roles],
-      });
+      current = source({ roles: [...input.roles], rootScope: { modulePaths: ['workspace', 'workspace/note', 'workspace/title'], moduleRole: active } });
       return current;
     });
     get = sinon.stub().callsFake(async (id: string): Promise<FollowedSyncSource | undefined> =>
@@ -482,17 +477,17 @@ describe('TypedEnbox contexts', () => {
       }
     });
 
-    ensureModules = sinon.stub().callsFake(async (_source: FollowedSyncSource, modules: readonly string[]): Promise<FollowedSyncSource> => {
-      current = { ...current!, additionalModules : [...modules], projections       : [{
-        module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
-        moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live', 'workspace/live/session'],
-      }] };
+    ensureModules = sinon.stub().callsFake(async (_source: FollowedSyncSource, selected: readonly string[]): Promise<FollowedSyncSource> => {
+      current = { ...current!, modules: { ...current!.modules } };
+      for (const module of selected) {
+        current.modules[module] = { contextPath: 'workspace', moduleRole: 'base:workspace/member', modulePaths: ['workspace/live', 'workspace/live/session'] };
+      }
       return current;
     });
     sync = {
       deleteFollowedSource,
       ensureFollowedSourceModules      : ensureModules,
-      resolveFollowedSourceModuleGraph : sinon.stub().resolves(RealtimeModule.resolvedGraph),
+      resolveFollowedSourceModuleGraph : sinon.stub().resolves(resolveTypedModuleGraph(RealtimeModule)),
       followSource                     : follow,
       getFollowedSource                : get,
       getIdentityOptions               : async (): Promise<undefined> => undefined,
@@ -519,7 +514,7 @@ describe('TypedEnbox contexts', () => {
           return (): void => { deliveryListeners.delete(listener); };
         },
       },
-      sync,
+      sync, signal: lifetime.signal,
     });
   });
 
@@ -546,9 +541,9 @@ describe('TypedEnbox contexts', () => {
     expect(realtime.path).toBe('workspace');
     await realtime.records.query('workspace/live');
     const rootBeforeProjection = await follow.firstCall.returnValue as FollowedSyncSource;
-    expect(rootBeforeProjection.projections).toBeUndefined();
+    expect(rootBeforeProjection.modules[RealtimeModule.definition.module]).toBeUndefined();
     const graphLookup = sync.resolveFollowedSourceModuleGraph as sinon.SinonStub;
-    expect(graphLookup.firstCall.args[0].projections).toEqual(current!.projections);
+    expect(graphLookup.firstCall.args[0].modules).toEqual(current!.modules);
     expect(graphLookup.firstCall.args[0]).not.toBe(rootBeforeProjection);
     expect(agent.processDwnRequest.lastCall.args[0]).toMatchObject({
       target        : sourceDid,
@@ -592,7 +587,7 @@ describe('TypedEnbox contexts', () => {
       const context = await typed.contexts.withModules({ realtime: RealtimeModule })
         .follow('workspace', { id: contextId, ownerDid: sourceDid });
       if (change === 'role') {
-        current = { ...current!, projections: [{ ...current!.projections![0], moduleRole: 'base:workspace/viewer' }] };
+        current = { ...current!, modules: { ...current!.modules, [RealtimeModule.definition.module]: { ...current!.modules[RealtimeModule.definition.module]!, moduleRole: 'base:workspace/viewer' } } };
       }
       const realtime = context.using(RealtimeModule);
       await expect(realtime.records.query('workspace/live')).rejects.toThrow();
@@ -617,7 +612,7 @@ describe('TypedEnbox contexts', () => {
     (sync.resolveFollowedSourceModuleGraph as sinon.SinonStub).resolves(graph);
     const context = await typed.contexts.withModules({ realtime: RealtimeModule })
       .follow('workspace', { id: contextId, ownerDid: sourceDid });
-    current = { ...current!, projections: [{ ...current!.projections![0], moduleRole: 'notebook:workspace/member' }] };
+    current = { ...current!, modules: { ...current!.modules, [RealtimeModule.definition.module]: { ...current!.modules[RealtimeModule.definition.module]!, moduleRole: 'notebook:workspace/member' } } };
     await context.using(RealtimeModule).records.query('workspace/live');
     expect(agent.processDwnRequest.lastCall.args[0].messageParams.moduleRole).toBe('notebook:workspace/member');
     expect(context.role).toBe(moduleRole);
@@ -645,10 +640,10 @@ describe('TypedEnbox contexts', () => {
     })).resolves({ reply: { status: { code: 200, detail: 'OK' }, roleRecordId: current!.id, subscription: { close } } });
     const opening = realtime.records.observe('workspace/live', { materialize: true, pagination: { limit: 1 } });
     await context.records.query('workspace/note');
-    current = { ...current!, projections: [{
-      module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
-      moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live', 'workspace/live/session'],
-    }] };
+    current = { ...current!, modules: { ...current!.modules, [RealtimeModule.definition.module]: {
+      contextPath : 'workspace',
+      moduleRole  : 'base:workspace/member', modulePaths : ['workspace/live', 'workspace/live/session'],
+    } } };
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     const view = await opening;
     await view.ready();
@@ -656,7 +651,7 @@ describe('TypedEnbox contexts', () => {
     expect(intentRecords).toHaveLength(1);
     expect(follow.callCount).toBe(1);
     const unchanged = current;
-    current = { ...unchanged, projections: [] };
+    current = { ...unchanged, modules: { ...unchanged.modules, [RealtimeModule.definition.module]: null } };
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(view.getSnapshot().status).toBe('error');
@@ -665,10 +660,10 @@ describe('TypedEnbox contexts', () => {
     await context.records.query('workspace/note');
     expect(context.role).toBe(moduleRole);
     await expect(realtime.records.query('workspace/live')).rejects.toBeInstanceOf(ContextRetiredError);
-    current = { ...unchanged, projections: [{
-      module         : RealtimeModule.definition.module, attachmentPath : 'workspace',
-      moduleRole     : 'base:workspace/member', modulePaths    : ['workspace/live'],
-    }] };
+    current = { ...unchanged, modules: { ...unchanged.modules, [RealtimeModule.definition.module]: {
+      contextPath : 'workspace',
+      moduleRole  : 'base:workspace/member', modulePaths : ['workspace/live'],
+    } } };
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       expect(view.getSnapshot().status).toBe('ready');
@@ -926,10 +921,12 @@ describe('TypedEnbox contexts', () => {
     const shared = await typed.contexts.follow('workspace', { ownerDid: sourceDid, id: contextId });
 
     expect(follow.firstCall.args[0]).toEqual({
-      actorDid : connectedDid,
+      actorDid    : connectedDid,
       contextId,
-      module   : SharedDefinition.module,
-      roles    : [moduleRole, viewerRole],
+      rootModule  : SharedDefinition.module,
+      contextPath : 'workspace',
+      modules     : [],
+      roles       : [moduleRole, viewerRole],
       sourceDid,
     });
     expect(shared).toMatchObject({
@@ -993,7 +990,7 @@ describe('TypedEnbox contexts', () => {
       target: sourceDid,
     });
     expect(markFollowedSourcePullPending.calledTwice).toBe(true);
-    expect(markFollowedSourcePullPending.alwaysCalledWithExactly(current!)).toBe(true);
+    expect(markFollowedSourcePullPending.alwaysCalledWithExactly(current!, SharedDefinition.module)).toBe(true);
     const intentWrite = agent.processDwnRequest.getCalls().find(call =>
       call.args[0].messageType === DwnInterface.RecordsWrite && isFollowIntentRequest(call.args[0]))!.args[0];
     expect(intentWrite).toMatchObject({ author: connectedDid, target: connectedDid });
@@ -1028,8 +1025,8 @@ describe('TypedEnbox contexts', () => {
     await shared.refresh();
     const local = await shared.records.query('workspace/note');
 
-    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
-    expect(pullFollowedSource.calledOnceWithExactly(current!)).toBe(true);
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!, SharedDefinition.module)).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(current!, SharedDefinition.module)).toBe(true);
     expect(local.records.map(record => record.id)).toEqual([created.id]);
   });
 
@@ -1257,7 +1254,7 @@ describe('TypedEnbox contexts', () => {
     intentRecords.splice(0, 1, newerIntentEntry(intentRecords[0], 'otherGroupScope', value));
     current = undefined;
     follow.resetHistory();
-    const fresh = new TypedEnbox(dwn, SharedModule, { sync });
+    const fresh = new TypedEnbox(dwn, SharedModule, { sync, signal: lifetime.signal });
 
     expect((await fresh['readContextFollows']()).map(record => record.value)).toEqual([value]);
     expect(await fresh.contexts.list()).toEqual([]);
@@ -1479,6 +1476,9 @@ describe('TypedEnbox contexts', () => {
     await view.close();
     expect(transports).toHaveLength(6);
     expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
+    // The shared authority lease belongs to the session, not this closed transport.
+    expect(listeners.size).toBeGreaterThan(0);
+    lifetime.abort();
     expect(listeners.size).toBe(0);
     await expect((typed.contexts.observe as unknown as (
       options: { access: 'member' }
@@ -1515,6 +1515,9 @@ describe('TypedEnbox contexts', () => {
 
     await view.close();
     expect(transport.close.calledOnce).toBe(true);
+    // The shared authority lease belongs to the session, not this closed transport.
+    expect(listeners.size).toBeGreaterThan(0);
+    lifetime.abort();
     expect(listeners.size).toBe(0);
   });
 
@@ -1592,11 +1595,7 @@ describe('TypedEnbox contexts', () => {
     const firstContext = view.getSnapshot().contexts[0].context;
     deleted = false;
     title = 'Third';
-    current = source({
-      acceptanceId : 'acceptance-b',
-      id           : 'viewer-role-record',
-      moduleRole   : viewerRole,
-    });
+    current = source({ acceptanceId: 'acceptance-b', id: 'viewer-role-record', rootScope: { moduleRole: viewerRole } });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
       const row = view.getSnapshot().contexts[0];
@@ -1625,6 +1624,9 @@ describe('TypedEnbox contexts', () => {
     releaseRetiredClose();
     await closing;
     expect(transports.every(transport => transport.close.calledOnce)).toBe(true);
+    // The shared authority lease belongs to the session, not this closed transport.
+    expect(listeners.size).toBeGreaterThan(0);
+    lifetime.abort();
     expect(listeners.size).toBe(0);
   });
 
@@ -1669,6 +1671,9 @@ describe('TypedEnbox contexts', () => {
       call => call.args[0].messageType === DwnInterface.RecordsQuery
         && call.args[0].messageParams.filter.modulePath === 'workspace',
     )).toBe(false);
+    // The shared authority lease belongs to the session, not this closed transport.
+    expect(listeners.size).toBeGreaterThan(0);
+    lifetime.abort();
     expect(listeners.size).toBe(0);
   });
 
@@ -2041,7 +2046,7 @@ describe('TypedEnbox contexts', () => {
     expect(agent.processDwnRequest.callCount).toBe(localRequests);
     expect(agent.sendDwnRequest.calledOnce).toBe(true);
     expect(agent.sendDwnRequest.firstCall.args[0].messageType).toBe(DwnInterface.RecordsRead);
-    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!, SharedDefinition.module)).toBe(true);
   });
 
   it('rejects a raced context delete unless the authority returns the canonical conflict', async () => {
@@ -2090,7 +2095,7 @@ describe('TypedEnbox contexts', () => {
     markFollowedSourcePullPending.resetHistory();
     await expect(shared.records.delete('workspace/note', { recordId: 'raced-note' }))
       .resolves.toBeUndefined();
-    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!)).toBe(true);
+    expect(markFollowedSourcePullPending.calledOnceWithExactly(current!, SharedDefinition.module)).toBe(true);
     expect(deleteStatuses).toHaveLength(0);
   });
 
@@ -2105,9 +2110,7 @@ describe('TypedEnbox contexts', () => {
     current = source({ id: 'replacement-role' });
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
-    current = source({
-      moduleRole: viewerRole,
-    });
+    current = source({ rootScope: { moduleRole: viewerRole } });
     await expect(shared.records.query('workspace/note')).rejects.toBeInstanceOf(ContextRetiredError);
 
     current = source();
@@ -2126,9 +2129,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('omits an accepted source whose active role is absent from the current definition', async () => {
-    current = source({
-      moduleRole: 'workspace/retired',
-    });
+    current = source({ rootScope: { moduleRole: 'workspace/retired' } });
 
     expect(await typed.contexts.list()).toEqual([]);
     const view = await typed.contexts.observe();
@@ -2137,11 +2138,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('omits an accepted source whose active role is not declared as a context role', async () => {
-    current = source({
-      contextId   : 'outsideRecord',
-      modulePaths : ['outside'],
-      moduleRole  : outsideRole,
-    });
+    current = source({ contextId: 'outsideRecord', rootScope: { modulePaths: ['outside'], moduleRole: outsideRole } });
 
     expect(await typed.contexts.list()).toEqual([]);
     const view = await typed.contexts.observe();
@@ -2150,7 +2147,7 @@ describe('TypedEnbox contexts', () => {
   });
 
   it('limits a persisted context to readable paths stored under its accepted definition', async () => {
-    current = source({ modulePaths: ['workspace', 'workspace/note'] });
+    current = source({ rootScope: { modulePaths: ['workspace', 'workspace/note'] } });
     const [shared] = await typed.contexts.list();
 
     await shared.records.query('workspace/note');
@@ -2247,10 +2244,7 @@ describe('TypedEnbox contexts', () => {
     const received = sinon.stub();
     const subscription = await shared.records.subscribe('workspace/note', received);
 
-    current = source({
-      acceptanceId : 'acceptance-b',
-      modulePaths  : ['workspace', 'workspace/note'],
-    });
+    current = source({ acceptanceId: 'acceptance-b', rootScope: { modulePaths: ['workspace', 'workspace/note'] } });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await deliver({
       type   : 'error',
@@ -2283,7 +2277,9 @@ describe('TypedEnbox contexts', () => {
     await expect(shared.records.subscribe('workspace/note', (): void => {}))
       .rejects.toThrow('subscription unavailable');
 
-    expect(listeners.size).toBe(lifecycleListeners);
+    expect(listeners.size).toBe(lifecycleListeners + 1);
+    lifetime.abort();
+    expect(listeners.size).toBe(0);
   });
 
   it('closes an observed member collection when its exact role source changes', async () => {
@@ -2329,12 +2325,7 @@ describe('TypedEnbox contexts', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(states).toEqual([]);
 
-    current = source({
-      acceptanceId : 'acceptance-b',
-      id           : 'viewer-role-record',
-      moduleRole   : viewerRole,
-      modulePaths  : ['workspace', 'workspace/note', 'workspace/title'],
-    });
+    current = source({ acceptanceId: 'acceptance-b', id: 'viewer-role-record', rootScope: { moduleRole: viewerRole, modulePaths: ['workspace', 'workspace/note', 'workspace/title'] } });
     for (const listener of [...listeners]) { listener(followedContextChange(current)); }
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(view.getSnapshot()).toMatchObject({
@@ -2388,7 +2379,7 @@ describe('TypedEnbox contexts', () => {
 
     await shared.refresh();
 
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source(), SharedDefinition.module)).toBe(true);
   });
 
   it('maps a failed followed-source pull to readiness', async () => {
@@ -2413,7 +2404,7 @@ describe('TypedEnbox contexts', () => {
     expect(error).toBeInstanceOf(ContextNotReadyError);
     expect((error?.cause as Error).message)
       .toContain('did not reach the feed head');
-    expect(pullFollowedSource.calledOnceWithExactly(source())).toBe(true);
+    expect(pullFollowedSource.calledOnceWithExactly(source(), SharedDefinition.module)).toBe(true);
   });
 
   it.each(['follow', 'forget'] as const)('validates %s coordinates before accessing records or accepting authority', async (operation) => {

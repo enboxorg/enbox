@@ -177,6 +177,30 @@ describe('shared context public API integration', () => {
     };
   }
 
+  async function expectNativeSourceScopes(): Promise<void> {
+    const sources = await memberHarness.agent.sync.listFollowedSources();
+    expect(sources).toHaveLength(2);
+    for (const [index, contextId] of contextIds.entries()) {
+      const source = sources.find(candidate => candidate.contextId === contextId)!;
+      expect(source).toMatchObject({
+        actorDid   : memberDid,
+        contextId,
+        rootModule : moduleDefinition.module,
+        sourceDid  : ownerDid,
+      });
+      expect(new URL(source.remoteEndpoint).href).toBe(new URL(testDwnUrl).href);
+      expect(source.modules).toEqual({
+        [moduleDefinition.module]: {
+          contextPath : 'notebook/page',
+          moduleRole  : index === 0 ? 'notebook/page/member' : 'notebook/page/viewer',
+          modulePaths : index === 0
+            ? ['notebook/page', 'notebook/page/change', 'notebook/page/member/change', 'notebook/page/title']
+            : ['notebook/page', 'notebook/page/change', 'notebook/page/title'],
+        },
+      });
+    }
+  }
+
   beforeAll(async () => {
     ownerHarness = await AgentHarness.setup({
       agentClass       : EnboxUserAgent,
@@ -339,6 +363,7 @@ describe('shared context public API integration', () => {
     expect(contextA).toMatchObject({ access: 'member', id: contextIds[0], ownerDid });
     expect(contextA.role).toBe('notebook/page/member');
     expect(contextB.role).toBe('notebook/page/viewer');
+    await expectNativeSourceScopes();
 
     await Promise.all([contextA.refresh(), contextB.refresh()]);
     const owner = new Enbox({ agent: ownerHarness.agent, connectedDid: ownerDid }).using(SharedNotebookModule);
@@ -638,6 +663,7 @@ describe('shared context public API integration', () => {
     }).using(SharedNotebookModule);
     const restored = await reopened.contexts.list();
     expect(restored.map((context) => context.id).sort()).toEqual([...contextIds].sort());
+    await expectNativeSourceScopes();
 
     const restoredA = restored.find((context) => context.id === contextIds[0])!;
     if (restoredA.access !== 'member') { throw new Error('expected a member context'); }

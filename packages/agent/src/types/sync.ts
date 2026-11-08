@@ -995,7 +995,7 @@ export interface SyncEngine {
    *
    * @internal Used by the typed shared-context mutation boundary.
    */
-  markFollowedSourcePullPending(source: FollowedSyncSource, module?: string): Promise<boolean>;
+  markFollowedSourcePullPending(source: FollowedSyncSource, module: string): Promise<boolean>;
   /**
    * Pull one exact accepted foreign context from its accepted hosted endpoint.
    * Returns `true` only when that feed reached its head while the acceptance
@@ -1003,7 +1003,7 @@ export interface SyncEngine {
    *
    * @internal Used by the typed shared-context readiness boundary.
    */
-  pullFollowedSource(source: FollowedSyncSource, module?: string): Promise<boolean>;
+  pullFollowedSource(source: FollowedSyncSource, module: string): Promise<boolean>;
   /**
    * Performs a one-shot sync operation. If no direction is provided, it will perform both push and pull.
    *

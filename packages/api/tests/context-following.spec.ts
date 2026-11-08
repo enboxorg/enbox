@@ -129,12 +129,18 @@ function fixture(initial: ContextFollowRecord[] = []): {
     if (existing !== undefined && existing.roles.length === input.roles.length
       && existing.roles.every((role, index): boolean => role === input.roles[index])) { return existing; }
     const source: FollowedSyncSource = {
-      ...input,
-      acceptanceId   : `accepted-${++acceptance}`,
-      id             : `role-${input.contextId}`,
-      modulePaths    : [input.roles[0].split('/').slice(0, -1).join('/')],
-      moduleRole     : input.roles[0],
-      remoteEndpoint : 'https://owner.example',
+      actorDid     : input.actorDid,
+      sourceDid    : input.sourceDid,
+      rootModule   : input.rootModule,
+      contextId    : input.contextId,
+      roles        : [...input.roles],
+      acceptanceId : `accepted-${++acceptance}`,
+      id           : `role-${input.contextId}`,
+      modules      : {
+        ...Object.fromEntries(input.modules.map(uri => [uri, null])),
+        [input.rootModule]: { contextPath: input.contextPath, moduleRole: input.roles[0], modulePaths: [input.contextPath] },
+      },
+      remoteEndpoint: 'https://owner.example',
     };
     sources.set(source.id, source);
     return source;
@@ -150,8 +156,11 @@ function fixture(initial: ContextFollowRecord[] = []): {
     .callsFake(async (): Promise<ExpandableRecordView<ContextFollowRecord>> => new IntentView(entries));
   const ensureModules = sinon.stub<[FollowedSyncSource, readonly string[]], Promise<FollowedSyncSource>>()
     .callsFake(async (source, modules): Promise<FollowedSyncSource> => {
-      const current = sources.get(source.id)!;
-      const next = { ...current, additionalModules: [...new Set([...(current.additionalModules ?? []), ...modules])] };
+      const current = sources.get(source.id);
+      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
+        throw new FollowedSourceNotReadyError('the root acceptance changed');
+      }
+      const next = { ...current, modules: { ...Object.fromEntries(modules.map(uri => [uri, null])), ...current.modules } };
       sources.set(source.id, next);
       return next;
     });
@@ -183,7 +192,9 @@ describe('ContextFollowing', () => {
 
   it('reconciles explicit consumer selection for an existing positive root without a new follow decision', async () => {
     const test = fixture([decision(1)]);
-    const accepted = test.acceptSource({ actorDid, sourceDid: ownerDid, module, contextId: request.id, roles: [...roles] });
+    const accepted = test.acceptSource({
+      actorDid, sourceDid: ownerDid, rootModule: module, contextPath: 'page', modules: [], contextId: request.id, roles: [...roles]
+    });
     test.options.additionalModules = (): readonly string[] => ['https://example.com/realtime'];
 
     await test.coordinator.restore();
@@ -217,11 +228,13 @@ describe('ContextFollowing', () => {
     expect(forgotten.append.callCount).toBe(0);
 
     const native = fixture([decision(1)]);
-    const accepted = native.acceptSource({ actorDid, sourceDid: ownerDid, module, contextId: request.id, roles: [...roles] });
-    native.sources.set(accepted.id, { ...accepted, additionalModules: ['https://example.com/other-selection'] });
+    const accepted = native.acceptSource({
+      actorDid, sourceDid: ownerDid, rootModule: module, contextPath: 'page', modules: [], contextId: request.id, roles: [...roles]
+    });
+    native.sources.set(accepted.id, { ...accepted, modules: { ...accepted.modules, 'https://example.com/other-selection': null } });
     await native.coordinator.restore();
     expect(native.ensureModules.callCount).toBe(0);
-    expect(native.sources.get(accepted.id)?.additionalModules).toEqual(['https://example.com/other-selection']);
+    expect(native.sources.get(accepted.id)?.modules['https://example.com/other-selection']).toBeNull();
   });
 
   it('persists verified intent once and restores it on a fresh device', async () => {
@@ -254,9 +267,11 @@ describe('ContextFollowing', () => {
     const test = fixture();
     await test.coordinator.follow(request);
     expect(test.follow.firstCall.args[0].roles).toEqual(roles);
-    test.options.definition.structure.page.$actions!.reverse();
+    const updatedDefinition = structuredClone(test.options.definition);
+    updatedDefinition.structure.page.$actions!.reverse();
+    const updated = new ContextFollowing({ ...test.options, definition: updatedDefinition });
 
-    await test.coordinator.restore();
+    await updated.restore();
 
     expect(test.follow.secondCall.args[0].roles).toEqual([...roles].reverse());
     expect([...test.sources.values()][0]!.roles).toEqual([...roles].reverse());
@@ -275,7 +290,9 @@ describe('ContextFollowing', () => {
     const lifetime = new AbortController();
     test.options.signal = lifetime.signal;
     if (state === 'existing') {
-      await test.follow({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid });
+      await test.follow({
+        actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+      });
     }
     const failure = new Error('write denied');
     test.options.append = async (): Promise<ContextFollowRecord> => {
@@ -305,9 +322,11 @@ describe('ContextFollowing', () => {
   it('reverifies the current saved policy after an unsaved replacement is rolled back', async () => {
     const test = fixture([decision(1)]);
     const previous = {
-      ...test.acceptSource({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid }),
-      id         : 'viewer-role',
-      moduleRole : 'page/viewer',
+      ...test.acceptSource({
+        actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+      }),
+      id      : 'viewer-role',
+      modules : { [module]: { contextPath: 'page', moduleRole: 'page/viewer', modulePaths: ['page'] as [string] } },
     };
     test.sources.clear();
     test.sources.set(previous.id, previous);
@@ -387,7 +406,9 @@ describe('ContextFollowing', () => {
 
   it.each(['removed', 'folder/page', 'unshared'] as const)('retains a newer unusable target %s without replaying older intent or removing access', async (path) => {
     const test = fixture([decision(1), decision(2, { path })]);
-    const accepted = test.acceptSource({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid });
+    const accepted = test.acceptSource({
+      actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+    });
     await test.coordinator.restore();
     expect(test.follow.called).toBe(false);
     expect(test.sources.get(accepted.id)).toBe(accepted);
@@ -407,7 +428,9 @@ describe('ContextFollowing', () => {
 
   it.each(['coordinates', 'handle'] as const)('reuses an existing forget through %s while removing remaining acceptance', async (mode) => {
     const test = fixture([decision(1, { following: false })]);
-    const source = test.acceptSource({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid });
+    const source = test.acceptSource({
+      actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+    });
     const forget = (): Promise<void> => mode === 'coordinates'
       ? test.coordinator.forgetContext(request) : test.coordinator.forget(source);
 
@@ -421,7 +444,9 @@ describe('ContextFollowing', () => {
 
   it.each(['coordinates', 'handle'] as const)('preserves a newer follow received while reconciling an existing %s forget', async (mode) => {
     const test = fixture([decision(1, { following: false })]);
-    const source = test.acceptSource({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid });
+    const source = test.acceptSource({
+      actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+    });
     let reads = 0;
     test.options.read = async (): Promise<readonly ContextFollowRecord[]> => {
       if (++reads === 2) {
@@ -507,7 +532,9 @@ describe('ContextFollowing', () => {
     const initial = decision(1);
     const received = decision(2, { following: choice === 'follow' });
     const test = fixture([initial]);
-    const source = test.acceptSource({ actorDid, contextId: request.id, module, roles: [...roles], sourceDid: ownerDid });
+    const source = test.acceptSource({
+      actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+    });
     const pending = deferred<FollowedSyncSource>();
     const getSource = sinon.stub(test.options.sync, 'getFollowedSource').resolves(source);
     getSource.onSecondCall().returns(pending.promise);
@@ -559,7 +586,10 @@ describe('ContextFollowing', () => {
     const append = test.options.append;
     test.options.append = async (intent, after): Promise<ContextFollowRecord> => {
       test.sources.delete(source.id);
-      test.sources.set('role-replacement', { ...source, id: 'role-replacement', moduleRole: 'page/viewer' });
+      test.sources.set('role-replacement', {
+        ...source, id      : 'role-replacement',
+        modules : { ...source.modules, [module]: { ...source.modules[module]!, moduleRole: 'page/viewer' } },
+      });
       return append(intent, after);
     };
     await test.coordinator.forget(source);
@@ -570,7 +600,9 @@ describe('ContextFollowing', () => {
   it.each(['forgotten', 'forgotten again', 'followed again'] as const)('rechecks a source rotated during exact deletion when intent is %s', async (intent) => {
     const test = fixture();
     const source = await test.coordinator.follow(request);
-    const replacement = { ...source, id: 'new-role', moduleRole: 'page/viewer' };
+    const replacement = {
+      ...source, id: 'new-role', modules: { ...source.modules, [module]: { ...source.modules[module]!, moduleRole: 'page/viewer' } },
+    };
     const remove = test.options.sync.deleteFollowedSource;
     let deletions = 0;
     test.options.sync.deleteFollowedSource = async (expected): Promise<void> => {
@@ -615,7 +647,9 @@ describe('ContextFollowing', () => {
   it.each(['reusing access', 'failing verification'] as const)('honors a forget learned while one-shot restoration is %s', async (phase) => {
     const test = fixture([decision(1)]);
     const candidates: [string, ...string[]] = phase === 'reusing access' ? [...roles] : [roles[1], roles[0]];
-    const source = test.acceptSource({ actorDid, contextId: request.id, module, roles: candidates, sourceDid: ownerDid });
+    const source = test.acceptSource({
+      actorDid, contextId: request.id, rootModule: module, contextPath: 'page', modules: [], roles: candidates, sourceDid: ownerDid
+    });
     const pending = deferred<void>();
     const list = sinon.stub(test.options.sync, 'listFollowedSources');
     if (phase === 'reusing access') {
@@ -801,7 +835,9 @@ describe('ContextFollowing', () => {
     const test = fixture([decision(1)]);
     const source = await test.coordinator.follow(request);
     test.follow.resetHistory();
-    test.options.definition.structure.page.$actions!.reverse();
+    const updatedDefinition = structuredClone(test.options.definition);
+    updatedDefinition.structure.page.$actions!.reverse();
+    const updated = new ContextFollowing({ ...test.options, definition: updatedDefinition });
     test.entries.push(decision(2));
     const wait = deferred<void>();
     test.follow.callsFake(async (): Promise<FollowedSyncSource> => {
@@ -809,14 +845,14 @@ describe('ContextFollowing', () => {
       throw new Error('owner unavailable');
     });
     const error = sinon.spy();
-    const lease = await test.coordinator.observe({ onError: error });
+    const lease = await updated.observe({ onError: error });
     try {
       await settled((): boolean => test.follow.calledOnce);
       for (let wake = 0; wake < 3; wake++) {
-        test.coordinator.retryAfterSync(recipientRecovery);
+        updated.retryAfterSync(recipientRecovery);
         await new Promise(resolve => setTimeout(resolve, 0));
       }
-      const forgetting = test.coordinator.forget(source);
+      const forgetting = updated.forget(source);
       wait.resolve();
       await forgetting;
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -901,7 +937,9 @@ describe('ContextFollowing', () => {
 
   it('logs unexpected restoration failures without closing the journal or dropping accepted contexts', async () => {
     const test = fixture([decision(1)]);
-    const accepted = test.acceptSource({ actorDid, contextId: 'another-page', module, roles: [...roles], sourceDid: ownerDid });
+    const accepted = test.acceptSource({
+      actorDid, contextId: 'another-page', rootModule: module, contextPath: 'page', modules: [], roles: [...roles], sourceDid: ownerDid
+    });
     const failure = new TypeError('remote module is malformed');
     test.follow.rejects(failure);
     const warn = sinon.stub(console, 'warn');

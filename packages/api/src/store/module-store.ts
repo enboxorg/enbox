@@ -1,4 +1,4 @@
-import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import type { ObservedCollection } from './observed-store.js';
 import type { RecordCodecMap } from '../record-codec.js';
@@ -18,6 +18,7 @@ import type { ModulePaths, ModuleRolePaths, SingletonModulePaths, TypedModule } 
 import { createCommand } from './command.js';
 import { createObservedCollection } from './observed-store.js';
 import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { resolveTypedModuleGraph } from '../define-module.js';
 import { assertValidRecordWithin, resolveRecordQueryNode } from '../record-query.js';
 import { collectModulePaths, isModuleRolePath } from '../module-paths.js';
 
@@ -93,6 +94,7 @@ function createTypedModuleStore<
   C extends RecordCodecMap,
 >(module: TypedModule<D, C>, scope: StoreScope): ModuleStore<TypedModule<D, C>> {
   type P = TypedModule<D, C>;
+  const graph = resolveTypedModuleGraph(module);
   const collections = new Map<string, unknown>();
   const writeScopes = new Map<string, { commands: unknown; refreshers: Set<() => Promise<void>> }>();
   const typed = (): TypedEnbox<D, C> => {
@@ -201,11 +203,11 @@ function createTypedModuleStore<
       }
       const key = JSON.stringify([path, canonicalValue({ ...options, pagination: { limit }, loadAll: options.loadAll === true })]);
       if (!collections.has(key)) {
-        if (resolveRecordQueryNode(module.resolvedGraph, path).parentPhysicalDepth > 0) {
+        if (resolveRecordQueryNode(graph, path).parentPhysicalDepth > 0) {
           const parents = new Map<string, StoreCollection<DataForPath<C, Path>>>();
           const family: StoreCollectionFamily<DataForPath<C, Path>> = {
             within: (parentContextId: string): StoreCollection<DataForPath<C, Path>> => {
-              assertDirectParent(module, path, parentContextId);
+              assertDirectParent(graph, path, parentContextId);
               let collection = parents.get(parentContextId);
               if (collection === undefined) {
                 collection = makeCollection(path, options, parentContextId);
@@ -240,8 +242,8 @@ function assertCollectionPath(definition: ModuleDefinition, path: string): void 
   }
 }
 
-function assertDirectParent(module: TypedModule, path: string, within: string): void {
-  const node = resolveRecordQueryNode(module.resolvedGraph, path);
+function assertDirectParent(graph: ResolvedModuleGraph, path: string, within: string): void {
+  const node = resolveRecordQueryNode(graph, path);
   assertValidRecordWithin(node, within, true);
   if (within.split('/').length !== node.parentPhysicalDepth) {
     throw new TypeError(`Store collection: '${path}' requires its exact direct parent context ID.`);

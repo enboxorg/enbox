@@ -70,8 +70,7 @@ import { createContextView } from './context-view.js';
 import { createMaterializedMemberContextView } from './materialized-member-context-view.js';
 import { createProjectedRecordView } from './projected-record-view.js';
 import { Did } from '@enbox/dids';
-import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
-import { FollowedContextProjection } from './followed-context-projection.js';
+import { FollowedModuleLease } from './followed-module-lease.js';
 import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { mergeRecordPatch } from './record-patch.js';
 import { RecordConflictError } from './record-conflict-error.js';
@@ -85,16 +84,14 @@ import {
   getTypeName,
   Modules,
   preloadModuleDefinitions,
-  resolveModuleAttachment,
   resolveModuleContextRoles,
+  resolveModuleContextRoot,
   resolveModuleGraph,
-  resolveModuleRoleContextScope,
-  resolveModuleRoleProjection,
+  resolveModuleRoleScope,
   Time,
   validateImportedModuleContracts,
 } from '@enbox/dwn-sdk-js';
 import { bindRecordCodec, encodeRecordValue, RecordValidationError } from './record-codec.js';
-import { collectModulePaths, hasManagedSharedContext, isModuleRolePath } from './module-paths.js';
 import { combineAbortSignals, whileSignalsActive } from './view-opening.js';
 import {
   CONTEXT_FOLLOW_PATH,
@@ -107,6 +104,7 @@ import { ContextNotReadyError, ContextRetiredError } from './context-errors.js';
 import { createExpandableRecordView, createRecordView } from './record-view.js';
 import { DwnResponseError, isCanonicalConflictStatus, requireDwnSuccess } from './dwn-response-error.js';
 import { FollowedSourceNotReadyError, followedSyncSourceActiveEqual } from '@enbox/agent';
+import { hasManagedSharedContext, isModuleRolePath } from './module-paths.js';
 
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
@@ -438,8 +436,6 @@ type TypedEnboxOptions = {
     modulePaths: ReadonlySet<string>;
     /** Verify the optional projection before an ordinary record operation. */
     prepare?(): Promise<void>;
-    /** Wait on existing sync wakes before opening a consumer observation. */
-    waitUntilReady?(signal?: AbortSignal): Promise<void>;
   };
 
   /** Session-owned role-delivery projection and retry operations. */
@@ -1327,7 +1323,6 @@ export class TypedEnbox<
     contexts: ContextsApi<D, C>;
   }[] = [];
   /** @internal */
-  private readonly _validPaths: Set<string>;
   /** @internal */
   private _records?: TypedRecordsApi<D, C>;
   /** @internal Whether this module owns the managed invitation/follow lifecycle. */
@@ -1352,7 +1347,6 @@ export class TypedEnbox<
     this._dependencyApis = options.dependencyApis ?? new Map();
     this._options = options;
     this._configured = options.context !== undefined;
-    this._validPaths = collectModulePaths(this._definition.structure);
     this._hasManagedSharedContext = hasManagedSharedContext(this._definition);
     this._requiresKeyAgreement = Modules.requiresKeyAgreement(this._definition);
   }
@@ -1483,7 +1477,7 @@ export class TypedEnbox<
       return this._contexts;
     }
 
-    const contextRoots = [...this._validPaths]
+    const contextRoots = [...this._resolvedGraph.nodesByDeclaredPath.keys()]
       .filter(path => this.getContextRoles(path).length > 0)
       .sort(compareCodeUnits) as ContextRootPath<D>[];
     const contextRoles = new Set(contextRoots.flatMap(path => this.getContextRoles(path)));
@@ -1535,8 +1529,8 @@ export class TypedEnbox<
       return (await this._options.sync.listFollowedSources())
         .filter(source =>
           source.actorDid === this._dwn.connectedDid &&
-          source.module === this._definition.module &&
-          contextRoles.has(source.moduleRole)
+          source.rootModule === this._definition.module &&
+          contextRoles.has(source.modules[source.rootModule]!.moduleRole)
         );
     };
 
@@ -1574,11 +1568,10 @@ export class TypedEnbox<
         return existing as OwnedContext<D, C, Root>;
       }
       const modulePaths = new Set(
-        [...this._validPaths]
-          .filter((candidate): boolean =>
-            (candidate === normalizedPath || candidate.startsWith(`${normalizedPath}/`)) &&
-            !isModuleRolePath(this._definition, candidate)
-          ),
+        [...this._resolvedGraph.nodesByDeclaredPath.values()]
+          .filter(node => node.kind === 'record' && node.ruleSet.$role !== true
+            && (node.declaringModulePath === normalizedPath || node.declaringModulePath.startsWith(`${normalizedPath}/`)))
+          .map(node => node.declaringModulePath),
       );
       const dwn = this._dwn.withRecordExecutionContext({
         assertActive : async (): Promise<void> => this._options.signal?.throwIfAborted(),
@@ -1961,10 +1954,12 @@ export class TypedEnbox<
    * Throws a descriptive error if the path is not a valid module path.
    */
   private _assertValidPath(path: string): void {
-    if (!this._validPaths.has(path)) {
+    if (this._resolvedGraph.nodesByDeclaredPath.get(path)?.kind !== 'record') {
+      const valid = [...this._resolvedGraph.nodesByDeclaredPath.values()]
+        .filter(node => node.kind === 'record').map(node => node.declaringModulePath);
       throw new TypeError(
         `TypedEnbox: invalid module path '${path}'. ` +
-        `Valid paths are: ${[...this._validPaths].join(', ')}.`,
+        `Valid paths are: ${valid.join(', ')}.`,
       );
     }
   }
@@ -2191,9 +2186,6 @@ export class TypedEnbox<
       throw new TypeError('TypedEnbox.records.subscribe: at least one module path is required.');
     }
     const paths = [...new Set(requestedPaths.map(normalizePath))];
-    if (this._options.context?.waitUntilReady !== undefined) {
-      await whileSignalsActive(() => this._options.context!.waitUntilReady!(signal), [signal, this._options.signal]);
-    }
     await whileSignalsActive(
       () => Promise.all(paths.map(path => this._ensureReady(path))),
       [signal],
@@ -2202,7 +2194,6 @@ export class TypedEnbox<
 
     let closed = false;
     let detachAbort = (): void => {};
-    let detachSync = (): void => {};
     let closeSubscription = (): Promise<void> => Promise.resolve();
     let listenerFailure: { error: unknown } | undefined;
     const deliver = async (
@@ -2214,41 +2205,9 @@ export class TypedEnbox<
         listenerFailure ??= { error };
         closed = true;
         detachAbort();
-        detachSync();
         await closeSubscription().catch((): void => {});
       }
     };
-    const followedSourceAcceptanceId = this._dwn.followedSourceAcceptanceId;
-    const followedSourceId = this._dwn.followedSourceId;
-    const contextId = this._options.context?.contextId;
-    if (followedSourceId !== undefined && contextId !== undefined && this._options.sync !== undefined) {
-      detachSync = this._options.sync.on((event): void => {
-        if (closed || signal?.aborted === true) {
-          return;
-        }
-        if (
-          event.type === 'followed-context:change' &&
-          event.actorDid === this._dwn.connectedDid &&
-          event.contextId === contextId &&
-          event.module === (this._dwn.followedSourceModule ?? this.module) &&
-          event.tenantDid === this._dwn.recordTenantDid &&
-          followedContextChangeRetiresSource({
-            acceptanceId : followedSourceAcceptanceId!,
-            id           : followedSourceId,
-          }, event)
-        ) {
-          closed = true;
-          detachAbort();
-          detachSync();
-          void Promise.resolve().then(() => listener({
-            type  : 'error',
-            error : new ContextRetiredError(contextId),
-          })).catch((): void => {});
-          void closeSubscription().catch((): void => {});
-        }
-      });
-    }
-
     const opening = this._dwn.subscribeRecordFrames({
       paths,
       module: this.module,
@@ -2266,7 +2225,6 @@ export class TypedEnbox<
       if (message.type === 'error') {
         closed = true;
         detachAbort();
-        detachSync();
         await deliver({
           type  : 'error',
           error : new Error(`Record subscription failed (${message.error.code}): ${message.error.detail}`),
@@ -2275,7 +2233,6 @@ export class TypedEnbox<
     });
     const reply = await whileSignalsActive(() => opening, [signal]).catch((error: unknown): never => {
       closed = true;
-      detachSync();
       void opening.then(async (lateReply): Promise<void> => {
         await lateReply.subscription?.close();
       }).catch((): void => {});
@@ -2286,13 +2243,11 @@ export class TypedEnbox<
       requireDwnSuccess('TypedEnbox.records.subscribe', reply);
     } catch (error: unknown) {
       closed = true;
-      detachSync();
       await reply.subscription?.close();
       throw error;
     }
     if (reply.subscription === undefined) {
       closed = true;
-      detachSync();
       throw new Error('TypedEnbox.records.subscribe: DWN returned success without a subscription.');
     }
     const subscription = reply.subscription;
@@ -2301,13 +2256,11 @@ export class TypedEnbox<
       closePromise ??= (async (): Promise<void> => {
         closed = true;
         detachAbort();
-        detachSync();
         await subscription.close();
       })();
       return closePromise;
     };
     if (closed || signal?.aborted === true) {
-      detachSync();
       let closeFailure: unknown;
       try {
         await closeSubscription();
@@ -2324,6 +2277,11 @@ export class TypedEnbox<
       throw new Error('TypedEnbox.records.subscribe: closed while opening the subscription.');
     }
     const handleAbort = (): void => {
+      if (this._options.signal?.aborted && !closed) {
+        const reason = this._options.signal.reason;
+        void Promise.resolve().then(() => listener({ type: 'error', error: reason instanceof Error ? reason : new Error(String(reason)) }))
+          .catch((): void => {});
+      }
       void closeSubscription().catch((): void => {});
     };
     signal?.addEventListener('abort', handleAbort, { once: true });
@@ -2566,7 +2524,7 @@ export class TypedEnbox<
       && names.every(name => binding.modules[name] === selected[name]));
     if (cached !== undefined) { return cached.contexts; }
     const contexts = new TypedEnbox<D, C>(this._dwn, {
-      definition: this._definition, codecs: this._codecs, dependencies: this._dependencies, resolvedGraph: this._resolvedGraph,
+      definition: this._definition, codecs: this._codecs, dependencies: this._dependencies,
     }, { ...this._options, dependencyApis: this._dependencyApis, contextModules: selected }).contexts;
     this._contextBindings.push({ modules: selected, contexts });
     return contexts;
@@ -2576,7 +2534,7 @@ export class TypedEnbox<
   private hasContextModuleAttachment(graph: ResolvedModuleGraph, root: ResolvedModuleNode): boolean {
     if (root.kind !== 'record' || root.ruleSet.$role === true || root.owningModuleUri !== this.module) { return false; }
     try {
-      resolveModuleAttachment(graph, root);
+      resolveModuleContextRoot(graph, root);
       return true;
     } catch (error: unknown) {
       if (error instanceof TypeError) { return false; }
@@ -2591,31 +2549,12 @@ export class TypedEnbox<
       this.hasContextModuleAttachment(resolveTypedModuleGraph(module), root));
   }
 
-  /** Resolve the exact feed and operation paths governed by one contextual role. */
-  private resolveMemberContextScope(role: string): {
-    allowedPaths: ReadonlySet<string>;
-    modulePath: ModulePaths<D> & string;
-    readablePaths: [string, ...string[]];
-    role: ContextRolePath<D>;
-  } {
-    const normalizedRole = normalizePath(role);
-    this._assertValidPath(normalizedRole);
-    const scope = resolveModuleRoleContextScope(this._definition, normalizedRole);
-
-    return {
-      allowedPaths  : scope.allowedPaths,
-      modulePath    : scope.modulePath as ModulePaths<D> & string,
-      readablePaths : scope.readablePaths,
-      role          : normalizedRole as ContextRolePath<D>,
-    };
-  }
-
   /** Read the shared root policy; paths outside the encrypted context surface have no member roles. */
   private getContextRoles(path: string): readonly string[] {
     const root = this._definition.structure[path.split('/')[0]];
-    return this._hasManagedSharedContext && this._validPaths.has(path) && typeof root?.$ref !== 'string'
+    return this._hasManagedSharedContext && this._resolvedGraph.nodesByDeclaredPath.get(path)?.kind === 'record' && typeof root?.$ref !== 'string'
       && !isModuleRolePath(this._definition, path)
-      ? resolveModuleContextRoles(this._definition, path) : [];
+      ? resolveModuleContextRoles(this._resolvedGraph, path) : [];
   }
 
   /** Read all locally known intent records; absence alone never means a context was forgotten. */
@@ -3061,53 +3000,27 @@ export class TypedEnbox<
     source: FollowedSyncSource,
     forget: (expected: FollowedSyncSource, withdrawRole?: () => Promise<void>) => Promise<void>,
   ): MemberContext<D, C> {
-    const scope = this.resolveMemberContextScope(source.moduleRole);
-    const replicatedPaths = new Set(source.modulePaths);
+    const rootScope = source.modules[source.rootModule]!;
+    const scope = resolveModuleRoleScope(this._resolvedGraph, this._resolvedGraph.resolveInvokedRole(rootScope.moduleRole));
+    const replicatedPaths = new Set(rootScope.modulePaths);
     const readablePaths = new Set(scope.readablePaths);
     const modulePaths = new Set([...scope.allowedPaths].filter(path =>
       !readablePaths.has(path) || replicatedPaths.has(path)
     ));
 
     const sync = this._options.sync;
-    if (sync === undefined) {
+    if (sync === undefined || this._options.signal === undefined) {
       throw new Error('TypedEnbox.contexts requires an Enbox session with shared-context storage.');
     }
-    const controller = new AbortController();
-    const signal = this._options.signal === undefined
-      ? controller.signal
-      : AbortSignal.any([this._options.signal, controller.signal]);
-    const assertActive = async (): Promise<void> => {
-      signal.throwIfAborted();
-      const current = await sync.getFollowedSource(source.id);
-      signal.throwIfAborted();
-      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
-        throw new ContextRetiredError(source.contextId);
-      }
-    };
-    const dwn = this._dwn.withRecordExecutionContext({
-      assertActive,
-      contextId                  : source.contextId,
-      followedSourceAcceptanceId : source.acceptanceId,
-      followedSourceId           : source.id,
-      followedSourceModule       : source.module,
-      invalidateReplica          : async (): Promise<void> => {
-        await sync.markFollowedSourcePullPending(source);
-      },
-      moduleRole     : source.moduleRole,
-      remoteEndpoint : source.remoteEndpoint,
-      tenantDid      : source.sourceDid,
-    });
-    const membershipDwn = this._dwn.withRecordExecutionContext({
-      assertActive,
-      contextId      : source.contextId,
-      remoteEndpoint : source.remoteEndpoint,
-      tenantDid      : source.sourceDid,
-    });
+    const lease = new FollowedModuleLease({ module: this.module, source, sync, signal: this._options.signal });
+    const signal = lease.signal;
+    const dwn = this._dwn.withRecordExecutionContext(lease.executionContext());
+    const membershipDwn = this._dwn.withRecordExecutionContext(lease.executionContext(false));
     const withdrawRole = async (): Promise<void> => {
       const result = await membershipDwn.records.delete({
         contextId  : source.contextId,
-        module     : source.module,
-        modulePath : source.moduleRole,
+        module     : source.rootModule,
+        modulePath : rootScope.moduleRole,
         recordId   : source.id,
       });
       if (result.status.code !== 404 && !isCanonicalConflictStatus(result.status)) {
@@ -3117,28 +3030,9 @@ export class TypedEnbox<
     const retire = async (withdraw?: () => Promise<void>): Promise<void> => {
       this._options.signal?.throwIfAborted();
       await forget(source, withdraw);
-      const current = await sync.getFollowedSource(source.id);
-      if (current === undefined || !followedSyncSourceActiveEqual(current, source)) {
-        controller.abort(new ContextRetiredError(source.contextId));
-      }
-    };
-    const refresh = async (): Promise<void> => {
-      await assertActive();
-      try {
-        if (!await sync.pullFollowedSource(source)) {
-          throw new Error(
-            `MemberContext.refresh: replication did not reach the feed head for context ` +
-            `'${source.contextId}' owned by '${source.sourceDid}'.`,
-          );
-        }
-      } catch (error: unknown) {
-        await assertActive();
-        if (error instanceof ContextNotReadyError) {
-          throw error;
-        }
-        throw new ContextNotReadyError(error);
-      }
-      await assertActive();
+      await lease.assertActive().catch((error: unknown): void => {
+        if (!(error instanceof ContextRetiredError)) { throw error; }
+      });
     };
 
     return Object.freeze({
@@ -3148,16 +3042,16 @@ export class TypedEnbox<
       key      : moduleContextKey(source.sourceDid, source.contextId),
       leave    : (): Promise<void> => retire(withdrawRole),
       ownerDid : source.sourceDid,
-      path     : scope.modulePath,
+      path     : scope.contextPath,
       records  : this.bindContextRecords(dwn, {
         contextId  : source.contextId,
-        modulePath : scope.modulePath,
+        modulePath : scope.contextPath as ModulePaths<D> & string,
         modulePaths,
       }, signal),
-      role         : scope.role,
+      role         : rootScope.moduleRole,
       rootRecordId : contextRootRecordId(source.contextId),
-      using        : this.createContextModuleAccessor(scope.modulePath, source.contextId, source, signal),
-      refresh,
+      using        : this.createContextModuleAccessor(scope.contextPath, source.contextId, source, signal, lease),
+      refresh      : (): Promise<void> => lease.refresh(),
     }) as unknown as MemberContext<D, C>;
   }
 
@@ -3167,6 +3061,7 @@ export class TypedEnbox<
     contextId: string,
     source?: FollowedSyncSource,
     signal: AbortSignal | undefined = this._options.signal,
+    rootLease?: FollowedModuleLease,
   ): <M extends TypedModule>(module: M) => ContextModuleBinding<M, D['module'], Root> {
     type Binding = { binding: ContextModuleBinding; records: ContextModuleBinding['records']; signal?: AbortSignal };
     const bindings = new Map<TypedModule, Binding>();
@@ -3178,7 +3073,7 @@ export class TypedEnbox<
       }
       const existing = bindings.get(module);
       if (existing !== undefined && existing.signal?.aborted !== true) { return existing; }
-      const result = this.bindContextModule(module, rootPath, contextId, source, signal);
+      const result = this.bindContextModule(module, rootPath, contextId, source, signal, rootLease);
       const records = result.binding.records;
       let binding = result.binding;
       if (source !== undefined) {
@@ -3189,6 +3084,7 @@ export class TypedEnbox<
             module       : module.definition.module,
             signal,
             source,
+            root         : rootLease!,
             sync         : this._options.sync!,
             generation   : (): ProjectionViewGeneration<unknown> => {
               const current = getBinding(module);
@@ -3217,16 +3113,16 @@ export class TypedEnbox<
     contextId: string,
     source: FollowedSyncSource | undefined,
     signal: AbortSignal | undefined,
+    rootLease?: FollowedModuleLease,
   ): { binding: ContextModuleBinding; signal?: AbortSignal } {
     const graph = resolveTypedModuleGraph(module);
-    const attachment = resolveModuleAttachment(graph, this.resolveRecordNode(rootPath));
+    const attachment = resolveModuleContextRoot(graph, this.resolveRecordNode(rootPath));
     const attachmentPath = attachment.declaringModulePath;
     const modulePaths = new Set([...graph.nodesByDeclaredPath.values()].filter(node => node.kind === 'record'
       && node.declaringModulePath.startsWith(`${attachmentPath}/`) && node.ruleSet.$role !== true)
       .map(node => node.declaringModulePath));
     let dwn: DwnApi;
     let prepare: () => Promise<void>;
-    let waitUntilReady: ((signal?: AbortSignal) => Promise<void>) | undefined;
     let boundSignal = signal;
     if (source === undefined) {
       const native = new TypedEnbox(this._dwn, module, { signal, sync: this._options.sync, dependencyApis: this._dependencyApis });
@@ -3237,28 +3133,29 @@ export class TypedEnbox<
         tenantDid    : this._dwn.connectedDid,
       });
     } else {
-      const scope = resolveModuleRoleProjection(graph, this._resolvedGraph.resolveInvokedRole(source.moduleRole));
+      const scope = resolveModuleRoleScope(graph, this._resolvedGraph.resolveInvokedRole(source.modules[source.rootModule]!.moduleRole));
       modulePaths.clear();
       for (const path of scope.allowedPaths) { modulePaths.add(path); }
-      const projection = new FollowedContextProjection({
+      const projection = new FollowedModuleLease({
+        root      : rootLease,
         module    : module.definition.module,
         source,
         signal,
         sync      : this._options.sync!,
         onCapture : async (accepted, verifiedSource): Promise<void> => {
-          if (accepted.attachmentPath !== attachmentPath) {
+          if (accepted.contextPath !== attachmentPath) {
             throw new ContextNotReadyError(new Error('The verified consumer mount differs from the typed context binding.'));
           }
           const actualGraph = await this._options.sync!.resolveFollowedSourceModuleGraph(verifiedSource, module.definition.module);
           if (actualGraph.rootModuleUri !== module.definition.module) {
             throw new Error('The verified context graph belongs to a different module.');
           }
-          const rootRole = this._resolvedGraph.resolveInvokedRole(source.moduleRole);
+          const rootRole = this._resolvedGraph.resolveInvokedRole(source.modules[source.rootModule]!.moduleRole);
           const actualRole = actualGraph.resolveInvokedRole(accepted.moduleRole);
           if (actualRole.owningModuleUri !== rootRole.owningModuleUri || actualRole.owningModulePath !== rootRole.owningModulePath) {
             throw new Error('The verified consumer role no longer identifies the accepted root membership.');
           }
-          const actualScope = resolveModuleRoleProjection(actualGraph, rootRole);
+          const actualScope = resolveModuleRoleScope(actualGraph, rootRole);
           const acceptedPaths = new Set(accepted.modulePaths);
           const readable = new Set(actualScope.readablePaths);
           const permitted = [...scope.allowedPaths].filter(path => actualScope.allowedPaths.has(path)
@@ -3277,11 +3174,10 @@ export class TypedEnbox<
       });
       boundSignal = projection.signal;
       prepare = (): Promise<void> => projection.assertActive();
-      waitUntilReady = (callerSignal): Promise<void> => projection.waitUntilReady(callerSignal);
-      dwn = this._dwn.withRecordExecutionContext(projection.executionContext);
+      dwn = this._dwn.withRecordExecutionContext(projection.executionContext());
     }
     const bound = new TypedEnbox(dwn, module, {
-      context : { contextId, modulePath: attachmentPath, modulePaths, prepare, waitUntilReady },
+      context : { contextId, modulePath: attachmentPath, modulePaths, prepare },
       signal  : boundSignal,
       sync    : this._options.sync,
     });
@@ -3300,10 +3196,9 @@ export class TypedEnbox<
     return new TypedEnbox<D, C>(
       dwn,
       {
-        codecs        : this._codecs,
-        definition    : this._definition,
-        dependencies  : this._dependencies,
-        resolvedGraph : this._resolvedGraph,
+        codecs       : this._codecs,
+        definition   : this._definition,
+        dependencies : this._dependencies,
       },
       {
         context,
@@ -3852,9 +3747,6 @@ export class TypedEnbox<
           undefined,
           within,
         ));
-        if (this._options.context?.waitUntilReady !== undefined) {
-          await whileSignalsActive(() => this._options.context!.waitUntilReady!(signal), [signal, this._options.signal]);
-        }
         await whileSignalsActive(
           () => this._ensureReady(normalizedPath),
           [signal, this._options.signal],

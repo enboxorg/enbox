@@ -20,7 +20,6 @@ import { deferred } from './utils/deferred.js';
 import { DwnInterface } from '../src/types/dwn.js';
 import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
-import { resolveFollowedSyncRoleRoot } from '../src/followed-sync-source.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { FollowedSourceNotReadyError, RoleReplicationSupportError } from '../src/sync-role-replication-support.js';
@@ -42,7 +41,7 @@ function modulePathsFor(role: string): [string, ...string[]] {
 function source(
   id = 'role-a',
   contextId = 'notebook-a',
-  moduleRole: FollowedSyncSource['moduleRole'] = 'notebook/viewer',
+  moduleRole: string = 'notebook/viewer',
 ): FollowedSyncSource {
   return {
     acceptanceId   : `acceptance-${id}`,
@@ -50,10 +49,9 @@ function source(
     sourceDid      : SOURCE_DID,
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    module         : MODULE,
+    rootModule     : MODULE,
     contextId,
-    moduleRole,
-    modulePaths    : modulePathsFor(moduleRole),
+    modules        : { [MODULE]: { contextPath: 'notebook', moduleRole, modulePaths: modulePathsFor(moduleRole) } },
     roles          : ROLES,
   };
 }
@@ -66,26 +64,28 @@ function targetFor(followed: FollowedSyncSource, dwnUrl = followed.remoteEndpoin
     authorization : {
       kind         : 'role',
       actorDid     : followed.actorDid,
-      moduleRole   : followed.moduleRole,
+      moduleRole   : followed.modules[followed.rootModule]!.moduleRole,
       roleRecordId : followed.id,
     },
     authorizationEpoch : `epoch-${followed.id}`,
     scope              : {
       kind        : 'context',
-      module      : followed.module,
+      module      : followed.rootModule,
       contextId   : followed.contextId,
-      modulePaths : followed.modulePaths,
+      modulePaths : followed.modules[followed.rootModule]!.modulePaths,
     },
   };
 }
 
 function sourceInput(followed = source()): FollowedSyncSourceInput {
   return {
-    actorDid  : followed.actorDid,
-    contextId : followed.contextId,
-    module    : followed.module,
-    roles     : ROLES,
-    sourceDid : followed.sourceDid,
+    actorDid    : followed.actorDid,
+    contextId   : followed.contextId,
+    rootModule  : followed.rootModule,
+    contextPath : followed.modules[followed.rootModule]!.contextPath,
+    modules     : [],
+    roles       : ROLES,
+    sourceDid   : followed.sourceDid,
   };
 }
 
@@ -577,23 +577,6 @@ describe('SyncEngineLevel — followed sources', () => {
     }
   });
 
-  it('should resolve the context root for an exact nested role context', () => {
-    expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', 'notebook/page/viewer'))
-      .toEqual({ modulePath: 'notebook/page' });
-  });
-
-  it('resolves a foreign immediate parent when canonical role metadata is supplied', () => {
-    const provider = followedModuleGraph().definitionsByUri.get(MODULE)!;
-    const graph = resolveModuleGraph({
-      module    : 'https://example.com/followed-extension', published : true,
-      uses      : { provider: MODULE }, types     : { viewer: {} },
-      structure : { page: { $ref: 'provider:notebook/page', viewer: { $role: true } } },
-    }, uri => uri === MODULE ? provider : undefined);
-
-    expect(resolveFollowedSyncRoleRoot('notebook-a/page-a', 'page/viewer', graph.resolveInvokedRole('page/viewer')))
-      .toEqual({ module: MODULE, modulePath: 'notebook/page' });
-  });
-
   it('should pull one followed source from its accepted endpoint under the sync lock', async () => {
     const engine = new SyncEngineLevel({ db });
     const internal = engine as any;
@@ -607,9 +590,9 @@ describe('SyncEngineLevel — followed sources', () => {
       return { pullDrained: true };
     });
 
-    await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
+    await expect(engine.pullFollowedSource(followed, followed.rootModule)).resolves.toBe(true);
 
-    expect(buildTarget.calledOnceWithExactly(followed, undefined, followed.module)).toBe(true);
+    expect(buildTarget.calledOnceWithExactly(followed, undefined, followed.rootModule)).toBe(true);
     expect(reconcile.calledOnceWithMatch(target, { direction: 'pull' }, sinon.match.func)).toBe(true);
   });
 
@@ -643,7 +626,7 @@ describe('SyncEngineLevel — followed sources', () => {
 
     const initializing = internal.initializeLinkTarget(target);
     await initializationStarted.promise;
-    const pulling = engine.pullFollowedSource(followed);
+    const pulling = engine.pullFollowedSource(followed, followed.rootModule);
     await Promise.resolve();
 
     expect(initialize.calledOnce).toBe(true);
@@ -670,7 +653,7 @@ describe('SyncEngineLevel — followed sources', () => {
       return { pullDrained: true };
     });
 
-    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+    await expect(engine.pullFollowedSource(followed, followed.rootModule)).resolves.toBe(false);
   });
 
   it('should mark an exact followed source pull-pending after a remote mutation', async () => {
@@ -682,11 +665,11 @@ describe('SyncEngineLevel — followed sources', () => {
     const controller = internal.activateLink(linkKey(link), link);
     expect(controller.markPullCurrent(controller.replicationGeneration)).toBe(true);
 
-    await expect(engine.markFollowedSourcePullPending(followed)).resolves.toBe(true);
+    await expect(engine.markFollowedSourcePullPending(followed, followed.rootModule)).resolves.toBe(true);
 
     expect(controller.isPullCurrent).toBe(false);
     expect(controller.executor.hasPending('pull')).toBe(true);
-    await expect(engine.markFollowedSourcePullPending({ ...followed, acceptanceId: 'retired' })).resolves.toBe(false);
+    await expect(engine.markFollowedSourcePullPending({ ...followed, acceptanceId: 'retired' }, followed.rootModule)).resolves.toBe(false);
   });
 
   it('should prepare a followed source without holding the sync lock', async () => {
@@ -809,7 +792,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const background = sinon.stub().resolves();
 
     await expect(engine.followSource(sourceInput(followed))).resolves.toEqual(followed);
-    await expect(engine.pullFollowedSource(followed)).resolves.toBe(true);
+    await expect(engine.pullFollowedSource(followed, followed.rootModule)).resolves.toBe(true);
     await engine['_lifecycle'].runBackgroundTask(background);
 
     expect(initialize.notCalled).toBe(true);
@@ -1036,7 +1019,7 @@ describe('SyncEngineLevel — followed sources', () => {
       return { pullDrained: true };
     });
 
-    await expect(engine.pullFollowedSource(followed)).resolves.toBe(false);
+    await expect(engine.pullFollowedSource(followed, followed.rootModule)).resolves.toBe(false);
     expect(await engine.getFollowedSource(followed.id)).toEqual(followed);
   });
 
@@ -1389,7 +1372,7 @@ describe('SyncEngineLevel — followed sources', () => {
     const changed: FollowedSyncSource = {
       ...followed,
       acceptanceId : 'acceptance-evolved',
-      modulePaths  : ['notebook', 'notebook/page', 'notebook/page/delta'],
+      modules      : { [MODULE]: { contextPath: 'notebook', moduleRole: 'notebook/viewer', modulePaths: ['notebook', 'notebook/page', 'notebook/page/delta'] } },
     };
 
     const replaced = await internal.commitFollowedSource(changed);

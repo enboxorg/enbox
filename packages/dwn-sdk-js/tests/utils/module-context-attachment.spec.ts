@@ -5,7 +5,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { getRuleSetAtPath } from '../../src/utils/modules.js';
 import { resolveModuleGraph } from '../../src/core/module-graph.js';
-import { resolveModuleAttachment, resolveModuleRoleProjection } from '../../src/utils/module-role-projection.js';
+import { resolveModuleContextRoot, resolveModuleRoleScope } from '../../src/utils/module-role-scope.js';
 
 const notebook: ModuleDefinition = {
   module    : 'https://example.com/projection/notebook',
@@ -78,7 +78,7 @@ function rootRole(path = 'notebook/page/editor'): ResolvedRoleReference {
   return resolveModuleGraph(notebook, () => undefined, { requireKeyAgreement: false }).resolveInvokedRole(path);
 }
 
-describe('resolveModuleAttachment', () => {
+describe('resolveModuleContextRoot', () => {
   it('binds an owner-only root without synthesizing a role or granting member access', () => {
     const definition: ModuleDefinition = {
       module    : 'https://example.com/projection/private-notebook-data',
@@ -91,8 +91,8 @@ describe('resolveModuleAttachment', () => {
     const consumerGraph = resolveModuleGraph(definition, () => notebook, { requireKeyAgreement: false });
     const root = providerGraph.nodesByDeclaredPath.get('notebook')!;
 
-    expect(resolveModuleAttachment(consumerGraph, root).declaringModulePath).toBe('collection');
-    expect(() => resolveModuleRoleProjection(consumerGraph, rootRole())).toThrow('exact shared root');
+    expect(resolveModuleContextRoot(consumerGraph, root).declaringModulePath).toBe('collection');
+    expect(() => resolveModuleRoleScope(consumerGraph, rootRole())).toThrow('exact shared root');
   });
 
   it('rejects mismatched physical depth or ancestry even when owner and path strings match', () => {
@@ -100,18 +100,18 @@ describe('resolveModuleAttachment', () => {
     const graph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
     const root = providerGraph.nodesByDeclaredPath.get('notebook/page')!;
 
-    expect(() => resolveModuleAttachment(graph, { ...root, physicalDepth: root.physicalDepth + 1 }))
+    expect(() => resolveModuleContextRoot(graph, { ...root, physicalDepth: root.physicalDepth + 1 }))
       .toThrow('exact shared root');
-    expect(() => resolveModuleAttachment(graph, { ...root, physicalAncestors: [] })).toThrow('exact shared root');
+    expect(() => resolveModuleContextRoot(graph, { ...root, physicalAncestors: [] })).toThrow('exact shared root');
   });
 });
 
-describe('resolveModuleRoleProjection', () => {
+describe('resolveModuleRoleScope', () => {
   it('selects concrete role-authorized paths beneath the exact shared attachment', () => {
     const graph = resolveModuleGraph(realtime(), uri => uri === notebook.module ? notebook : undefined, { requireKeyAgreement: false });
-    const projection = resolveModuleRoleProjection(graph, rootRole());
+    const projection = resolveModuleRoleScope(graph, rootRole());
 
-    expect(projection.attachmentPath).toBe('page');
+    expect(projection.contextPath).toBe('page');
     expect(projection.moduleRole).toBe('notes:notebook/page/editor');
     expect([...projection.allowedPaths]).toEqual(['page/draft', 'page/live', 'page/live/session']);
     expect(projection.readablePaths).toEqual(['page/live', 'page/live/session']);
@@ -121,7 +121,7 @@ describe('resolveModuleRoleProjection', () => {
 
   it('does not promote viewer access to editor-only writes', () => {
     const graph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
-    const projection = resolveModuleRoleProjection(graph, rootRole('notebook/page/viewer'));
+    const projection = resolveModuleRoleScope(graph, rootRole('notebook/page/viewer'));
 
     expect(projection.moduleRole).toBe('notes:notebook/page/viewer');
     expect([...projection.allowedPaths]).toEqual(['page/live', 'page/live/session']);
@@ -134,7 +134,7 @@ describe('resolveModuleRoleProjection', () => {
     definition.structure.aliasRole = { $ref: 'notes:notebook/page/editor', roleNote: {} };
     getRuleSetAtPath('page/live', definition.structure)!.$actions = [{ role: 'aliasRole', can: ['read'] }];
     const graph = resolveModuleGraph(definition, () => notebook, { requireKeyAgreement: false });
-    const projection = resolveModuleRoleProjection(graph, rootRole());
+    const projection = resolveModuleRoleScope(graph, rootRole());
 
     expect(projection.moduleRole).toBe('aliasRole');
     expect(projection.readablePaths).toEqual(['page/live', 'page/live/session']);
@@ -154,22 +154,22 @@ describe('resolveModuleRoleProjection', () => {
     definition.uses!.bridge = bridge.module;
     definition.structure.page.$ref = 'bridge:anchor';
     const graph = resolveModuleGraph(definition, uri => uri === notebook.module ? notebook : bridge, { requireKeyAgreement: false });
-    const projection = resolveModuleRoleProjection(graph, rootRole());
+    const projection = resolveModuleRoleScope(graph, rootRole());
 
-    expect(projection.attachmentPath).toBe('page');
+    expect(projection.contextPath).toBe('page');
     expect(projection.readablePaths).toEqual(['page/live', 'page/live/session']);
     expect(projection.allowedPaths.has('anchor/marker')).toBe(false);
   });
 
   it('rejects a role from a sibling context even when its name and physical depth match', () => {
     const graph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
-    expect(() => resolveModuleRoleProjection(graph, rootRole('notebook/other/editor')))
+    expect(() => resolveModuleRoleScope(graph, rootRole('notebook/other/editor')))
       .toThrow('exact shared root');
   });
 
   it('rejects a root-level role without a physical context parent', () => {
     const graph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
-    expect(() => resolveModuleRoleProjection(graph, rootRole('owner'))).toThrow('physical parent');
+    expect(() => resolveModuleRoleScope(graph, rootRole('owner'))).toThrow('physical parent');
   });
 
   it('requires an explicit readable consumer path and does not inherit provider or attachment rules', () => {
@@ -187,6 +187,6 @@ describe('resolveModuleRoleProjection', () => {
       },
     };
     const graph = resolveModuleGraph(definition, () => notebook, { requireKeyAgreement: false });
-    expect(() => resolveModuleRoleProjection(graph, rootRole())).toThrow('no consumer records readable');
+    expect(() => resolveModuleRoleScope(graph, rootRole())).toThrow('no records readable');
   });
 });
