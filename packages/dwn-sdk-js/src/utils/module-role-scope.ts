@@ -98,11 +98,13 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
   if (readablePaths.length === 0) {
     throw new TypeError(`Module '${graph.rootModuleUri}' has no records readable through the selected context role.`);
   }
+  allowedPaths.sort(lexicographicalCompare);
+  readablePaths.sort(lexicographicalCompare);
   return {
     contextPath,
     moduleRole    : [...invokedRoles].sort(lexicographicalCompare)[0],
-    allowedPaths  : new Set(allowedPaths.sort(lexicographicalCompare)),
-    readablePaths : readablePaths.sort(lexicographicalCompare) as [string, ...string[]],
+    allowedPaths  : new Set(allowedPaths),
+    readablePaths : readablePaths as [string, ...string[]],
   };
 }
 

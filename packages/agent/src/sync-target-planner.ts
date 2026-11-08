@@ -166,7 +166,7 @@ export class SyncTargetPlanner {
       // Keep the accepted source while its actor is inactive; registration changes invalidate the plan.
       return { targets: [], unavailable: false };
     }
-    const unavailable = Object.values(entry.source.modules).some(scope => scope === null);
+    const unavailable = Object.values(entry.source.modules).includes(null);
     const targets = await this._getTargetResolver().buildTargetsForSource(entry.source, identity.delegateDid);
     return { targets, unavailable };
   }
