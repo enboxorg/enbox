@@ -51,8 +51,9 @@ export class FollowedModuleLease {
 
   public async currentSource(): Promise<FollowedSyncSource> {
     this.start();
+    const { root, source, sync } = this._options;
     const current = await whileSignalsActive(
-      () => this._options.root?.currentSource() ?? this._options.sync.getFollowedSource(this._options.source.id), [this.signal]);
+      () => root === undefined ? sync.getFollowedSource(source.id) : root.currentSource(), [this.signal]);
     if (current === undefined || !followedSyncSourceActiveEqual(this._options.source, current)) { throw this.retire(); }
     return current;
   }

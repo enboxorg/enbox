@@ -199,8 +199,10 @@ describe('FollowedModuleLease', () => {
     const test = fixture(true);
     await test.binding.assertActive();
     const failure = new Error('store temporarily unavailable');
-    test.get.onCall(test.get.callCount).rejects(failure);
+    const lookups = test.get.callCount;
+    test.get.onCall(lookups).rejects(failure);
     await expect(test.binding.assertActive()).rejects.toBe(failure);
+    expect(test.get.callCount).toBe(lookups + 1);
     expect(test.root.signal.aborted).toBe(false);
     expect(test.binding.signal.aborted).toBe(false);
     await test.binding.assertActive();
