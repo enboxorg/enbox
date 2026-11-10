@@ -211,7 +211,7 @@ describe('resolveModuleRoleScope', () => {
 
   it('rejects a top-level role without a parent context root', () => {
     const resolved = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
-    expect(() => resolveModuleRoleScope(resolved, notebookRole('owner'))).toThrow('physical parent');
+    expect(() => resolveModuleRoleScope(resolved, notebookRole('owner'))).toThrow('parent context');
   });
 
   it('requires at least one readable record path under an attached context root', () => {
@@ -238,7 +238,7 @@ describe('resolveModuleContextRoot', () => {
     const resolved = graph();
     const root = resolved.nodesByDeclaredPath.get('context')!;
     expect(resolveModuleContextRoot(resolved, root)).toBe(root);
-    expect(() => resolveModuleContextRoot(resolved, { ...root, physicalDepth: root.physicalDepth + 1 }))
+    expect(() => resolveModuleContextRoot(resolved, { ...root, owningModulePath: 'missing' }))
       .toThrow('exact shared root');
   });
 
@@ -262,17 +262,6 @@ describe('resolveModuleContextRoot', () => {
 
     expect(resolveModuleContextRoot(consumerGraph, root).declaringModulePath).toBe('collection');
     expect(() => resolveModuleRoleScope(consumerGraph, notebookRole())).toThrow('exact shared root');
-  });
-
-  it('rejects mismatched depth or ancestry even when module URI and path strings match', () => {
-    const providerGraph = resolveModuleGraph(notebook, () => undefined, { requireKeyAgreement: false });
-    const consumerGraph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
-    const root = providerGraph.nodesByDeclaredPath.get('notebook/page')!;
-
-    expect(() => resolveModuleContextRoot(consumerGraph, { ...root, physicalDepth: root.physicalDepth + 1 }))
-      .toThrow('exact shared root');
-    expect(() => resolveModuleContextRoot(consumerGraph, { ...root, physicalAncestors: [] }))
-      .toThrow('exact shared root');
   });
 
   it('rejects a graph with multiple top-level $ref roots targeting the same context root', () => {

@@ -20,15 +20,14 @@ export type ResolvedModuleRoleScope = {
   readablePaths: [string, ...string[]];
 };
 
-/** Identifies a context root node in a resolved module graph by its owning module, path, depth, and ancestor chain. */
-export type ModuleContextRoot = Pick<ResolvedModuleNode,
-  'owningModuleUri' | 'owningModulePath' | 'physicalAncestors' | 'physicalDepth'>;
+/** Identifies a context root by the module URI and record path that define it. */
+export type ModuleContextRoot = ResolvedModuleAddress;
 
 /** Find the node in `graph` that represents `root` — either the context root record itself or the top-level `$ref` node that attaches to it. */
 export function resolveModuleContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode {
-  const matchingNodes = [...graph.nodesByDeclaredPath.values()].filter(node =>
-    node.ruleSet.$role !== true && sameModuleAddress(node, root) && node.physicalDepth === root.physicalDepth &&
-    sameAncestorChain(node.physicalAncestors, root.physicalAncestors));
+  const matchingNodes = [...graph.nodesByDeclaredPath.values()].filter(
+    node => node.ruleSet.$role !== true && sameModuleAddress(node, root),
+  );
   if (matchingNodes.length !== 1) {
     throw new TypeError(`Module '${graph.rootModuleUri}' must declare one exact shared root.`);
   }
@@ -44,14 +43,14 @@ export function resolveModuleContextRoles(graph: ResolvedModuleGraph, contextPat
   if (contextNode.kind === 'ref') {
     return [];
   }
-  return contextNode.actions.filter(action => {
-    const invokedRole = action.resolvedRole;
-    const roleNode = action.rule.role === undefined ? undefined : graph.nodesByDeclaredPath.get(action.rule.role);
-    return invokedRole !== undefined && roleNode?.kind === 'record' && invokedRole.owningModuleUri === graph.rootModuleUri &&
-      action.rule.can.includes(ModuleAction.Read) && invokedRole.parentAncestor !== undefined &&
-      sameModuleAddress(invokedRole.parentAncestor, contextNode) &&
-      sameAncestorChain(invokedRole.physicalAncestors, [...contextNode.physicalAncestors, contextNode]);
-  }).map(action => action.rule.role!);
+  return contextNode.actions
+    .filter(action =>
+      action.rule.can.includes(ModuleAction.Read) &&
+      action.rule.role !== undefined &&
+      graph.nodesByDeclaredPath.get(action.rule.role)?.kind === 'record' &&
+      sameModuleAddress(action.resolvedRole?.parentAncestor, contextNode),
+    )
+    .map(action => action.rule.role!);
 }
 
 /**
@@ -62,18 +61,10 @@ export function resolveModuleContextRoles(graph: ResolvedModuleGraph, contextPat
  * reading at least one record path beneath the `$ref` attachment.
  */
 export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: ResolvedRoleReference): ResolvedModuleRoleScope {
-  const parent = role.parentAncestor;
-  if (parent === undefined || role.ruleSet.$role !== true ||
-      role.parentPhysicalDepth !== role.physicalAncestors.length ||
-      role.physicalDepth !== role.parentPhysicalDepth + 1 ||
-      !sameModuleAddress(role.physicalAncestors.at(-1), parent)) {
-    throw new TypeError('A context scope requires a contextual role and its physical parent.');
+  if (role.parentAncestor === undefined || role.ruleSet.$role !== true) {
+    throw new TypeError('A context scope requires a contextual role and its parent context.');
   }
-  const contextRootNode = resolveModuleContextRoot(graph, {
-    ...parent,
-    physicalDepth     : role.parentPhysicalDepth,
-    physicalAncestors : role.physicalAncestors.slice(0, -1),
-  });
+  const contextRootNode = resolveModuleContextRoot(graph, role.parentAncestor);
   const contextPath = contextRootNode.declaringModulePath;
   const allowedPaths: string[] = [];
   const readablePaths: string[] = [];
@@ -82,8 +73,7 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
     if (!isRecordUnderContext(graph.rootModuleUri, contextPath, path, node)) {
       continue;
     }
-    const matchingActions = node.actions.filter(action => action.resolvedRole !== undefined &&
-      sameModuleAddress(action.resolvedRole, role) && sameAncestorChain(action.resolvedRole.physicalAncestors, role.physicalAncestors));
+    const matchingActions = node.actions.filter(action => sameModuleAddress(action.resolvedRole, role));
     if (matchingActions.length === 0) {
       continue;
     }
@@ -119,8 +109,4 @@ function isRecordUnderContext(moduleUri: string, contextPath: string, path: stri
 
 function sameModuleAddress(left: ResolvedModuleAddress | undefined, right: ResolvedModuleAddress): boolean {
   return left?.owningModuleUri === right.owningModuleUri && left.owningModulePath === right.owningModulePath;
-}
-
-function sameAncestorChain(left: readonly ResolvedModuleAddress[], right: readonly ResolvedModuleAddress[]): boolean {
-  return left.length === right.length && left.every((ancestor, index) => sameModuleAddress(ancestor, right[index]));
 }

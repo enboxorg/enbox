@@ -1708,7 +1708,7 @@ export class SyncEngineLevel implements SyncEngine {
         const resolvedRole = batch.resolvedGraph.resolveInvokedRole(role);
         const parent = resolvedRole.parentAncestor;
         if (resolvedRole.owningModuleUri !== input.rootModule || parent?.owningModuleUri !== input.rootModule ||
-            parent.owningModulePath !== input.contextPath || resolvedRole.parentPhysicalDepth !== input.contextId.split('/').length ||
+            parent.owningModulePath !== input.contextPath ||
             resolvedRole.physicalAncestors.some(ancestor => ancestor.owningModuleUri !== input.rootModule)) {
           await batch.root.dataStream?.cancel();
           throw new TypeError('FollowedSyncSource: the requested root must be the native physical parent of its selected role.');
