@@ -79,7 +79,7 @@ import { installedModuleDefinitionsEqual, recordRepresentationsEqual } from './m
 const INITIAL_SUBSCRIPTION_OVERLAP_LIMIT = 1_000;
 const INITIAL_SUBSCRIPTION_PAGE_LIMIT = 100;
 
-/** A module-bound record with coordinates guaranteed by its typed selection. */
+/** Resolves the decoded value type `T` for a given module path from a codec map. */
 export type DataForPath<
   C extends RecordCodecMap,
   Path extends string,
@@ -97,7 +97,7 @@ type TypedRecordReadResult<T> = {
   tombstonePrune?: boolean;
 };
 
-/** A module-bound record with coordinates guaranteed by its typed selection. */
+/** A module-bound record with non-optional `contextId`, `module`, and `modulePath` fields. */
 export interface TypedRecord<T = unknown> extends Record<T> {
   readonly contextId: string;
   readonly module: string;
@@ -372,7 +372,7 @@ export type RecordObserveRequest<
   Materialization extends RecordMaterialization<D, Path> | undefined = undefined,
 > = ObserveRequest<D, Path, Materialization, RecordQuery<D, Path>>;
 
-/** Session-owned role-delivery projection and retry operations. */
+/** Session-owned role-delivery status and retry operations. */
 export type RoleDeliveryApi = Readonly<{
   get(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
   retry(roleRecordId: string): Promise<RoleDeliveryState | undefined>;
@@ -408,7 +408,7 @@ type TypedEnboxOptions = {
     signal?: AbortSignal;
   };
 
-  /** Session-owned role-delivery projection and retry operations. */
+  /** Session-owned role-delivery status and retry operations. */
   roleDelivery?: RoleDeliveryApi;
 
   /** Session-lifetime signal; aborting it closes every view created by this instance. */

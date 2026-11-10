@@ -14,7 +14,7 @@ export function installedModuleDefinitionsEqual(left: unknown, right: unknown): 
   return canonicalJsonStringify(left) === canonicalJsonStringify(right);
 }
 
-/** Representation and physical placement are codec contracts; mutable access policies are not. */
+/** Extract a record node's wire-format contract (owning module/path, ancestors, schema, formats, and flags), excluding mutable access rules. */
 export function consumedRecordRepresentation(node: ResolvedModuleNode): unknown {
   return {
     owner     : [node.owningModuleUri, node.owningModulePath],
@@ -29,7 +29,7 @@ export function consumedRecordRepresentation(node: ResolvedModuleNode): unknown 
   };
 }
 
-/** Whether two resolved record nodes share the exact wire representation and physical ancestry. */
+/** Whether two resolved record nodes have the same wire representation, owning module/path, and ancestor chain. */
 export function recordRepresentationsEqual(expected: ResolvedModuleNode, actual: ResolvedModuleNode): boolean {
   return installedModuleDefinitionsEqual(
     consumedRecordRepresentation(expected),

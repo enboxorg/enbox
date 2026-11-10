@@ -681,7 +681,7 @@ export type SyncEvent =
     /** Opaque local acceptance carried by this transition. */
     followedSourceAcceptanceId: string;
     followedSourceId: string | undefined;
-    /** Verified consumer projections added, removed, or changed without replacing the root acceptance. */
+    /** Attached module URIs whose verified scopes were added, removed, or changed without replacing the root acceptance. */
     affectedModules?: readonly string[];
     module: string;
     tenantDid: string;
@@ -981,7 +981,7 @@ export interface SyncEngine {
   followSource(source: FollowedSyncSourceInput): Promise<FollowedSyncSource>;
   /** Add explicitly selected consumer modules without saving a new root following decision. */
   ensureFollowedSourceModules(source: FollowedSyncSource, modules: readonly string[]): Promise<FollowedSyncSource>;
-  /** Resolve the verified owner graph for an already selected projection without changing saved following intent. */
+  /** Resolve the verified owner module graph for an already accepted followed module without changing saved following state. */
   resolveFollowedSourceModuleGraph(source: FollowedSyncSource, module: string): Promise<ResolvedModuleGraph>;
   /** Read one followed foreign context by accepted role-record ID. */
   getFollowedSource(id: string): Promise<FollowedSyncSource | undefined>;

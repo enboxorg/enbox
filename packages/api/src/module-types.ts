@@ -103,7 +103,7 @@ type RuleSetAtPath<R, Path extends string> =
         : never
       : never;
 
-/** Declared paths include attachments, which are excluded from writable record paths. */
+/** All declared structure paths, including `$ref` attachment nodes (which are excluded from writable record paths). */
 type DeclaredPaths<R, Prefix extends string = ''> = string extends keyof R ? string : {
   [K in Extract<keyof R, string>]: K extends `$${string}` ? never
     : R[K] extends ModuleRuleSet ? `${Prefix}${K}` | DeclaredPaths<R[K], `${Prefix}${K}/`> : never;
@@ -115,7 +115,7 @@ type DeclaredPaths<R, Prefix extends string = ''> = string extends keyof R ? str
 
 type AttachmentTarget = { module: string; path: string };
 
-/** Look up the complete declared path before following a terminal reference in its own module's aliases. */
+/** Follow `$ref` links across `dependencies` to resolve the underlying owning module URI and record path. */
 type ResolveAttachmentTarget<
   M extends ModuleDependency,
   Path extends string,
@@ -136,7 +136,7 @@ type ResolveAttachmentTarget<
             : { module: M['definition']['module']; path: Path }
         : never;
 
-/** Widened coordinates remain runtime-checked; distinct literal coordinates cannot match. */
+/** True when `Target` can match `(ModuleUri, ModulePath)` (allowing widened `string` types while rejecting mismatched string literals). */
 type MatchesAttachmentTarget<Target, ModuleUri extends string, ModulePath extends string> =
   Target extends AttachmentTarget
     ? [Target['module'] & ModuleUri] extends [never] ? false
@@ -144,9 +144,9 @@ type MatchesAttachmentTarget<Target, ModuleUri extends string, ModulePath extend
     : false;
 
 /**
- * Local attachment paths that resolve to an exact owning module and declared record path.
+ * Local `$ref` attachment paths in `M` that resolve to `(OwningModuleUri, OwningModulePath)`.
  * References may chain through typed dependencies, but do not import undeclared provider children.
- * A definition widened to the generic ModuleDefinition retains a runtime-checked string path.
+ * A definition widened to the generic `ModuleDefinition` retains a runtime-checked `string` path.
  */
 export type ModuleAttachmentPaths<
   M extends TypedModule,

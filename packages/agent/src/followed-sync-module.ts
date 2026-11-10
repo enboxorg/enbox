@@ -112,8 +112,9 @@ export async function prepareFollowedModule(params: {
     throw new FollowedModuleUnavailableError(error instanceof Error ? error.message : String(error));
   }
 
-  // A real root is proven by its RecordsRead support. A virtual consumer needs
-  // its own path grants and feed proof, even when that feed contains no records.
+  // The root module's role authority is already proven by its RecordsRead support batch.
+  // An attached composing module needs its own delegated path grants and feed proof,
+  // even when its feed currently contains no records.
   if (module !== source.rootModule) {await verifyConsumerScope(params, scope);}
 
   const configurations = orderMessagesForAdmission(

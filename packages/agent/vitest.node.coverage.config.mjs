@@ -15,7 +15,7 @@ export default defineConfig({
     include: [
       'tests/sync-admit-closure.spec.ts',
       'tests/sync-durable-feed-reconciler.spec.ts',
-      'tests/sync-followed-projections.spec.ts',
+      'tests/sync-followed-modules.spec.ts',
       'tests/sync-followed-source.spec.ts',
       'tests/sync-link-recovery-coordinator.spec.ts',
       'tests/sync-next-progress-store.spec.ts',

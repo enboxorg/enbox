@@ -2,7 +2,7 @@ import { lexicographicalCompare } from './types/sync.js';
 
 /** Verified role-authorized content within one explicitly selected module. */
 export type FollowedModuleScope = {
-  /** Concrete root path in the root module, or virtual root path in a consumer. */
+  /** Context root path in the root module, or top-level `$ref` attachment path in a composing module. */
   contextPath: string;
   moduleRole: string;
   modulePaths: [string, ...string[]];
@@ -24,10 +24,10 @@ export type FollowedSyncSource = {
   modules: Record<string, FollowedModuleScope | null>;
 };
 
-/** Exact root coordinates and explicit selections supplied before authority is verified. */
+/** Context root details and optional attached module selections supplied before authority is verified. */
 export type FollowedSyncSourceInput = Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'rootModule' | 'sourceDid' | 'roles'> & {
   contextPath: string;
-  /** Desired consumer URIs; root verification always inserts rootModule separately. */
+  /** Desired attached module URIs; root verification always inserts `rootModule` separately. */
   modules: readonly string[];
 };
 

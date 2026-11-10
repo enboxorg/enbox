@@ -77,13 +77,13 @@ export interface ModuleReadinessApi {
   resolveGraph(module: TypedModule): ResolvedModuleGraph;
   /** Return contextual read roles directly beneath a local root path in preference order. */
   resolveContextRoles(graph: ResolvedModuleGraph, path: string): readonly string[];
-  /** Return the single top-level `$ref` root attaching a consumer graph to a provider context root. */
+  /** Return the context root node in `graph` (either the root record node or its top-level `$ref` attachment node). */
   resolveContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode;
-  /** Resolve the concrete readable and allowed paths granted to an invoked role within a graph. */
+  /** Resolve the readable and allowed record paths granted to `role` under its context root in `graph`. */
   resolveRoleScope(graph: ResolvedModuleGraph, role: ResolvedRoleReference): ResolvedModuleRoleScope;
   /** Compare two module definition or sub-tree values canonically. */
   definitionsEqual(left: unknown, right: unknown): boolean;
-  /** Whether two resolved record nodes share the exact wire representation and physical ancestry. */
+  /** Whether two resolved record nodes have the same wire representation, owning module/path, and ancestor chain. */
   representationsEqual(expected: ResolvedModuleNode, actual: ResolvedModuleNode): boolean;
 }
 

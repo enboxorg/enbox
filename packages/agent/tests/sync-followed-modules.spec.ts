@@ -36,7 +36,7 @@ function moduleScope(): FollowedModuleScope {
   return { moduleRole: 'notebook:notebook/viewer', contextPath: 'notebook', modulePaths: ['notebook/live'] };
 }
 
-function projectionGraph(): ReturnType<typeof resolveModuleGraph> {
+function realtimeGraph(): ReturnType<typeof resolveModuleGraph> {
   const root = {
     module    : MODULE,
     published : true,
@@ -59,16 +59,16 @@ function projectionGraph(): ReturnType<typeof resolveModuleGraph> {
   }, uri => uri === MODULE ? root : undefined, { requireKeyAgreement: false });
 }
 
-describe('Followed context consumer projections', () => {
+describe('Followed context attached modules', () => {
   let db: Level<string, string>;
   let engine: SyncEngineLevel;
   let root: FollowedSyncSource;
 
   beforeEach(async () => {
-    db = new Level<string, string>(`__TESTDATA__/sync-followed-projections/${crypto.randomUUID()}`);
+    db = new Level<string, string>(`__TESTDATA__/sync-followed-modules/${crypto.randomUUID()}`);
     engine = new SyncEngineLevel({ db });
     root = rootSource();
-    await ensureSyncStoreFormat(db, 'sync-followed-projections.spec.ts');
+    await ensureSyncStoreFormat(db, 'sync-followed-modules.spec.ts');
     await engine['_identityStore'].set(root.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(root);
   });
@@ -81,7 +81,7 @@ describe('Followed context consumer projections', () => {
   it('orders a diamond of signed consumer configurations without admitting unrelated root-support metadata', async () => {
     const owner = await TestDataGenerator.generatePersona();
     const actor = await TestDataGenerator.generatePersona();
-    const graph = projectionGraph();
+    const graph = realtimeGraph();
     const notebook = structuredClone(graph.definitionsByUri.get(MODULE)!);
     notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
     (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
@@ -163,7 +163,7 @@ describe('Followed context consumer projections', () => {
   it('finishes each shared metadata closure before admitting the next consumer', async () => {
     const consumers = [REALTIME, `${REALTIME}-second`];
     sinon.stub(engine as never, 'prepareFollowedModuleUpdates').resolves({
-      prepared    : consumers.map(module => ({ module, scope: moduleScope(), configurations: [], graph: projectionGraph() })),
+      prepared    : consumers.map(module => ({ module, scope: moduleScope(), configurations: [], graph: realtimeGraph() })),
       unavailable : [], pending     : [],
     });
     const entered = deferred();
@@ -204,7 +204,7 @@ describe('Followed context consumer projections', () => {
     });
     const processRequest = sinon.stub().resolves({ reply: { status: { code: 200 }, entries: [consumer] } });
     sinon.stub(engine, 'agent').get(() => ({ dwn: { applyReplicatedMessage, processRequest } } as unknown as EnboxPlatformAgent));
-    const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: projectionGraph() };
+    const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: realtimeGraph() };
     const admitting = engine['admitFollowedModule'](root, prepared, undefined);
     await entered.promise;
     expect(applyReplicatedMessage.callCount).toBe(1);
@@ -231,7 +231,7 @@ describe('Followed context consumer projections', () => {
     });
     const consumer = moduleScope();
     const prepare = sinon.stub(engine as never, 'prepareFollowedModuleUpdates').resolves({
-      prepared    : [{ module: REALTIME, scope: consumer, configurations: [], graph: projectionGraph() }],
+      prepared    : [{ module: REALTIME, scope: consumer, configurations: [], graph: realtimeGraph() }],
       unavailable : [],
       pending     : [],
     });
@@ -256,7 +256,7 @@ describe('Followed context consumer projections', () => {
 
   it('rebuilds the root graph from its admitted role-read proof without requiring a feed grant', async () => {
     const owner = await TestDataGenerator.generatePersona();
-    const definition = structuredClone(projectionGraph().definitionsByUri.get(MODULE)!);
+    const definition = structuredClone(realtimeGraph().definitionsByUri.get(MODULE)!);
     definition.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
     (definition.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = definition.$keyAgreement;
     const configured = await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition: definition });
@@ -322,7 +322,7 @@ describe('Followed context consumer projections', () => {
     expect(await engine.markFollowedSourcePullPending(selected, REALTIME)).toBe(false);
   });
 
-  it('keeps verified consumer coordinates during transport uncertainty and marks only that projection pending', async () => {
+  it('keeps verified module scopes during transport uncertainty and marks only that module pending', async () => {
     const selected = { ...root, modules: { ...root.modules, [REALTIME]: moduleScope() } };
     await engine['_followedSourceStore'].replace(selected);
     sinon.stub(engine as never, 'prepareFollowedModuleUpdates').resolves({ prepared: [], unavailable: [], pending: [REALTIME] });
@@ -360,7 +360,7 @@ describe('Followed context consumer projections', () => {
     expect(await engine.getFollowedSource(root.id)).toEqual(selected);
   });
 
-  it('collects independent source health keys in bounded batches and preserves all projections', async () => {
+  it('collects independent source health keys in bounded batches and preserves all module scopes', async () => {
     const sources = Array.from({ length: 6 }, (_, index) => ({ ...root, id: `role-${index}`, contextId: `notebook-${index}` }));
     await engine['_followedSourceStore'].replace(sources[0], [root.id]);
     for (const source of sources.slice(1)) {await engine['_followedSourceStore'].replace(source);}
@@ -408,13 +408,13 @@ describe('Followed context consumer projections', () => {
     expect(await engine['replicationLinkStore'].getAllLinks()).toEqual([]);
   });
 
-  it('cannot restore projections after the root is forgotten during preparation', async () => {
+  it('cannot restore attached modules after the root is forgotten during preparation', async () => {
     const entered = deferred();
     const release = deferred();
     sinon.stub(engine as never, 'prepareFollowedModuleUpdates').callsFake(async () => {
       entered.resolve();
       await release.promise;
-      return { prepared: [{ module: REALTIME, scope: moduleScope(), configurations: [], graph: projectionGraph() }], unavailable: [], pending: [] };
+      return { prepared: [{ module: REALTIME, scope: moduleScope(), configurations: [], graph: realtimeGraph() }], unavailable: [], pending: [] };
     });
     const admit = sinon.stub(engine as never, 'admitFollowedModule').resolves();
     const adding = engine.ensureFollowedSourceModules(root, [REALTIME]);
@@ -440,7 +440,7 @@ describe('Followed context consumer projections', () => {
 
   it('bounds foreign uses traversal and classifies cyclic DwnError closures as unavailable', async () => {
     const owner = await TestDataGenerator.generatePersona();
-    const notebook = structuredClone(projectionGraph().definitionsByUri.get(MODULE)!);
+    const notebook = structuredClone(realtimeGraph().definitionsByUri.get(MODULE)!);
     notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
     (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
     const notebookMsg = (await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition: notebook })).message;
@@ -500,7 +500,7 @@ describe('Followed context consumer projections', () => {
   it('refreshes the delegated grant catalog once across multi-path consumer verification', async () => {
     const owner = await TestDataGenerator.generatePersona();
     const actor = await TestDataGenerator.generatePersona();
-    const notebook = structuredClone(projectionGraph().definitionsByUri.get(MODULE)!);
+    const notebook = structuredClone(realtimeGraph().definitionsByUri.get(MODULE)!);
     notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
     (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
     const consumer: ModuleDefinition = {
@@ -613,12 +613,12 @@ describe('Followed context consumer projections', () => {
     });
     sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
       dependencies  : [{ message: provider, isLatestBaseState: true }],
-      resolvedGraph : projectionGraph(),
+      resolvedGraph : realtimeGraph(),
       root          : {},
     });
     sinon.stub(engine, 'agent').get(() => ({ dwn: { applyReplicatedMessage, processRequest } } as unknown as EnboxPlatformAgent));
 
-    const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: projectionGraph() };
+    const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: realtimeGraph() };
     await expect(engine['admitFollowedModule'](root, prepared, undefined)).rejects.toThrow();
   });
 });

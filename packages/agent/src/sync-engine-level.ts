@@ -1433,7 +1433,7 @@ export class SyncEngineLevel implements SyncEngine {
     return batch;
   }
 
-  /** Verify optional projections outside the commit lock; a root acceptance never depends on their availability. */
+  /** Verify attached modules outside the commit lock; root acceptance never depends on their availability. */
   private async reconcileFollowedSourceModules(
     expected: FollowedSyncSource,
     modules: readonly string[],
@@ -1547,14 +1547,23 @@ export class SyncEngineLevel implements SyncEngine {
           source,
           shouldContinue,
         }));
+      const authCandidate = results.find(
+        (r): r is PromiseRejectedResult => r.status === 'rejected' && r.reason instanceof PermissionGrantNotFoundError,
+      )?.reason ?? results.find(
+        (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r.reason instanceof FollowedModuleUnavailableError),
+      )?.reason;
+      const isAuthPaused = authCandidate !== undefined
+        && await this.handleSyncAuthorizationFailure(source.actorDid, delegateDid, authCandidate);
       for (const [index, result] of results.entries()) {
         if (result.status === 'fulfilled') {
           prepared.push(result.value);
-        } else if (await this.handleSyncAuthorizationFailure(source.actorDid, delegateDid, result.reason)) {
-          pending.push(desired[index]);
+        } else if (!isAuthPaused && (
+          result.reason instanceof FollowedModuleUnavailableError
+          || result.reason instanceof PermissionGrantNotFoundError
+        )) {
+          unavailable.push(desired[index]);
         } else {
-          (result.reason instanceof FollowedModuleUnavailableError || result.reason instanceof PermissionGrantNotFoundError
-            ? unavailable : pending).push(desired[index]);
+          pending.push(desired[index]);
         }
       }
     } finally {
@@ -2962,17 +2971,17 @@ export class SyncEngineLevel implements SyncEngine {
 
   private static followedSourceCoversTarget(source: FollowedSyncSource, target: SyncTarget): boolean {
     const { scope } = target;
-    const projection = scope.kind === 'context' ? source.modules[scope.module] : undefined;
+    const moduleScope = scope.kind === 'context' ? source.modules[scope.module] : undefined;
     return target.authorization.kind === 'role' &&
-      scope.kind === 'context' && projection !== undefined && projection !== null &&
+      scope.kind === 'context' && moduleScope !== undefined && moduleScope !== null &&
       source.id === target.authorization.roleRecordId &&
       source.sourceDid === target.did &&
       source.remoteEndpoint === target.dwnUrl &&
       source.actorDid === target.authorization.actorDid &&
       source.contextId === scope.contextId &&
-      projection.moduleRole === target.authorization.moduleRole &&
-      projection.modulePaths.length === scope.modulePaths.length &&
-      projection.modulePaths.every((path, index) => path === scope.modulePaths[index]);
+      moduleScope.moduleRole === target.authorization.moduleRole &&
+      moduleScope.modulePaths.length === scope.modulePaths.length &&
+      moduleScope.modulePaths.every((path, index) => path === scope.modulePaths[index]);
   }
 
   private static followedSourceModuleEqual(current: FollowedSyncSource, expected: FollowedSyncSource, module: string): boolean {
