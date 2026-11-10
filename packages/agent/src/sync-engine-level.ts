@@ -1376,7 +1376,7 @@ export class SyncEngineLevel implements SyncEngine {
       try {
         const prepared = await prepareFollowedModule({
           agent          : this.agent, source         : expected, module, delegateDid    : identity.delegateDid,
-          permissionsApi : this._permissionsApi, rootBatch      : batch, shouldContinue : fence, local          : true,
+          permissionsApi : this._permissionsApi, rootBatch      : batch, shouldContinue : fence, isLocal        : true,
         });
         const current = await this.currentFollowedModule(expected, module);
         if (!fence() || current.identity.delegateDid !== identity.delegateDid ||
@@ -1410,7 +1410,7 @@ export class SyncEngineLevel implements SyncEngine {
     source: FollowedSyncSource,
     delegateDid: string | undefined,
     shouldContinue: () => boolean,
-    local = false,
+    isLocal = false,
   ): Promise<RoleReplicationSupportBatch> {
     const batch = await readRoleReplicationSupport({
       agent          : this.agent,
@@ -1424,7 +1424,7 @@ export class SyncEngineLevel implements SyncEngine {
       dwnUrl         : source.remoteEndpoint,
       permissionsApi : this._permissionsApi,
       shouldContinue,
-      local,
+      isLocal,
     });
     if (batch.roleRecordId !== source.id) {
       await batch.root.dataStream?.cancel();
@@ -1437,11 +1437,11 @@ export class SyncEngineLevel implements SyncEngine {
   private async reconcileFollowedSourceModules(
     expected: FollowedSyncSource,
     modules: readonly string[],
-    force: boolean,
+    isForced: boolean,
   ): Promise<FollowedSyncSource> {
     await this.ensureStoreFormat();
     const fence = this.captureTransitionFence();
-    const mutate = (operation: () => Promise<void>): Promise<void> => force
+    const mutate = (operation: () => Promise<void>): Promise<void> => isForced
       ? this.runBackgroundIdentityMutation(expected.sourceDid, operation, fence)
       : this.runExclusiveIdentityMutation(expected.sourceDid, operation, {});
     let selected!: FollowedSyncSource;
@@ -1457,16 +1457,26 @@ export class SyncEngineLevel implements SyncEngine {
     });
     if (!fence()) {throw new FollowedSourceNotReadyError('consumer setup was cancelled');}
     const desired = Object.keys(selected.modules).filter(module => module !== selected.rootModule);
-    if (desired.length === 0 || (!force && desired.every(module => selected.modules[module] !== null))) {
+    if (desired.length === 0 || (!isForced && desired.every(module => selected.modules[module] !== null))) {
       return selected;
     }
     const intake = await this.runFollowedSourceIntake(selected.actorDid, async (identity, runIdentityTask) => ({
       identity,
       runIdentityTask,
       result: await this.prepareFollowedModuleUpdates(selected, identity.delegateDid, fence),
-    }), { foreground: !force, shouldContinue: fence });
+    }), { foreground: !isForced, shouldContinue: fence });
     if (intake === undefined) {throw new FollowedSourceNotReadyError('the member is not registered for consumer sync');}
     const { identity, result, runIdentityTask } = intake;
+    if (result.isRoleAbsent === true) {
+      const replacementId = await this.refreshFollowedSourceAuthority(this._runtime, selected);
+      if (isForced && replacementId !== undefined && replacementId !== selected.id) {
+        const replacement = await this._followedSourceStore.get(replacementId);
+        if (replacement !== undefined) {
+          return this.reconcileFollowedSourceModules(replacement, [], true);
+        }
+      }
+      throw new FollowedSourceNotReadyError('the root role assignment changed during consumer verification');
+    }
     let accepted!: FollowedSyncSource;
     await mutate(async (): Promise<void> => {
       const current = await this._followedSourceStore.get(selected.id);
@@ -1507,7 +1517,7 @@ export class SyncEngineLevel implements SyncEngine {
     source: FollowedSyncSource,
     delegateDid: string | undefined,
     shouldContinue: () => boolean,
-  ): Promise<{ prepared: PreparedFollowedModule[]; unavailable: string[]; pending: string[] }> {
+  ): Promise<{ prepared: PreparedFollowedModule[]; unavailable: string[]; pending: string[]; isRoleAbsent?: boolean }> {
     const prepared: PreparedFollowedModule[] = [];
     const unavailable: string[] = [];
     const pending: string[] = [];
@@ -1516,7 +1526,13 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       rootBatch = await this.readFollowedRootSupport(source, delegateDid, shouldContinue);
     } catch (error: unknown) {
-      return error instanceof PermissionGrantNotFoundError || error instanceof FollowedSourceRoleAbsentError
+      if (error instanceof FollowedSourceRoleAbsentError) {
+        return { prepared, unavailable, pending, isRoleAbsent: true };
+      }
+      if (await this.handleSyncAuthorizationFailure(source.actorDid, delegateDid, error)) {
+        return { prepared, unavailable, pending: desired };
+      }
+      return error instanceof PermissionGrantNotFoundError
         ? { prepared, unavailable: desired, pending }
         : { prepared, unavailable, pending: desired };
     }
@@ -1534,6 +1550,8 @@ export class SyncEngineLevel implements SyncEngine {
       for (const [index, result] of results.entries()) {
         if (result.status === 'fulfilled') {
           prepared.push(result.value);
+        } else if (await this.handleSyncAuthorizationFailure(source.actorDid, delegateDid, result.reason)) {
+          pending.push(desired[index]);
         } else {
           (result.reason instanceof FollowedModuleUnavailableError || result.reason instanceof PermissionGrantNotFoundError
             ? unavailable : pending).push(desired[index]);
@@ -1551,11 +1569,15 @@ export class SyncEngineLevel implements SyncEngine {
     prepared: PreparedFollowedModule,
     delegateDid: string | undefined,
   ): Promise<void> {
+    let hasSupersededDependency = false;
     for (const message of prepared.configurations) {
       // A failed prerequisite must stop admission before its consuming configuration.
       const result = await this.agent.dwn.applyReplicatedMessage(source.sourceDid, message); // NOSONAR: S9382 — admit providers first.
       if (result.kind !== 'Applied' && result.kind !== 'Duplicate' && result.kind !== 'Superseded') {
-        throw new Error(`consumer module '${message.descriptor.definition.module}' could not be admitted (${result.kind}).`);
+        throw new Error(`SyncEngineLevel: consumer module '${message.descriptor.definition.module}' could not be admitted (${result.kind}).`);
+      }
+      if (result.kind === 'Superseded') {
+        hasSupersededDependency = true;
       }
     }
     const { reply } = await this.agent.dwn.processRequest({
@@ -1567,7 +1589,27 @@ export class SyncEngineLevel implements SyncEngine {
     const expected = prepared.configurations.find(message => message.descriptor.definition.module === prepared.module)!;
     if (reply.status.code !== 200 || canonicalJsonStringify(reply.entries?.[0]?.descriptor.definition) !==
         canonicalJsonStringify(expected.descriptor.definition)) {
-      throw new Error('the verified consumer configuration is not active in the local replica.');
+      throw new Error('SyncEngineLevel: the verified consumer configuration is not active in the local replica.');
+    }
+    if (hasSupersededDependency) {
+      const localRootBatch = await this.readFollowedRootSupport(source, delegateDid, () => true, true);
+      try {
+        const localPrepared = await prepareFollowedModule({
+          agent          : this.agent,
+          delegateDid,
+          isLocal        : true,
+          module         : prepared.module,
+          permissionsApi : this._permissionsApi,
+          rootBatch      : localRootBatch,
+          shouldContinue : (): boolean => true,
+          source,
+        });
+        if (!followedModuleScopeEqual(localPrepared.scope, prepared.scope)) {
+          throw new Error('SyncEngineLevel: superseded dependency altered the active local consumer scope.');
+        }
+      } finally {
+        await localRootBatch.root.dataStream?.cancel();
+      }
     }
   }
 
@@ -2068,7 +2110,7 @@ export class SyncEngineLevel implements SyncEngine {
       if (runtime.disposed) {
         return;
       }
-      if (!pausedRoleIds.has(source.id) && Object.keys(source.modules).length === 1) {
+      if (!pausedRoleIds.has(source.id) && !Object.values(source.modules).includes(null)) {
         continue;
       }
       try {
@@ -2089,11 +2131,14 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Revalidate one root role before reconciling its explicitly selected consumers. */
-  private async refreshFollowedSource(runtime: SyncRuntime, source: FollowedSyncSource, refreshAuthority: boolean): Promise<void> {
-    if (refreshAuthority) {
-      await this.refreshFollowedSourceAuthority(runtime, source);
+  private async refreshFollowedSource(runtime: SyncRuntime, source: FollowedSyncSource, isRefreshAuthority: boolean): Promise<void> {
+    const activeId = isRefreshAuthority
+      ? await this.refreshFollowedSourceAuthority(runtime, source)
+      : source.id;
+    if (activeId === undefined) {
+      return;
     }
-    const current = await this._followedSourceStore.get(source.id);
+    const current = await this._followedSourceStore.get(activeId);
     if (runtime.disposed || current === undefined || Object.keys(current.modules).length === 1) {
       return;
     }
@@ -2111,7 +2156,7 @@ export class SyncEngineLevel implements SyncEngine {
   private async refreshFollowedSourceAuthority(
     runtime: SyncRuntime,
     expected: FollowedSyncSource,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const shouldContinue = (): boolean => !runtime.disposed;
     const preparation = await this.runFollowedSourceIntake(expected.actorDid, async (identity, runIdentityTask) => {
       if (this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
@@ -2136,22 +2181,25 @@ export class SyncEngineLevel implements SyncEngine {
       }
     }, { shouldContinue });
     if (preparation === undefined) {
-      return;
+      return undefined;
     }
     const { identity, prepared, runIdentityTask } = preparation;
-    if (runtime.disposed) {
-      return;
-    }
-    if (this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
-      return;
+    const cancelPreparedStream = async (): Promise<void> => {
+      await prepared?.batch.root.dataStream?.cancel().catch((): void => {});
+    };
+    if (runtime.disposed || this.isIdentityPaused(expected.actorDid, identity.delegateDid)) {
+      await cancelPreparedStream();
+      return undefined;
     }
     if (prepared !== undefined && followedSyncSourceAuthorityEqual(prepared.source, expected)) {
+      await cancelPreparedStream();
       this.activateFollowedSource(expected, identity.delegateDid, runIdentityTask);
-      return;
+      return expected.id;
     }
 
     let accepted: FollowedSyncSource | undefined;
     let replaced: FollowedSyncSource[] = [];
+    let admitted = false;
     await this.runBackgroundIdentityMutation(expected.sourceDid, async (): Promise<void> => {
       const current = await this._followedSourceStore.get(expected.id);
       const currentIdentity = await this._identityStore.get(expected.actorDid);
@@ -2169,17 +2217,22 @@ export class SyncEngineLevel implements SyncEngine {
         await this.commitFollowedSourceRemoval(current);
         return;
       }
+      admitted = true;
       await this.admitFollowedSource(prepared, shouldContinue);
       accepted = normalizeFollowedSyncSource({ ...prepared.source,
         modules: { ...Object.fromEntries(Object.keys(current.modules).map(module => [module, null])), ...prepared.source.modules },
       });
       replaced = await this.commitFollowedSource(accepted);
     }, shouldContinue);
+    if (!admitted) {
+      await cancelPreparedStream();
+    }
     if (accepted === undefined || runtime.disposed) {
-      return;
+      return undefined;
     }
     await this.removeFollowedSourceLinksForSources(replaced);
     this.activateFollowedSource(accepted, identity.delegateDid, runIdentityTask);
+    return accepted.id;
   }
 
   /** Coalesce catalog wakes and paused-role recovery onto one runtime task. */
@@ -2621,7 +2674,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (!await this.reinitializeOrphanedLinkTargets(runtime)) {
       return;
     }
-    if ([...this._followedSourceSnapshot.values()].some(source => Object.keys(source.modules).length > 1) ||
+    if ([...this._followedSourceSnapshot.values()].some(source => Object.values(source.modules).includes(null)) ||
       [...this._linkControllers.values()].some(({ link }) =>
         link.status === 'paused' && link.authorization.kind === 'role' &&
       !this.isIdentityPaused(link.authorization.actorDid, link.delegateDid)

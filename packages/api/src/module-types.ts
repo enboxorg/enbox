@@ -202,10 +202,6 @@ export type SquashModulePaths<D extends ModuleDefinition> = {
     : never;
 }[ModulePaths<D>];
 
-type EncryptedTypeNames<D extends ModuleDefinition> = {
-  [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
-}[keyof D['types']];
-
 type ReadActionRole<Action> = Action extends {
   readonly role: infer Role extends string;
   readonly can: readonly string[];
@@ -222,13 +218,12 @@ type IsLocallyRooted<D extends ModuleDefinition, Path extends string> =
     ? D['structure'][Head] extends { readonly $ref: string } ? false : true
     : D['structure'][Path] extends { readonly $ref: string } ? false : true;
 
-/** Encrypted audience roles directly below a root whose actions grant them read access. */
+/** Contextual roles directly below a root whose actions grant them read access. */
 export type ContextRolesAtPath<
   D extends ModuleDefinition,
   Root extends ModulePaths<D> & string,
 > = Root extends unknown
   ? IsLocallyRooted<D, Root> extends false ? never
-    : EncryptedTypeNames<D> extends never ? never
     : RuleSetAtPath<D['structure'], Root> extends infer RuleSet
       ? RuleSet extends { readonly $role: true } ? never
         : RuleSet extends { readonly $actions: readonly (infer Action)[] }
@@ -237,7 +232,7 @@ export type ContextRolesAtPath<
       : never
   : never;
 
-/** Context roots with at least one direct encrypted audience role granted read access. */
+/** Context roots with at least one direct role granted read access. */
 export type ContextRootPath<D extends ModuleDefinition> = {
   [Path in ModulePaths<D> & string]: [ContextRolesAtPath<D, Path>] extends [never] ? never : Path;
 }[ModulePaths<D> & string];
@@ -367,7 +362,7 @@ export type TypedModule<
   C extends RecordCodecMap = RecordCodecMap,
   Deps extends ModuleDependencies = ModuleDependencies,
 > = {
-  /** The effective DWN module definition, including Enbox-managed module paths. */
+  /** The authored DWN module definition. */
   readonly definition: D;
 
   /** Application codecs keyed by module type name. */

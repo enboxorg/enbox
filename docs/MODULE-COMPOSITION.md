@@ -128,11 +128,17 @@ replicas using their literal JSON definitions.
 
 ## Follow a context with selected extensions
 
-The managed context root and its roles stay in the provider module. Applications
-can explicitly select extensions attached to that exact root:
+The context root and its roles stay in the provider module. Companion invitation
+and follow-journal records live in a separate companion module created with
+`defineContextModule()` in `@enbox/contexts`, keeping `defineModule()` pure.
+Applications explicitly select extensions attached to that exact root:
 
 ```ts
-const contexts = enbox.using(NotebookModule).contexts.withModules({
+import { bindContexts, defineContextModule } from '@enbox/contexts';
+
+const NotebookContextsModule = defineContextModule(NotebookModule);
+
+const contexts = bindContexts(enbox, NotebookContextsModule).withModules({
   realtime: NotebookRealtimeModule,
 });
 const page = await contexts.follow('notebook/page', { ownerDid, id: pageContextId });
@@ -142,12 +148,16 @@ const adverts = await realtime.records.observe('page/live', {
 });
 ```
 
+Lower-level callers without `@enbox/contexts` can drive `syncEngine.followSource`
+and `syncEngine.ensureFollowedSourceModules` directly and confine record operations
+with `enbox.using(Module).scope({ contextId, execution, allowedPaths })`.
+
 `withModules` also applies to owned contexts, invitation acceptance, and contexts
 restored by `list` or `observe`. Selection and `using` do not follow a context or
-write a follow decision. The recipient still has one root follow/forget journal
-and one local acceptance. Another device restores that root decision and applies
-its own application's explicit module selection. Installed reverse dependencies
-are never selected implicitly.
+write a follow decision. The recipient still has one root follow/forget journal in
+the companion module and one local acceptance. Another device restores that root
+decision and applies its own application's explicit module selection. Installed
+reverse dependencies are never selected implicitly.
 
 The private sync catalog stores one `modules` map for each accepted context.
 Its root entry always has a verified scope; a selected consumer has either the

@@ -155,7 +155,7 @@ export class SyncTargetPlanner {
     return targets;
   }
 
-  /** Each accepted root resolves independently; an unavailable consumer prevents caching the whole plan. */
+  /** Each accepted root resolves independently; optional null consumers do not invalidate the plan cache. */
   private async resolveFollowedSource(entry: FollowedSyncSourceStoreEntry): Promise<RegisteredIdentityTargets> {
     if (entry.status === 'corrupt') {
       this._warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping source:`, entry.error);
@@ -166,9 +166,8 @@ export class SyncTargetPlanner {
       // Keep the accepted source while its actor is inactive; registration changes invalidate the plan.
       return { targets: [], unavailable: false };
     }
-    const unavailable = Object.values(entry.source.modules).includes(null);
     const targets = await this._getTargetResolver().buildTargetsForSource(entry.source, identity.delegateDid);
-    return { targets, unavailable };
+    return { targets, unavailable: false };
   }
 
   /** Shared prerequisite for endpoint planning and durable-link retention. */

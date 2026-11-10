@@ -101,7 +101,6 @@ const _UnencryptedDefinition = {
   ...RoleDefinition,
   types: { ...RoleDefinition.types, workspace: { dataFormats: ['application/json'] } },
 } as const satisfies ModuleDefinition;
-// @ts-expect-error shared-context roles require encrypted audience support.
 const unencryptedRoot: ContextRootPath<typeof _UnencryptedDefinition> = 'workspace';
 void unencryptedRoot;
 
@@ -154,38 +153,6 @@ void typed.records.create(roleOrRecordPath, {
   data      : { label: 'administrator' },
   recipient : 'did:example:alice',
 });
-
-const sharedContext = typed.contexts.follow('workspace', {
-  id       : 'workspace-id',
-  ownerDid : 'did:example:owner',
-});
-void sharedContext.then(context => context.records.query('workspace'));
-void sharedContext.then(context => {
-  const access: 'member' = context.access;
-  const path: 'workspace' = context.path;
-  const role: 'workspace/member' | 'workspace/viewer' = context.role;
-  void access;
-  void path;
-  void role;
-  // @ts-expect-error member contexts expose only their root and descendants.
-  void context.records.query('admin');
-  return context.refresh();
-});
-
-const forgetting: Promise<void> = typed.contexts.forget({ id: 'workspaceContext', ownerDid: 'did:example:owner' });
-void forgetting;
-
-// @ts-expect-error a forget requires the owner's DID even when no live handle exists.
-void typed.contexts.forget({ id: 'workspaceContext' });
-
-// @ts-expect-error a follow requires a module context root.
-void typed.contexts.follow('workspace/member', { id: 'workspace-id', ownerDid: 'did:example:owner' });
-
-// @ts-expect-error callers no longer supply role arrays.
-void typed.contexts.follow('workspace', { id: 'workspace-id', ownerDid: 'did:example:owner', roles: ['workspace/member'] });
-
-// @ts-expect-error the singular role contract was removed.
-void typed.contexts.follow('workspace', { id: 'workspace-id', ownerDid: 'did:example:owner', role: 'workspace/member' });
 
 // @ts-expect-error role-record creates require a recipient.
 void typed.records.create('admin', { data: { label: 'administrator' } });

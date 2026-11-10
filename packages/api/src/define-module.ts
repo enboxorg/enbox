@@ -10,13 +10,10 @@ import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 import type { DefineModuleOptions, ModuleDependencies, ModuleDependenciesFor, ModuleDependency, ModuleRecordCodecs, TypedModule } from './module-types.js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
-import {
-  addSharedContextModule,
-  assertSharedContextNamesAvailable,
-  hasSharedContextModule,
-} from './shared-context-module.js';
+import { collectModulePaths } from './module-paths.js';
 import { authoredModuleDefinitionsEqual, getTypeName, ModulesConfigure, resolveModuleGraph } from '@enbox/dwn-sdk-js';
-import { collectModulePaths, hasManagedSharedContext } from './module-paths.js';
+
+const resolvedGraphs = new WeakMap<object, ResolvedModuleGraph>();
 
 /**
  * Creates a {@link TypedModule} from a plain DWN module definition and
@@ -35,7 +32,7 @@ import { collectModulePaths, hasManagedSharedContext } from './module-paths.js';
  *   },
  * });
  *
- * // notes.definition is the effective ModuleDefinition
+ * // notes.definition is the authored ModuleDefinition
  * // TypedEnbox infers paths like 'note' | 'note/attachment' and
  * // data types from the codecs.
  * ```
@@ -50,21 +47,19 @@ export function defineModule<
   }
   const { definition, codecs } = options;
   assertModuleDefinitionShape(definition);
-  assertSharedContextNamesAvailable(definition);
   assertTypedModuleComponents(definition, codecs);
   const dependencies = Object.freeze({ ...options.dependencies }) as Deps;
   assertDependencyAliases(definition, dependencies);
   const snapshot = structuredClone(definition);
-  const effective = hasManagedSharedContext(snapshot)
-    ? addSharedContextModule(snapshot, codecs)
-    : { definition: snapshot, codecs: { ...codecs } };
-  resolveTypedModuleGraph({ ...effective, dependencies });
-  freezeDefinition(effective.definition);
-  return Object.freeze({
-    definition : effective.definition as D,
-    codecs     : Object.freeze(effective.codecs) as C,
+  const frozenCodecs = Object.freeze({ ...codecs }) as C;
+  freezeDefinition(snapshot);
+  const artifact = Object.freeze({
+    definition : snapshot as D,
+    codecs     : frozenCodecs,
     dependencies,
   });
+  resolvedGraphs.set(artifact, computeTypedModuleGraph(artifact));
+  return artifact;
 }
 
 /** @internal Whether a runtime value satisfies the module shape required by typed APIs. */
@@ -81,11 +76,24 @@ export function isTypedModule(value: unknown): value is TypedModule {
   }
 }
 
-/** @internal Derive the canonical graph from the artifact's definitions and dependency bindings. */
+/** Derive and memoize the canonical graph from the artifact's definitions and dependency bindings. */
 export function resolveTypedModuleGraph(value: unknown): ResolvedModuleGraph {
   if (!isObjectRecord(value)) {
     throw new TypeError('defineModule: module artifact must be an object.');
   }
+  if (Object.isFrozen(value)) {
+    const cached = resolvedGraphs.get(value);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = computeTypedModuleGraph(value);
+    resolvedGraphs.set(value, resolved);
+    return resolved;
+  }
+  return computeTypedModuleGraph(value);
+}
+
+function computeTypedModuleGraph(value: globalThis.Record<string, unknown>): ResolvedModuleGraph {
   const definitions = new Map<string, ModuleDefinition>();
   const visited = new Set<object>();
   collectDependencyDefinitions(value, definitions, visited);
@@ -129,15 +137,7 @@ function collectDependencyDefinitions(
   visited.add(value);
   assertTypedModuleComponents(value.definition, value.codecs);
   const definition = value.definition as ModuleDefinition;
-  const codecs = value.codecs as RecordCodecMap;
   assertDependencyAliases(definition, value.dependencies);
-  if (hasManagedSharedContext(definition)) {
-    if (!hasSharedContextModule(definition, codecs)) {
-      throw new TypeError('defineModule: managed shared-context paths and codecs must match the SDK definitions.');
-    }
-  } else {
-    assertSharedContextNamesAvailable(definition);
-  }
   const previous = definitions.get(definition.module);
   if (previous !== undefined && !authoredModuleDefinitionsEqual(previous, definition)) {
     throw new TypeError(`defineModule: conflicting dependency definitions for module '${definition.module}'.`);

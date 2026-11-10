@@ -136,6 +136,14 @@ export class Enbox {
   }
 
   /**
+   * Combined session and facade lifetime signal; aborts when the owning session
+   * ends or {@link Enbox.close} is called.
+   */
+  public get signal(): AbortSignal {
+    return this._lifetimeSignal;
+  }
+
+  /**
    * Returns a {@link TypedEnbox} instance scoped to the given module.
    *
    * This is the **primary developer interface** for interacting with

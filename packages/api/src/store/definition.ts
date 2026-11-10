@@ -1,3 +1,4 @@
+import type { Enbox } from '../enbox.js';
 import type { ModuleStore } from './module-store.js';
 import type { ObservationFactory } from './observed-store.js';
 import type { StoreCommand } from './command.js';
@@ -48,6 +49,8 @@ type InferredCommand<Operation extends CommandOperation> =
 
 /** Session-owned dependencies and lifecycle controls supplied to a feature factory. */
 export type StoreContext<Modules extends StoreModules, Stores extends StoreDefinitions> = Readonly<{
+  /** Resolve the active Enbox session inside a command or observation opener; throws when inactive or retired. */
+  enbox(): Enbox;
   modules: { readonly [Name in keyof Modules]: ModuleStore<Modules[Name]> };
   stores: { readonly [Name in keyof Stores]: StoreInstance<Stores[Name]> };
   /** Aborted when this feature closes, fails construction, or its session/facade is replaced. */
@@ -102,6 +105,7 @@ export function defineStore<
       const command = ((operation: CommandOperation, options?: Readonly<{ signal?: AbortSignal }>) =>
         createCommand(withStoreSignal(scope, options?.signal), operation)) as StoreContext<Modules, Stores>['command'];
       return create({
+        enbox   : (): Enbox => scope.getEnbox(),
         // The declared keys pair each original module with its own typed binding.
         modules : bindings as unknown as StoreContext<Modules, Stores>['modules'],
         stores  : dependencies as StoreContext<Modules, Stores>['stores'],

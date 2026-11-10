@@ -22,17 +22,3 @@ export function collectModulePaths(
   });
   return paths;
 }
-
-/** @internal Managed invitation/follow records belong only to locally rooted sharing modules. */
-export function hasManagedSharedContext(definition: ModuleDefinition): boolean {
-  const hasEncryptedTypes = Object.entries(definition.types).some(([name, type]) =>
-    name !== 'enboxContextFollow' && name !== 'enboxContextInvitation' && type.encryptionRequired === true);
-  if (!hasEncryptedTypes) {
-    return false;
-  }
-
-  return [...collectModulePaths(definition.structure)].some(path => {
-    const root = definition.structure[path.split('/')[0]];
-    return typeof root.$ref !== 'string' && isModuleRolePath(definition, path);
-  });
-}

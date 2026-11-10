@@ -189,4 +189,22 @@ describe('resolveModuleRoleScope', () => {
     const graph = resolveModuleGraph(definition, () => notebook, { requireKeyAgreement: false });
     expect(() => resolveModuleRoleScope(graph, rootRole())).toThrow('no records readable');
   });
+
+  it('rejects a graph with multiple top-level $ref roots targeting the same physical context', () => {
+    const providerGraph = resolveModuleGraph(notebook, () => undefined, { requireKeyAgreement: false });
+    const graph = resolveModuleGraph(realtime(), () => notebook, { requireKeyAgreement: false });
+    const pageRoot = graph.nodesByDeclaredPath.get('page')!;
+    const duplicateGraph = {
+      ...graph,
+      nodesByDeclaredPath: new Map([
+        ...graph.nodesByDeclaredPath,
+        ['secondPage', { ...pageRoot, declaringModulePath: 'secondPage' }],
+      ]),
+    };
+
+    expect(() => resolveModuleContextRoot(
+      duplicateGraph,
+      providerGraph.nodesByDeclaredPath.get('notebook/page')!,
+    )).toThrow('must declare one exact shared root');
+  });
 });

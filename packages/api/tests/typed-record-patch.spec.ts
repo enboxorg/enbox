@@ -51,9 +51,9 @@ function typedWithReads(readRecordForMutation: sinon.SinonStub): TypedEnbox<
   const dwn = { readRecordForMutation } as unknown as DwnApi;
   return new TypedEnbox(dwn, module, {
     context: {
-      contextId   : 'noteid',
-      modulePath  : 'note',
-      modulePaths : new Set(['note']),
+      contextId    : 'noteid',
+      modulePath   : 'note',
+      allowedPaths : new Set(['note']),
     },
   });
 }

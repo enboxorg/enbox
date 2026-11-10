@@ -148,7 +148,7 @@ describe('typed module composition', () => {
     } as never)).toThrow('unexpected: note');
   });
 
-  it('snapshots authored metadata and keeps plaintext role providers free of managed contexts', () => {
+  it('snapshots authored metadata without injecting synthetic shared-context paths and memoizes resolved graphs', () => {
     const definition = structuredClone(BaseDefinition) as ModuleDefinition;
     const module = defineModule({ definition, codecs: BaseModule.codecs });
     definition.types.note.dataFormats = ['text/plain'];
@@ -156,9 +156,10 @@ describe('typed module composition', () => {
     expect(Object.isFrozen(module.definition.structure.workspace)).toBe(true);
     expect(module.definition.structure.enboxContextFollow).toBeUndefined();
     expect(isTypedModule(module)).toBe(true);
+    expect(resolveTypedModuleGraph(module)).toBe(resolveTypedModuleGraph(module));
   });
 
-  it('resolves injected sharing paths only for locally rooted encrypted sharing modules', () => {
+  it('keeps encrypted role-bearing modules and composed extensions pure of hidden injected paths', () => {
     const definition = {
       ...BaseDefinition,
       types     : { ...BaseDefinition.types, workspace: { dataFormats: ['application/json'], encryptionRequired: true } },
@@ -170,7 +171,8 @@ describe('typed module composition', () => {
       },
     } as const satisfies ModuleDefinition;
     const module = defineModule({ definition, codecs: BaseModule.codecs });
-    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('enboxContextFollow')?.kind).toBe('record');
+    expect(module.definition).toEqual(definition);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('enboxContextFollow')).toBeUndefined();
     expect(isTypedModule(module)).toBe(true);
 
     const extension = defineModule({

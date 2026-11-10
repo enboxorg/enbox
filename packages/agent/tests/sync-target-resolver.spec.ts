@@ -371,6 +371,38 @@ describe('SyncTargetResolver', () => {
       expect(second.authorization).toBe(target.authorization);
       expect(second.authorizationEpoch).toBe(target.authorizationEpoch);
     });
+
+    it('should build distinct targets for verified modules while filtering null optional consumers', async () => {
+      const consumerUri = 'https://example.com/notebooks/realtime';
+      const unavailableUri = 'https://example.com/notebooks/unavailable';
+      const source = followedSource({
+        modules: {
+          ...followedSource().modules,
+          [consumerUri]: {
+            contextPath : 'page',
+            moduleRole  : 'notes:notebook/viewer',
+            modulePaths : ['page/live'],
+          },
+          [unavailableUri]: null,
+        },
+      });
+      const { resolver } = createResolver({ remoteEndpoints: ['https://owner.example.com'] });
+
+      const targets = await resolver.buildTargetsForSource(source);
+
+      expect(targets).toHaveLength(2);
+      expect(targets.map(target => target.scope.kind === 'context' ? target.scope.module : '')).toEqual([
+        source.rootModule,
+        consumerUri,
+      ]);
+      expect(targets[0].projectionId).not.toBe(targets[1].projectionId);
+      expect(targets[1].authorization).toEqual({
+        kind         : 'role',
+        actorDid     : source.actorDid,
+        moduleRole   : 'notes:notebook/viewer',
+        roleRecordId : source.id,
+      });
+    });
   });
 });
 

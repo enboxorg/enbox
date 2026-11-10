@@ -103,9 +103,9 @@ function contextRecords(dwn: DwnApi): ContextRecordsApi<
 > {
   return new TypedEnbox(dwn, module, {
     context: {
-      contextId   : 'noteContext',
-      modulePath  : 'note',
-      modulePaths : new Set(['note']),
+      contextId    : 'noteContext',
+      modulePath   : 'note',
+      allowedPaths : new Set(['note']),
     },
   }).records as unknown as ContextRecordsApi<typeof definition, typeof module.codecs, 'note'>;
 }

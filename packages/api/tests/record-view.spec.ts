@@ -18,7 +18,6 @@ import { createRecordView } from '../src/record-view.js';
 import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { Enbox } from '../src/enbox.js';
-import { FollowedModuleLease } from '../src/followed-module-lease.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
@@ -1395,14 +1394,7 @@ describe('RecordView', () => {
         [ViewDefinition.module]: { contextPath: 'note', moduleRole: 'note/member', modulePaths: ['note'] },
       },
     };
-    const session = new AbortController();
-    const lease = new FollowedModuleLease({
-      module : ViewDefinition.module,
-      signal : session.signal,
-      source : fakeSync.source,
-      sync   : fakeSync.sync,
-    });
-    await lease.assertActive();
+    const leaseController = new AbortController();
     fakeSync.links = [{
       connectivity     : 'online',
       followedSourceId : 'current-role',
@@ -1426,27 +1418,17 @@ describe('RecordView', () => {
         pagination : { limit: 10 },
         within     : contextId,
       }),
-      signal : lease.signal,
+      signal : leaseController.signal,
       sync   : fakeSync.sync,
     });
     await waitFor(() => { expect(view.getSnapshot().status).toBe('ready'); });
 
-    fakeSync.source = { ...fakeSync.source, acceptanceId: 'acceptance-b' };
-    fakeSync.emit({
-      type                       : 'followed-context:change',
-      actorDid                   : TENANT_DID,
-      contextId,
-      followedSourceAcceptanceId : 'acceptance-b',
-      followedSourceId           : 'current-role',
-      module                     : ViewDefinition.module,
-      tenantDid                  : sourceDid,
-    });
+    const retiredError = new ContextRetiredError(contextId);
+    leaseController.abort(retiredError);
 
     await waitFor(() => { expect(view.getSnapshot().status).toBe('error'); });
-    expect(lease.signal.aborted).toBe(true);
-    expect(lease.signal.reason).toBeInstanceOf(ContextRetiredError);
     expect(view.getSnapshot()).toMatchObject({ status: 'error', current: false, records: ['shared'] });
-    expect(view.getSnapshot().error?.cause).toBe(lease.signal.reason);
+    expect(view.getSnapshot().error?.cause).toBe(retiredError);
     await view.close();
     expect(fakeSync.listenerCount()).toBe(0);
     expect(harness.closeCount()).toBe(1);

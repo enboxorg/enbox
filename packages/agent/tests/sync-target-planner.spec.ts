@@ -426,4 +426,28 @@ describe('SyncTargetPlanner', () => {
     await planner.getTargets();
     expect(entries.callCount).toBe(2);
   });
+
+  it('should keep the target plan cacheable when an optional followed consumer scope is null', async () => {
+    const source = {
+      ...followedSource(),
+      modules: {
+        ...followedSource().modules,
+        'https://example.com/optional-consumer': null,
+      },
+    };
+    const { buildTargetsForSource, entries, planner } = createPlanner({
+      identityOptions : { [source.actorDid]: { modules: 'all' } },
+      sourceEntries   : [{ status: 'valid', source }],
+    });
+    const beforeCache = sinon.stub().resolves();
+
+    const first = await planner.getTargets({ beforeCache });
+    const second = await planner.getTargets({ beforeCache });
+
+    expect(second).toBe(first);
+    expect(planner.lastResolutionComplete).toBe(true);
+    expect(beforeCache.calledOnce).toBe(true);
+    expect(buildTargetsForSource.calledOnceWithExactly(source, undefined)).toBe(true);
+    expect(entries.calledOnce).toBe(true);
+  });
 });

@@ -127,7 +127,7 @@ Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'rootModule' | 'roles' | 'so
   };
 }
 
-function normalizeScope(scope: FollowedModuleScope, root: boolean): FollowedModuleScope {
+function normalizeScope(scope: FollowedModuleScope, isRoot: boolean): FollowedModuleScope {
   if (scope === null || typeof scope !== 'object' || Array.isArray(scope)) {
     throw new TypeError('FollowedSyncSource: a selected module requires a verified scope or null.');
   }
@@ -138,12 +138,12 @@ function normalizeScope(scope: FollowedModuleScope, root: boolean): FollowedModu
   }
   for (const path of scope.modulePaths) {
     assertPath(path, 'modulePath');
-    if ((!root || path !== scope.contextPath) && !path.startsWith(`${scope.contextPath}/`)) {
+    if ((!isRoot || path !== scope.contextPath) && !path.startsWith(`${scope.contextPath}/`)) {
       throw new TypeError('FollowedSyncSource: readable paths must belong to their selected context.');
     }
   }
   const modulePaths = [...new Set(scope.modulePaths)].sort(lexicographicalCompare) as [string, ...string[]];
-  if (root && !modulePaths.includes(scope.contextPath)) {
+  if (isRoot && !modulePaths.includes(scope.contextPath)) {
     throw new TypeError('FollowedSyncSource: the root scope must authorize reading the context root.');
   }
   return { contextPath: scope.contextPath, moduleRole: scope.moduleRole, modulePaths };

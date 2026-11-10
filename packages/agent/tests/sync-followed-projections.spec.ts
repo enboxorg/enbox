@@ -9,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { resolveModuleGraph, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { deferred } from './utils/deferred.js';
+import { DwnInterface } from '../src/types/dwn.js';
 import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
+import { FollowedSourceRoleAbsentError } from '../src/sync-role-replication-support.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
-import { followedModuleScopeEqual, followedSyncSourceActiveEqual } from '../src/followed-sync-source.js';
+import { followedModuleScopeEqual, followedSyncSourceActiveEqual, followedSyncSourceStateEqual } from '../src/followed-sync-source.js';
 
 const MODULE = 'https://example.com/notebook';
 const REALTIME = 'https://example.com/notebook-realtime';
@@ -432,5 +434,191 @@ describe('Followed context consumer projections', () => {
     const second = { ...first, modules: { ...first.modules, [REALTIME]: changed } };
     expect(followedSyncSourceActiveEqual(first, second)).toBe(true);
     expect(followedModuleScopeEqual(first.modules[REALTIME], second.modules[REALTIME])).toBe(false);
+    expect(followedSyncSourceStateEqual(first, second)).toBe(false);
+    expect(followedSyncSourceStateEqual(first, structuredClone(first))).toBe(true);
+  });
+
+  it('bounds foreign uses traversal and classifies cyclic DwnError closures as unavailable', async () => {
+    const owner = await TestDataGenerator.generatePersona();
+    const notebook = structuredClone(projectionGraph().definitionsByUri.get(MODULE)!);
+    notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
+    (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
+    const notebookMsg = (await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition: notebook })).message;
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies  : [{ message: notebookMsg, isLatestBaseState: true }],
+      resolvedGraph : resolveModuleGraph(notebook, () => undefined),
+      root          : {},
+    });
+    const excessiveConsumer = `${REALTIME}-wide`;
+    const cyclicConsumer = `${REALTIME}-cycle-a`;
+    const cyclicPeer = `${REALTIME}-cycle-b`;
+    const sendRequest = sinon.stub().callsFake(async ({ messageParams }: { messageParams: { filter: { module: string } } }) => {
+      const uri = messageParams.filter.module;
+      if (uri === cyclicConsumer || uri === cyclicPeer) {
+        const msg = (await TestDataGenerator.generateModulesConfigure({
+          author           : owner,
+          moduleDefinition : {
+            module    : uri,
+            published : true,
+            uses      : { peer: uri === cyclicConsumer ? cyclicPeer : cyclicConsumer },
+            types     : { live: {} },
+            structure : { live: {} },
+          },
+        })).message;
+        return { reply: { status: { code: 200, detail: 'OK' }, entries: [msg] } };
+      }
+      const uses = uri === excessiveConsumer
+        ? Object.fromEntries(Array.from({ length: 70 }, (_, idx) => [`dep${idx}`, `${excessiveConsumer}/dep-${idx}`]))
+        : undefined;
+      const msg = (await TestDataGenerator.generateModulesConfigure({
+        author           : owner,
+        moduleDefinition : {
+          module    : uri,
+          published : true,
+          ...(uses === undefined ? {} : { uses }),
+          types     : { item: {} },
+          structure : { item: {} },
+        },
+      })).message;
+      return { reply: { status: { code: 200, detail: 'OK' }, entries: [msg] } };
+    });
+    sinon.stub(engine, 'agent').get(() => ({ dwn: { sendRequest } } as unknown as EnboxPlatformAgent));
+
+    const source = {
+      ...root,
+      sourceDid : owner.did,
+      modules   : { ...root.modules, [excessiveConsumer]: null, [cyclicConsumer]: null },
+    };
+    const result = await engine['prepareFollowedModuleUpdates'](source, undefined, () => true);
+
+    expect(result.prepared).toEqual([]);
+    expect(result.pending).toEqual([]);
+    expect(result.unavailable.sort()).toEqual([cyclicConsumer, excessiveConsumer].sort());
+    expect(sendRequest.callCount).toBeLessThanOrEqual(66);
+  });
+
+  it('refreshes the delegated grant catalog once across multi-path consumer verification', async () => {
+    const owner = await TestDataGenerator.generatePersona();
+    const actor = await TestDataGenerator.generatePersona();
+    const notebook = structuredClone(projectionGraph().definitionsByUri.get(MODULE)!);
+    notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
+    (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
+    const consumer: ModuleDefinition = {
+      module    : REALTIME,
+      published : true,
+      uses      : { notebook: MODULE },
+      types     : { live: {}, session: {} },
+      structure : {
+        notebook: {
+          $ref : 'notebook:notebook',
+          live : {
+            $actions : [{ role: 'notebook:notebook/viewer', can: ['read'] }],
+            session  : { $actions: [{ role: 'notebook:notebook/viewer', can: ['read'] }] },
+          },
+        },
+      },
+    };
+    const [notebookMsg, consumerMsg] = await Promise.all([notebook, consumer].map(
+      async moduleDefinition => (await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition })).message,
+    ));
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies  : [{ message: notebookMsg, isLatestBaseState: true }],
+      resolvedGraph : resolveModuleGraph(notebook, () => undefined),
+      root          : {},
+    });
+    const getPermission = sinon.stub(engine['_permissionsApi'], 'getPermissionForRequest').resolves({
+      grant   : {} as never,
+      message : { recordId: 'feed-grant' } as never,
+    });
+    const query = await TestDataGenerator.generateMessagesQuery({ author: actor });
+    sinon.stub(engine, 'agent').get(() => ({
+      dwn               : { sendRequest: sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [consumerMsg] } }) },
+      processDwnRequest : sinon.stub().resolves({ message: query.message }),
+      rpc               : { sendDwnRequest: sinon.stub().resolves({ status: { code: 200 }, entries: [], roleRecordId: root.id }) },
+    } as unknown as EnboxPlatformAgent));
+
+    const source = { ...root, sourceDid: owner.did, actorDid: actor.did, modules: { ...root.modules, [REALTIME]: null } };
+    const result = await engine['prepareFollowedModuleUpdates'](source, 'did:example:delegate', () => true);
+
+    expect(result.prepared).toHaveLength(1);
+    expect(getPermission.callCount).toBe(3);
+    expect(getPermission.getCalls().map(call => call.args[0].forceRefresh)).toEqual([true, false, false]);
+  });
+
+  it('reconciles replacement root authority immediately during refreshFollowedSource and skips healthy settle refreshes', async () => {
+    const selected = { ...root, modules: { ...root.modules, [REALTIME]: moduleScope() } };
+    await engine['_followedSourceStore'].replace(selected);
+    const replacement = {
+      ...selected,
+      acceptanceId : 'accepted-replacement',
+      id           : 'replacement-role',
+      modules      : { [MODULE]: selected.modules[MODULE]!, [REALTIME]: null },
+    };
+    sinon.stub(engine as never, 'refreshFollowedSourceAuthority').callsFake(async () => {
+      await engine['_followedSourceStore'].replace(replacement, [selected.id]);
+      return replacement.id;
+    });
+    const reconcileModules = sinon.stub(engine as never, 'reconcileFollowedSourceModules').resolves({
+      ...replacement,
+      modules: { ...replacement.modules, [REALTIME]: moduleScope() },
+    });
+    const runtime = engine['_runtime'];
+    await engine['refreshFollowedSource'](runtime, selected, true);
+
+    expect(reconcileModules.calledOnce).toBe(true);
+    expect(reconcileModules.firstCall.args[0]).toEqual(replacement);
+
+    await engine['refreshFollowedSourceState']();
+    sinon.stub(engine['_runCoordinator'], 'settle').resolves();
+    sinon.stub(engine as never, 'reinitializeOrphanedLinkTargets').resolves(true);
+    const scheduleRefresh = sinon.spy(engine as never, 'scheduleFollowedSourceRefresh');
+    await engine['_followedSourceStore'].replace({
+      ...replacement,
+      modules: { ...replacement.modules, [REALTIME]: moduleScope() },
+    });
+    await engine['refreshFollowedSourceState']();
+    engine['_lifecycle'].tryAcquireSync();
+    engine['_lifecycle'].releaseSync();
+    await engine['runSettleCheck'](runtime);
+    expect(scheduleRefresh.notCalled).toBe(true);
+  });
+
+  it('routes root role absence to authority refresh instead of wiping verified consumers behind a stale root', async () => {
+    const selected = { ...root, modules: { ...root.modules, [REALTIME]: moduleScope() } };
+    await engine['_followedSourceStore'].replace(selected);
+    sinon.stub(engine as never, 'readFollowedRootSupport').rejects(new FollowedSourceRoleAbsentError('role deleted'));
+    const refreshAuthority = sinon.stub(engine as never, 'refreshFollowedSourceAuthority').resolves(undefined);
+
+    await expect(engine['reconcileFollowedSourceModules'](selected, [], true))
+      .rejects.toThrow('root role assignment changed');
+    expect(refreshAuthority.calledOnce).toBe(true);
+  });
+
+  it('rejects consumer admission when a superseded provider alters the active local consumer scope', async () => {
+    const provider = (await TestDataGenerator.generateModulesConfigure({ moduleDefinition: {
+      module: MODULE, published: true, types: { notebook: {} }, structure: { notebook: {} },
+    } })).message;
+    const consumer = (await TestDataGenerator.generateModulesConfigure({ moduleDefinition: {
+      module    : REALTIME, published : true, uses      : { notebook: MODULE }, types     : { live: {} },
+      structure : { notebook: { $ref: 'notebook:notebook', live: {} } },
+    } })).message;
+    const applyReplicatedMessage = sinon.stub();
+    applyReplicatedMessage.onFirstCall().resolves({ kind: 'Superseded' });
+    applyReplicatedMessage.onSecondCall().resolves({ kind: 'Applied' });
+    const processRequest = sinon.stub().callsFake(async ({ messageType }: { messageType: DwnInterface }) => {
+      if (messageType === DwnInterface.ModulesQuery) {
+        return { reply: { status: { code: 200 }, entries: [consumer] } };
+      }
+      return { reply: { status: { code: 404 } } };
+    });
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies  : [{ message: provider, isLatestBaseState: true }],
+      resolvedGraph : projectionGraph(),
+      root          : {},
+    });
+    sinon.stub(engine, 'agent').get(() => ({ dwn: { applyReplicatedMessage, processRequest } } as unknown as EnboxPlatformAgent));
+
+    const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: projectionGraph() };
+    await expect(engine['admitFollowedModule'](root, prepared, undefined)).rejects.toThrow();
   });
 });

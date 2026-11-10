@@ -9,7 +9,12 @@
  */
 
 export { DwnApi } from './dwn-api.js';
+export { ObservedView } from './observed-view.js';
+export { resolveTypedModuleGraph } from './define-module.js';
+export { combineAbortSignals, openView, whileSignalsActive } from './view-opening.js';
+export { consumedRecordRepresentation, installedModuleDefinitionsEqual, recordRepresentationsEqual } from './module-definition-utils.js';
 
+export type { RecordExecutionContext } from './record-types.js';
 export type {
   MessagesSubscribeRequest,
   MessagesSubscribeResponse,

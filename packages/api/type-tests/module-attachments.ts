@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
-import type { ContextModuleBinding, ContextRootPath, Enbox, ModuleAttachmentPaths, ModulePaths, TypedModule } from '@enbox/api';
+import type { ContextRecordsApi, ContextRootPath, Enbox, ModuleAttachmentPaths, ModulePaths, TypedModule } from '@enbox/api';
 
 import { defineModule, recordCodecs } from '@enbox/api';
 
@@ -166,33 +166,36 @@ type _ConsumerCodecsRemainExact = Assert<Equal<
 
 
 export async function contextModuleBindingContract(enbox: Enbox): Promise<void> {
-  const contexts = enbox.using(Notebook).contexts.withModules({ realtime: Realtime });
-  const page = await contexts.follow('notebook/page', { ownerDid: 'did:example:owner', id: 'notebook/page' });
-  const realtime: ContextModuleBinding<typeof Realtime, typeof Notebook.definition.module, 'notebook/page'> = page.using(Realtime);
-  const mount: 'page' = realtime.path;
-  const role: 'notebook/page/member' = page.role;
-  const live = await realtime.records.query('page/live', { materialize: true, pagination: { limit: 1 } });
+  type MountPath = ModuleAttachmentPaths<typeof Realtime, typeof Notebook.definition.module, 'notebook/page'>;
+  const mount: MountPath = 'page';
+  const realtimeRecords: ContextRecordsApi<
+    typeof Realtime.definition,
+    typeof Realtime.codecs,
+    MountPath
+  > = enbox.using(Realtime).scope({
+    allowedPaths : new Set(['page/live', 'page/live/session']),
+    contextId    : 'notebook/page',
+    contextPath  : mount,
+  });
+  const live = await realtimeRecords.query('page/live', { materialize: true, pagination: { limit: 1 } });
   const topic: string | undefined = live.records[0]?.value.topic;
-  const session = await realtime.records.create('page/live/session', { data: { peerKey: 'peer' }, parentContextId: 'notebook/page/live' });
+  const session = await realtimeRecords.create('page/live/session', { data: { peerKey: 'peer' }, parentContextId: 'notebook/page/live' });
   const peerKey: string = (await session.value()).peerKey;
   // @ts-expect-error a reference anchor has no record surface in its consumer module
-  await realtime.records.read('page', { filter: {} });
+  await realtimeRecords.read('page', { filter: {} });
   // @ts-expect-error this binding excludes another physical root in the same consumer artifact
-  await realtime.records.query('folder/marker');
+  await realtimeRecords.query('folder/marker');
   // @ts-expect-error provider-owned records stay on the root context
-  await realtime.records.query('notebook/page');
-  // @ts-expect-error the consumer codec is preserved through context.using
-  await realtime.records.create('page/live/session', { data: { title: 'wrong' }, parentContextId: 'notebook/page/live' });
+  await realtimeRecords.query('notebook/page');
+  // @ts-expect-error the consumer codec is preserved through scoped records
+  await realtimeRecords.create('page/live/session', { data: { title: 'wrong' }, parentContextId: 'notebook/page/live' });
   // @ts-expect-error observations always require an explicitly bounded request
-  await realtime.records.observe('page/live');
+  await realtimeRecords.observe('page/live');
   // @ts-expect-error callers cannot supply a different tenant on a bound consumer view
-  await realtime.records.query('page/live', { from: 'did:example:other' });
+  await realtimeRecords.query('page/live', { from: 'did:example:other' });
   // @ts-expect-error callers cannot replace the canonical role selected for the consumer
-  await realtime.records.query('page/live', { moduleRole: 'base:notebook/page/member' });
-  const owned = await contexts.open('notebook/page', 'notebook/page');
-  await owned.using(Realtime).records.set('page/live', { data: { topic: 'owner-room' } });
-  void mount;
-  void role;
+  await realtimeRecords.query('page/live', { moduleRole: 'base:notebook/page/member' });
+  await realtimeRecords.set('page/live', { data: { topic: 'owner-room' } });
   void topic;
   void peerKey;
 }

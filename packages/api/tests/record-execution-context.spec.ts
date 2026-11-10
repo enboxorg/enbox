@@ -5,8 +5,6 @@ import type {
   EnboxAgent,
   FollowedSyncSource,
   ProcessDwnRequest,
-  SyncEngine,
-  SyncEventListener,
 } from '@enbox/agent';
 
 import sinon from 'sinon';
@@ -14,10 +12,9 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '@enbox/agent';
 
-import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
-import { FollowedModuleLease } from '../src/followed-module-lease.js';
+import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
@@ -577,16 +574,13 @@ describe('context record execution', () => {
         modules        : { [module]: { contextPath: 'note', moduleRole, modulePaths: ['note'] } },
       };
       let current: FollowedSyncSource | undefined = source;
-      const listeners = new Set<SyncEventListener>();
-      const sync = {
-        getFollowedSource : async (id: string): Promise<FollowedSyncSource | undefined> => current?.id === id ? current : undefined,
-        on                : (listener: SyncEventListener): (() => void) => {
-          listeners.add(listener);
-          return (): void => { listeners.delete(listener); };
-        },
-      } as unknown as SyncEngine;
       const session = new AbortController();
-      const lease = new FollowedModuleLease({ module, signal: session.signal, source, sync });
+      const assertActive = async (): Promise<void> => {
+        session.signal.throwIfAborted();
+        if (current === undefined || current.acceptanceId !== source.acceptanceId) {
+          throw new ContextRetiredError(source.contextId);
+        }
+      };
       agent.processDwnRequest.resolves({
         reply: {
           entry        : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
@@ -598,7 +592,14 @@ describe('context record execution', () => {
         agent          : agent as unknown as EnboxAgent,
         connectedDid,
         permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
-      }).withRecordExecutionContext(lease.executionContext());
+      }).withRecordExecutionContext({
+        assertActive,
+        contextId        : source.contextId,
+        followedSourceId : source.id,
+        moduleRole,
+        remoteEndpoint   : source.remoteEndpoint,
+        tenantDid,
+      });
       const { record } = await dwn.records.read({ filter: { recordId } });
       expect(record).toBeDefined();
 
@@ -608,17 +609,12 @@ describe('context record execution', () => {
         current = { ...source, acceptanceId: 'replacement' };
       } else {
         current = undefined;
-        for (const listener of listeners) {
-          listener({ type: 'followed-context:change', actorDid: connectedDid, contextId: source.contextId, module, tenantDid });
-        }
       }
 
       const reason = retirement === 'session end' ? 'Session has ended.' : 'is no longer active';
       await expect(record!.data.json()).rejects.toThrow(reason);
       await expect(record!.update({ tags: { pinned: true } })).rejects.toThrow(reason);
       await expect(record!.delete()).rejects.toThrow(reason);
-      expect(lease.signal.aborted).toBe(true);
-      expect(listeners.size).toBe(0);
       expect(agent.processDwnRequest.calledOnce).toBe(true);
       expect(agent.sendDwnRequest.notCalled).toBe(true);
     });
