@@ -85,6 +85,13 @@ export function isValidSyncNextToken(token: ProgressToken): boolean {
     /^(0|[1-9]\d*)$/.test(token.position);
 }
 
+/** Whether two optional progress tokens identify the same exact source position. */
+export function isSameSyncNextToken(left: ProgressToken | undefined, right: ProgressToken | undefined): boolean {
+  return left === right || (left !== undefined && right !== undefined &&
+    left.streamId === right.streamId && left.epoch === right.epoch &&
+    left.position === right.position && left.messageCid === right.messageCid);
+}
+
 /** Compare two positions after the caller has validated their token domains. */
 export function compareSyncNextPosition(a: ProgressToken, b: ProgressToken): number {
   const difference = BigInt(a.position) - BigInt(b.position);
