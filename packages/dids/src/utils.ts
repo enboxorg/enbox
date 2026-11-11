@@ -20,13 +20,8 @@ import { DidError, DidErrorCode } from './did-error.js';
  *
  * A DWN DID service is a specialized type of DID service with the `type` set to
  * `DecentralizedWebNode`. Encryption and signing keys are resolved from the DID document's
- * verification methods, not from the service entry.
- *
- * The `enc` and `sig` properties are optional legacy fields that may be present on existing
- * DID documents for backward compatibility. When present, they contain verification method `id`
- * values that hint at which keys to use for encryption and signing. New implementations should
- * resolve keys from the DID document's verification methods by purpose (`keyAgreement` for
- * encryption, `authentication`/`assertionMethod` for signing).
+ * verification methods by purpose (`keyAgreement` for encryption,
+ * `authentication`/`assertionMethod` for signing), not from the service entry.
  *
  * @example
  * ```ts

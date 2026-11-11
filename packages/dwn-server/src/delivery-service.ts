@@ -543,10 +543,9 @@ export class DeliveryService implements MessageProcessedHook {
    * Extracts DWN service endpoints from a DID document.
    * Looks for services of type `DecentralizedWebNode` with `serviceEndpoint` entries.
    *
-   * Supports all endpoint formats:
+   * Supports these endpoint formats:
    * - `"https://example.com"` — bare string, implicitly full
    * - `["https://a.com", "https://b.com"]` — string array, implicitly full
-   * - `{ nodes: ["https://a.com"] }` — legacy object format, implicitly full
    * - `{ url: "https://a.com", dataRetention: "cache" }` — map format with explicit retention
    */
   static #extractDwnEndpoints(didDocument: DidDocument): DwnEndpoint[] {
@@ -573,7 +572,7 @@ export class DeliveryService implements MessageProcessedHook {
       return [];
     }
 
-    // serviceEndpoint can be a string, string[], object with nodes, or map with url.
+    // serviceEndpoint can be a string, string[], or map with url.
     const epValue = service.serviceEndpoint;
 
     if (typeof epValue === 'string') {
@@ -585,7 +584,8 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     if (epValue && typeof epValue === 'object') {
-      return DeliveryService.#extractEndpointsFromObject(epValue as Record<string, unknown>);
+      const mapEndpoint = DeliveryService.#extractMapEndpoint(epValue as Record<string, unknown>);
+      return mapEndpoint ? [mapEndpoint] : [];
     }
 
     return [];
@@ -608,39 +608,6 @@ export class DeliveryService implements MessageProcessedHook {
         if (mapEndpoint) {
           endpoints.push(mapEndpoint);
         }
-      }
-    }
-
-    return endpoints;
-  }
-
-  /**
-   * Extracts endpoints from an object-shaped `serviceEndpoint`. The legacy
-   * `{ nodes: [...] }` format and the map format `{ url, dataRetention? }`
-   * are checked independently — not mutually exclusive, matching the
-   * original scan — so an object carrying both keys yields endpoints from
-   * each, `nodes` first.
-   */
-  static #extractEndpointsFromObject(epValue: Record<string, unknown>): DwnEndpoint[] {
-    const endpoints: DwnEndpoint[] = [];
-
-    // Legacy object format: { nodes: [...] }
-    if ('nodes' in epValue) {
-      const nodes = (epValue as { nodes: string[] }).nodes;
-      if (Array.isArray(nodes)) {
-        for (const node of nodes) {
-          if (typeof node === 'string') {
-            endpoints.push({ url: stripTrailingSlashes(node), isFull: true });
-          }
-        }
-      }
-    }
-
-    // Map format at top level: { url: "...", dataRetention?: "..." }
-    if ('url' in epValue) {
-      const mapEndpoint = DeliveryService.#extractMapEndpoint(epValue);
-      if (mapEndpoint) {
-        endpoints.push(mapEndpoint);
       }
     }
 

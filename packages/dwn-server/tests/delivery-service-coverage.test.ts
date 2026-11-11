@@ -89,7 +89,7 @@ function didDocWithDwnService(did: string, endpoints: string[]): DidDocument {
   } as DidDocument;
 }
 
-/** Creates a DID document with DWN service endpoint as object with nodes. */
+/** Creates a DID document with an unsupported `{ nodes }` DWN service endpoint object. */
 function didDocWithDwnNodes(did: string, nodes: string[]): DidDocument {
   return {
     id      : did,
@@ -504,7 +504,7 @@ describe('DeliveryService — coverage', () => {
       expect(fetchStub.firstCall.args[0]).toBe('http://peer.example.com');
     });
 
-    it('should extract endpoints from service with nodes object', async () => {
+    it('should ignore the unsupported nodes-object endpoint shape', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch').resolves(
         new Response(null, { status: 200 }),
       );
@@ -520,7 +520,7 @@ describe('DeliveryService — coverage', () => {
       svc.dispatchIfNeeded(tenant, recordsWriteMessage(), 202);
       await new Promise((resolve): ReturnType<typeof setTimeout> => setTimeout(resolve, 100));
 
-      expect(fetchStub.callCount).toBe(1);
+      expect(fetchStub.callCount).toBe(0);
     });
 
     it('should skip non-DecentralizedWebNode services', async () => {

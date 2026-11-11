@@ -13,7 +13,16 @@ import officialTestVector3 from '../fixtures/test-vectors/did-dht/vector-3.json'
 import resolveTestVectors from '../fixtures/web5-spec-vectors/did_dht/resolve.json' with { type: 'json' };
 import { UniversalResolver } from '../../src/resolver/universal-resolver.js';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { createDidDhtMethod, DidDht, DidDhtDocument, DidDhtRegisteredDidType, DidDhtUtils, TXT_SEGMENT_MAX_BYTES } from '../../src/methods/did-dht.js';
+import {
+  createBep44PutMessage,
+  createDidDhtMethod,
+  DidDht,
+  DidDhtDocument,
+  DidDhtRegisteredDidType,
+  parseBep44GetMessage,
+  TXT_SEGMENT_MAX_BYTES,
+  validatePreviousDidProof,
+} from '../../src/methods/did-dht.js';
 import { DidErrorCode, DidResolutionErrorCause } from '../../src/did-error.js';
 
 // Helper function to create a mocked fetch response that fails and returns a 404 Not Found.
@@ -1671,7 +1680,7 @@ describe('DidDhtDocument', () => {
       expect(didResolutionResult.didDocument!.verificationMethod![1].controller).toBe(customController); // custom controller
     });
 
-    it('never emits `a=undefined` and decodes the legacy literal as the key type default', async () => {
+    it('never emits `a=undefined` and resolves an absent alg as the key type default', async () => {
       const didUri = 'did:dht:5cahcfh3zh8bqd5cn3y6inoea1b3d6kh85rjksne9e5dcyrc1ery';
       const dnsPacket = await DidDhtDocument.toDnsPacket({
         didDocument: {
@@ -1693,7 +1702,7 @@ describe('DidDhtDocument', () => {
               id           : `${didUri}#enc`,
               type         : 'JsonWebKey',
               controller   : didUri,
-              // An X25519 JWK generated without `alg`, as serialized by `@enbox/dids` <= 0.1.3.
+              // An X25519 JWK without `alg`.
               publicKeyJwk : {
                 crv : 'X25519',
                 kty : 'OKP',
@@ -1711,13 +1720,6 @@ describe('DidDhtDocument', () => {
 
       for (const answer of dnsPacket.answers ?? []) {
         expect(String(answer.data)).not.toContain('a=undefined');
-      }
-
-      // Simulate a record published by an encoder that serialized the absent `alg` literally.
-      for (const answer of dnsPacket.answers ?? []) {
-        if (String(answer.data).includes('id=enc')) {
-          (answer as { data: string }).data = `${String(answer.data)};a=undefined`;
-        }
       }
 
       const didResolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
@@ -1789,7 +1791,7 @@ describe('DidDhtDocument', () => {
   });
 });
 
-describe('DidDhtUtils', () => {
+describe('did:dht utilities', () => {
   pinPublicGatewayDefault();
 
   let fetchStub: ReturnType<typeof spyOn>;
@@ -1809,7 +1811,7 @@ describe('DidDhtUtils', () => {
     const previousDidProof = { ...officialTestVector3.previousDidProof };
     const newDid = (await DidDht.create()).document.id;
 
-    await expect(DidDhtUtils.validatePreviousDidProof({ newDid, previousDidProof })).rejects.toThrow(DidErrorCode.InvalidPreviousDidProof);
+    await expect(validatePreviousDidProof({ newDid, previousDidProof })).rejects.toThrow(DidErrorCode.InvalidPreviousDidProof);
   });
 
   describe('BEP44 signing payloads', () => {
@@ -1872,7 +1874,7 @@ describe('DidDhtUtils', () => {
         ]
       };
 
-      const bep44Message = await DidDhtUtils.createBep44PutMessage({
+      const bep44Message = await createBep44PutMessage({
         dnsPacket,
         publicKeyBytes,
         signer,
@@ -1884,7 +1886,7 @@ describe('DidDhtUtils', () => {
 
       expect(Array.from(signedPayload!)).toEqual(Array.from(expectedPayload));
 
-      const parsedPacket = await DidDhtUtils.parseBep44GetMessage({ bep44Message });
+      const parsedPacket = await parseBep44GetMessage({ bep44Message });
       expect(parsedPacket.answers).toHaveLength(1);
 
       const tamperedMessage = {
@@ -1893,7 +1895,7 @@ describe('DidDhtUtils', () => {
       };
       tamperedMessage.v[0] ^= 0xff;
 
-      await expect(DidDhtUtils.parseBep44GetMessage({ bep44Message: tamperedMessage })).rejects.toThrow(DidErrorCode.InvalidSignature);
+      await expect(parseBep44GetMessage({ bep44Message: tamperedMessage })).rejects.toThrow(DidErrorCode.InvalidSignature);
     });
   });
 });
