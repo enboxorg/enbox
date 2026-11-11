@@ -18,6 +18,7 @@ import { AnonymousDwnApi } from '@enbox/agent';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { createDidDhtMethod, DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
+import { combineAbortSignals } from './view-opening.js';
 import { createModuleReadinessApi } from './module-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
@@ -89,9 +90,7 @@ export class Enbox {
 
   public constructor({ agent, connectedDid, delegateDid, signal }: EnboxParams) {
     this.agent = agent;
-    this._lifetimeSignal = signal === undefined
-      ? this._lifetimeController.signal
-      : AbortSignal.any([signal, this._lifetimeController.signal]);
+    this._lifetimeSignal = combineAbortSignals(signal, this._lifetimeController.signal)!;
     this.did = new DidApi({ agent, connectedDid });
     this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
     this._connectedDid = connectedDid;

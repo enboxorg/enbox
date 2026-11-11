@@ -91,7 +91,7 @@ import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, mes
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { ensureSyncStoreFormat, SYNC_STORE_FORMAT, SYNC_STORE_FORMAT_KEY } from './sync-store-format.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext, syncMessageDescriptor } from './sync-messages.js';
-import { followedModuleScopeEqual, followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, followedSyncSourceStateEqual, normalizeFollowedModules, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput } from './followed-sync-source.js';
+import { FOLLOWED_SOURCE_CONCURRENCY, followedModuleScopeEqual, followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, followedSyncSourceStateEqual, normalizeFollowedModules, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput } from './followed-sync-source.js';
 import { FollowedModuleUnavailableError, prepareFollowedModule } from './followed-sync-module.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncModuleRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -182,7 +182,6 @@ type PendingSyncRun = {
 };
 
 export class SyncEngineLevel implements SyncEngine {
-  private static readonly FOLLOWED_SOURCE_CONCURRENCY = 4;
   /**
    * Holds the instance of a `EnboxPlatformAgent` that represents the current execution context for
    * the `SyncEngineLevel`. This agent is used to interact with other Enbox agent components. It's
@@ -977,10 +976,15 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   /** Failed inspection or active-but-incomplete coverage never establishes expiry. */
-  private async handleSyncAuthorizationFailure(did: string, delegateDid: string | undefined, error: unknown): Promise<boolean> {
+  private static isSyncAuthorizationFailureCandidate(error: unknown): boolean {
     const errorCode = error instanceof DwnError ? error.code : error;
-    if (delegateDid === undefined || !(error instanceof SyncModuleRootPermissionGrantMissingError ||
-      error instanceof PermissionGrantNotFoundError || isTerminalSyncAuthorizationErrorCode(errorCode))) {
+    return error instanceof SyncModuleRootPermissionGrantMissingError ||
+      error instanceof PermissionGrantNotFoundError ||
+      isTerminalSyncAuthorizationErrorCode(errorCode);
+  }
+
+  private async handleSyncAuthorizationFailure(did: string, delegateDid: string | undefined, error: unknown): Promise<boolean> {
+    if (delegateDid === undefined || !SyncEngineLevel.isSyncAuthorizationFailureCandidate(error)) {
       return false;
     }
     if (this.isIdentityPaused(did, delegateDid)) {
@@ -1505,7 +1509,7 @@ export class SyncEngineLevel implements SyncEngine {
     if (!fence()) {throw new FollowedSourceNotReadyError('consumer setup was cancelled');}
     await this.removeObsoleteFollowedSourceLinks();
     this.activateFollowedSource(accepted, identity.delegateDid, runIdentityTask);
-    const pendingUpdates = await mapConcurrentSettled(result.pending, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+    const pendingUpdates = await mapConcurrentSettled(result.pending, FOLLOWED_SOURCE_CONCURRENCY,
       module => this.markFollowedSourcePullPending(accepted, module));
     for (const update of pendingUpdates) {
       if (update.status === 'rejected') {throw update.reason;}
@@ -1537,7 +1541,7 @@ export class SyncEngineLevel implements SyncEngine {
         : { prepared, unavailable, pending: desired };
     }
     try {
-      const results = await mapConcurrentSettled(desired, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+      const results = await mapConcurrentSettled(desired, FOLLOWED_SOURCE_CONCURRENCY,
         module => prepareFollowedModule({
           agent          : this.agent,
           delegateDid,
@@ -1548,9 +1552,8 @@ export class SyncEngineLevel implements SyncEngine {
           shouldContinue,
         }));
       const authCandidate = results.find(
-        (r): r is PromiseRejectedResult => r.status === 'rejected' && r.reason instanceof PermissionGrantNotFoundError,
-      )?.reason ?? results.find(
-        (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r.reason instanceof FollowedModuleUnavailableError),
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+          && SyncEngineLevel.isSyncAuthorizationFailureCandidate(r.reason),
       )?.reason;
       const isAuthPaused = authCandidate !== undefined
         && await this.handleSyncAuthorizationFailure(source.actorDid, delegateDid, authCandidate);
@@ -5847,15 +5850,8 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   private async addCurrentFollowedSourceKeys(identityKeys: Set<string>): Promise<void> {
-    const sources: FollowedSyncSource[] = [];
-    for (const entry of await this._followedSourceStore.list()) {
-      if (entry.status === 'corrupt') {
-        console.warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping health target:`, entry.error);
-        continue;
-      }
-      sources.push(entry.source);
-    }
-    const results = await mapConcurrentSettled(sources, SyncEngineLevel.FOLLOWED_SOURCE_CONCURRENCY,
+    const sources = await this.readFollowedSources();
+    const results = await mapConcurrentSettled(sources, FOLLOWED_SOURCE_CONCURRENCY,
       source => this.targetResolver.buildTargetsForSource(source));
     for (const result of results) {
       if (result.status === 'rejected') {throw result.reason;}

@@ -46,7 +46,6 @@ export function defineModule<
     throw new TypeError('defineModule: options must be an object.');
   }
   const { definition, codecs } = options;
-  assertModuleDefinitionShape(definition);
   assertTypedModuleComponents(definition, codecs);
   const dependencies = Object.freeze({ ...options.dependencies }) as Deps;
   assertDependencyAliases(definition, dependencies);
@@ -58,7 +57,15 @@ export function defineModule<
     codecs     : frozenCodecs,
     dependencies,
   });
-  resolvedGraphs.set(artifact, computeTypedModuleGraph(artifact));
+  const definitions = new Map<string, ModuleDefinition>([[snapshot.module, snapshot]]);
+  const visited = new Set<object>([artifact]);
+  for (const dependency of Object.values(dependencies as ModuleDependencies)) {
+    collectDependencyDefinitions(dependency, definitions, visited);
+  }
+  resolvedGraphs.set(
+    artifact,
+    resolveModuleGraph(snapshot, uri => definitions.get(uri), { requireKeyAgreement: false }),
+  );
   return artifact;
 }
 
@@ -106,7 +113,7 @@ export function orderTypedModuleDependencies(roots: readonly ModuleDependency[])
   const visited = new Set<object>();
   for (const root of roots) {
     collectDependencyDefinitions(root, definitions, visited);
-    resolveModuleGraph(root.definition, uri => definitions.get(uri), { requireKeyAgreement: false });
+    resolveTypedModuleGraph(root);
   }
   const ordered: ModuleDependency[] = [];
   const complete = new Set<string>();
@@ -135,9 +142,11 @@ function collectDependencyDefinitions(
     return;
   }
   visited.add(value);
-  assertTypedModuleComponents(value.definition, value.codecs);
+  if (!resolvedGraphs.has(value)) {
+    assertTypedModuleComponents(value.definition, value.codecs);
+    assertDependencyAliases(value.definition as ModuleDefinition, value.dependencies);
+  }
   const definition = value.definition as ModuleDefinition;
-  assertDependencyAliases(definition, value.dependencies);
   const previous = definitions.get(definition.module);
   if (previous !== undefined && !authoredModuleDefinitionsEqual(previous, definition)) {
     throw new TypeError(`defineModule: conflicting dependency definitions for module '${definition.module}'.`);

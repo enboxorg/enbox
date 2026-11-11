@@ -1,5 +1,8 @@
 import { lexicographicalCompare } from './types/sync.js';
 
+/** Maximum concurrent followed-source operations per pass. */
+export const FOLLOWED_SOURCE_CONCURRENCY = 4;
+
 /** Verified role-authorized content within one explicitly selected module. */
 export type FollowedModuleScope = {
   /** Context root path in the root module, or top-level `$ref` attachment path in a composing module. */

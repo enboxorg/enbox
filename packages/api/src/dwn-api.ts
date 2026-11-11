@@ -23,8 +23,8 @@ import { dataToBlob } from './utils.js';
 import { invalidateRecordReplica } from './record-types.js';
 import { Module } from './module.js';
 import { Record } from './record.js';
-import { Records } from '@enbox/dwn-sdk-js';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
+import { DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
 
 type ReadInterface =
   | DwnInterface.MessagesSubscribe
@@ -582,7 +582,7 @@ export class DwnApi {
   ): Promise<MessagesSubscribeResponse> {
     const contextId = this.recordExecutionContext?.contextId;
     const filters: MessagesFilter[] = request.paths.map(modulePath => ({
-      interface : 'Records',
+      interface : DwnInterfaceName.Records,
       module    : request.module,
       modulePath,
       ...(contextId === undefined ? {} : { contextIdPrefix: contextId }),
@@ -611,8 +611,8 @@ export class DwnApi {
       }
 
       const descriptor = message.event.message.descriptor;
-      if (descriptor.interface !== 'Records'
-        || (descriptor.method !== 'Write' && descriptor.method !== 'Delete')) {
+      if (descriptor.interface !== DwnInterfaceName.Records
+        || (descriptor.method !== DwnMethodName.Write && descriptor.method !== DwnMethodName.Delete)) {
         return;
       }
       const recordsWrite = Records.isRecordsWrite(message.event.message)

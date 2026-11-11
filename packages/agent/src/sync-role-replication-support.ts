@@ -609,7 +609,9 @@ function expectedAuthorRoleProofs(
     if (definition === undefined) {
       throw new RoleReplicationSupportError(`missing author-role module '${module}'.`);
     }
-    const authorGraph = resolveModuleGraph(definition, uri => params.graph.definitionsByUri.get(uri));
+    const authorGraph = module === params.graph.rootModuleUri
+      ? params.graph
+      : resolveModuleGraph(definition, uri => params.graph.definitionsByUri.get(uri));
     const identity = getRoleRecordIdentity({ role: authorGraph.resolveInvokedRole(modulePath), contextId, recipient });
     if (identity.key === params.roleIdentity.key) {
       return;
@@ -692,7 +694,9 @@ function isRootAudienceControl(
   if (definition === undefined) {
     return false;
   }
-  const roleGraph = resolveModuleGraph(definition, uri => graph.definitionsByUri.get(uri));
+  const roleGraph = message.descriptor.module === graph.rootModuleUri
+    ? graph
+    : resolveModuleGraph(definition, uri => graph.definitionsByUri.get(uri));
   const role = roleGraph.resolveInvokedRole(tags.rolePath);
   return root.encryption?.keyEncryption.some(entry =>
     entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'module' in entry &&

@@ -60,7 +60,7 @@ import { mergeRecordPatch } from './record-patch.js';
 import { RecordConflictError } from './record-conflict-error.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { resolveTypedModuleGraph } from './define-module.js';
-import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery, resolveRecordQueryNode } from './record-query.js';
+import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from './record-query.js';
 import {
   authoredModuleDefinitionsEqual,
   DateSort,
@@ -408,6 +408,8 @@ type TypedEnboxOptions = {
     signal?: AbortSignal;
   };
 
+  /** Pre-resolved module graph passed when constructing a scoped binding. */
+  resolvedGraph?: ResolvedModuleGraph;
   /** Session-owned role-delivery status and retry operations. */
   roleDelivery?: RoleDeliveryApi;
 
@@ -1065,7 +1067,7 @@ export class TypedEnbox<
    * @param options - Optional session-owned lifecycle and sync resources.
    */
   constructor(dwn: DwnApi, module: TypedModule<D, C>, options: TypedEnboxOptions = {}) {
-    this._resolvedGraph = resolveTypedModuleGraph(module);
+    this._resolvedGraph = options.resolvedGraph ?? resolveTypedModuleGraph(module);
     this._dwn = dwn;
     this._definition = module.definition;
     this._codecs = module.codecs;
@@ -1238,7 +1240,7 @@ export class TypedEnbox<
           signal       : options.signal,
         },
         dependencyApis : this._dependencyApis,
-        roleDelivery   : this._options.roleDelivery,
+        resolvedGraph  : this._resolvedGraph,
         signal         : combinedSignal,
         sync           : this._options.sync,
       },
@@ -1380,25 +1382,30 @@ export class TypedEnbox<
    * Validates that the path is recognized.
    * Throws a descriptive error if the path is not a valid module path.
    */
-  private _assertValidPath(path: string): void {
-    if (this._resolvedGraph.nodesByDeclaredPath.get(path)?.kind !== 'record') {
+  private _assertValidPath(path: string): ResolvedModuleNode {
+    const node = this._resolvedGraph.nodesByDeclaredPath.get(path);
+    if (node?.kind !== 'record') {
       const valid = [...this._resolvedGraph.nodesByDeclaredPath.values()]
-        .filter(node => node.kind === 'record').map(node => node.declaringModulePath);
+        .filter(candidate => candidate.kind === 'record').map(candidate => candidate.declaringModulePath);
       throw new TypeError(
         `TypedEnbox: invalid module path '${path}'. ` +
         `Valid paths are: ${valid.join(', ')}.`,
       );
     }
+    return node;
   }
 
   private resolveRecordNode(path: string): ResolvedModuleNode {
-    this._assertValidPath(path);
-    return resolveRecordQueryNode(this._resolvedGraph, path);
+    return this._assertValidPath(path);
   }
 
   /** Resolve the codec assigned to one validated module path. */
   private resolveCodec(path: string): RecordCodec<unknown> {
-    const codec = this._codecs[this.resolveRecordNode(path).typeName];
+    return this.resolveNodeCodec(path, this.resolveRecordNode(path));
+  }
+
+  private resolveNodeCodec(path: string, node: ResolvedModuleNode): RecordCodec<unknown> {
+    const codec = this._codecs[node.typeName];
     if (codec === undefined) {
       throw new Error(`TypedEnbox: module path '${path}' does not have a record codec.`);
     }
@@ -1418,11 +1425,11 @@ export class TypedEnbox<
     path : string,
     record : Record<Existing>,
   ): TypedRecord<DataForPath<C, Path>> {
-    const dataFormats = this.resolveRecordNode(path).recordType.dataFormats;
+    const node = this.resolveRecordNode(path);
     return bindRecordCodec(
       record,
-      this.getCodec<Path>(path),
-      dataFormats,
+      this.resolveNodeCodec(path, node) as RecordCodec<DataForPath<C, Path>>,
+      node.recordType.dataFormats,
       this._options.signal,
     ) as TypedRecord<DataForPath<C, Path>>;
   }
@@ -1706,9 +1713,7 @@ export class TypedEnbox<
     const contextSignal = this._options.context?.signal;
     const handleAbort = (): void => {
       if (contextSignal?.aborted === true && !closed) {
-        const reason = contextSignal.reason;
-        void Promise.resolve().then(() => listener({ type: 'error', error: reason instanceof Error ? reason : new Error(String(reason)) }))
-          .catch((): void => {});
+        this.deliverContextAbortError(contextSignal, listener);
       }
       void closeSubscription().catch((): void => {});
     };
@@ -1826,15 +1831,22 @@ export class TypedEnbox<
     } catch (error: unknown) {
       await subscription.close().catch((): void => {});
       if (contextSignal?.aborted === true && options.signal?.aborted !== true) {
-        const reason = contextSignal.reason;
-        void Promise.resolve().then(() => listener({
-          type  : 'error',
-          error : reason instanceof Error ? reason : new Error(String(reason)),
-        })).catch((): void => {});
+        this.deliverContextAbortError(contextSignal, listener);
       }
       assertActive();
       throw error;
     }
+  }
+
+  private deliverContextAbortError(
+    contextSignal: AbortSignal,
+    listener: (event: { type: 'error'; error: Error }) => unknown,
+  ): void {
+    const reason = contextSignal.reason;
+    void Promise.resolve().then(() => listener({
+      type  : 'error',
+      error : reason instanceof Error ? reason : new Error(String(reason)),
+    })).catch((): void => {});
   }
 
   /** Require the module fact that gives `set()` one unambiguous target. */
@@ -1862,11 +1874,7 @@ export class TypedEnbox<
   private async createRecord<Path extends ModulePaths<D> & string>(
     path: Path,
     request: TypedCreateOptions<C, Path>,
-    dwn: DwnApi = this._dwn,
-  ): Promise<{
-    audienceKeyDelivery?: AudienceKeyDeliveryOutcome;
-    record: TypedRecord<DataForPath<C, Path>>;
-  }> {
+  ): Promise<TypedRecord<DataForPath<C, Path>>> {
     const normalizedPath = normalizePath(path);
     if (getRuleSetAtPath(normalizedPath, this._definition.structure)?.$role === true
       && request.recipient === undefined) {
@@ -1890,7 +1898,7 @@ export class TypedEnbox<
       modulePath : normalizedPath,
       schema     : typeEntry?.schema,
     });
-    const result = await dwn.records.write({
+    const result = await this._dwn.records.write({
       data                   : encoded.data,
       from                   : request.from,
       parentContextId,
@@ -1923,10 +1931,7 @@ export class TypedEnbox<
         writable     : false,
       });
     }
-    return {
-      ...(result.audienceKeyDelivery === undefined ? {} : { audienceKeyDelivery: result.audienceKeyDelivery }),
-      record: bound,
-    };
+    return bound;
   }
 
   /**
@@ -2320,7 +2325,7 @@ export class TypedEnbox<
       create: async <Path extends ModulePaths<D> & string>(
         path: Path,
         request: TypedCreateRequest<D, C, Path>,
-      ): Promise<TypedRecord<DataForPath<C, Path>>> => (await this.createRecord(path, request)).record,
+      ): Promise<TypedRecord<DataForPath<C, Path>>> => this.createRecord(path, request),
 
       /**
        * Query records at the given module path.
@@ -2675,14 +2680,14 @@ export class TypedEnbox<
         requireDwnSuccess('TypedEnbox.records.set query', result);
         const existing = result.records[0];
         if (existing === undefined) {
-          return (await this.createRecord(path, {
+          return this.createRecord(path, {
             data             : request.data,
             datePublished    : request.datePublished,
             messageTimestamp : request.messageTimestamp,
             parentContextId  : within,
             published        : request.published,
             tags             : request.tags,
-          })).record;
+          });
         }
 
         const record = this.bindCodec<Path>(normalizedPath, existing);

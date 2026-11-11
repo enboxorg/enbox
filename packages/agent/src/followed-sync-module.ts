@@ -73,10 +73,10 @@ export async function prepareFollowedModule(params: {
     const { reply } = params.isLocal === true
       ? await agent.dwn.processRequest(request)
       : await agent.dwn.sendRequest({ ...request, remoteEndpoint: source.remoteEndpoint });
+    if (reply.status.code >= 400 && reply.status.code < 500) {
+      throw new FollowedModuleUnavailableError(`module '${uri}' metadata was denied (${reply.status.code}).`);
+    }
     if (reply.status.code !== 200) {
-      if (reply.status.code >= 400 && reply.status.code < 500) {
-        throw new FollowedModuleUnavailableError(`module '${uri}' metadata was denied (${reply.status.code}).`);
-      }
       throw new Error(`prepareFollowedModule: followed consumer module query failed (${reply.status.code}): ${reply.status.detail}`);
     }
     const entries = reply.entries ?? [];
@@ -150,8 +150,10 @@ async function verifyConsumerScope(params: Parameters<typeof prepareFollowedModu
     })),
   };
   const reply = isLocal === true ? await queryLocalMessageFeed(feed) : await queryRemoteMessageFeed(feed);
+  if (reply.status.code >= 500) {
+    throw new Error(`prepareFollowedModule: followed consumer feed failed (${reply.status.code}).`);
+  }
   if (reply.status.code !== 200 || reply.roleRecordId !== source.id) {
-    if (reply.status.code >= 500) {throw new Error(`prepareFollowedModule: followed consumer feed failed (${reply.status.code}).`);}
     throw new FollowedModuleUnavailableError(`module '${module}' did not prove the accepted root role.`);
   }
 }

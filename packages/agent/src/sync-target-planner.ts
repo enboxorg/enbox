@@ -3,6 +3,7 @@ import type { SyncIdentityStore } from './sync-identity-store.js';
 import type { FollowedSyncSource, FollowedSyncSourceStore, FollowedSyncSourceStoreEntry } from './followed-sync-source.js';
 import type { SyncTarget, SyncTargetResolution } from './sync-target-resolver.js';
 
+import { FOLLOWED_SOURCE_CONCURRENCY } from './followed-sync-source.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
 import { mapConcurrentSettled } from './utils.js';
 import { syncScopeFromModules } from './types/sync.js';
@@ -58,7 +59,6 @@ type RegisteredIdentityTargets = {
  */
 export class SyncTargetPlanner {
   private static readonly DEFAULT_CACHE_TTL_MS = 30_000;
-  private static readonly FOLLOWED_SOURCE_CONCURRENCY = 4;
 
   private _cache?: SyncTargetCache;
   private readonly _cacheTtlMs: number;
@@ -137,7 +137,7 @@ export class SyncTargetPlanner {
 
     const sources = await this._sourceStore.list();
     hasRegistrations ||= sources.length > 0;
-    const sourceResults = await mapConcurrentSettled(sources, SyncTargetPlanner.FOLLOWED_SOURCE_CONCURRENCY,
+    const sourceResults = await mapConcurrentSettled(sources, FOLLOWED_SOURCE_CONCURRENCY,
       entry => this.resolveFollowedSource(entry));
     for (const result of sourceResults) {
       if (result.status === 'rejected') {throw result.reason;}

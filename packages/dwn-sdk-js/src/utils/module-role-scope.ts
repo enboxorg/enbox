@@ -5,6 +5,7 @@ import type {
   ResolvedRoleReference,
 } from '../core/module-graph.js';
 
+import { FilterUtility } from './filter.js';
 import { lexicographicalCompare } from './string.js';
 import { ModuleAction } from '../types/modules-types.js';
 
@@ -104,7 +105,7 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
 function isRecordUnderContext(moduleUri: string, contextPath: string, path: string, node: ResolvedModuleNode): boolean {
   return node.kind === 'record' && node.owningModuleUri === moduleUri &&
     node.declaringModuleUri === moduleUri && node.ruleSet.$role !== true &&
-    (path === contextPath || path.startsWith(`${contextPath}/`));
+    FilterUtility.matchesSubtree(contextPath, path);
 }
 
 function sameModuleAddress(left: ResolvedModuleAddress | undefined, right: ResolvedModuleAddress): boolean {
