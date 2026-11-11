@@ -101,15 +101,6 @@ const META_PARTITION = 'meta';
 const EPOCH_KEY = 'epoch';
 const RECORD_LIMIT_RAW_PAGE_SIZE = 128;
 const RECORD_LIMIT_GROUP_CACHE_SIZE = 128;
-const CURRENT_PARTITIONS = new Set([
-  BLOCKS_PARTITION,
-  INDEX_PARTITION,
-  LOG_PARTITION,
-  CID_TO_SEQ_PARTITION,
-  FINGERPRINT_PARTITION,
-  HEADS_PARTITION,
-  META_PARTITION,
-]);
 
 /**
  * The persisted shape of a replication log row (the value at key `log!<tenant>!<paddedSeq>`).
@@ -215,7 +206,6 @@ export class MessageStoreLevel implements MessageStore {
     await partitions.root.open();
     const lockName = `enbox:dwn-message-store-initialize:${JSON.stringify(this.config.location!)}`;
     await runWithCrossContextLock(lockName, async (): Promise<void> => {
-      await this.assertNoPreSubstrateLayout(partitions);
       await this.getEpoch();
     });
   }
@@ -1206,33 +1196,6 @@ export class MessageStoreLevel implements MessageStore {
   private async getHead(partitions: StorePartitions, tenant: string): Promise<bigint> {
     const headString = await partitions.heads.get(tenant);
     return headString === undefined ? 0n : BigInt(headString);
-  }
-
-  private async assertNoPreSubstrateLayout(partitions: StorePartitions): Promise<void> {
-    if (await partitions.meta.get(EPOCH_KEY) !== undefined) {
-      return;
-    }
-
-    for await (const key of partitions.root.keys()) {
-      const partition = MessageStoreLevel.parseSublevelPartition(key);
-      if (partition === undefined || CURRENT_PARTITIONS.has(partition)) {
-        continue;
-      }
-
-      throw new DwnError(
-        DwnErrorCode.MessageStorePreSubstrateLayout,
-        `message store location ${this.config.location} contains pre-substrate Level data; reset the store before opening it`
-      );
-    }
-  }
-
-  private static parseSublevelPartition(key: string): string | undefined {
-    if (!key.startsWith('!')) {
-      return undefined;
-    }
-
-    const end = key.indexOf('!', 1);
-    return end === -1 ? undefined : key.slice(1, end);
   }
 
   private async readStoredMessage(

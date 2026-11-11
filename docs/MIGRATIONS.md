@@ -41,7 +41,7 @@ DWN migrations need dialect-specific DDL (e.g., `dialect.hasTable()`, blob colum
 import type { DwnMigrationFactory } from '../migration-provider.js';
 import type { Kysely, Migration } from 'kysely';
 
-export const migration004MyChange: DwnMigrationFactory = (dialect): Migration => ({
+export const migration002MyChange: DwnMigrationFactory = (dialect): Migration => ({
   async up(db: Kysely<any>): Promise<void> {
     // Use `dialect` for dialect-specific DDL if needed
     await db.schema
@@ -57,7 +57,7 @@ Register in `packages/dwn-sql-store/src/migrations/index.ts`:
 ```typescript
 export const allDwnMigrations = [
   // ... existing migrations ...
-  ['004-my-change', migration004MyChange],
+  ['002-my-change', migration002MyChange],
 ] as const;
 ```
 
@@ -95,7 +95,7 @@ export const allServerMigrations: ReadonlyArray<readonly [name: string, factory:
 
 ## Migration conventions
 
-1. **Naming**: migration modules use `NNN-kebab-case-description.ts` (e.g., `003-add-squash-column.ts`). This convention is scoped to migration files only; do not use numbered prefixes for ordinary source files.
+1. **Naming**: migration modules use `NNN-kebab-case-description.ts` (e.g., `001-initial-schema.ts`). This convention is scoped to migration files only; do not use numbered prefixes for ordinary source files.
 2. **Stable names**: the filename stem is also the Kysely migration key stored in the migration tracking table. Never rename, renumber, reorder, or remove a released migration. Add the next sequential migration instead.
 3. **Forward-only**: Migrations have `up()` only — no `down()`. Rollback is done by deploying a new forward migration.
 4. **Idempotent DDL**: Use `ifNotExists()` for `createTable` and `createIndex`. Wrap `alterTable` in try/catch when the column might already exist.

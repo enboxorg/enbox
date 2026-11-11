@@ -98,22 +98,6 @@ describe('MessageStoreLevel Test Suite', () => {
 
       expect(locations).toEqual(new Set([ 'TEST-MESSAGESTORE' ]));
     });
-
-    it('should fail fast when a pre-substrate Level blockstore layout is detected', async () => {
-      const location = 'TEST-MESSAGESTORE-PRE-SUBSTRATE';
-      const oldDb = await createLevelDatabase<Uint8Array>(location, { valueEncoding: 'binary' });
-      await oldDb.put('!did:test:alice!bafy-old-message', new Uint8Array([1]));
-      await oldDb.close();
-
-      const oldLayoutStore = new MessageStoreLevel({ location });
-
-      await expect(oldLayoutStore.open()).rejects.toThrow(DwnErrorCode.MessageStorePreSubstrateLayout);
-      await oldLayoutStore.close();
-
-      const cleanupDb = await createLevelDatabase<Uint8Array>(location, { valueEncoding: 'binary' });
-      await cleanupDb.clear();
-      await cleanupDb.close();
-    });
   });
 
   async function generateStoredMessage(overrides: {
