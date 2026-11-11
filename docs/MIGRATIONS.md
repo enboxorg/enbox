@@ -96,7 +96,7 @@ export const allServerMigrations: ReadonlyArray<readonly [name: string, factory:
 ## Migration conventions
 
 1. **Naming**: migration modules use `NNN-kebab-case-description.ts` (e.g., `001-initial-schema.ts`). This convention is scoped to migration files only; do not use numbered prefixes for ordinary source files.
-2. **Stable names**: the filename stem is also the Kysely migration key stored in the migration tracking table. Never rename, renumber, reorder, or remove a released migration. Add the next sequential migration instead.
+2. **Stable names**: the filename stem is also the Kysely migration key stored in the migration tracking table. Never rename, renumber, reorder, or remove a released migration. Add the next sequential migration instead. (The pre-release DWN store migrations were reset to a single `001-initial-schema` baseline; databases created before that reset must be recreated rather than migrated.)
 3. **Forward-only**: Migrations have `up()` only — no `down()`. Rollback is done by deploying a new forward migration.
 4. **Idempotent DDL**: Use `ifNotExists()` for `createTable` and `createIndex`. Wrap `alterTable` in try/catch when the column might already exist.
 5. **No data migrations**: Migration files are for DDL only. Data migrations belong in application code.

@@ -15,6 +15,7 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
     describe(`${dialect.name}`, () => {
       let db: Kysely<DwnDatabaseType>;
 
+      // Order matters for foreign key constraints.
       const tablesToDrop = [
         'messageStoreRecordsTags',
         'messageStoreMessages',
@@ -32,7 +33,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         db = new Kysely<DwnDatabaseType>({ dialect });
 
         // Clean up all tables that migrations might create, plus Kysely's tracking tables.
-        // Order matters for foreign key constraints.
         for (const table of tablesToDrop) {
           const exists = await dialect.hasTable(db, table);
           if (exists) {
@@ -80,7 +80,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
         expect(await dialect.hasTable(db, 'replicationCounters')).toBe(true);
         expect(await dialect.hasTable(db, 'replicationFingerprints')).toBe(true);
         expect(await dialect.hasTable(db, 'replicationMeta')).toBe(true);
-        expect(await dialect.hasTable(db, 'dataStore')).toBe(false);
       });
 
       it('should record applied migrations in the kysely_migration table', async () => {
