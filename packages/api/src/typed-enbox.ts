@@ -1395,13 +1395,9 @@ export class TypedEnbox<
     return node;
   }
 
-  private resolveRecordNode(path: string): ResolvedModuleNode {
-    return this._assertValidPath(path);
-  }
-
   /** Resolve the codec assigned to one validated module path. */
   private resolveCodec(path: string): RecordCodec<unknown> {
-    return this.resolveNodeCodec(path, this.resolveRecordNode(path));
+    return this.resolveNodeCodec(path, this._assertValidPath(path));
   }
 
   private resolveNodeCodec(path: string, node: ResolvedModuleNode): RecordCodec<unknown> {
@@ -1425,7 +1421,7 @@ export class TypedEnbox<
     path : string,
     record : Record<Existing>,
   ): TypedRecord<DataForPath<C, Path>> {
-    const node = this.resolveRecordNode(path);
+    const node = this._assertValidPath(path);
     return bindRecordCodec(
       record,
       this.resolveNodeCodec(path, node) as RecordCodec<DataForPath<C, Path>>,
@@ -1851,12 +1847,11 @@ export class TypedEnbox<
 
   /** Require the module fact that gives `set()` one unambiguous target. */
   private assertSingletonScope(path: string, within: string | undefined): void {
-    this._assertValidPath(path);
-    if (getRuleSetAtPath(path, this._definition.structure)?.$recordLimit?.max !== 1) {
+    const node = this._assertValidPath(path);
+    if (node.ruleSet.$recordLimit?.max !== 1) {
       throw new TypeError(`TypedEnbox.records.set: path '${path}' must declare $recordLimit.max: 1.`);
     }
 
-    const node = this.resolveRecordNode(path);
     if (node.parentPhysicalDepth === 0) {
       if (within !== undefined) {
         throw new TypeError('TypedEnbox.records.set: a root singleton does not accept within.');
@@ -1882,7 +1877,7 @@ export class TypedEnbox<
     }
     await this._ensureReady(normalizedPath);
     const parentContextId = this.resolveCreateParentContext(normalizedPath, request.parentContextId);
-    const node = this.resolveRecordNode(normalizedPath);
+    const node = this._assertValidPath(normalizedPath);
     if (node.parentPhysicalDepth > 0) {
       assertValidRecordWithin(node, parentContextId, true);
       if (parentContextId!.split('/').length !== node.parentPhysicalDepth) {
@@ -1893,7 +1888,7 @@ export class TypedEnbox<
     }
     const typeEntry = node.recordType;
 
-    const codec = this.getCodec<Path>(normalizedPath);
+    const codec = this.resolveNodeCodec(normalizedPath, node) as RecordCodec<DataForPath<C, Path>>;
     const encoded = await encodeRecordValue(codec, request.data, typeEntry?.dataFormats, {
       modulePath : normalizedPath,
       schema     : typeEntry?.schema,
@@ -2734,7 +2729,7 @@ export class TypedEnbox<
           throw new TypeError('TypedDeleteRequest: use within instead of contextId.');
         }
         const within = this.resolveContextWithin(normalizedPath, request.within);
-        assertValidRecordWithin(this.resolveRecordNode(normalizedPath), within, false);
+        assertValidRecordWithin(this._assertValidPath(normalizedPath), within, false);
         if (this._options.context !== undefined) {
           const { record, tombstonePrune } = await this.readTypedRecord(path, {
             filter     : { recordId: request.recordId },

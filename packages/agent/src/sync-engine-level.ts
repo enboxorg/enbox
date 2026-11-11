@@ -91,7 +91,7 @@ import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, mes
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
 import { ensureSyncStoreFormat, SYNC_STORE_FORMAT, SYNC_STORE_FORMAT_KEY } from './sync-store-format.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext, syncMessageDescriptor } from './sync-messages.js';
-import { FOLLOWED_SOURCE_CONCURRENCY, followedModuleScopeEqual, followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, followedSyncSourceStateEqual, normalizeFollowedModules, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput } from './followed-sync-source.js';
+import { FOLLOWED_SOURCE_CONCURRENCY, followedModuleScopeEqual, followedModuleSelectionEqual, followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, followedSyncSourceStateEqual, normalizeFollowedModules, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, sameStrings } from './followed-sync-source.js';
 import { FollowedModuleUnavailableError, prepareFollowedModule } from './followed-sync-module.js';
 import { FollowedSourceNotReadyError, FollowedSourceRoleAbsentError, readRoleReplicationSupport, type RoleReplicationSupportBatch, RoleReplicationSupportError } from './sync-role-replication-support.js';
 import { getMessagesPermissionGrantsForScope, permissionGrantIdsFromEntries, SyncModuleRootPermissionGrantMissingError, toMessagesPermissionGrantIds } from './sync-permission-grants.js';
@@ -1698,15 +1698,17 @@ export class SyncEngineLevel implements SyncEngine {
     for (const role of input.roles) {
       try {
         const batch = await readRoleReplicationSupport({
-          ...input,
+          actorDid       : input.actorDid,
           agent          : this.agent,
+          contextId      : input.contextId,
           delegateDid,
           dwnUrl         : remoteEndpoint,
-          permissionsApi : this._permissionsApi,
           module         : input.rootModule,
           modulePath     : input.contextPath,
           moduleRole     : role,
+          permissionsApi : this._permissionsApi,
           shouldContinue,
+          sourceDid      : input.sourceDid,
         });
         const resolvedRole = batch.resolvedGraph.resolveInvokedRole(role);
         const parent = resolvedRole.parentAncestor;
@@ -2001,7 +2003,10 @@ export class SyncEngineLevel implements SyncEngine {
     a: FollowedContextKey,
     b: FollowedContextKey,
   ): boolean {
-    return SyncEngineLevel.followedContextKey(a) === SyncEngineLevel.followedContextKey(b);
+    return a.sourceDid === b.sourceDid &&
+      a.actorDid === b.actorDid &&
+      a.rootModule === b.rootModule &&
+      a.contextId === b.contextId;
   }
 
   private static followedContextKey(source: FollowedContextKey): string {
@@ -2013,10 +2018,7 @@ export class SyncEngineLevel implements SyncEngine {
     const current = after?.modules ?? {};
     return [...new Set([...Object.keys(previous), ...Object.keys(current)])].filter(module => {
       if (module === (after ?? before)!.rootModule) {return false;}
-      const left = previous[module];
-      const right = current[module];
-      if (left === undefined || left === null) {return right !== undefined && right !== null;}
-      return right === undefined || right === null || !followedModuleScopeEqual(left, right);
+      return !followedModuleSelectionEqual(previous[module] ?? null, current[module] ?? null);
     }).sort(lexicographicalCompare);
   }
 
@@ -2983,8 +2985,7 @@ export class SyncEngineLevel implements SyncEngine {
       source.actorDid === target.authorization.actorDid &&
       source.contextId === scope.contextId &&
       moduleScope.moduleRole === target.authorization.moduleRole &&
-      moduleScope.modulePaths.length === scope.modulePaths.length &&
-      moduleScope.modulePaths.every((path, index) => path === scope.modulePaths[index]);
+      sameStrings(moduleScope.modulePaths, scope.modulePaths);
   }
 
   private static followedSourceModuleEqual(current: FollowedSyncSource, expected: FollowedSyncSource, module: string): boolean {

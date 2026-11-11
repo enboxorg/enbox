@@ -1,4 +1,4 @@
-import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 
 import type { ObservedCollection } from './observed-store.js';
 import type { RecordCodecMap } from '../record-codec.js';
@@ -15,12 +15,12 @@ import type {
 } from '../typed-enbox.js';
 import type { ModulePaths, ModuleRolePaths, SingletonModulePaths, TypedModule } from '../module-types.js';
 
+import { canonicalJsonStringify } from '@enbox/common';
 import { createCommand } from './command.js';
 import { createObservedCollection } from './observed-store.js';
-import { getRuleSetAtPath } from '@enbox/dwn-sdk-js';
+import { Records } from '@enbox/dwn-sdk-js';
 import { resolveTypedModuleGraph } from '../define-module.js';
 import { assertValidRecordWithin, resolveRecordQueryNode } from '../record-query.js';
-import { collectModulePaths, isModuleRolePath } from '../module-paths.js';
 
 type DefinitionOf<P extends TypedModule> = P['definition'];
 type CodecsOf<P extends TypedModule> = P['codecs'];
@@ -136,7 +136,7 @@ function createTypedModuleStore<
         // RecordsDelete identifies a record by ID; validate path membership before dispatch.
         const record = await typed().records.read(path, id);
         scope.assertCurrent();
-        if (record !== undefined && within !== undefined && record.contextId.split('/').slice(0, -1).join('/') !== within) {
+        if (record !== undefined && within !== undefined && Records.getParentContextFromOfContextId(record.contextId) !== within) {
           throw new TypeError(`Store collection: record '${id}' belongs to another parent context.`);
         }
         return record;
@@ -183,7 +183,7 @@ function createTypedModuleStore<
       path: Path,
       requested: StoreCollectionOptions<P, NoInfer<Path>> = {},
     ): Path extends `${string}/${string}` ? StoreCollectionFamily<DataForPath<C, Path>> : StoreCollection<DataForPath<C, Path>> => {
-      assertCollectionPath(module.definition, path);
+      const node = assertCollectionPath(graph, path);
       for (const key of ['from', 'within', 'moduleRole', 'materialize', 'signal']) {
         if (Object.hasOwn(requested, key)) {
           throw new TypeError(`Store collection: '${key}' is owned by the collection scope.`);
@@ -201,9 +201,9 @@ function createTypedModuleStore<
       if (!Number.isSafeInteger(limit) || limit <= 0) {
         throw new RangeError('Store collection: pagination.limit must be a positive safe integer.');
       }
-      const key = JSON.stringify([path, canonicalValue({ ...options, pagination: { limit }, loadAll: options.loadAll === true })]);
+      const key = canonicalJsonStringify([path, { ...options, pagination: { limit }, loadAll: options.loadAll === true }]);
       if (!collections.has(key)) {
-        if (resolveRecordQueryNode(graph, path).parentPhysicalDepth > 0) {
+        if (node.parentPhysicalDepth > 0) {
           const parents = new Map<string, StoreCollection<DataForPath<C, Path>>>();
           const family: StoreCollectionFamily<DataForPath<C, Path>> = {
             within: (parentContextId: string): StoreCollection<DataForPath<C, Path>> => {
@@ -230,16 +230,18 @@ function createTypedModuleStore<
   };
 }
 
-function assertCollectionPath(definition: ModuleDefinition, path: string): void {
-  if (!collectModulePaths(definition.structure).has(path)) {
+function assertCollectionPath(graph: ResolvedModuleGraph, path: string): ResolvedModuleNode {
+  const node = graph.nodesByDeclaredPath.get(path);
+  if (node?.kind !== 'record') {
     throw new TypeError(`Store collection: unknown module path '${path}'.`);
   }
-  if (isModuleRolePath(definition, path)) {
+  if (node.ruleSet.$role === true) {
     throw new TypeError('Store collection: role records use the context membership API.');
   }
-  if (getRuleSetAtPath(path, definition.structure)?.$recordLimit?.max === 1) {
+  if (node.ruleSet.$recordLimit?.max === 1) {
     throw new TypeError('Store collection: singleton paths use native().records.set().');
   }
+  return node;
 }
 
 function assertDirectParent(graph: ResolvedModuleGraph, path: string, within: string): void {
@@ -254,12 +256,4 @@ function assertRecordId(id: unknown): asserts id is string {
   if (typeof id !== 'string' || id.length === 0) {
     throw new TypeError('Store collection: record ID must be a non-empty string.');
   }
-}
-
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) { return value.map(canonicalValue); }
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonicalValue(entry)]));
-  }
-  return value;
 }

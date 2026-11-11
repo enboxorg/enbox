@@ -1,5 +1,6 @@
 import type { AbstractLevel } from 'abstract-level';
 
+import { isSyncMessageStoreLevelNotFound } from './sync-message-store-level.js';
 import { runWithCrossContextLock } from '@enbox/common';
 
 export const SYNC_STORE_FORMAT_KEY = 'enbox:sync-store-format';
@@ -15,7 +16,7 @@ export async function ensureSyncStoreFormat(
     try {
       format = await db.get(SYNC_STORE_FORMAT_KEY);
     } catch (error: unknown) {
-      if ((error as { code?: string }).code !== 'LEVEL_NOT_FOUND') {
+      if (!isSyncMessageStoreLevelNotFound(error)) {
         throw error;
       }
     }
@@ -23,12 +24,7 @@ export async function ensureSyncStoreFormat(
     if (format === SYNC_STORE_FORMAT) {
       return;
     }
-    if (format !== undefined) {
-      throw incompatibleSyncStore();
-    }
-
-    const existingKeys = await db.keys({ limit: 1 }).all();
-    if (existingKeys.length > 0) {
+    if (format !== undefined || (await db.keys({ limit: 1 }).all()).length > 0) {
       throw incompatibleSyncStore();
     }
     await db.put(SYNC_STORE_FORMAT_KEY, SYNC_STORE_FORMAT);

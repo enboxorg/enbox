@@ -57,15 +57,7 @@ export function defineModule<
     codecs     : frozenCodecs,
     dependencies,
   });
-  const definitions = new Map<string, ModuleDefinition>([[snapshot.module, snapshot]]);
-  const visited = new Set<object>([artifact]);
-  for (const dependency of Object.values(dependencies as ModuleDependencies)) {
-    collectDependencyDefinitions(dependency, definitions, visited);
-  }
-  resolvedGraphs.set(
-    artifact,
-    resolveModuleGraph(snapshot, uri => definitions.get(uri), { requireKeyAgreement: false }),
-  );
+  resolvedGraphs.set(artifact, computeTypedModuleGraph(artifact, true));
   return artifact;
 }
 
@@ -100,10 +92,10 @@ export function resolveTypedModuleGraph(value: unknown): ResolvedModuleGraph {
   return computeTypedModuleGraph(value);
 }
 
-function computeTypedModuleGraph(value: globalThis.Record<string, unknown>): ResolvedModuleGraph {
+function computeTypedModuleGraph(value: globalThis.Record<string, unknown>, rootValidated = false): ResolvedModuleGraph {
   const definitions = new Map<string, ModuleDefinition>();
   const visited = new Set<object>();
-  collectDependencyDefinitions(value, definitions, visited);
+  collectDependencyDefinitions(value, definitions, visited, rootValidated);
   return resolveModuleGraph(value.definition as ModuleDefinition, uri => definitions.get(uri), { requireKeyAgreement: false });
 }
 
@@ -137,12 +129,13 @@ function collectDependencyDefinitions(
   value: globalThis.Record<string, unknown>,
   definitions: Map<string, ModuleDefinition>,
   visited: Set<object>,
+  skipValidation = false,
 ): void {
   if (visited.has(value)) {
     return;
   }
   visited.add(value);
-  if (!resolvedGraphs.has(value)) {
+  if (!skipValidation && !resolvedGraphs.has(value)) {
     assertTypedModuleComponents(value.definition, value.codecs);
     assertDependencyAliases(value.definition as ModuleDefinition, value.dependencies);
   }

@@ -94,14 +94,22 @@ export function followedModuleScopeEqual(a: FollowedModuleScope, b: FollowedModu
   return a.contextPath === b.contextPath && a.moduleRole === b.moduleRole && sameStrings(a.modulePaths, b.modulePaths);
 }
 
+export function followedModuleSelectionEqual(
+  left: FollowedModuleScope | null | undefined,
+  right: FollowedModuleScope | null | undefined,
+): boolean {
+  if (left === undefined || left === null) {
+    return left === right;
+  }
+  return right !== undefined && right !== null && followedModuleScopeEqual(left, right);
+}
+
 /** Durable state equality includes unavailable selections while root equality does not. */
 export function followedSyncSourceStateEqual(a: FollowedSyncSource, b: FollowedSyncSource): boolean {
   const modules = Object.keys(a.modules);
-  return followedSyncSourceActiveEqual(a, b) && modules.length === Object.keys(b.modules).length && modules.every(module => {
-    const left = a.modules[module];
-    const right = b.modules[module];
-    return left === null ? right === null : right !== undefined && right !== null && followedModuleScopeEqual(left, right);
-  });
+  return followedSyncSourceActiveEqual(a, b) &&
+    modules.length === Object.keys(b.modules).length &&
+    modules.every(module => followedModuleSelectionEqual(a.modules[module], b.modules[module]));
 }
 
 export function normalizeFollowedModules(modules: readonly string[]): string[] {
@@ -114,9 +122,10 @@ export function normalizeFollowedModules(modules: readonly string[]): string[] {
 
 function normalizeAuthority(source: Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'rootModule' | 'roles' | 'sourceDid'>):
 Pick<FollowedSyncSource, 'actorDid' | 'contextId' | 'rootModule' | 'roles' | 'sourceDid'> {
-  for (const [field, value] of Object.entries({
-    actorDid: source.actorDid, contextId: source.contextId, rootModule: source.rootModule, sourceDid: source.sourceDid,
-  })) {assertString(value, field);}
+  assertString(source.actorDid, 'actorDid');
+  assertString(source.contextId, 'contextId');
+  assertString(source.rootModule, 'rootModule');
+  assertString(source.sourceDid, 'sourceDid');
   if (!Array.isArray(source.roles) || source.roles.length === 0) {
     throw new TypeError('FollowedSyncSource: roles must contain at least one candidate.');
   }
@@ -165,6 +174,6 @@ function assertPath(value: unknown, field: string): asserts value is string {
   }
 }
 
-function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+export function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }

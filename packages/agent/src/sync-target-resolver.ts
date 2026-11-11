@@ -189,8 +189,9 @@ export class SyncTargetResolver {
 
   /** Each verified module in a followed source has its own feed and checkpoint pair. */
   public buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> {
-    return Promise.all(Object.keys(source.modules).filter(module => source.modules[module] !== null)
-      .map(module => this.buildTargetForSource(source, delegateDid, module)));
+    return Promise.all(Object.entries(source.modules)
+      .filter(([, scope]) => scope !== null)
+      .map(([module]) => this.buildTargetForSource(source, delegateDid, module)));
   }
 
   /** Attach the current full delegate grant immediately before a role request. */

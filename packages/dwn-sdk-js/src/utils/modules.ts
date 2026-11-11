@@ -160,7 +160,6 @@ export class Modules {
     moduleDefinition: ModuleDefinition,
     keyDeriver: EncryptionKeyDeriver,
   ): Promise<ModuleDefinition> {
-    // clone before modify
     const clone = structuredClone(moduleDefinition);
 
     const basePath = [KeyDerivationScheme.ModulePath, moduleDefinition.module];
@@ -169,7 +168,7 @@ export class Modules {
     };
 
     async function injectKeys(ruleSet: ModuleRuleSet, parentPath: string[]): Promise<void> {
-      for (const key in ruleSet) {
+      for (const key of Object.keys(ruleSet)) {
         if (key.startsWith('$')) {
           continue;
         }
