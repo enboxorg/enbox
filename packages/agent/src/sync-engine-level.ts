@@ -2991,8 +2991,7 @@ export class SyncEngineLevel implements SyncEngine {
   private static followedSourceModuleEqual(current: FollowedSyncSource, expected: FollowedSyncSource, module: string): boolean {
     if (!followedSyncSourceActiveEqual(current, expected)) {return false;}
     const left = current.modules[module];
-    const right = expected.modules[module];
-    return left !== undefined && left !== null && right !== undefined && right !== null && followedModuleScopeEqual(left, right);
+    return left !== undefined && left !== null && followedModuleSelectionEqual(left, expected.modules[module]);
   }
 
   /** Parked identities cannot run; role targets also require their actor's current registration. */

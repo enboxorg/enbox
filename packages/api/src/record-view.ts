@@ -459,9 +459,12 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     try {
       const result = await this._dwn.records.query(query);
       requireDwnSuccess('RecordView query', result);
-      const records = await this._materializeRecords(result.records);
+      const [records, resolvedCurrentness] = await Promise.all([
+        this._materializeRecords(result.records),
+        this.resolveCurrentness(),
+      ]);
 
-      let currentness = await this.resolveCurrentness();
+      let currentness = resolvedCurrentness;
       if (this._isDirectRemote && this._directRemoteUnavailableSubscriptions.size > 0) {
         currentness = { current: false };
       }

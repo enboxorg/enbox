@@ -23,9 +23,8 @@ import { createModuleReadinessApi } from './module-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
-import { orderTypedModuleDependencies } from './define-module.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { collectModulePaths, isModuleRolePath } from './module-paths.js';
+import { orderTypedModuleDependencies, resolveTypedModuleGraph } from './define-module.js';
 
 /**
  * The main Enbox API interface. It provides module-scoped access to
@@ -207,8 +206,10 @@ export class Enbox {
       sync   : this.agent.sync,
     });
     for (const artifact of orderTypedModuleDependencies([module])) {
-      const rolePaths = [...collectModulePaths(artifact.definition.structure)]
-        .filter(path => isModuleRolePath(artifact.definition, path));
+      const graph = resolveTypedModuleGraph(artifact);
+      const rolePaths = [...graph.nodesByDeclaredPath.values()]
+        .filter(node => node.kind === 'record' && node.ruleSet.$role === true)
+        .map(node => node.declaringModulePath);
       if (rolePaths.length > 0) {
         this.agent.dwn.registerAudienceKeyDeliveryModule({
           ...deliverySession,

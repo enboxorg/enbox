@@ -98,10 +98,10 @@ export function followedModuleSelectionEqual(
   left: FollowedModuleScope | null | undefined,
   right: FollowedModuleScope | null | undefined,
 ): boolean {
-  if (left === undefined || left === null) {
+  if (left === undefined || left === null || right === undefined || right === null) {
     return left === right;
   }
-  return right !== undefined && right !== null && followedModuleScopeEqual(left, right);
+  return followedModuleScopeEqual(left, right);
 }
 
 /** Durable state equality includes unavailable selections while root equality does not. */

@@ -110,19 +110,22 @@ export function getRuleSetAtPath(modulePath: string, structure: { [key: string]:
  */
 export function walkModuleRuleSets(
   structure: ModuleRuleSet,
-  visit: (modulePath: string, ruleSet: ModuleRuleSet) => void,
+  visit: (modulePath: string, ruleSet: ModuleRuleSet) => boolean | void,
 ): void {
-  const walk = (ruleSet: ModuleRuleSet, parentPath: string): void => {
+  const walk = (ruleSet: ModuleRuleSet, parentPath: string): boolean => {
     for (const [name, child] of Object.entries(ruleSet)) {
       if (name.startsWith('$')) {
         continue;
       }
       const path = parentPath === '' ? name : `${parentPath}/${name}`;
-      visit(path, child as ModuleRuleSet);
-      if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
-        walk(child as ModuleRuleSet, path);
+      if (visit(path, child as ModuleRuleSet) === false) {
+        return false;
+      }
+      if (child !== null && typeof child === 'object' && !Array.isArray(child) && !walk(child as ModuleRuleSet, path)) {
+        return false;
       }
     }
+    return true;
   };
   walk(structure, '');
 }
@@ -137,9 +140,10 @@ export class Modules {
       return true;
     }
     let hasRole = false;
-    walkModuleRuleSets(definition.structure as ModuleRuleSet, (_path, ruleSet): void => {
+    walkModuleRuleSets(definition.structure as ModuleRuleSet, (_path, ruleSet): boolean | void => {
       if (ruleSet.$role === true) {
         hasRole = true;
+        return false;
       }
     });
     return hasRole;

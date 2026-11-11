@@ -64,7 +64,6 @@ import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from
 import {
   authoredModuleDefinitionsEqual,
   DateSort,
-  getRuleSetAtPath,
   getTypeName,
   Modules,
   preloadModuleDefinitions,
@@ -1395,22 +1394,12 @@ export class TypedEnbox<
     return node;
   }
 
-  /** Resolve the codec assigned to one validated module path. */
-  private resolveCodec(path: string): RecordCodec<unknown> {
-    return this.resolveNodeCodec(path, this._assertValidPath(path));
-  }
-
   private resolveNodeCodec(path: string, node: ResolvedModuleNode): RecordCodec<unknown> {
     const codec = this._codecs[node.typeName];
     if (codec === undefined) {
       throw new Error(`TypedEnbox: module path '${path}' does not have a record codec.`);
     }
     return codec;
-  }
-
-  /** Resolve one statically known path's application codec. */
-  private getCodec<Path extends ModulePaths<D> & string>(path: string): RecordCodec<DataForPath<C, Path>> {
-    return this.resolveCodec(path) as RecordCodec<DataForPath<C, Path>>;
   }
 
   /** Bind a path codec to one canonical record returned by the raw DWN API. */
@@ -1463,11 +1452,12 @@ export class TypedEnbox<
     for (const childPath of childPaths) {
       this.assertContextPath(childPath);
       const childName = childPath.slice(directChildPrefix.length);
-      const ruleSet = getRuleSetAtPath(childPath, this._definition.structure);
+      const childNode = this._resolvedGraph.nodesByDeclaredPath.get(childPath);
       if (!childPath.startsWith(directChildPrefix)
         || childName === ''
         || childName.includes('/')
-        || ruleSet?.$recordLimit?.max !== 1) {
+        || childNode?.kind !== 'record'
+        || childNode.ruleSet.$recordLimit?.max !== 1) {
         throw new TypeError(
           `Record materialization: '${childPath}' must be a direct child of '${parentPath}' ` +
           `with $recordLimit.max: 1.`,
@@ -1537,9 +1527,9 @@ export class TypedEnbox<
     }]));
     const parentIds = [...parentById.keys()];
     await Promise.all(childPaths.map(async (childPath): Promise<void> => {
-      const childName = getTypeName(childPath);
-
-      const childType = this._definition.types[childName];
+      const childNode = this._assertValidPath(childPath);
+      const childName = childNode.typeName;
+      const childCodec = this.resolveNodeCodec(childPath, childNode);
       const filter = compileRecordFilter(
         this._resolvedGraph,
         childPath,
@@ -1573,8 +1563,8 @@ export class TypedEnbox<
 
         const childRecord = bindRecordCodec(
           record,
-          this.resolveCodec(childPath),
-          childType?.dataFormats,
+          childCodec,
+          childNode.recordType.dataFormats,
           this._options.signal,
         );
         parentEntry.children.set(childName, Object.freeze({
@@ -1871,7 +1861,9 @@ export class TypedEnbox<
     request: TypedCreateOptions<C, Path>,
   ): Promise<TypedRecord<DataForPath<C, Path>>> {
     const normalizedPath = normalizePath(path);
-    if (getRuleSetAtPath(normalizedPath, this._definition.structure)?.$role === true
+    const candidateNode = this._resolvedGraph.nodesByDeclaredPath.get(normalizedPath);
+    if (candidateNode?.kind === 'record'
+      && candidateNode.ruleSet.$role === true
       && request.recipient === undefined) {
       throw new TypeError(`TypedEnbox.records.create: role path '${normalizedPath}' requires a recipient.`);
     }
