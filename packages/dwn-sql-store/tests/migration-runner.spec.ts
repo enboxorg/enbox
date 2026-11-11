@@ -2,7 +2,6 @@ import type { DwnDatabaseType } from '../src/types.js';
 import type { Migration } from 'kysely';
 
 import { allDwnMigrations } from '../src/migrations/index.js';
-import { MessageStoreSql } from '../src/message-store-sql.js';
 import { migration001InitialSchema } from '../src/migrations/001-initial-schema.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -70,27 +69,6 @@ describe('runDwnStoreMigrations (Kysely Migrator)', () => {
       });
 
       // ─── Fresh database tests ───────────────────────────────────────
-
-      it('rejects old and mixed module schemas before recording or applying migrations', async () => {
-        await db.schema.createTable('messageStoreMessages')
-          .addColumn('protocol', 'text')
-          .addColumn('protocolPath', 'text')
-          .execute();
-
-        await expect(runDwnStoreMigrations(db, dialect)).rejects.toThrow('MessageStoreIncompatibleFormat');
-        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(false);
-
-        const store = new MessageStoreSql(dialect);
-        await expect(store.open()).rejects.toThrow('MessageStoreIncompatibleFormat');
-        await expect(store.open()).rejects.toThrow('MessageStoreIncompatibleFormat');
-        await store.close();
-
-        await db.schema.alterTable('messageStoreMessages').addColumn('module', 'text').execute();
-        await db.schema.alterTable('messageStoreMessages').addColumn('modulePath', 'text').execute();
-
-        await expect(runDwnStoreMigrations(db, dialect)).rejects.toThrow('MessageStoreIncompatibleFormat');
-        expect(await dialect.hasTable(db, 'kysely_migration')).toBe(false);
-      });
 
       it('should create Kysely migration tracking tables on first run', async () => {
         let exists = await dialect.hasTable(db, 'kysely_migration');

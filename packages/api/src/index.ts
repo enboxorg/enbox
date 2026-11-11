@@ -61,6 +61,7 @@ export type {
   ExactModuleCodecs,
   ExactModuleDependencies,
   ModuleAttachmentPaths,
+  ModuleContextAttachmentPath,
   ModuleDependencies,
   ModuleDependenciesFor,
   ModuleDependency,

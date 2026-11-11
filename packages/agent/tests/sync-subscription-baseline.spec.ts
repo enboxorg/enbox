@@ -13,7 +13,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import type { ReplicationLinkState, SyncEvent } from '../src/types/sync.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 const DID = 'did:example:alice';
@@ -109,12 +108,10 @@ describe('SyncEngineLevel — dual-subscription wake baseline', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-subscription-baseline-spec');
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-subscription-baseline.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-subscription-baseline.spec.ts');
     sinon.restore();
   });
 

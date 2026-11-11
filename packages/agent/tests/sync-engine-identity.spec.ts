@@ -7,7 +7,6 @@ import { RateLimitError } from '@enbox/dwn-clients';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { deferred } from './utils/deferred.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { SyncScopeClosureValidator } from '../src/sync-scope-closure-validator.js';
@@ -48,7 +47,6 @@ describe('SyncEngineLevel — identity management', () => {
   });
 
   beforeEach(async () => {
-    await ensureSyncStoreFormat(db, 'sync-engine-identity-spec');
     sinon.stub(SyncScopeClosureValidator.prototype, 'validateClosure').resolves();
   });
 

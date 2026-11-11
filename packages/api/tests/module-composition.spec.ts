@@ -243,4 +243,66 @@ describe('typed module composition', () => {
     await expect(typed.records.query('note/comment', { within: 'W/N' })).rejects.toThrow('is missing $keyAgreement');
     expect(configurations).toBe(0);
   });
+
+  it('scopes a descendant $ref attachment to an ancestor contextId while requiring explicit parent depth on writes', async () => {
+    const writes: unknown[] = [];
+    const queries: unknown[] = [];
+    const dwn = {
+      isDelegate : false,
+      modules    : {
+        query: async (req: { filter: { module: string } }): Promise<unknown> => ({
+          status  : { code: 200, detail: 'OK' },
+          modules : [{
+            definition: req.filter.module === BaseDefinition.module
+              ? { ...BaseDefinition, $keyAgreement: {} }
+              : DiscussionDefinition,
+          }],
+        }),
+      },
+      records: {
+        query: async (req: unknown): Promise<unknown> => {
+          queries.push(req);
+          return { status: { code: 200, detail: 'OK' }, records: [] };
+        },
+        write: async (req: unknown): Promise<unknown> => {
+          writes.push(req);
+          return {
+            status : { code: 202, detail: 'Accepted' },
+            record : { id: 'C1', dataFormat: 'application/json' },
+          };
+        },
+      },
+      withRecordExecutionContext(): DwnApi {
+        return dwn;
+      },
+    } as unknown as DwnApi;
+
+    const scoped = new TypedEnbox(dwn, discussion()).scope({
+      allowedPaths : new Set(['note/comment']),
+      contextId    : 'W1',
+      contextPath  : 'note',
+    });
+
+    await scoped.query('note/comment');
+    expect(queries).toEqual([expect.objectContaining({
+      filter: expect.objectContaining({
+        contextId  : 'W1',
+        module     : DiscussionDefinition.module,
+        modulePath : 'note/comment',
+      }),
+    })]);
+
+    await expect(scoped.create('note/comment', { data: { text: 'missing note parent' } }))
+      .rejects.toThrow('Context-bound create at \'note/comment\' requires its direct parent context.');
+    await expect(scoped.create('note/comment', { data: { text: 'escaped context' }, parentContextId: 'W2/N1' }))
+      .rejects.toThrow('Context-bound selectors cannot escape their context.');
+
+    await scoped.create('note/comment', { data: { text: 'attached under W1/N1' }, parentContextId: 'W1/N1' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      module          : DiscussionDefinition.module,
+      modulePath      : 'note/comment',
+      parentContextId : 'W1/N1',
+    });
+  });
 });

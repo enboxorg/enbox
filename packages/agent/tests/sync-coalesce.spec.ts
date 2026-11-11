@@ -11,7 +11,6 @@ import { deferred as createDeferred } from './utils/deferred.js';
 
 function createEngine(registeredDids: string[] = []): { engine: SyncEngineLevel; run: SinonStub } {
   const engine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-  sinon.stub(engine as any, 'ensureStoreFormat').resolves();
   const run = sinon.stub().resolves();
   (engine as any)._runCoordinator = { run };
   (engine as any)._identityStore = {

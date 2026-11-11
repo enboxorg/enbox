@@ -12,7 +12,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import type { SyncLinkController } from '../src/sync-link-controller.js';
 
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { deferred } from './utils/deferred.js';
@@ -81,12 +80,10 @@ describe('SyncEngineLevel — replication generation fencing', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-live-pull-fencing-spec');
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
     sinon.restore();
   });
 
@@ -843,12 +840,10 @@ describe('SyncEngineLevel — transport lifecycle connectivity', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-transport-attachment-spec');
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-live-pull-fencing.spec.ts');
     sinon.restore();
   });
 

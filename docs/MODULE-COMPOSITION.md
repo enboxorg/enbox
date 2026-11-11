@@ -163,9 +163,7 @@ The private sync catalog stores one `modules` map for each accepted context.
 Its root entry always has a verified scope; a selected consumer has either the
 same scope shape or `null` while unavailable. Root and consumer bindings use one
 lease implementation. Graphs are reconstructed from admitted local evidence;
-there is no separate graph cache or second remote recovery path. This layout uses
-sync-store format `modules-v2` and requires a freshly initialized private sync
-store when upgrading from an older format.
+there is no separate graph cache or second remote recovery path.
 
 For a member, each extension gets a separate replication link at the root's
 accepted owner endpoint. The owner must publish the extension definition. The SDK

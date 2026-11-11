@@ -1,12 +1,5 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { DwnMessage, DwnResponseStatus, EnboxPlatformAgent } from '@enbox/agent';
-import type {
-  ModuleContextRoot,
-  ModuleDefinition,
-  ResolvedModuleGraph,
-  ResolvedModuleNode,
-  ResolvedModuleRoleScope,
-  ResolvedRoleReference,
-} from '@enbox/dwn-sdk-js';
 
 import { DwnInterface } from '@enbox/agent';
 
@@ -15,15 +8,12 @@ import type { RecordCodecMap } from './record-codec.js';
 import type { TypedEnbox } from './typed-enbox.js';
 import type { TypedModule } from './module-types.js';
 
+import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { resolveTypedModuleGraph } from './define-module.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
-import { installedModuleDefinitionsEqual, recordRepresentationsEqual } from './module-definition-utils.js';
 import {
   preloadModuleDefinitions,
-  resolveModuleContextRoles,
-  resolveModuleContextRoot,
   resolveModuleGraph,
-  resolveModuleRoleScope,
   validateImportedModuleContracts,
 } from '@enbox/dwn-sdk-js';
 
@@ -69,22 +59,10 @@ export class ModuleReadinessError extends Error {
   }
 }
 
-/** Module installation, hosted publication, and canonical graph inspection exposed as `enbox.modules`. */
+/** Module installation and optional hosted publication exposed as `enbox.modules`. */
 export interface ModuleReadinessApi {
   /** Makes application modules ready for the current session. */
   ensureReady(options: EnsureModulesReadyOptions): Promise<void>;
-  /** Resolve and memoize the canonical graph for a typed module artifact. */
-  resolveGraph(module: TypedModule): ResolvedModuleGraph;
-  /** Return contextual read roles directly beneath a local root path in preference order. */
-  resolveContextRoles(graph: ResolvedModuleGraph, path: string): readonly string[];
-  /** Return the context root node in `graph` (either the root record node or its top-level `$ref` attachment node). */
-  resolveContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode;
-  /** Resolve the readable and allowed record paths granted to `role` under its context root in `graph`. */
-  resolveRoleScope(graph: ResolvedModuleGraph, role: ResolvedRoleReference): ResolvedModuleRoleScope;
-  /** Compare two module definition or sub-tree values canonically. */
-  definitionsEqual(left: unknown, right: unknown): boolean;
-  /** Whether two resolved record nodes have the same wire representation, owning module/path, and ancestor chain. */
-  representationsEqual(expected: ResolvedModuleNode, actual: ResolvedModuleNode): boolean;
 }
 
 type TypedModuleAccessor = <
@@ -115,30 +93,6 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
     this.connectedDid = options.connectedDid;
     this.delegateDid = options.delegateDid;
     this.using = options.using;
-  }
-
-  public resolveGraph(module: TypedModule): ResolvedModuleGraph {
-    return resolveTypedModuleGraph(module);
-  }
-
-  public resolveContextRoles(graph: ResolvedModuleGraph, path: string): readonly string[] {
-    return resolveModuleContextRoles(graph, path);
-  }
-
-  public resolveContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode {
-    return resolveModuleContextRoot(graph, root);
-  }
-
-  public resolveRoleScope(graph: ResolvedModuleGraph, role: ResolvedRoleReference): ResolvedModuleRoleScope {
-    return resolveModuleRoleScope(graph, role);
-  }
-
-  public definitionsEqual(left: unknown, right: unknown): boolean {
-    return installedModuleDefinitionsEqual(left, right);
-  }
-
-  public representationsEqual(expected: ResolvedModuleNode, actual: ResolvedModuleNode): boolean {
-    return recordRepresentationsEqual(expected, actual);
   }
 
   public async ensureReady(options: EnsureModulesReadyOptions): Promise<void> {
@@ -242,7 +196,7 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
         }
         operation = 'query';
         const installed = await this.queryHostedDefinition(targetDid, uri);
-        if (!this.definitionsEqual(installed, message.descriptor.definition)) {
+        if (!installedModuleDefinitionsEqual(installed, message.descriptor.definition)) {
           operation = 'publish';
           throw new Error('The hosted DWN retained a different active module definition.');
         }

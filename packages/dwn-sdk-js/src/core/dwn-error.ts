@@ -101,7 +101,6 @@ export enum DwnErrorCode {
   MessageStoreCompleteDataInvalidTarget = 'MessageStoreCompleteDataInvalidTarget',
   MessageStoreDeleteLogEntryMissing = 'MessageStoreDeleteLogEntryMissing',
   MessageStoreFingerprintScopeMutation = 'MessageStoreFingerprintScopeMutation',
-  MessageStoreIncompatibleFormat = 'MessageStoreIncompatibleFormat',
   MessageStorePreSubstrateLayout = 'MessageStorePreSubstrateLayout',
   MessageStoreReplicationPositionOverflow = 'MessageStoreReplicationPositionOverflow',
   MessageStoreUpdateMessageAndIndexesCidMismatch = 'MessageStoreUpdateMessageAndIndexesCidMismatch',

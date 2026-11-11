@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { computeProjectionId } from '../src/types/sync.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
 import { SyncPushFailuresError, SyncRunCancelledError } from '../src/sync-runtime-errors.js';
@@ -113,14 +112,12 @@ describe('SyncEngineLevel lifecycle', () => {
   beforeEach(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-lifecycle-spec');
     await db.open();
-    await ensureSyncStoreFormat(db, 'sync-lifecycle.spec.ts');
   });
 
   afterEach(async () => {
     sinon.restore();
     if (db.status === 'open') {
       await db.clear();
-      await ensureSyncStoreFormat(db, 'sync-lifecycle.spec.ts');
     }
     if (db.status !== 'closed') {
       await db.close();
@@ -189,7 +186,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should time out close without closing storage later after the active sync settles', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const syncStarted = createDeferred();
     const releaseSync = createDeferred();
@@ -219,7 +215,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should retain a timed-out subscription close across lifecycle retries', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
@@ -256,7 +251,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should share one close deadline across subscription and sync-lock waits', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const closeStarted = createDeferred();
     const releaseClose = createDeferred();
@@ -296,7 +290,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should never run a close that times out behind an earlier lifecycle transition', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const startEntered = createDeferred();
     const releaseStart = createDeferred();
@@ -325,7 +318,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should time out clear without deleting durable state later after background work settles', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
@@ -369,7 +361,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should cancel a registration that times out behind another sync owner', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     expect(engine['_lifecycle'].tryAcquireSync()).toBe(true);
@@ -392,7 +383,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should cancel a registration that times out behind a cross-context identity mutation', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseLock = createDeferred();
@@ -423,7 +413,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should not persist a registration after its preparation times out', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseValidation = createDeferred();
@@ -454,7 +443,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should preserve an identity when stopped-runtime work does not drain before unregister timeout', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const releaseTask = createDeferred();
@@ -493,7 +481,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should finish unregister atomically after its preparation consumes almost all of the deadline', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     await engine.setIdentityOptions({ did, options: { modules: 'all' } });
@@ -534,7 +521,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should preserve old identity options when live work does not drain before update timeout', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const did = 'did:example:alice';
     const oldOptions = { modules: 'all' as const };
@@ -710,7 +696,6 @@ describe('SyncEngineLevel lifecycle', () => {
 
   it('should recover exhausted durable repairs through sync, settle, and explicit retry', async () => {
     const engine = new SyncEngineLevel({ db });
-    await engine['ensureStoreFormat']();
     const clock = sinon.useFakeTimers();
     const internal = engine as any;
     const tenantDid = 'did:example:repair-retry';

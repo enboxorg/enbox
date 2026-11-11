@@ -25,7 +25,6 @@ import type { InsertObject, Kysely, Selectable, SelectQueryBuilder, Transaction,
 import * as block from 'multiformats/block';
 import * as cbor from '@ipld/dag-cbor';
 
-import { assertModuleStoreFormat } from './module-store-format.js';
 import { executeWithTransaction } from './utils/transaction.js';
 import { extractTagsAndSanitizeIndexes } from './utils/sanitize.js';
 import { filterSelectQuery } from './utils/filter.js';
@@ -138,7 +137,6 @@ export class MessageStoreSql implements MessageStore {
     this.#db = new KyselyDatabase<DwnDatabaseType>({ dialect: this.#dialect });
 
     try {
-      await assertModuleStoreFormat(this.#db);
       await this.assertTablesExist();
       await this.assertNoPreSubstrateRows();
       await this.epoch();

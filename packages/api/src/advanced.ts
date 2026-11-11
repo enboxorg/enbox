@@ -10,11 +10,23 @@
 
 export { DwnApi } from './dwn-api.js';
 export { ObservedView } from './observed-view.js';
+export { recordRepresentationsEqual } from './module-definition-utils.js';
 export { resolveTypedModuleGraph } from './define-module.js';
 export { combineAbortSignals, openView, whileSignalsActive } from './view-opening.js';
-export { consumedRecordRepresentation, installedModuleDefinitionsEqual, recordRepresentationsEqual } from './module-definition-utils.js';
+export {
+  resolveModuleContextRoles,
+  resolveModuleContextRoot,
+  resolveModuleRoleScope,
+} from '@enbox/dwn-sdk-js';
 
 export type { RecordExecutionContext } from './record-types.js';
+export type {
+  ModuleContextRoot,
+  ResolvedModuleGraph,
+  ResolvedModuleNode,
+  ResolvedModuleRoleScope,
+  ResolvedRoleReference,
+} from '@enbox/dwn-sdk-js';
 export type {
   MessagesSubscribeRequest,
   MessagesSubscribeResponse,

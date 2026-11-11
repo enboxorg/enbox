@@ -6,7 +6,6 @@ import { Level } from 'level';
 import { Message } from '@enbox/dwn-sdk-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 import { deferred as createDeferred } from './utils/deferred.js';
@@ -92,13 +91,11 @@ describe('SyncEngineLevel late subscription callbacks', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-late-callbacks-spec');
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-late-callbacks.spec.ts');
   });
 
   afterEach(async () => {
     sinon.restore();
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-late-callbacks.spec.ts');
   });
 
   afterAll(async () => {

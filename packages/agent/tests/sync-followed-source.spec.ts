@@ -18,7 +18,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { buildLinkKey } from '../src/sync-link-key.js';
 import { deferred } from './utils/deferred.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
@@ -128,12 +127,10 @@ describe('SyncEngineLevel — followed sources', () => {
   beforeAll(async () => {
     db = new Level<string, string>('__TESTDATA__/sync-followed-source-spec');
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-followed-source.spec.ts');
   });
 
   afterEach(async () => {
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-followed-source.spec.ts');
     sinon.restore();
   });
 

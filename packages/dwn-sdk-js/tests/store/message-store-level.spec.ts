@@ -57,7 +57,7 @@ describe('MessageStoreLevel Test Suite', () => {
   });
 
   describe('createLevelDatabase', function () {
-    it('initializes concurrent clients of one empty database with the same format and epoch', async () => {
+    it('initializes concurrent clients of one empty database with the same epoch', async () => {
       const location = `TEST-MESSAGESTORE-CONCURRENT-OPEN-${crypto.randomUUID()}`;
       const database = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
       await database.open();
@@ -72,46 +72,11 @@ describe('MessageStoreLevel Test Suite', () => {
         const epochs = await Promise.all(stores.map(store => store.epoch()));
         expect(new Set(epochs).size).toBe(1);
         expect(await database.get('!meta!epoch')).toBe(epochs[0]);
-        expect(await database.get('!meta!format')).toBe('enbox-modules-v1');
       } finally {
         await Promise.allSettled(stores.map(store => store.close()));
         await database.open();
         await database.clear();
         await database.close();
-      }
-    });
-
-    it('rejects the previous wire format even when replication metadata already exists', async () => {
-      const location = 'TEST-MESSAGESTORE-OLD-FORMAT';
-      const oldDb = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
-      await oldDb.put('!meta!epoch', 'existing-replication-epoch');
-      await oldDb.close();
-      const store = new MessageStoreLevel({ location });
-      try {
-        await expect(store.open()).rejects.toThrow(DwnErrorCode.MessageStoreIncompatibleFormat);
-      } finally {
-        await store.close();
-        const db = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
-        expect(await db.get('!meta!epoch')).toBe('existing-replication-epoch');
-        await db.clear();
-        await db.close();
-      }
-    });
-
-    it('rejects an unknown store format without replacing its marker', async () => {
-      const location = 'TEST-MESSAGESTORE-UNKNOWN-FORMAT';
-      const db = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
-      await db.put('!meta!format', 'enbox-future-format');
-      await db.close();
-      const store = new MessageStoreLevel({ location });
-      try {
-        await expect(store.open()).rejects.toThrow(DwnErrorCode.MessageStoreIncompatibleFormat);
-      } finally {
-        await store.close();
-        const cleanup = await createLevelDatabase<string>(location, { valueEncoding: 'utf8' });
-        expect(await cleanup.get('!meta!format')).toBe('enbox-future-format');
-        await cleanup.clear();
-        await cleanup.close();
       }
     });
 

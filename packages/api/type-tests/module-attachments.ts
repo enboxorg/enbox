@@ -1,5 +1,13 @@
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
-import type { ContextRecordsApi, ContextRootPath, Enbox, ModuleAttachmentPaths, ModulePaths, TypedModule } from '@enbox/api';
+import type {
+  ContextRecordsApi,
+  ContextRootPath,
+  Enbox,
+  ModuleAttachmentPaths,
+  ModuleContextAttachmentPath,
+  ModulePaths,
+  TypedModule,
+} from '@enbox/api';
 
 import { defineModule, recordCodecs } from '@enbox/api';
 
@@ -120,6 +128,28 @@ type _NativeRecordsAreNotAttachments = Assert<Equal<
 type _MatchingRootUnion = Assert<Equal<
   ModuleAttachmentPaths<typeof Realtime, typeof Notebook.definition.module, 'notebook' | 'notebook/page'>,
   'page' | 'folder'
+>>;
+type _ContextAttachmentDirect = Assert<Equal<
+  ModuleContextAttachmentPath<typeof Realtime, typeof Notebook.definition.module, 'notebook/page'>,
+  'page'
+>>;
+type _ContextAttachmentAmbiguousMultiRefUnderSameRootIsNever = Assert<Equal<
+  ModuleContextAttachmentPath<typeof Realtime, typeof Notebook.definition.module, 'notebook'>,
+  never
+>>;
+type _ContextAttachmentDescendantSingleRef = Assert<Equal<
+  ModuleContextAttachmentPath<{
+    readonly definition: {
+      readonly module: 'https://example.com/attachments/comments';
+      readonly published: true;
+      readonly uses: { readonly base: typeof Notebook.definition.module };
+      readonly types: { readonly comment: { readonly dataFormats: ['text/plain'] } };
+      readonly structure: { readonly page: { readonly $ref: 'base:notebook/page'; readonly comment: {} } };
+    };
+    readonly codecs: { comment: typeof _Activity.codecs.event };
+    readonly dependencies: { readonly base: typeof Notebook };
+  }, typeof Notebook.definition.module, 'notebook'>,
+  'page'
 >>;
 
 // An attachment exposes only its declared local descendants, never a provider's undeclared child.

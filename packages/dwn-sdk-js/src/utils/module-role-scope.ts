@@ -24,10 +24,14 @@ export type ResolvedModuleRoleScope = {
 /** Identifies a context root by the module URI and record path that define it. */
 export type ModuleContextRoot = ResolvedModuleAddress;
 
-/** Find the node in `graph` that represents `root` — either the context root record itself or the top-level `$ref` node that attaches to it. */
+/**
+ * Find the node in `graph` that represents `root` — either the context root
+ * record itself, or the single top-level `$ref` node that attaches directly to
+ * `root` or to a descendant record beneath `root`.
+ */
 export function resolveModuleContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode {
   const matchingNodes = [...graph.nodesByDeclaredPath.values()].filter(
-    node => node.ruleSet.$role !== true && sameModuleAddress(node, root),
+    node => node.ruleSet.$role !== true && isContextRootAttachment(node, root),
   );
   if (matchingNodes.length !== 1) {
     throw new TypeError(`Module '${graph.rootModuleUri}' must declare one exact shared root.`);
@@ -122,6 +126,11 @@ function isRecordUnderContext(moduleUri: string, contextPath: string, path: stri
   return node.kind === 'record' && node.owningModuleUri === moduleUri &&
     node.declaringModuleUri === moduleUri && node.ruleSet.$role !== true &&
     FilterUtility.matchesSubtree(contextPath, path);
+}
+
+function isContextRootAttachment(node: ResolvedModuleNode, root: ModuleContextRoot): boolean {
+  return sameModuleAddress(node, root) ||
+    (node.kind === 'ref' && node.physicalAncestors.some(ancestor => sameModuleAddress(ancestor, root)));
 }
 
 function sameModuleAddress(left: ResolvedModuleAddress | undefined, right: ResolvedModuleAddress): boolean {

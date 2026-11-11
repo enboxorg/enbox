@@ -13,7 +13,6 @@ describe('SyncEngineLevel quota routing', () => {
 
   it('resolves admitted CIDs as superseding acknowledgements without directly clearing quota blocks', async () => {
     const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-    sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
     const internal = syncEngine as any;
     const target: SyncTarget = {
       authorization      : { kind: 'owner' },

@@ -14,6 +14,13 @@ import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { createModuleReadinessApi, ModuleReadinessError } from '../src/module-readiness.js';
+import {
+  recordRepresentationsEqual,
+  resolveModuleContextRoles,
+  resolveModuleContextRoot,
+  resolveModuleRoleScope,
+  resolveTypedModuleGraph,
+} from '../src/advanced.js';
 
 const OWNER_DID = 'did:example:owner';
 const DELEGATE_DID = 'did:example:delegate';
@@ -359,7 +366,7 @@ describe('ModuleReadinessApi', () => {
     expect(fixture.hosted.get(hostedKey(TARGET_DID, NotesDefinition.module))).toEqual(NotesDefinition);
   });
 
-  it('should expose canonical graph, role-scope, and representation helpers', () => {
+  it('keeps ModuleReadinessApi focused on ensureReady while @enbox/api/advanced exposes graph helpers', () => {
     const sharedNotesA = defineModule({
       definition: {
         module    : 'https://example.com/modules/shared-notes',
@@ -394,14 +401,19 @@ describe('ModuleReadinessApi', () => {
       },
     });
     const fixture = createFixture();
-    const graphA = fixture.api.resolveGraph(sharedNotesA);
-    const graphB = fixture.api.resolveGraph(sharedNotesB);
-    const rootNode = fixture.api.resolveContextRoot(graphA, graphA.nodesByDeclaredPath.get('note')!);
+    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(fixture.api))
+      .filter(name => name !== 'constructor' && typeof (fixture.api as unknown as Record<string, unknown>)[name] === 'function'
+        && name === 'ensureReady')).toEqual(['ensureReady']);
+    expect('resolveGraph' in fixture.api).toBe(false);
+
+    const graphA = resolveTypedModuleGraph(sharedNotesA);
+    const graphB = resolveTypedModuleGraph(sharedNotesB);
+    const rootNode = resolveModuleContextRoot(graphA, graphA.nodesByDeclaredPath.get('note')!);
     expect(rootNode.declaringModulePath).toBe('note');
-    expect(fixture.api.resolveContextRoles(graphA, 'note')).toEqual(['note/member']);
-    const scope = fixture.api.resolveRoleScope(graphA, graphA.resolveInvokedRole('note/member')!);
+    expect(resolveModuleContextRoles(graphA, 'note')).toEqual(['note/member']);
+    const scope = resolveModuleRoleScope(graphA, graphA.resolveInvokedRole('note/member'));
     expect(scope.readablePaths).toEqual(['note']);
-    expect(fixture.api.representationsEqual(
+    expect(recordRepresentationsEqual(
       graphA.nodesByDeclaredPath.get('note')!,
       graphB.nodesByDeclaredPath.get('note')!,
     )).toBe(true);

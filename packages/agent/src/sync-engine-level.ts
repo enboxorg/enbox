@@ -89,7 +89,6 @@ import { SyncTargetPlanner } from './sync-target-planner.js';
 import { buildCurrentLinkIdentityKey, buildDurableLinkIdentityKey, buildLinkKey, LINK_KEY_SEPARATOR } from './sync-link-key.js';
 import { computeProjectionId, isTerminalPushFailure, lexicographicalCompare, messageFeedFiltersForSyncScope, normalizeSyncModules, singleModuleForSyncScope, syncEventScope } from './types/sync.js';
 import { createSyncLifecycleDeadline, remainingSyncLifecycleTimeout, SyncLifecycleCoordinator } from './sync-lifecycle-coordinator.js';
-import { ensureSyncStoreFormat, SYNC_STORE_FORMAT, SYNC_STORE_FORMAT_KEY } from './sync-store-format.js';
 import { fetchRemoteMessages, getLocalMessage, isInitialWriteForRecord, pushMessageEntries, pushMessages, queryLocalMessageFeed, queryRemoteMessageFeed, recordIdForRecordsMessage, RemoteApplyPushContext, syncMessageDescriptor } from './sync-messages.js';
 import { FOLLOWED_SOURCE_CONCURRENCY, followedModuleScopeEqual, followedModuleSelectionEqual, followedSyncSourceActiveEqual, followedSyncSourceAuthorityEqual, followedSyncSourceStateEqual, normalizeFollowedModules, normalizeFollowedSyncSource, normalizeFollowedSyncSourceInput, sameStrings } from './followed-sync-source.js';
 import { FollowedModuleUnavailableError, prepareFollowedModule } from './followed-sync-module.js';
@@ -196,7 +195,6 @@ export class SyncEngineLevel implements SyncEngine {
   private _permissionsApi: PermissionsApi;
 
   private readonly _db: AbstractLevel<string | Buffer | Uint8Array>;
-  private _storeFormatReady?: Promise<void>;
   private readonly _connectivityManager: SyncConnectivityManager;
   private readonly _deadLetterStore: SyncDeadLetterStoreLevel;
   private readonly _deferredPullStore: SyncDeferredPullStoreLevel;
@@ -655,13 +653,6 @@ export class SyncEngineLevel implements SyncEngine {
     await this.replicationLinkStore.clear();
     await this._endpointStore.clear();
     await this._db.clear();
-    await this._db.put(SYNC_STORE_FORMAT_KEY, SYNC_STORE_FORMAT);
-  }
-
-  /** Validate the persistent format once before any engine operation uses durable state. */
-  private ensureStoreFormat(): Promise<void> {
-    this._storeFormatReady ??= ensureSyncStoreFormat(this._db, this._lockNamespace);
-    return this._storeFormatReady;
   }
 
   /**
@@ -808,7 +799,6 @@ export class SyncEngineLevel implements SyncEngine {
   public async clear(options: SyncLifecycleOptions = {}): Promise<void> {
     const deadline = SyncEngineLevel.createLifecycleDeadline(options);
     await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
-      await this.ensureStoreFormat();
       await this.stopSyncRuntime(activeDeadline);
       await this.runDestructivePhase(async (): Promise<void> => {
         const followedSources = await this.readFollowedSources();
@@ -1041,7 +1031,6 @@ export class SyncEngineLevel implements SyncEngine {
   ): Promise<void> {
     const deadline = SyncEngineLevel.createLifecycleDeadline(lifecycleOptions);
     await this._lifecycle.runIdentityMutation(async (activeDeadline): Promise<void> => {
-      await this.ensureStoreFormat();
       await this.runIdentityLifecycle(did, operation, activeDeadline);
     }, deadline);
   }
@@ -1224,7 +1213,6 @@ export class SyncEngineLevel implements SyncEngine {
       this._identityRegistrationRefreshes,
       tenantDid,
       async (): Promise<void> => {
-        await this.ensureStoreFormat();
         const options = await this._identityStore.get(tenantDid);
         this._pausedIdentities.delete(tenantDid);
         this.invalidateSyncTargetsCache();
@@ -1238,7 +1226,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getIdentityOptions(did: string): Promise<SyncIdentityOptions | undefined> {
-    await this.ensureStoreFormat();
     try {
       return await this._identityStore.get(did);
     } catch (error: unknown) {
@@ -1306,7 +1293,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async followSource(input: FollowedSyncSourceInput): Promise<FollowedSyncSource> {
-    await this.ensureStoreFormat();
     const normalized = normalizeFollowedSyncSourceInput(input);
     const transitionFence = this.captureTransitionFence();
     const assertTransitionCurrent = (): void => {
@@ -1371,7 +1357,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async resolveFollowedSourceModuleGraph(source: FollowedSyncSource, module: string): Promise<ResolvedModuleGraph> {
-    await this.ensureStoreFormat();
     const expected = normalizeFollowedSyncSource(source);
     const fence = this.captureTransitionFence();
     try {
@@ -1443,7 +1428,6 @@ export class SyncEngineLevel implements SyncEngine {
     modules: readonly string[],
     isForced: boolean,
   ): Promise<FollowedSyncSource> {
-    await this.ensureStoreFormat();
     const fence = this.captureTransitionFence();
     const mutate = (operation: () => Promise<void>): Promise<void> => isForced
       ? this.runBackgroundIdentityMutation(expected.sourceDid, operation, fence)
@@ -1821,7 +1805,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getFollowedSource(id: string): Promise<FollowedSyncSource | undefined> {
-    await this.ensureStoreFormat();
     return this._followedSourceStore.get(id);
   }
 
@@ -1844,7 +1827,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Decode the durable catalog without changing this engine's applied snapshot. */
   private async readFollowedSources(): Promise<FollowedSyncSource[]> {
-    await this.ensureStoreFormat();
     const sources: FollowedSyncSource[] = [];
     for (const entry of await this._followedSourceStore.list()) {
       if (entry.status === 'valid') {
@@ -1874,7 +1856,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Mark one exact followed source stale and request its active replication sessions to pull. */
   public async markFollowedSourcePullPending(source: FollowedSyncSource, module: string): Promise<boolean> {
-    await this.ensureStoreFormat();
     const expected = normalizeFollowedSyncSource(source);
     const current = await this._followedSourceStore.get(expected.id);
     if (current === undefined || !SyncEngineLevel.followedSourceModuleEqual(current, expected, module)) {
@@ -1898,7 +1879,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Pull one exact accepted source from its verified hosted endpoint. */
   public async pullFollowedSource(source: FollowedSyncSource, module: string): Promise<boolean> {
-    await this.ensureStoreFormat();
     const expected = normalizeFollowedSyncSource(source);
     const transitionFence = this.captureTransitionFence();
     const preparation = await this.runFollowedSourceIntake(expected.actorDid, async (identity) => {
@@ -2290,7 +2270,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async sync(direction?: SyncDirection, options?: SyncRunOptions): Promise<void> {
     if (options?.did !== undefined) {
-      await this.ensureStoreFormat();
       if (await this._identityStore.get(options.did) === undefined) {
         throw new Error(`SyncEngineLevel: Identity with DID ${options.did} is not registered.`);
       }
@@ -2298,7 +2277,6 @@ export class SyncEngineLevel implements SyncEngine {
 
     if (this._lifecycle.tryAcquireSync()) {
       try {
-        await this.ensureStoreFormat();
         await this._runCoordinator.run(direction, options);
       } finally {
         this._lifecycle.releaseSync();
@@ -2418,7 +2396,6 @@ export class SyncEngineLevel implements SyncEngine {
       throw new Error('SyncEngineLevel: Sync operation is already in progress.');
     }
     try {
-      await this.ensureStoreFormat();
       return await this._drainCoordinator.drain(normalizedEndpoint, options);
     } finally {
       this._lifecycle.releaseSync();
@@ -2458,7 +2435,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   public async startSync(params: StartSyncParams = {}): Promise<void> {
     await this._lifecycle.runTransition(async (): Promise<void> => {
-      await this.ensureStoreFormat();
       await this.startSyncRuntime(params);
     });
   }
@@ -5575,7 +5551,6 @@ export class SyncEngineLevel implements SyncEngine {
     errorCode? : string;
     errorDetail : string;
   }): Promise<void> {
-    await this.ensureStoreFormat();
     const entry: DeadLetterEntry = {
       ...params,
       failedAt: new Date().toISOString(),
@@ -5605,7 +5580,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getDeadLetters(tenantDid?: string): Promise<DeadLetterEntry[]> {
-    await this.ensureStoreFormat();
     const entries = (await this._deadLetterStore.getAll())
       .filter((entry): boolean => !tenantDid || entry.tenantDid === tenantDid);
     // Deterministic ordering: newest first so apps see the most recent failures.
@@ -5648,7 +5622,6 @@ export class SyncEngineLevel implements SyncEngine {
   }
 
   public async getReplicationLinks(tenantDid?: string): Promise<ReplicationLinkSnapshot[]> {
-    await this.ensureStoreFormat();
     const [currentLinkIdentityKeys, links] = await Promise.all([
       this.getCurrentLinkIdentityKeys(),
       this.getLinksForStatusReporting(),
@@ -5658,7 +5631,6 @@ export class SyncEngineLevel implements SyncEngine {
 
   /** Read every durable source once, then project the requested status snapshot. */
   private async getSyncStatus(tenantDid?: string): Promise<SyncStatusSnapshot> {
-    await this.ensureStoreFormat();
     const [currentLinkIdentityKeys, currentQuotaLinkKeys, links, quotaBlocks, deadLetters] = await Promise.all([
       this.getCurrentLinkIdentityKeys(),
       this.getCurrentQuotaLinkKeys(),
@@ -5680,7 +5652,6 @@ export class SyncEngineLevel implements SyncEngine {
   public async retryRemoteNow(tenantDid: string, remoteEndpoint: string): Promise<void> {
     const transitionFence = this.captureTransitionFence();
     const retry = this._retryRemoteQueue.then(async (): Promise<void> => {
-      await this.ensureStoreFormat();
       await this.doRetryRemoteNow(tenantDid, remoteEndpoint, transitionFence);
     });
     this._retryRemoteQueue = retry.catch((): void => {
@@ -5912,7 +5883,6 @@ export class SyncEngineLevel implements SyncEngine {
    * `beforeCache` hook.
    */
   private async getSyncTargets(): Promise<SyncTarget[]> {
-    await this.ensureStoreFormat();
     return this._targetPlanner.getTargets({
       beforeCache: (targets, topologyGeneration): Promise<void> =>
         this._quotaManager.pruneStaleLinkBlocks(

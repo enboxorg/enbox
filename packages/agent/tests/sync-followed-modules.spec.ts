@@ -10,7 +10,6 @@ import { resolveModuleGraph, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { deferred } from './utils/deferred.js';
 import { DwnInterface } from '../src/types/dwn.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { FollowedSourceRoleAbsentError } from '../src/sync-role-replication-support.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { followedModuleScopeEqual, followedSyncSourceActiveEqual, followedSyncSourceStateEqual } from '../src/followed-sync-source.js';
@@ -68,7 +67,6 @@ describe('Followed context attached modules', () => {
     db = new Level<string, string>(`__TESTDATA__/sync-followed-modules/${crypto.randomUUID()}`);
     engine = new SyncEngineLevel({ db });
     root = rootSource();
-    await ensureSyncStoreFormat(db, 'sync-followed-modules.spec.ts');
     await engine['_identityStore'].set(root.actorDid, { modules: 'all' });
     await engine['_followedSourceStore'].replace(root);
   });
@@ -620,5 +618,58 @@ describe('Followed context attached modules', () => {
 
     const prepared = { configurations: [provider, consumer], module: REALTIME, scope: moduleScope(), graph: realtimeGraph() };
     await expect(engine['admitFollowedModule'](root, prepared, undefined)).rejects.toThrow();
+  });
+
+  it('prepares a composed consumer that attaches $ref to a descendant record beneath the shared root', async () => {
+    const owner = await TestDataGenerator.generatePersona();
+    const actor = await TestDataGenerator.generatePersona();
+    const notebook = structuredClone(realtimeGraph().definitionsByUri.get(MODULE)!);
+    notebook.types.page = {};
+    notebook.structure.notebook.page = { $actions: [{ role: 'notebook/viewer', can: ['read'] }] };
+    notebook.$keyAgreement = { publicKeyJwk: owner.encryptionKeyPair.publicJwk };
+    (notebook.structure.notebook.viewer as ModuleRuleSet).$keyAgreement = notebook.$keyAgreement;
+    const consumer: ModuleDefinition = {
+      module    : REALTIME,
+      published : true,
+      uses      : { notebook: MODULE },
+      types     : { comment: {} },
+      structure : {
+        page: {
+          $ref    : 'notebook:notebook/page',
+          comment : { $actions: [{ role: 'notebook:notebook/viewer', can: ['read'] }] },
+        },
+      },
+    };
+    const [notebookMsg, consumerMsg] = await Promise.all([notebook, consumer].map(
+      async moduleDefinition => (await TestDataGenerator.generateModulesConfigure({ author: owner, moduleDefinition })).message,
+    ));
+    sinon.stub(engine as never, 'readFollowedRootSupport').resolves({
+      dependencies  : [{ message: notebookMsg, isLatestBaseState: true }],
+      resolvedGraph : resolveModuleGraph(notebook, () => undefined),
+      root          : {},
+    });
+    const query = await TestDataGenerator.generateMessagesQuery({ author: actor });
+    const processDwnRequest = sinon.stub().resolves({ message: query.message });
+    sinon.stub(engine, 'agent').get(() => ({
+      dwn : { sendRequest: sinon.stub().resolves({ reply: { status: { code: 200, detail: 'OK' }, entries: [consumerMsg] } }) },
+      processDwnRequest,
+      rpc : { sendDwnRequest: sinon.stub().resolves({ status: { code: 200 }, entries: [], roleRecordId: root.id }) },
+    } as unknown as EnboxPlatformAgent));
+
+    const source = { ...root, sourceDid: owner.did, actorDid: actor.did, modules: { ...root.modules, [REALTIME]: null } };
+    const result = await engine['prepareFollowedModuleUpdates'](source, undefined, () => true);
+
+    expect(result.prepared).toHaveLength(1);
+    expect(result.prepared[0].scope).toEqual({
+      contextPath : 'page',
+      modulePaths : ['page/comment'],
+      moduleRole  : 'notebook:notebook/viewer',
+    });
+    expect(processDwnRequest.firstCall.args[0]).toMatchObject({
+      messageParams: {
+        filters    : [{ contextIdPrefix: root.contextId, module: REALTIME, modulePath: 'page/comment' }],
+        moduleRole : 'notebook:notebook/viewer',
+      },
+    });
   });
 });

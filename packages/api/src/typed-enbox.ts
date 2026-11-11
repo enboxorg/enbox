@@ -1988,7 +1988,8 @@ export class TypedEnbox<
       throw new TypeError('Context-bound records cannot create another context root.');
     }
     const parentPath = path.split('/').slice(0, -1).join('/');
-    if (parentPath !== context.modulePath) {
+    const contextNode = this._resolvedGraph.nodesByDeclaredPath.get(context.modulePath);
+    if (parentPath !== context.modulePath || contextNode?.physicalDepth !== context.contextId.split('/').length) {
       throw new TypeError(`Context-bound create at '${path}' requires its direct parent context.`);
     }
     return context.contextId;

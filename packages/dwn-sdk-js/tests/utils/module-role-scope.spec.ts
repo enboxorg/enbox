@@ -281,6 +281,71 @@ describe('resolveModuleContextRoot', () => {
       providerGraph.nodesByDeclaredPath.get('notebook/page')!,
     )).toThrow('must declare one exact shared root');
   });
+
+  it('resolves a top-level $ref attaching to a descendant record beneath the shared context root', () => {
+    const sharedWorkspace: ModuleDefinition = {
+      module    : 'https://example.com/shared-workspace',
+      published : true,
+      types     : {
+        workspace : { dataFormats: ['application/json'] },
+        member    : { dataFormats: ['application/json'] },
+        note      : { dataFormats: ['application/json'] },
+      },
+      structure: {
+        workspace: {
+          $actions : [{ role: 'workspace/member', can: ['read'] }],
+          member   : { $role: true },
+          note     : { $actions: [{ role: 'workspace/member', can: ['create', 'read'] }] },
+        },
+      },
+    };
+    const comments: ModuleDefinition = {
+      module    : 'https://example.com/note-comments',
+      published : true,
+      uses      : { base: sharedWorkspace.module },
+      types     : { comment: { dataFormats: ['application/json'] } },
+      structure : {
+        note: {
+          $ref    : 'base:workspace/note',
+          comment : { $actions: [{ role: 'base:workspace/member', can: ['create', 'read'] }] },
+        },
+      },
+    };
+    const providerGraph = resolveModuleGraph(sharedWorkspace, () => undefined, { requireKeyAgreement: false });
+    const consumerGraph = resolveModuleGraph(comments, () => sharedWorkspace, { requireKeyAgreement: false });
+    const workspaceRoot = providerGraph.nodesByDeclaredPath.get('workspace')!;
+
+    expect(resolveModuleContextRoot(consumerGraph, workspaceRoot).declaringModulePath).toBe('note');
+    const scope = resolveModuleRoleScope(consumerGraph, providerGraph.resolveInvokedRole('workspace/member'));
+    expect(scope.contextPath).toBe('note');
+    expect(scope.moduleRole).toBe('base:workspace/member');
+    expect(scope.readablePaths).toEqual(['note/comment']);
+    expect([...scope.allowedPaths]).toEqual(['note/comment']);
+  });
+
+  it('rejects a composing module that mounts multiple top-level $ref nodes beneath the same shared context root', () => {
+    const bothLevels: ModuleDefinition = {
+      module    : 'https://example.com/ambiguous-notebook-consumer',
+      published : true,
+      uses      : { notes: notebook.module },
+      types     : { marker: { dataFormats: ['application/json'] } },
+      structure : {
+        folder : { $ref: 'notes:notebook', marker: {} },
+        page   : { $ref: 'notes:notebook/page', marker: {} },
+      },
+    };
+    const providerGraph = resolveModuleGraph(notebook, () => undefined, { requireKeyAgreement: false });
+    const consumerGraph = resolveModuleGraph(bothLevels, () => notebook, { requireKeyAgreement: false });
+
+    expect(() => resolveModuleContextRoot(
+      consumerGraph,
+      providerGraph.nodesByDeclaredPath.get('notebook')!,
+    )).toThrow('must declare one exact shared root');
+    expect(resolveModuleContextRoot(
+      consumerGraph,
+      providerGraph.nodesByDeclaredPath.get('notebook/page')!,
+    ).declaringModulePath).toBe('page');
+  });
 });
 
 describe('resolveModuleContextRoles', () => {
