@@ -25,13 +25,13 @@ import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
-  createHttpDwnRpcRequestBody,
   createJsonRpcRequest,
   HTTP_DWN_RPC_MEDIA_TYPE,
   JsonRpcErrorCodes,
 } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
+  dwnRpcRequestInit,
   getDwnResponse,
   getFileAsReadStream,
 } from './utils.js';
@@ -65,16 +65,7 @@ describe('http api', function () {
   }
 
   async function postDwnRpc(dwnRequest: JsonRpcRequest, data?: BodyInit): Promise<Response> {
-    const body = createHttpDwnRpcRequestBody(dwnRequest, data);
-    const requestInit: RequestInit & { duplex?: 'half' } = {
-      body,
-      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-      method  : 'POST',
-    };
-    if (body instanceof ReadableStream) {
-      requestInit.duplex = 'half';
-    }
-    return fetch(baseUrl, requestInit);
+    return fetch(baseUrl, dwnRpcRequestInit(dwnRequest, data));
   }
 
   beforeAll(async function () {
@@ -241,15 +232,7 @@ describe('http api', function () {
           controller.close();
         },
       });
-      const framedBody = createHttpDwnRpcRequestBody(dwnRequest, requestData);
-      const requestInit: RequestInit & { duplex?: 'half' } = {
-        body    : framedBody,
-        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-        method  : 'POST',
-      };
-      if (framedBody instanceof ReadableStream) {
-        requestInit.duplex = 'half';
-      }
+      const requestInit = dwnRpcRequestInit(dwnRequest, requestData);
       expect(requestInit.duplex).toBe('half');
 
       const response = await fetch(baseUrl, requestInit);

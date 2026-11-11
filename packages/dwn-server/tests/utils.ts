@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
-import type { JsonRpcResponse } from '@enbox/dwn-clients';
 import type { GenericMessage, Persona, ReplicationApplyResult, UnionMessageReply } from '@enbox/dwn-sdk-js';
+import type { JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
 
 import { expect } from 'bun:test';
 import { fileURLToPath } from 'url';
@@ -118,6 +118,17 @@ export function getDwnResponse(response: Response): UnionMessageReply {
   return JSON.parse(response.headers.get('dwn-response') as string) as UnionMessageReply;
 }
 
+/** Builds the `fetch` init for a framed DWN RPC POST, adding `duplex` for streaming bodies. */
+export function dwnRpcRequestInit(jsonRpcRequest: JsonRpcRequest, data?: BodyInit): RequestInit & { duplex?: 'half' } {
+  const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
+  return {
+    method  : 'POST',
+    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+    body,
+    ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
+  };
+}
+
 export async function sendHttpMessage(options: {
   url: string,
   target: string,
@@ -132,17 +143,7 @@ export async function sendHttpMessage(options: {
     message,
   });
 
-  const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
-  const fetchOpts: RequestInit & { duplex?: 'half' } = {
-    method  : 'POST',
-    headers : {
-      'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-    },
-    body,
-    ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
-  };
-
-  const resp = await fetch(url, fetchOpts);
+  const resp = await fetch(url, dwnRpcRequestInit(jsonRpcRequest, data));
   let dwnRpcResponse: JsonRpcResponse;
 
   // check to see if response is in header first. if it is, that means the response is a ReadableStream

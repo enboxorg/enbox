@@ -740,23 +740,23 @@ describe('HttpDwnRpcClient', () => {
     });
 
     it('should deduplicate concurrent getServerInfo lookups', async () => {
-      const capabilityUrl = 'https://info.example/dwn';
+      const infoUrl = 'https://info.example/dwn';
       const cache = new DwnServerInfoCacheMemory();
-      const bodyClient = new HttpDwnRpcClient(cache, { maxRetries: 0 });
+      const client = new HttpDwnRpcClient(cache, { maxRetries: 0 });
       let resolveInfo!: (response: Response) => void;
       const infoResponse = new Promise<Response>(resolve => {
         resolveInfo = resolve;
       });
       const fetchStub = sinon.stub(globalThis, 'fetch').returns(infoResponse);
 
-      const requests = [1, 2].map(async (): Promise<ServerInfo> => bodyClient.getServerInfo(capabilityUrl));
+      const requests = [1, 2].map(async (): Promise<ServerInfo> => client.getServerInfo(infoUrl));
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       resolveInfo({
         ok     : true,
         status : 200,
         json   : async (): Promise<ServerInfo> => ({
           ...testServerInfo(),
-          url: capabilityUrl,
+          url: infoUrl,
         }),
       } as Response);
       const [first, second] = await Promise.all(requests);

@@ -760,14 +760,12 @@ export class DeliveryService implements MessageProcessedHook {
     );
 
     const dataBearingWrite = DeliveryService.#getDataBearingWrite(message);
-    const headers = { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE };
 
     for (let attempt = 0; attempt <= DeliveryService.#maxRetries; attempt++) {
       const result = await this.#sendMessageAttempt({
         attempt,
         dataBearingWrite,
         endpointUrl,
-        headers,
         rpcRequest,
         sourceTenant,
         target,
@@ -786,7 +784,6 @@ export class DeliveryService implements MessageProcessedHook {
     attempt,
     dataBearingWrite,
     endpointUrl,
-    headers,
     rpcRequest,
     sourceTenant,
     target,
@@ -794,13 +791,12 @@ export class DeliveryService implements MessageProcessedHook {
     attempt: number;
     dataBearingWrite: RecordsWriteMessage | undefined;
     endpointUrl: string;
-    headers: Record<string, string>;
     rpcRequest: JsonRpcRequest;
     sourceTenant: string;
     target: string;
   }): Promise<SendMessageAttemptResult> {
     try {
-      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, headers, rpcRequest, dataBearingWrite);
+      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, rpcRequest, dataBearingWrite);
       if (fetchOptions === undefined) {
         return 'skipped';
       }
@@ -816,7 +812,6 @@ export class DeliveryService implements MessageProcessedHook {
   async #createFetchOptions(
     sourceTenant: string,
     endpointUrl: string,
-    headers: Record<string, string>,
     rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
   ): Promise<RequestInitWithDuplex | undefined> {
@@ -827,9 +822,9 @@ export class DeliveryService implements MessageProcessedHook {
 
     const fetchOptions: RequestInitWithDuplex = {
       body,
-      headers,
-      method : 'POST',
-      signal : AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      method  : 'POST',
+      signal  : AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
     };
 
     if (body instanceof ReadableStream) {
