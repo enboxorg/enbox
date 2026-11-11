@@ -242,7 +242,7 @@ class DefaultModuleReadinessApi implements ModuleReadinessApi {
         }
         operation = 'query';
         const installed = await this.queryHostedDefinition(targetDid, uri);
-        if (!installedModuleDefinitionsEqual(installed, message.descriptor.definition)) {
+        if (!this.definitionsEqual(installed, message.descriptor.definition)) {
           operation = 'publish';
           throw new Error('The hosted DWN retained a different active module definition.');
         }

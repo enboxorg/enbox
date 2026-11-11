@@ -2030,8 +2030,12 @@ export class SyncEngineLevel implements SyncEngine {
     try {
       sources = await this.readFollowedSources();
       const current = new Map(sources.map(source => [SyncEngineLevel.followedContextKey(source), source]));
+      const allKeys = new Set(this._followedSourceSnapshot.keys());
+      for (const key of current.keys()) {
+        allKeys.add(key);
+      }
       const changes: Array<{ source: FollowedSyncSource; followedSourceId: string | undefined; affectedModules: string[] }> = [];
-      for (const key of new Set([...this._followedSourceSnapshot.keys(), ...current.keys()])) {
+      for (const key of allKeys) {
         const previous = this._followedSourceSnapshot.get(key);
         const next = current.get(key);
         if (previous !== undefined && next !== undefined && followedSyncSourceStateEqual(previous, next)) {
@@ -2688,13 +2692,27 @@ export class SyncEngineLevel implements SyncEngine {
     if (!await this.reinitializeOrphanedLinkTargets(runtime)) {
       return;
     }
-    if ([...this._followedSourceSnapshot.values()].some(source => Object.values(source.modules).includes(null)) ||
-      [...this._linkControllers.values()].some(({ link }) =>
-        link.status === 'paused' && link.authorization.kind === 'role' &&
-      !this.isIdentityPaused(link.authorization.actorDid, link.delegateDid)
-      )) {
+    if (this.shouldRefreshFollowedSourcesAfterSettle()) {
       this.scheduleFollowedSourceRefresh();
     }
+  }
+
+  private shouldRefreshFollowedSourcesAfterSettle(): boolean {
+    for (const source of this._followedSourceSnapshot.values()) {
+      if (Object.values(source.modules).includes(null)) {
+        return true;
+      }
+    }
+    for (const { link } of this._linkControllers.values()) {
+      if (
+        link.status === 'paused' &&
+        link.authorization.kind === 'role' &&
+        !this.isIdentityPaused(link.authorization.actorDid, link.delegateDid)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

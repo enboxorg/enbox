@@ -5,13 +5,13 @@
  * runtime codecs used by {@link TypedEnbox} for application values.
  */
 
-import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import type { DefineModuleOptions, ModuleDependencies, ModuleDependenciesFor, ModuleDependency, ModuleRecordCodecs, TypedModule } from './module-types.js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
-import { collectModulePaths } from './module-paths.js';
-import { authoredModuleDefinitionsEqual, getTypeName, ModulesConfigure, resolveModuleGraph } from '@enbox/dwn-sdk-js';
+import { isPlainObject } from './utils.js';
+import { authoredModuleDefinitionsEqual, getTypeName, ModulesConfigure, resolveModuleGraph, walkModuleRuleSets } from '@enbox/dwn-sdk-js';
 
 const resolvedGraphs = new WeakMap<object, ResolvedModuleGraph>();
 
@@ -42,7 +42,7 @@ export function defineModule<
   const C extends ModuleRecordCodecs<D>,
   const Deps extends ModuleDependenciesFor<D> = ModuleDependenciesFor<D>,
 >(options: DefineModuleOptions<D, C, Deps>): TypedModule<D, C, Deps> {
-  if (!isObjectRecord(options)) {
+  if (!isPlainObject(options)) {
     throw new TypeError('defineModule: options must be an object.');
   }
   const { definition, codecs } = options;
@@ -63,7 +63,7 @@ export function defineModule<
 
 /** @internal Whether a runtime value satisfies the module shape required by typed APIs. */
 export function isTypedModule(value: unknown): value is TypedModule {
-  if (!isObjectRecord(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -77,7 +77,7 @@ export function isTypedModule(value: unknown): value is TypedModule {
 
 /** Derive and memoize the canonical graph from the artifact's definitions and dependency bindings. */
 export function resolveTypedModuleGraph(value: unknown): ResolvedModuleGraph {
-  if (!isObjectRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError('defineModule: module artifact must be an object.');
   }
   if (Object.isFrozen(value)) {
@@ -151,7 +151,7 @@ function collectDependencyDefinitions(
 }
 
 function assertDependencyAliases(definition: ModuleDefinition, value: unknown): asserts value is ModuleDependencies {
-  if (!isObjectRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError('defineModule: dependencies must be an object.');
   }
   const uses = definition.uses ?? {};
@@ -162,7 +162,7 @@ function assertDependencyAliases(definition: ModuleDefinition, value: unknown): 
   }
   for (const alias of required) {
     const dependency = value[alias];
-    if (!isObjectRecord(dependency) || !isObjectRecord(dependency.definition) || dependency.definition.module !== uses[alias]) {
+    if (!isPlainObject(dependency) || !isPlainObject(dependency.definition) || dependency.definition.module !== uses[alias]) {
       throw new TypeError(`defineModule: dependency '${alias}' must provide module '${uses[alias]}'.`);
     }
   }
@@ -181,7 +181,7 @@ function freezeDefinition(value: unknown): void {
 function assertTypedModuleComponents(definition: unknown, codecs: unknown): void {
   assertModuleDefinitionShape(definition);
 
-  if (!isObjectRecord(codecs)) {
+  if (!isPlainObject(codecs)) {
     throw new TypeError('defineModule: codecs must be an object.');
   }
 
@@ -192,12 +192,12 @@ function assertTypedModuleComponents(definition: unknown, codecs: unknown): void
 }
 
 function assertModuleDefinitionShape(definition: unknown): asserts definition is ModuleDefinition {
-  if (!isObjectRecord(definition)
+  if (!isPlainObject(definition)
     || typeof definition.module !== 'string'
     || definition.module === ''
     || typeof definition.published !== 'boolean'
-    || !isObjectRecord(definition.types)
-    || !isObjectRecord(definition.structure)) {
+    || !isPlainObject(definition.types)
+    || !isPlainObject(definition.structure)) {
     throw new TypeError(
       'defineModule: definition must include a non-empty module URI, boolean published flag, ' +
       'and object-valued types and structure.',
@@ -209,7 +209,7 @@ function assertModuleDefinitionShape(definition: unknown): asserts definition is
 /** Validate the runtime fields consumed from every module type declaration. */
 function assertModuleTypes(types: globalThis.Record<string, unknown>): void {
   for (const [typeName, type] of Object.entries(types)) {
-    if (!isObjectRecord(type)
+    if (!isPlainObject(type)
       || (type.schema !== undefined && typeof type.schema !== 'string')
       || (type.dataFormats !== undefined
         && (!Array.isArray(type.dataFormats) || type.dataFormats.some((format) => typeof format !== 'string')))
@@ -230,7 +230,7 @@ function assertModuleStructureNodes(
     }
 
     const path = prefix === '' ? key : `${prefix}/${key}`;
-    if (!isObjectRecord(child)) {
+    if (!isPlainObject(child)) {
       throw new TypeError(`defineModule: definition.structure['${path}'] must be an object rule-set node.`);
     }
     assertModuleStructureNodes(child, path);
@@ -239,9 +239,7 @@ function assertModuleStructureNodes(
 
 /** Enforce one valid codec for every reachable module type and no others. */
 function assertModuleCodecs(definition: ModuleDefinition, codecs: RecordCodecMap): void {
-  const requiredTypeNames = new Set(
-    [...collectModulePaths(definition.structure)].map((path) => getTypeName(path)),
-  );
+  const requiredTypeNames = collectReachableTypeNames(definition.structure);
   const missingTypeDefinitions = [...requiredTypeNames]
     .filter((typeName) => !Object.hasOwn(definition.types, typeName))
     .sort((a, b) => a.localeCompare(b));
@@ -270,14 +268,20 @@ function assertModuleCodecs(definition: ModuleDefinition, codecs: RecordCodecMap
   }
 }
 
+function collectReachableTypeNames(structure: globalThis.Record<string, unknown>): Set<string> {
+  const typeNames = new Set<string>();
+  walkModuleRuleSets(structure as ModuleRuleSet, (path, ruleSet): void => {
+    if (typeof ruleSet.$ref !== 'string') {
+      typeNames.add(getTypeName(path));
+    }
+  });
+  return typeNames;
+}
+
 function isRecordCodec(value: unknown): value is RecordCodec<unknown> {
   if (value === null || typeof value !== 'object') {
     return false;
   }
   const candidate = value as Partial<RecordCodec<unknown>>;
   return typeof candidate.encode === 'function' && typeof candidate.decode === 'function';
-}
-
-function isObjectRecord(value: unknown): value is globalThis.Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

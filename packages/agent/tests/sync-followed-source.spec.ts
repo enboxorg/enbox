@@ -22,6 +22,7 @@ import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { PermissionGrantNotFoundError } from '../src/permissions-api.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { SyncRuntime } from '../src/sync-runtime.js';
+import { waitFor } from './utils/wait-for.js';
 import { FollowedSourceNotReadyError, RoleReplicationSupportError } from '../src/sync-role-replication-support.js';
 
 const SOURCE_DID = 'did:example:owner';
@@ -119,16 +120,6 @@ async function storeFollowedSource(engine: SyncEngineLevel, followed: FollowedSy
   const replaced = await internal.commitFollowedSource(followed);
   await internal.removeFollowedSourceLinksForSources(replaced);
   internal.activateFollowedSource(followed, undefined, internal._lifecycle.captureIdentityTaskRunner(followed.actorDid));
-}
-
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeout = 1000): Promise<void> {
-  const expiresAt = Date.now() + timeout;
-  while (!await predicate()) {
-    if (Date.now() >= expiresAt) {
-      throw new Error('Timed out waiting for followed-source state.');
-    }
-    await new Promise<void>(resolve => setTimeout(resolve, 5));
-  }
 }
 
 describe('SyncEngineLevel — followed sources', () => {

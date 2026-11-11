@@ -207,9 +207,12 @@ export class Enbox {
     });
     for (const artifact of orderTypedModuleDependencies([module])) {
       const graph = resolveTypedModuleGraph(artifact);
-      const rolePaths = [...graph.nodesByDeclaredPath.values()]
-        .filter(node => node.kind === 'record' && node.ruleSet.$role === true)
-        .map(node => node.declaringModulePath);
+      const rolePaths: string[] = [];
+      for (const node of graph.nodesByDeclaredPath.values()) {
+        if (node.kind === 'record' && node.ruleSet.$role === true) {
+          rolePaths.push(node.declaringModulePath);
+        }
+      }
       if (rolePaths.length > 0) {
         this.agent.dwn.registerAudienceKeyDeliveryModule({
           ...deliverySession,

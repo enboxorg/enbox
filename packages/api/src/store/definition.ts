@@ -88,7 +88,7 @@ export function defineStore<
   Value = unknown,
 >(options: DefineStoreOptions<Modules, Stores, Value>): StoreDefinition<Value> {
   const modules: StoreModules = Object.freeze({ ...options.modules });
-  const stores = Object.freeze({ ...options.stores });
+  const stores: StoreDefinitions = Object.freeze({ ...options.stores });
   for (const [name, module] of Object.entries(modules)) {
     if (!isTypedModule(module)) {
       throw new TypeError(`defineStore: module '${name}' must be a TypedModule.`);
@@ -99,8 +99,10 @@ export function defineStore<
     modules,
     stores,
     [storeFactory](scope: StoreScope, dependencies: Readonly<Record<string, unknown>>): Value {
-      const bindings = Object.fromEntries(Object.entries(modules).map(([name, module]): [string, unknown] =>
-        [name, createModuleStore(module, scope)]));
+      const bindings: Record<string, unknown> = {};
+      for (const [name, module] of Object.entries(modules)) {
+        bindings[name] = createModuleStore(module, scope);
+      }
       // Runtime dispatch is single-input; authoring retains its optionality and awaited result.
       const command = ((operation: CommandOperation, options?: Readonly<{ signal?: AbortSignal }>) =>
         createCommand(withStoreSignal(scope, options?.signal), operation)) as StoreContext<Modules, Stores>['command'];

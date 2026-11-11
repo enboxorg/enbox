@@ -74,15 +74,23 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
     if (!isRecordUnderContext(graph.rootModuleUri, contextPath, path, node)) {
       continue;
     }
-    const matchingActions = node.actions.filter(action => sameModuleAddress(action.resolvedRole, role));
-    if (matchingActions.length === 0) {
+    let matched = false;
+    let readable = false;
+    for (const action of node.actions) {
+      if (!sameModuleAddress(action.resolvedRole, role)) {
+        continue;
+      }
+      matched = true;
+      invokedRoles.add(action.rule.role!);
+      if (action.rule.can.includes(ModuleAction.Read)) {
+        readable = true;
+      }
+    }
+    if (!matched) {
       continue;
     }
     allowedPaths.push(path);
-    for (const action of matchingActions) {
-      invokedRoles.add(action.rule.role!);
-    }
-    if (matchingActions.some(action => action.rule.can.includes(ModuleAction.Read))) {
+    if (readable) {
       readablePaths.push(path);
     }
   }

@@ -1,6 +1,7 @@
 import type { DataFormatAtPath, ModulePaths, TagKeys, TagsAtPath } from './module-types.js';
 import type { ModuleDefinition, Pagination, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 
+import { isPlainObject } from './utils.js';
 import { DateSort, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 type LowerBound<T extends string | number> =
@@ -286,10 +287,6 @@ function assertValidQueryControls(
 
 function hasUnexpectedKeys(value: object, allowedKeys: string[]): boolean {
   return Object.keys(value).some((key) => !allowedKeys.includes(key));
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function normalizeStringSelection(selection: StringSelection): string | string[] {

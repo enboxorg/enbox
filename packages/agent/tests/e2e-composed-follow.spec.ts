@@ -10,6 +10,7 @@ import { DataStream, DwnInterfaceName, DwnMethodName, Encoder, Message } from '@
 
 import { DwnInterface } from '../src/types/dwn.js';
 import { PlatformAgentTestHarness } from '../src/test-harness.js';
+import { waitFor as pollUntil } from './utils/wait-for.js';
 import { requireDwnServer } from './utils/require-dwn-server.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 import { TestAgent } from './utils/test-agent.js';
@@ -492,11 +493,11 @@ describe('E2E: one managed root with a composed consumer feed', () => {
   }
 
   async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
-    const deadline = Date.now() + 20_000;
-    while (!await predicate()) {
-      if (Date.now() > deadline) {throw new Error('Managed composed feed did not become ready');}
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    await pollUntil(predicate, {
+      intervalMs : 50,
+      message    : 'Managed composed feed did not become ready',
+      timeoutMs  : 20_000,
+    });
   }
 
 });
