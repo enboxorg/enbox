@@ -1,6 +1,7 @@
 import type { ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 
 import { canonicalJsonStringify } from '@enbox/common';
+import { lexicographicalCompare } from '@enbox/dwn-sdk-js';
 
 /** Deterministic equality for module definitions, including runtime encryption keys. */
 export function installedModuleDefinitionsEqual(left: unknown, right: unknown): boolean {
@@ -15,7 +16,7 @@ export function consumedRecordRepresentation(node: ResolvedModuleNode): unknown 
     schema    : node.recordType.schema,
     formats   : node.recordType.dataFormats === undefined
       ? undefined
-      : [...new Set(node.recordType.dataFormats)].sort(),
+      : [...new Set(node.recordType.dataFormats)].sort(lexicographicalCompare),
     encrypted : node.recordType.encryptionRequired === true,
     role      : node.ruleSet.$role === true,
     squash    : node.ruleSet.$squash === true,

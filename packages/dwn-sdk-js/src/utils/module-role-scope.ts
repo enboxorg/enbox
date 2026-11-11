@@ -74,23 +74,11 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
     if (!isRecordUnderContext(graph.rootModuleUri, contextPath, path, node)) {
       continue;
     }
-    let matched = false;
-    let readable = false;
-    for (const action of node.actions) {
-      if (!sameModuleAddress(action.resolvedRole, role)) {
-        continue;
-      }
-      matched = true;
-      invokedRoles.add(action.rule.role!);
-      if (action.rule.can.includes(ModuleAction.Read)) {
-        readable = true;
-      }
+    const access = collectNodeRoleAccess(node, role, invokedRoles);
+    if (access.allowed) {
+      allowedPaths.push(path);
     }
-    if (!matched) {
-      continue;
-    }
-    allowedPaths.push(path);
-    if (readable) {
+    if (access.readable) {
       readablePaths.push(path);
     }
   }
@@ -108,6 +96,26 @@ export function resolveModuleRoleScope(graph: ResolvedModuleGraph, role: Resolve
     allowedPaths  : new Set(allowedPaths),
     readablePaths : readablePaths as [string, ...string[]],
   };
+}
+
+function collectNodeRoleAccess(
+  node: ResolvedModuleNode,
+  role: ResolvedRoleReference,
+  invokedRoles: Set<string>,
+): { allowed: boolean; readable: boolean } {
+  let allowed = false;
+  let readable = false;
+  for (const action of node.actions) {
+    if (!sameModuleAddress(action.resolvedRole, role)) {
+      continue;
+    }
+    allowed = true;
+    invokedRoles.add(action.rule.role!);
+    if (action.rule.can.includes(ModuleAction.Read)) {
+      readable = true;
+    }
+  }
+  return { allowed, readable };
 }
 
 function isRecordUnderContext(moduleUri: string, contextPath: string, path: string, node: ResolvedModuleNode): boolean {

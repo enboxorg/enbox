@@ -358,4 +358,52 @@ describe('ModuleReadinessApi', () => {
     });
     expect(fixture.hosted.get(hostedKey(TARGET_DID, NotesDefinition.module))).toEqual(NotesDefinition);
   });
+
+  it('should expose canonical graph, role-scope, and representation helpers', () => {
+    const sharedNotesA = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/shared-notes',
+        published : true,
+        types     : {
+          member : { dataFormats: ['application/json'] },
+          note   : { dataFormats: ['text/plain', 'application/json'] },
+        },
+        structure: {
+          note: {
+            $actions : [{ role: 'note/member', can: ['read'] }],
+            member   : { $role: true },
+          },
+        },
+      },
+      codecs: {
+        member : recordCodecs.json<{ role: string }>(),
+        note   : recordCodecs.text(),
+      },
+    });
+    const sharedNotesB = defineModule({
+      definition: {
+        ...sharedNotesA.definition,
+        types: {
+          member : { dataFormats: ['application/json'] },
+          note   : { dataFormats: ['application/json', 'text/plain', 'text/plain'] },
+        },
+      },
+      codecs: {
+        member : recordCodecs.json<{ role: string }>(),
+        note   : recordCodecs.text(),
+      },
+    });
+    const fixture = createFixture();
+    const graphA = fixture.api.resolveGraph(sharedNotesA);
+    const graphB = fixture.api.resolveGraph(sharedNotesB);
+    const rootNode = fixture.api.resolveContextRoot(graphA, graphA.nodesByDeclaredPath.get('note')!);
+    expect(rootNode.declaringModulePath).toBe('note');
+    expect(fixture.api.resolveContextRoles(graphA, 'note')).toEqual(['note/member']);
+    const scope = fixture.api.resolveRoleScope(graphA, graphA.resolveInvokedRole('note/member')!);
+    expect(scope.readablePaths).toEqual(['note']);
+    expect(fixture.api.representationsEqual(
+      graphA.nodesByDeclaredPath.get('note')!,
+      graphB.nodesByDeclaredPath.get('note')!,
+    )).toBe(true);
+  });
 });
