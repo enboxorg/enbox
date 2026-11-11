@@ -563,9 +563,8 @@ export class DeliveryService implements MessageProcessedHook {
 
   /**
    * Extracts DWN endpoints from a single DID document service entry. Returns
-   * an empty array for non-`DecentralizedWebNode` services — mirrors the
-   * `continue` in the original per-service scan — and for any
-   * `serviceEndpoint` shape not covered by the string/array/object cases.
+   * an empty array for non-`DecentralizedWebNode` services and for any
+   * `serviceEndpoint` shape not covered by the string/array/map cases.
    */
   static #extractEndpointsFromService(service: DidService): DwnEndpoint[] {
     if (service.type !== 'DecentralizedWebNode') {
@@ -594,7 +593,7 @@ export class DeliveryService implements MessageProcessedHook {
   /**
    * Extracts endpoints from a `serviceEndpoint` array. Each entry may be a
    * bare URL string or a map entry (`{ url, dataRetention? }`); any other
-   * entry shape is silently skipped, matching the original per-entry scan.
+   * entry shape is silently skipped.
    */
   static #extractEndpointsFromArray(entries: DidServiceEndpoint[]): DwnEndpoint[] {
     const endpoints: DwnEndpoint[] = [];
@@ -617,7 +616,7 @@ export class DeliveryService implements MessageProcessedHook {
   /**
    * Builds a `DwnEndpoint` from a map-shaped service endpoint entry
    * (`{ url: "...", dataRetention?: "full" | "cache" }`). Returns `undefined`
-   * when `url` is not a string, matching the original guard.
+   * when `url` is not a string.
    */
   static #extractMapEndpoint(value: Record<string, unknown>): DwnEndpoint | undefined {
     const mapEntry = value as { url?: string; dataRetention?: string };

@@ -352,10 +352,8 @@ export function isDidService(obj: unknown): obj is DidService {
  * Checks if a given object is a {@link DwnDidService}.
  *
  * A {@link DwnDidService} is defined as a {@link DidService} object with a `type` of
- * `"DecentralizedWebNode"`. The `enc` and `sig` properties are optional — they may be present
- * on existing DID documents for backward compatibility, but are not required per the DWN
- * specification. Encryption and signing keys are resolved from the DID document's verification
- * methods, not from the service entry.
+ * `"DecentralizedWebNode"`. Encryption and signing keys are resolved from the DID document's
+ * verification methods, not from the service entry.
  *
  * @example
  * ```ts
