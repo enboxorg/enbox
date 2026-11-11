@@ -12,7 +12,6 @@ import {
   clearLocalDwnEndpoint,
   createLocalDwnRpcClient,
   discoverEjectedLocalDwnPairing,
-  discoverLocalDwn,
   discoverLocalDwnPairing,
   initiateLocalDwnPairing,
   persistLocalDwnEjectionRecord,
@@ -45,7 +44,6 @@ const pairingRecord = {
   endpoint     : 'http://127.0.0.1:55500',
   pairedOrigin : 'https://app.example',
   token        : 'paired-token',
-  version      : 1 as const,
 };
 
 let originalLocation: Location | undefined;
@@ -53,7 +51,7 @@ let originalNavigator: Navigator | undefined;
 let originalIsSecureContext: boolean | undefined;
 
 describe('local-node pairing storage', () => {
-  test('persists and reads a versioned pairing record', async () => {
+  test('persists and reads a pairing record', async () => {
     const storage = new MemoryStorage();
 
     await persistLocalDwnPairingRecord(storage, {
@@ -67,19 +65,17 @@ describe('local-node pairing storage', () => {
     expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
   });
 
-  test('persists and reads a versioned ejection record', async () => {
+  test('persists and reads an ejection record', async () => {
     const storage = new MemoryStorage();
 
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : `${pairingRecord.endpoint}/`,
-      version     : 1,
     });
 
     const expected = {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     };
     const raw = await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION);
     expect(raw).not.toBeNull();
@@ -92,7 +88,6 @@ describe('local-node pairing storage', () => {
     await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
       completedAt : Number.NaN,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     }));
 
     expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
@@ -105,7 +100,6 @@ describe('local-node pairing storage', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     await clearLocalDwnEndpoint(storage);
@@ -120,7 +114,6 @@ describe('local-node pairing storage', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     const fetchFn = async (url: string | URL | Request): Promise<Response> => {
@@ -137,13 +130,12 @@ describe('local-node pairing storage', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 789,
       endpoint    : 'http://127.0.0.1:55501',
-      version     : 1,
     });
     expect(await discoverEjectedLocalDwnPairing(storage, fetchFn)).toBeUndefined();
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_EJECTION)).toBeNull();
   });
 
-  test('clears legacy endpoint-only values', async () => {
+  test('clears non-JSON pairing values', async () => {
     const storage = new MemoryStorage();
     await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, pairingRecord.endpoint);
 
@@ -151,12 +143,11 @@ describe('local-node pairing storage', () => {
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).toBeNull();
   });
 
-  test('clears malformed versioned pairing records', async () => {
+  test('clears malformed pairing records', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
     await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, JSON.stringify({
       ...pairingRecord,
@@ -174,7 +165,6 @@ describe('local-node pairing storage', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     const result = await discoverLocalDwnPairing(storage, async (url, init): Promise<Response> => {
@@ -203,23 +193,6 @@ describe('local-node pairing storage', () => {
     const result = await discoverLocalDwnPairing(storage, fetchFn);
 
     expect(result).toEqual(pairingRecord);
-
-    const originalFetch = globalThis.fetch;
-    Object.defineProperty(globalThis, 'fetch', {
-      configurable : true,
-      value        : fetchFn,
-      writable     : true,
-    });
-
-    try {
-      expect(await discoverLocalDwn(storage)).toBe(pairingRecord.endpoint);
-    } finally {
-      Object.defineProperty(globalThis, 'fetch', {
-        configurable : true,
-        value        : originalFetch,
-        writable     : true,
-      });
-    }
   });
 
   test('returns undefined for stored pairing when fetch is unavailable', async () => {
@@ -228,7 +201,6 @@ describe('local-node pairing storage', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     await withoutGlobalFetch(async (): Promise<void> => {
@@ -429,7 +401,6 @@ describe('probeLocalDwn', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     const result = await probeLocalDwn({
@@ -453,7 +424,6 @@ describe('probeLocalDwn', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairingRecord.endpoint,
-      version     : 1,
     });
 
     const result = await probeLocalDwn({
@@ -557,7 +527,6 @@ describe('requestLocalDwnPairing', () => {
         endpoint     : 'http://127.0.0.1:55500',
         pairedOrigin : 'https://app.example',
         token        : 'new-token',
-        version      : 1,
       },
       serverInfo : localNodeInfo,
       status     : 'paired',

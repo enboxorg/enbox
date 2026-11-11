@@ -114,7 +114,7 @@ async function approveWithMintedDelegate({ jwe, requestKey, providerDid, pin }: 
 }
 
 describe('ConnectClient + ConnectProvider (loopback)', () => {
-  it('should snapshot reactive legacy connect and refresh inputs without retaining mutable caller state', async () => {
+  it('should snapshot connect and refresh inputs without retaining mutable caller state', async () => {
     const owner = await DidJwk.create();
     const delegate = await DidJwk.create();
     const portable = await delegate.export();
@@ -136,18 +136,15 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
             ...(requestType === 'refresh' ? {} : { delegatePortableDid: portable }) },
         });
       });
-      const requestProfile = transport.requestProfile.bind(transport);
-      transport.requestProfile = async (state): Promise<ConnectRequestProfile> => {
-        const profile = await requestProfile(state);
-        return { ...profile, reply: new Proxy(profile.reply, {}) };
-      };
       const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
       const options = {
-        appName            : 'Reactive application', requestType, clientMetadata     : new Proxy(metadata, {}),
-        permissionRequests : new Proxy(permissionRequests, {}),
+        appName        : 'Snapshot application',
+        requestType,
+        clientMetadata : metadata,
+        permissionRequests,
         ...(requestType === 'refresh' ? { delegatePortableDid: portable } : {}),
       };
-      const pending = client.connect(new Proxy(options, {}));
+      const pending = client.connect(options);
       metadata.origin = 'https://changed.example';
       permissionRequests[0].permissionScopes[0].module = 'https://changed.example/module';
       expect((await pending)?.connectedDid).toBe(owner.uri);

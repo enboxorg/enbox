@@ -127,11 +127,10 @@ export type ConnectRequest = {
   appIcon?: string;
 
   /**
-   * Stable application identifier hint available to the wallet during approval.
-   * Browser clients should use their canonical origin; native clients may
-   * use a reverse-domain identifier. The official approval ceremony does not
-   * embed this in permission-grant session metadata during the compatibility
-   * rollout. It is a display hint unless the transport independently
+   * Stable application identifier hint available to the wallet during approval
+   * and recorded in permission-grant session metadata. Browser clients should
+   * use their canonical origin; native clients may use a reverse-domain
+   * identifier. It is a display hint unless the transport independently
    * authenticates it.
    */
   applicationId?: string;

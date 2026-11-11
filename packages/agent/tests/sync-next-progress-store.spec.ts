@@ -133,7 +133,7 @@ describe('SyncNextProgressStore', () => {
 
     expect(await store.getAllLinks()).toHaveLength(2);
     expect(await db.sublevel('replicationLinks').iterator().all()).toEqual([]);
-    expect(await db.sublevel('syncNextV1Links').iterator().all()).toHaveLength(2);
+    expect(await db.sublevel('syncNextLinks').iterator().all()).toHaveLength(2);
   });
 
   it('should atomically retain quarantine and advance the pull checkpoint', async () => {
@@ -500,32 +500,15 @@ describe('SyncNextProgressStore', () => {
     expect(await store.getQuarantineForProjection(first.tenantDid, first.projectionId)).toEqual([]);
   });
 
-  it('should reject obsolete rows and invalid queue metadata', async () => {
+  it('should reject invalid queue metadata', async () => {
     const link = await store.getOrCreateLink(linkCreate());
     const receipt = { messageCid: 'cid-1', source: token(1, 'pull', 'cid-1') };
     const quarantine = (store as unknown as {
       _quarantine: {
-        del(key: string): Promise<void>;
         put(key: string, value: string): Promise<void>;
       };
     })._quarantine;
     const key = syncNextReceiptKey(link, receipt);
-    await quarantine.put(key, JSON.stringify({
-      ...link,
-      ...receipt,
-      encryptedPayload : 'obsolete-jwe',
-      lastAttemptAt    : new Date().toISOString(),
-    }));
-
-    await expect(store.getQuarantineForLink(link)).rejects.toThrow('encrypted quarantine rows are obsolete');
-    await expect(store.commitPullPage(link, {
-      checkpoint   : token(1, 'pull', 'cid-1'),
-      pageReceipts : [receipt],
-      quarantine   : [],
-      settled      : [receipt],
-    })).rejects.toThrow('clear the complete sync-next progress store');
-    expect((await store.getLink(link))?.pullCheckpoint).toBeUndefined();
-    await quarantine.del(key);
 
     await store.commitPullPage(link, {
       checkpoint   : token(1, 'pull', 'cid-1'),

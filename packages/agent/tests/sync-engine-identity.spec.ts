@@ -871,6 +871,13 @@ describe('SyncEngineLevel — identity management', () => {
         clock.restore();
       }
     });
+
+    it('should reject invalid timeout values without mutating runtime state', async () => {
+      const engine = new SyncEngineLevel({ db });
+      for (const invalidTimeout of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(engine.stopSync(invalidTimeout)).rejects.toThrow(RangeError);
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------

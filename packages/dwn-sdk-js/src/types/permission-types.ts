@@ -12,11 +12,7 @@ export type ConnectSessionMetadata = {
   /** Approval-bundle ID shared by all grants created in one ceremony. */
   id: string;
 
-  /**
-   * Reserved for reader compatibility during a staged rollout. Grant
-   * producers must not emit this field until older closed-schema readers have
-   * been upgraded to accept it.
-   */
+  /** Application identifier hint supplied by the requester during approval. Self-reported display data. */
   applicationId?: string;
 
   /** Human-readable app name shown during approval. Self-reported display data. */

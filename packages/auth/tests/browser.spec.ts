@@ -28,7 +28,8 @@ describe('@enbox/auth/browser', () => {
     expect(mod.PasswordProviderUnavailableError).toBe(PasswordProviderUnavailableError);
     expect(mod.WalletConnect).toBeDefined();
     expect(mod.createDefaultStorage).toBeDefined();
-    expect(mod.discoverLocalDwn).toBeDefined();
+    expect(mod.discoverLocalDwnPairing).toBeDefined();
+    expect(mod.discoverLocalDwn).toBeUndefined();
     expect(mod.normalizePermissionPolicy).toBeDefined();
     expect(mod.normalizeModuleRequests).toBeDefined();
   });

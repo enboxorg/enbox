@@ -94,15 +94,16 @@ export const CONNECT_SESSION_DEFAULT_TTL_SECONDS = 60 * 60;
 export const CONNECT_SESSION_MAX_TTL_SECONDS = 90 * 24 * 60 * 60;
 
 const CONNECT_SESSION_METADATA_LIMITS = {
-  id        : 128,
-  appName   : 128,
-  appIcon   : 2048,
-  origin    : 512,
-  userAgent : 512,
-  platform  : 128,
-  language  : 64,
-  languages : 16,
-  timezone  : 128,
+  id            : 128,
+  applicationId : 512,
+  appName       : 128,
+  appIcon       : 2048,
+  origin        : 512,
+  userAgent     : 512,
+  platform      : 128,
+  language      : 64,
+  languages     : 16,
+  timezone      : 128,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,7 @@ const CONNECT_SESSION_METADATA_LIMITS = {
 /** Options for {@link createConnectSessionMetadata}. */
 export type CreateConnectSessionMetadataOptions = {
   id?: string;
+  applicationId?: string;
   appName?: string;
   appIcon?: string;
   clientMetadata?: ConnectClientMetadata;
@@ -122,9 +124,7 @@ export type CreateConnectSessionMetadataOptions = {
 /**
  * The approved connect request fields consumed by the ceremony. A kernel
  * {@link ConnectRequest} (as returned by `ConnectProvider.openRequest`) is
- * assignable to this shape. `applicationId` remains available to approval
- * UIs, but the ceremony deliberately does not persist it in grants during
- * the closed-schema compatibility rollout.
+ * assignable to this shape.
  */
 export type ConnectApprovalRequest = (Pick<
   ConnectRequest,
@@ -232,9 +232,7 @@ function boundedSessionStringArray(values: string[] | undefined): string[] | und
 /**
  * Builds the bounded {@link ConnectSessionMetadata} stamped onto every grant
  * created by a connect approval. All requester-supplied display fields are
- * length-limited so a hostile request cannot bloat grant records. Request
- * `applicationId` hints are intentionally not accepted here during the
- * closed-schema compatibility rollout.
+ * length-limited so a hostile request cannot bloat grant records.
  */
 export function createConnectSessionMetadata(
   options: CreateConnectSessionMetadataOptions = {},
@@ -244,6 +242,7 @@ export function createConnectSessionMetadata(
     seconds: options.ttlSeconds ?? CONNECT_SESSION_DEFAULT_TTL_SECONDS,
   }, createdAt);
   const clientMetadata = options.clientMetadata ?? {};
+  const applicationId = boundedSessionString(options.applicationId, CONNECT_SESSION_METADATA_LIMITS.applicationId);
   const appName = boundedSessionString(options.appName, CONNECT_SESSION_METADATA_LIMITS.appName);
   const appIcon = boundedSessionString(options.appIcon, CONNECT_SESSION_METADATA_LIMITS.appIcon);
   const origin = boundedSessionString(clientMetadata.origin, CONNECT_SESSION_METADATA_LIMITS.origin);
@@ -257,6 +256,7 @@ export function createConnectSessionMetadata(
     id: boundedSessionString(options.id, CONNECT_SESSION_METADATA_LIMITS.id) ?? randomToken(),
     createdAt,
     expiresAt,
+    ...(applicationId ? { applicationId } : {}),
     ...(appName ? { appName } : {}),
     ...(appIcon ? { appIcon } : {}),
     ...(origin ? { origin } : {}),
@@ -769,14 +769,10 @@ async function prepareConnectApprovalAuthentication(
 export async function executeConnectApproval(input: ExecuteConnectApprovalParams): Promise<ConnectApprovalResult> {
   // Progress observers and asynchronous collaborators must not change an
   // approved request or its controls while grants are being prepared.
-  // Legacy reactive inputs retain their JSON wire semantics. Authentication
-  // keeps cloneable plain data intact for strict proof-context validation.
-  const approvedRequest = input.request;
   const params = {
     ...input,
-    request: approvedRequest.authentication === undefined
-      ? JSON.parse(JSON.stringify(approvedRequest)) as ConnectApprovalRequest : structuredClone(approvedRequest),
-    approvedModuleOverrides: input.approvedModuleOverrides === undefined ? undefined : [...input.approvedModuleOverrides],
+    request                 : structuredClone(input.request),
+    approvedModuleOverrides : input.approvedModuleOverrides === undefined ? undefined : [...input.approvedModuleOverrides],
   };
   assertConnectPermissionRequests(params.request.permissionRequests);
   const { agent, providerDid, request } = params;
@@ -845,6 +841,7 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       : undefined;
 
     const connectSession = createConnectSessionMetadata({
+      applicationId  : request.applicationId,
       appName        : request.appName,
       appIcon        : request.appIcon,
       ttlSeconds     : sessionTtlSeconds,

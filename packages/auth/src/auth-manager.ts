@@ -1291,7 +1291,6 @@ export class AuthManager {
     await persistLocalDwnEjectionRecord(this._storage, {
       completedAt : Date.now(),
       endpoint    : drain.endpoint,
-      version     : 1,
     });
 
     return {

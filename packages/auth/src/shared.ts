@@ -39,7 +39,6 @@ export {
   clearLocalDwnEndpoint,
   createLocalDwnRpcClient,
   discoverEjectedLocalDwnPairing,
-  discoverLocalDwn,
   discoverLocalDwnPairing,
   initiateLocalDwnPairing,
   persistLocalDwnEjectionRecord,

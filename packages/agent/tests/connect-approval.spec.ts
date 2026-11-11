@@ -706,16 +706,16 @@ describe('connect approval ceremony', () => {
       expect('delegateDecryptionKeys' in result).toBe(false);
     });
 
-    it('snapshots reactive legacy approval data before progress observers can change it', async () => {
+    it('snapshots approval request data before progress observers can change it', async () => {
       const original = structuredClone(approvalRequest({ clientMetadata: { origin: 'https://approved.example' } }));
       const request = {
         ...structuredClone(original),
-        clientMetadata     : new Proxy(original.clientMetadata!, {}),
-        permissionRequests : new Proxy(structuredClone(original.permissionRequests), {}),
+        clientMetadata     : original.clientMetadata!,
+        permissionRequests : structuredClone(original.permissionRequests),
       };
       const { createGrantsStub, capturedSessions } = await stubApprovalDependencies();
       const result = await executeConnectApproval({
-        agent       : testHarness.agent, providerDid : providerIdentity.did.uri, transport   : 'relay', request     : new Proxy(request, {}),
+        agent       : testHarness.agent, providerDid : providerIdentity.did.uri, transport   : 'relay', request,
         onProgress  : ({ phase }) => {
           if (phase === 'delegate') {
             request.clientMetadata.origin = 'https://changed.example';
@@ -998,7 +998,7 @@ describe('connect approval ceremony', () => {
       expect(revocationGrantStub.firstCall.args[0].dateExpires).toBe(session.expiresAt);
     });
 
-    it('should keep request application IDs out of grants for legacy reader compatibility', async () => {
+    it('should persist bounded request application IDs onto grant session metadata', async () => {
       const { capturedSessions } = await stubApprovalDependencies();
 
       await executeConnectApproval({
@@ -1011,7 +1011,17 @@ describe('connect approval ceremony', () => {
       const session = capturedSessions[0];
       expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt))
         .toBe(CONNECT_SESSION_DEFAULT_TTL_SECONDS * 1000);
-      expect(Object.prototype.hasOwnProperty.call(session, 'applicationId')).toBe(false);
+      expect(session.applicationId).toBe('com.example.sample');
+
+      const oversizedAppId = 'x'.repeat(600);
+      await executeConnectApproval({
+        agent       : testHarness.agent,
+        providerDid : providerIdentity.did.uri,
+        transport   : 'relay',
+        request     : approvalRequest({ applicationId: oversizedAppId }),
+      });
+
+      expect(capturedSessions[1].applicationId).toBe('x'.repeat(512));
     });
 
     it('should prefer the provider-approved session TTL over the requester preference', async () => {

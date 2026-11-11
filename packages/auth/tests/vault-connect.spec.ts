@@ -736,7 +736,6 @@ describe('vaultConnect', () => {
       endpoint     : 'http://127.0.0.1:55557',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
 
     const setCalls: string[] = [];
