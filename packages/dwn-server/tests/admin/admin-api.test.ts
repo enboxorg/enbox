@@ -1,4 +1,7 @@
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
+
 import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
+import { createHttpDwnRpcRequestBody, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -535,7 +538,8 @@ describe('AdminApi — Phase 2 endpoints', () => {
 
       await fetch(`http://localhost:${port}`, {
         method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
+        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
       });
 
       // Check events endpoint.
@@ -579,7 +583,8 @@ describe('AdminApi — Phase 2 endpoints', () => {
 
       await fetch(`http://localhost:${port}`, {
         method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
+        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
       });
 
       // Fetch events since cursor.
@@ -1555,7 +1560,8 @@ describe('AdminApi — tenant data browser endpoints', () => {
 
       await fetch(`http://localhost:${port}`, {
         method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
+        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
       });
 
       // Note: RecordsQuery messages are not stored in the message store.

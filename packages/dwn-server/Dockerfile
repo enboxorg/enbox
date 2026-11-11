@@ -50,9 +50,6 @@ RUN chmod +x entrypoint.sh
 # Create data directory
 RUN mkdir -p data
 
-# Copy package.json to expected location for /info endpoint
-RUN mkdir -p /dwn-server && cp package.json /dwn-server/package.json
-
 # Expose port
 EXPOSE ${DS_PORT}
 

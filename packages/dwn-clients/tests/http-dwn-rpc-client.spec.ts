@@ -1,4 +1,3 @@
-import type { DwnRpcResponse } from '../src/dwn-rpc-types.js';
 import type { ServerInfo } from '../src/server-info-types.js';
 import type { ModuleDefinition, Persona } from '@enbox/dwn-sdk-js';
 
@@ -12,8 +11,7 @@ import sinon from 'sinon';
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { DataStream, DwnErrorCode, Jws, ModulesConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import {
-  HTTP_DWN_RPC_BODY_V1,
-  HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
+  HTTP_DWN_RPC_MEDIA_TYPE,
   parseHttpDwnRpcRequestBody,
 } from '../src/http-dwn-rpc-framing.js';
 
@@ -51,13 +49,10 @@ async function installDefaultTestModuleViaHttp(httpClient: HttpDwnRpcClient, dwn
 
 describe('HttpDwnRpcClient', () => {
   const client = new HttpDwnRpcClient();
-  const legacyServerInfoCache = new DwnServerInfoCacheMemory();
-  const legacyClient = new HttpDwnRpcClient(legacyServerInfoCache);
   let alice: Persona;
 
   beforeEach(async () => {
     sinon.restore();
-    await legacyServerInfoCache.set(testDwnUrl, testServerInfo());
     alice = await TestDataGenerator.generateDidKeyPersona();
   });
 
@@ -216,7 +211,7 @@ describe('HttpDwnRpcClient', () => {
         schema : 'foo/bar',
       });
 
-      await legacyClient.sendDwnRequest({
+      await client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message   : writeMessage,
@@ -231,7 +226,8 @@ describe('HttpDwnRpcClient', () => {
       expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect(fetchOpts.duplex).toBe('half');
 
-      const sentBytes = await DataStream.toBytes(fetchOpts.body as ReadableStream<Uint8Array>);
+      const parsed = await parseHttpDwnRpcRequestBody(fetchOpts.body as ReadableStream<Uint8Array>);
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(streamBytes);
     });
 
@@ -255,7 +251,7 @@ describe('HttpDwnRpcClient', () => {
         schema : 'foo/bar',
       });
 
-      await legacyClient.sendDwnRequest({
+      await client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message   : writeMessage,
@@ -267,12 +263,15 @@ describe('HttpDwnRpcClient', () => {
       const fetchCallArgs = fetchStub.firstCall.args;
       const fetchOpts = fetchCallArgs[1] as Record<string, unknown>;
 
-      expect(fetchOpts.body).toBe(dataBlob);
+      expect(fetchOpts.body).toBeInstanceOf(Blob);
       expect(fetchOpts.duplex).toBeUndefined();
+
+      const parsed = await parseHttpDwnRpcRequestBody(requestBodyStream(fetchOpts.body as BodyInit));
+      expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(streamBytes);
     });
 
     it('adds endpoint bearer tokens to DWN HTTP requests', async () => {
-      const authClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 0 }, {
+      const authClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 }, {
         getBearerToken: (dwnUrl: string): string | undefined => {
           return dwnUrl === testDwnUrl ? 'local-node-token' : undefined;
         },
@@ -317,7 +316,7 @@ describe('HttpDwnRpcClient', () => {
       } as any);
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
-      const result = await legacyClient.applyReplicatedMessage({
+      const result = await client.applyReplicatedMessage({
         ancestryOnly                       : true,
         dwnUrl                             : testDwnUrl,
         includeMaterializationConfirmation : true,
@@ -330,16 +329,17 @@ describe('HttpDwnRpcClient', () => {
 
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
       const headers = fetchOpts.headers as Record<string, string>;
-      const dwnRequest = JSON.parse(headers['dwn-request']);
+      expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
+      const { jsonRpcRequest: dwnRequest } = await parseHttpDwnRpcRequestBody(requestBodyStream(fetchOpts.body!));
       expect(dwnRequest.method).toBe('dwn.applyReplicatedMessage');
-      expect(dwnRequest.params.ancestryOnly).toBe(true);
-      expect(dwnRequest.params.includeMaterializationConfirmation).toBe(true);
-      expect(dwnRequest.params.target).toBe(alice.did);
-      expect(dwnRequest.params.message).toEqual(message);
+      expect((dwnRequest.params as Record<string, unknown>).ancestryOnly).toBe(true);
+      expect((dwnRequest.params as Record<string, unknown>).includeMaterializationConfirmation).toBe(true);
+      expect((dwnRequest.params as Record<string, unknown>).target).toBe(alice.did);
+      expect((dwnRequest.params as Record<string, unknown>).message).toEqual(message);
     });
 
     it('adds endpoint bearer tokens to replicated apply HTTP requests', async () => {
-      const authClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 0 }, {
+      const authClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 }, {
         getBearerToken: (dwnUrl: string): string | undefined => {
           return dwnUrl === testDwnUrl ? 'local-node-token' : undefined;
         },
@@ -391,7 +391,7 @@ describe('HttpDwnRpcClient', () => {
       } as any);
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
-      const result = await legacyClient.applyReplicatedMessage({
+      const result = await client.applyReplicatedMessage({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -403,11 +403,12 @@ describe('HttpDwnRpcClient', () => {
 
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
       const headers = fetchOpts.headers as Record<string, string>;
-      expect(headers['content-type']).toBe('application/octet-stream');
+      expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect((fetchOpts as Record<string, unknown>).duplex).toBe('half');
 
-      const sentBytes = await DataStream.toBytes(fetchOpts.body as ReadableStream<Uint8Array>);
+      const parsed = await parseHttpDwnRpcRequestBody(fetchOpts.body as ReadableStream<Uint8Array>);
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(payload);
     });
 
@@ -432,7 +433,7 @@ describe('HttpDwnRpcClient', () => {
       const timeoutStub = sinon.stub(AbortSignal, 'timeout').callsFake((_ms: number): AbortSignal => new AbortController().signal);
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: payload });
 
-      await legacyClient.applyReplicatedMessage({
+      await client.applyReplicatedMessage({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -459,7 +460,7 @@ describe('HttpDwnRpcClient', () => {
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
       try {
-        await legacyClient.applyReplicatedMessage({
+        await client.applyReplicatedMessage({
           dwnUrl    : testDwnUrl,
           targetDid : alice.did,
           message,
@@ -484,7 +485,7 @@ describe('HttpDwnRpcClient', () => {
       } as any);
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
-      await expect(legacyClient.applyReplicatedMessage({
+      await expect(client.applyReplicatedMessage({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -538,7 +539,7 @@ describe('HttpDwnRpcClient', () => {
         filter : { schema: 'foo/bar' }
       });
 
-      const response = await legacyClient.sendDwnRequest({
+      const response = await client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -584,7 +585,7 @@ describe('HttpDwnRpcClient', () => {
         filter : { schema: 'foo/bar' }
       });
 
-      await expect(legacyClient.sendDwnRequest({
+      await expect(client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -603,7 +604,7 @@ describe('HttpDwnRpcClient', () => {
         filter : { schema: 'foo/bar' }
       });
 
-      await expect(legacyClient.sendDwnRequest({
+      await expect(client.sendDwnRequest({
         dwnUrl    : testDwnUrl,
         targetDid : alice.did,
         message,
@@ -622,7 +623,7 @@ describe('HttpDwnRpcClient', () => {
 
 
       try {
-        await legacyClient.sendDwnRequest({
+        await client.sendDwnRequest({
           dwnUrl    : testDwnUrl,
           targetDid : alice.did,
           message   : writeMessage,
@@ -647,7 +648,7 @@ describe('HttpDwnRpcClient', () => {
         schema : 'foo/bar'
       });
       try {
-        await legacyClient.sendDwnRequest({
+        await client.sendDwnRequest({
           dwnUrl    : testDwnUrl,
           targetDid : alice.did,
           message   : writeMessage,
@@ -660,11 +661,9 @@ describe('HttpDwnRpcClient', () => {
     });
   });
 
-  describe('HTTP request body framing negotiation', () => {
-    it('should use body-v1 for processMessage when the cached server capability advertises it', async () => {
-      const cache = new DwnServerInfoCacheMemory();
-      await cache.set(testDwnUrl, testServerInfo([HTTP_DWN_RPC_BODY_V1]));
-      const bodyClient = new HttpDwnRpcClient(cache, { maxRetries: 0 });
+  describe('HTTP request body framing', () => {
+    it('should frame processMessage in the HTTP request body without probing /info', async () => {
+      const bodyClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
       const jsonRpcResponse = {
         id      : 'test',
         jsonrpc : '2.0',
@@ -687,9 +686,10 @@ describe('HttpDwnRpcClient', () => {
       });
 
       expect(fetchStub.calledOnce).toBe(true);
+      expect(fetchStub.firstCall.args[0]).toBe(testDwnUrl);
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
       const headers = fetchOpts.headers as Record<string, string>;
-      expect(headers['content-type']).toBe(HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE);
+      expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(headers['dwn-request']).toBeUndefined();
       expect(fetchOpts.body).toBeInstanceOf(Blob);
       expect((fetchOpts as RequestInit & { duplex?: string }).duplex).toBeUndefined();
@@ -700,10 +700,8 @@ describe('HttpDwnRpcClient', () => {
       expect(parsed.dataStream).toBeUndefined();
     });
 
-    it('should use streaming body-v1 data for replicated apply', async () => {
-      const cache = new DwnServerInfoCacheMemory();
-      await cache.set(testDwnUrl, testServerInfo([HTTP_DWN_RPC_BODY_V1]));
-      const bodyClient = new HttpDwnRpcClient(cache, { maxRetries: 0 });
+    it('should stream record data in the framed HTTP request body for replicated apply', async () => {
+      const bodyClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
       const jsonRpcResponse = {
         id      : 'test',
         jsonrpc : '2.0',
@@ -730,7 +728,10 @@ describe('HttpDwnRpcClient', () => {
         targetDid : alice.did,
       });
 
+      expect(fetchStub.calledOnce).toBe(true);
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit & { duplex?: string };
+      const headers = fetchOpts.headers as Record<string, string>;
+      expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect(fetchOpts.duplex).toBe('half');
       const parsed = await parseHttpDwnRpcRequestBody(fetchOpts.body as ReadableStream<Uint8Array>);
@@ -738,173 +739,33 @@ describe('HttpDwnRpcClient', () => {
       expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(payload);
     });
 
-    it('should deduplicate concurrent capability lookups and preserve future capability strings', async () => {
-      const capabilityUrl = 'https://body-v1.example/dwn';
+    it('should deduplicate concurrent getServerInfo lookups', async () => {
+      const capabilityUrl = 'https://info.example/dwn';
       const cache = new DwnServerInfoCacheMemory();
       const bodyClient = new HttpDwnRpcClient(cache, { maxRetries: 0 });
       let resolveInfo!: (response: Response) => void;
       const infoResponse = new Promise<Response>(resolve => {
         resolveInfo = resolve;
       });
-      const jsonRpcResponse = {
-        id      : 'test',
-        jsonrpc : '2.0',
-        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
-      };
-      const fetchStub = sinon.stub(globalThis, 'fetch').callsFake(async (url): Promise<Response> => {
-        if (String(url).endsWith('/info')) {
-          return infoResponse;
-        }
-        return {
-          status  : 200,
-          headers : new Headers(),
-          text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
-        } as Response;
-      });
-      const { message } = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { schema: 'foo/bar' },
-      });
+      const fetchStub = sinon.stub(globalThis, 'fetch').returns(infoResponse);
 
-      const requests = [1, 2].map(async (): Promise<DwnRpcResponse> => bodyClient.sendDwnRequest({
-        dwnUrl    : capabilityUrl,
-        message,
-        targetDid : alice.did,
-      }));
+      const requests = [1, 2].map(async (): Promise<ServerInfo> => bodyClient.getServerInfo(capabilityUrl));
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       resolveInfo({
         ok     : true,
         status : 200,
         json   : async (): Promise<ServerInfo> => ({
-          ...testServerInfo([HTTP_DWN_RPC_BODY_V1, 'body-v2']),
+          ...testServerInfo(),
           url: capabilityUrl,
         }),
       } as Response);
-      await Promise.all(requests);
+      const [first, second] = await Promise.all(requests);
 
-      expect(fetchStub.getCalls().filter(call => String(call.args[0]).endsWith('/info'))).toHaveLength(1);
-      expect(fetchStub.callCount).toBe(3);
-      expect((await cache.get(capabilityUrl))?.httpRpcFraming).toEqual([HTTP_DWN_RPC_BODY_V1, 'body-v2']);
-      for (const call of fetchStub.getCalls().filter(call => !String(call.args[0]).endsWith('/info'))) {
-        const headers = (call.args[1] as RequestInit).headers as Record<string, string>;
-        expect(headers['content-type']).toBe(HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE);
-      }
-    });
-
-    it('should back off failed capability lookups and retry discovery later', async () => {
-      const legacyUrl = 'https://legacy.example/dwn';
-      const bodyClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
-      const jsonRpcResponse = {
-        id      : 'test',
-        jsonrpc : '2.0',
-        result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
-      };
-      let infoRequests = 0;
-      let infoAvailable = false;
-      const fetchStub = sinon.stub(globalThis, 'fetch').callsFake(async (url): Promise<Response> => {
-        if (String(url).endsWith('/info')) {
-          infoRequests++;
-          if (!infoAvailable) {
-            throw new Error('info unavailable');
-          }
-          return {
-            ok     : true,
-            status : 200,
-            json   : async (): Promise<ServerInfo> => ({
-              ...testServerInfo([HTTP_DWN_RPC_BODY_V1]),
-              url: legacyUrl,
-            }),
-          } as Response;
-        }
-        return {
-          status  : 200,
-          headers : new Headers(),
-          text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
-        } as Response;
-      });
-      const { message } = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { schema: 'foo/bar' },
-      });
-      let now = 1_000;
-      sinon.stub(Date, 'now').callsFake((): number => now);
-
-      await bodyClient.sendDwnRequest({ dwnUrl: legacyUrl, message, targetDid: alice.did });
-      await bodyClient.sendDwnRequest({ dwnUrl: legacyUrl, message, targetDid: alice.did });
-
-      expect(infoRequests).toBe(1);
-      expect(fetchStub.callCount).toBe(3);
-      const initialPosts = fetchStub.getCalls().filter(call => !String(call.args[0]).endsWith('/info'));
-      for (const call of initialPosts) {
-        const headers = (call.args[1] as RequestInit).headers as Record<string, string>;
-        expect(headers['dwn-request']).toBeDefined();
-        expect(headers['content-type']).toBeUndefined();
-      }
-
-      now += 30_001;
-      infoAvailable = true;
-      await bodyClient.sendDwnRequest({ dwnUrl: legacyUrl, message, targetDid: alice.did });
-
-      expect(infoRequests).toBe(2);
-      expect(fetchStub.callCount).toBe(5);
-      const recoveredPost = fetchStub.getCalls().filter(call => !String(call.args[0]).endsWith('/info')).at(-1)!;
-      const recoveredHeaders = (recoveredPost.args[1] as RequestInit).headers as Record<string, string>;
-      expect(recoveredHeaders['content-type']).toBe(HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE);
-      expect(recoveredHeaders['dwn-request']).toBeUndefined();
-    });
-
-    it('should abort only the caller waiting on shared capability discovery', async () => {
-      const capabilityUrl = 'https://slow-info.example/dwn';
-      const bodyClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
-      let resolveInfo!: (response: Response) => void;
-      const infoResponse = new Promise<Response>(resolve => {
-        resolveInfo = resolve;
-      });
-      const fetchStub = sinon.stub(globalThis, 'fetch').callsFake(async (url): Promise<Response> => {
-        if (String(url).endsWith('/info')) {
-          return infoResponse;
-        }
-        return {
-          status  : 200,
-          headers : new Headers(),
-          text    : async (): Promise<string> => JSON.stringify({
-            id      : 'test',
-            jsonrpc : '2.0',
-            result  : { reply: { status: { code: 200, detail: 'OK' }, entries: [] } },
-          }),
-        } as Response;
-      });
-      const { message } = await TestDataGenerator.generateRecordsQuery({
-        author : alice,
-        filter : { schema: 'foo/bar' },
-      });
-      const controller = new AbortController();
-      const request = bodyClient.sendDwnRequest({
-        dwnUrl    : capabilityUrl,
-        message,
-        signal    : controller.signal,
-        targetDid : alice.did,
-      });
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
-
-      controller.abort(new DOMException('caller stopped', 'AbortError'));
-      await expect(request).rejects.toThrow('caller stopped');
       expect(fetchStub.callCount).toBe(1);
-
-      resolveInfo({
-        ok     : true,
-        status : 200,
-        json   : async (): Promise<ServerInfo> => ({
-          ...testServerInfo([HTTP_DWN_RPC_BODY_V1]),
-          url: capabilityUrl,
-        }),
-      } as Response);
-      await bodyClient.getServerInfo(capabilityUrl);
-      await bodyClient.sendDwnRequest({ dwnUrl: capabilityUrl, message, targetDid: alice.did });
-      expect(fetchStub.callCount).toBe(2);
+      expect(first).toEqual(second);
     });
 
-    it('should not start capability discovery for an already-aborted caller', async () => {
+    it('should reject immediately without calling fetch for an already-aborted caller', async () => {
       const fetchStub = sinon.stub(globalThis, 'fetch');
       const bodyClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
       const controller = new AbortController();
@@ -931,7 +792,7 @@ describe('HttpDwnRpcClient', () => {
         id      : 'test',
         jsonrpc : '2.0',
       }, { status: 500 }));
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 3 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 3 });
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
       await expect(retryClient.applyReplicatedMessage({
@@ -955,7 +816,7 @@ describe('HttpDwnRpcClient', () => {
         jsonrpc : '2.0',
         result  : { result: { kind: 'Duplicate' } },
       }));
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10 });
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
       expect(await retryClient.applyReplicatedMessage({
@@ -988,7 +849,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1017,7 +878,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
       const dataStream = DataStream.fromBytes(new TextEncoder().encode('one-shot-body'));
 
@@ -1050,7 +911,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1069,7 +930,7 @@ describe('HttpDwnRpcClient', () => {
     it('should exhaust retries and throw on persistent network error', async () => {
       sinon.stub(globalThis, 'fetch').rejects(new TypeError('Failed to fetch'));
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1097,7 +958,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1135,7 +996,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => JSON.stringify(jsonRpcResponse),
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1168,7 +1029,7 @@ describe('HttpDwnRpcClient', () => {
         }),
       } as Response);
       const retryClient = new HttpDwnRpcClient(
-        legacyServerInfoCache,
+        undefined,
         { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 25 },
       );
       const { message } = await TestDataGenerator.generateRecordsQuery({
@@ -1206,7 +1067,7 @@ describe('HttpDwnRpcClient', () => {
         }),
       } as Response);
       const retryClient = new HttpDwnRpcClient(
-        legacyServerInfoCache,
+        undefined,
         { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 2_000 },
       );
 
@@ -1223,7 +1084,7 @@ describe('HttpDwnRpcClient', () => {
     it('should not retry when maxRetries is 0', async () => {
       sinon.stub(globalThis, 'fetch').rejects(new TypeError('Failed to fetch'));
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 0 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 0 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1251,7 +1112,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => body,
       } as any);
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1289,7 +1150,7 @@ describe('HttpDwnRpcClient', () => {
         } as any;
       });
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 1, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1308,7 +1169,7 @@ describe('HttpDwnRpcClient', () => {
     it('should not retry on non-retryable errors (e.g. RangeError)', async () => {
       sinon.stub(globalThis, 'fetch').rejects(new RangeError('Invalid argument'));
 
-      const retryClient = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const retryClient = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1343,7 +1204,7 @@ describe('HttpDwnRpcClient', () => {
         });
       }) as any);
 
-      const client = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const client = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1384,7 +1245,7 @@ describe('HttpDwnRpcClient', () => {
         });
       }) as any);
 
-      const client = new HttpDwnRpcClient(legacyServerInfoCache, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
+      const client = new HttpDwnRpcClient(undefined, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 50 });
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
         filter : { schema: 'foo/bar' }
@@ -1409,7 +1270,7 @@ describe('HttpDwnRpcClient', () => {
         text    : async (): Promise<string> => '',
       } as Response);
       const client = new HttpDwnRpcClient(
-        legacyServerInfoCache,
+        undefined,
         { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 60_000 },
       );
       const { message } = await TestDataGenerator.generateRecordsQuery({
@@ -1519,9 +1380,8 @@ function requestBodyStream(body: BodyInit): ReadableStream<Uint8Array> {
   return new Response(body).body!;
 }
 
-function testServerInfo(httpRpcFraming?: string[]): ServerInfo {
+function testServerInfo(): ServerInfo {
   return {
-    httpRpcFraming,
     maxFileSize              : 100 * 1024 * 1024,
     registrationRequirements : [],
     server                   : '@enbox/dwn-server',

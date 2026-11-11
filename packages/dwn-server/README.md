@@ -335,15 +335,9 @@ Send a DWeb message to a target tenant.
 }
 ```
 
-### Transporting large data
+### HTTP JSON-RPC framing & streaming large data
 
-Inline `encodedData` is only suitable for payloads up to ~30 KB (`30,000` bytes). Larger `RecordsWrite` data is streamed over HTTP:
-
-- Check `GET /info` for `httpRpcFraming: ["body-v1"]`.
-- Set `content-type` to `application/vnd.enbox.dwn-rpc; version=1`.
-- Send a one-byte flags field, a four-byte big-endian JSON envelope length, the UTF-8 JSON-RPC envelope, and then the raw binary data in one streaming request body.
-
-Servers continue to accept the legacy `dwn-request` header with an `application/octet-stream` data body for older clients. Enbox clients negotiate the body framing automatically.
+HTTP `POST /` requests carry a `content-type: application/vnd.enbox.dwn-rpc` body consisting of a one-byte flags field (`0x00` without trailing data, `0x01` when raw record data follows), a four-byte big-endian JSON envelope length, the UTF-8 JSON-RPC envelope, and—for `RecordsWrite` payloads larger than ~30 KB (`30,000` bytes)—the raw binary data stream.
 
 ### Receiving large data
 

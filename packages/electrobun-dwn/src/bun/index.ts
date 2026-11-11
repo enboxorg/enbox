@@ -27,7 +27,7 @@ const webSocketSupport = (
   { on: true, off: false } as const
 )[process.env['DS_WEBSOCKET_SERVER'] ?? ''] ?? true;
 
-function resolveDwnServerPackageJsonPath(): string {
+function resolveDwnServerPackageJsonPath(): string | undefined {
   const envPath = process.env['DWN_SERVER_PACKAGE_JSON'];
   if (envPath) {
     return envPath;
@@ -41,10 +41,10 @@ function resolveDwnServerPackageJsonPath(): string {
       return resolvedPath;
     }
   } catch {
-    // Fall back to the server package default path.
+    // Allow HttpApi to handle resolution or omit version metadata.
   }
 
-  return '/dwn-server/package.json';
+  return undefined;
 }
 
 /**

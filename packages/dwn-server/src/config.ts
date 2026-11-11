@@ -87,13 +87,10 @@ export const config = {
   ttlCacheUrl: process.env.DWN_TTL_CACHE_URL || 'sqlite://',
 
   /**
-   * Used to populate the `version` and `sdkVersion` properties returned by the `/info` endpoint.
-   *
-   * The `version` and `sdkVersion` are pulled from `package.json` at runtime.
-   * If `DWN_SERVER_PACKAGE_JSON` is set, we use that path.
-   * Otherwise use the Docker image path, with installed-package resolution in the metadata loader.
+   * Optional path to a `package.json` used to populate the `version` property returned by `/info`.
+   * When unset, `@enbox/dwn-server/package.json` is resolved from installed packages.
    */
-  packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || '/dwn-server/package.json',
+  packageJsonPath   : process.env.DWN_SERVER_PACKAGE_JSON || undefined,
   /**
    * Maximum size of data that can be provided with a RecordsWrite.
    * Request bodies up to this size are buffered fully into memory, so the

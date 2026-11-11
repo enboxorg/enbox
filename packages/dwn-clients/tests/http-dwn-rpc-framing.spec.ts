@@ -5,9 +5,8 @@ import { DataStream } from '@enbox/dwn-sdk-js';
 
 import {
   createHttpDwnRpcRequestBody,
-  HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
-  HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES,
-  isHttpDwnRpcBodyV1ContentType,
+  HTTP_DWN_RPC_MAX_ENVELOPE_BYTES,
+  HTTP_DWN_RPC_MEDIA_TYPE,
   isHttpDwnRpcContentType,
   parseHttpDwnRpcRequestBody,
 } from '../src/http-dwn-rpc-framing.js';
@@ -68,17 +67,17 @@ describe('HTTP DWN RPC request body framing', () => {
     expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(data);
   });
 
-  it('should reject an envelope larger than the body-v1 limit before framing', () => {
+  it('should reject an envelope larger than the max envelope limit before framing', () => {
     const request = createJsonRpcRequest('request-id', 'test.method', {
-      value: 'x'.repeat(HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES),
+      value: 'x'.repeat(HTTP_DWN_RPC_MAX_ENVELOPE_BYTES),
     });
 
-    expect(() => createHttpDwnRpcRequestBody(request)).toThrow('body-v1 limit');
+    expect(() => createHttpDwnRpcRequestBody(request)).toThrow('-byte limit');
   });
 
   it('should reject malformed, unsupported, and truncated frames', async () => {
     const oversizedLength = new Uint8Array([0, 0, 16, 0, 1]);
-    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([oversizedLength]))).rejects.toThrow('body-v1 limit');
+    await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([oversizedLength]))).rejects.toThrow('-byte limit');
 
     const unsupportedFlags = new Uint8Array([2, 0, 0, 0, 0]);
     await expect(parseHttpDwnRpcRequestBody(DataStream.fromAsyncIterable([unsupportedFlags]))).rejects.toThrow('unsupported flags');
@@ -150,17 +149,13 @@ describe('HTTP DWN RPC request body framing', () => {
     expect(cancellationReason).toBe('no longer needed');
   });
 
-  it('should identify the version-one media type without accepting other versions', () => {
-    expect(isHttpDwnRpcBodyV1ContentType(HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE)).toBe(true);
-    expect(isHttpDwnRpcBodyV1ContentType('Application/Vnd.Enbox.Dwn-Rpc; charset=utf-8; VERSION="1"')).toBe(true);
-    expect(isHttpDwnRpcBodyV1ContentType('application/vnd.enbox.dwn-rpc; version=2')).toBe(false);
-    expect(isHttpDwnRpcBodyV1ContentType('application/vnd.enbox.dwn-rpc; version="1')).toBe(false);
-    expect(isHttpDwnRpcBodyV1ContentType('application/vnd.enbox.dwn-rpc; version=1"')).toBe(false);
-    expect(isHttpDwnRpcBodyV1ContentType('application/vnd.enbox.dwn-rpc; version=1=garbage')).toBe(false);
-    expect(isHttpDwnRpcContentType('application/vnd.enbox.dwn-rpc; version=2')).toBe(true);
-    expect(isHttpDwnRpcBodyV1ContentType('application/octet-stream')).toBe(false);
+  it('should identify the exact DWN RPC media type without parameters', () => {
+    expect(isHttpDwnRpcContentType(HTTP_DWN_RPC_MEDIA_TYPE)).toBe(true);
+    expect(isHttpDwnRpcContentType('Application/Vnd.Enbox.Dwn-Rpc')).toBe(true);
+    expect(isHttpDwnRpcContentType('application/vnd.enbox.dwn-rpc; version=1')).toBe(false);
+    expect(isHttpDwnRpcContentType('application/vnd.enbox.dwn-rpc; version=2')).toBe(false);
+    expect(isHttpDwnRpcContentType('application/vnd.enbox.dwn-rpc; charset=utf-8')).toBe(false);
     expect(isHttpDwnRpcContentType('application/octet-stream')).toBe(false);
-    expect(isHttpDwnRpcBodyV1ContentType(null)).toBe(false);
     expect(isHttpDwnRpcContentType(null)).toBe(false);
   });
 });

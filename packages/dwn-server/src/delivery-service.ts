@@ -6,8 +6,8 @@ import type { MessageProcessedContext, MessageProcessedHook } from './message-pr
 
 import log from 'loglevel';
 
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { sleep } from '@enbox/common';
+import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, getRoleContextPrefix, getRuleSetAtPath, Message, preloadModuleDefinitions, Records, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
@@ -746,12 +746,10 @@ export class DeliveryService implements MessageProcessedHook {
 
   /**
    * Sends a single DWN message to a remote endpoint via JSON-RPC over HTTP.
-   * The JSON-RPC envelope rides the `dwn-request` header; for data-bearing
-   * `RecordsWrite` messages the record data is sent as an
-   * `application/octet-stream` request body (the same wire shape
-   * `HttpDwnRpcClient.sendDwnRequest` produces), read back from the source
-   * tenant's local stores since the original request stream was consumed
-   * when the message was processed.
+   * The JSON-RPC envelope and optional record data stream ride in a framed
+   * `application/vnd.enbox.dwn-rpc` request body, reading record data back
+   * from the source tenant's local stores since the original request stream
+   * was consumed when the message was processed.
    * Follows the same retry pattern as WebhookManager.
    */
   async #sendMessage(endpointUrl: string, target: string, message: GenericMessage, sourceTenant: string): Promise<void> {
@@ -762,7 +760,7 @@ export class DeliveryService implements MessageProcessedHook {
     );
 
     const dataBearingWrite = DeliveryService.#getDataBearingWrite(message);
-    const headers = DeliveryService.#createHeaders(rpcRequest, dataBearingWrite);
+    const headers = { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE };
 
     for (let attempt = 0; attempt <= DeliveryService.#maxRetries; attempt++) {
       const result = await this.#sendMessageAttempt({
@@ -770,6 +768,7 @@ export class DeliveryService implements MessageProcessedHook {
         dataBearingWrite,
         endpointUrl,
         headers,
+        rpcRequest,
         sourceTenant,
         target,
       });
@@ -788,6 +787,7 @@ export class DeliveryService implements MessageProcessedHook {
     dataBearingWrite,
     endpointUrl,
     headers,
+    rpcRequest,
     sourceTenant,
     target,
   }: {
@@ -795,11 +795,12 @@ export class DeliveryService implements MessageProcessedHook {
     dataBearingWrite: RecordsWriteMessage | undefined;
     endpointUrl: string;
     headers: Record<string, string>;
+    rpcRequest: JsonRpcRequest;
     sourceTenant: string;
     target: string;
   }): Promise<SendMessageAttemptResult> {
     try {
-      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, headers, dataBearingWrite);
+      const fetchOptions = await this.#createFetchOptions(sourceTenant, endpointUrl, headers, rpcRequest, dataBearingWrite);
       if (fetchOptions === undefined) {
         return 'skipped';
       }
@@ -816,9 +817,10 @@ export class DeliveryService implements MessageProcessedHook {
     sourceTenant: string,
     endpointUrl: string,
     headers: Record<string, string>,
+    rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
   ): Promise<RequestInitWithDuplex | undefined> {
-    const body = await this.#createRequestBody(sourceTenant, endpointUrl, dataBearingWrite);
+    const body = await this.#createRequestBody(sourceTenant, endpointUrl, rpcRequest, dataBearingWrite);
     if (body === undefined) {
       return undefined;
     }
@@ -845,10 +847,11 @@ export class DeliveryService implements MessageProcessedHook {
   async #createRequestBody(
     sourceTenant: string,
     endpointUrl: string,
+    rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
   ): Promise<BodyInit | undefined> {
     if (dataBearingWrite === undefined) {
-      return new Uint8Array(0);
+      return createHttpDwnRpcRequestBody(rpcRequest);
     }
 
     const data = await this.#getRecordsWriteData(sourceTenant, dataBearingWrite);
@@ -857,21 +860,11 @@ export class DeliveryService implements MessageProcessedHook {
       return undefined;
     }
 
-    return data;
+    return createHttpDwnRpcRequestBody(rpcRequest, data);
   }
 
   static #getDataBearingWrite(message: GenericMessage): RecordsWriteMessage | undefined {
     return Records.isRecordsWrite(message) && message.descriptor.dataSize > 0 ? message : undefined;
-  }
-
-  static #createHeaders(
-    rpcRequest: JsonRpcRequest,
-    dataBearingWrite: RecordsWriteMessage | undefined,
-  ): Record<string, string> {
-    return {
-      'content-type' : dataBearingWrite !== undefined ? 'application/octet-stream' : 'application/json',
-      'dwn-request'  : JSON.stringify(rpcRequest),
-    };
   }
 
   static #handleSendResponse(endpointUrl: string, target: string, response: Response, attempt: number): SendMessageAttemptResult {

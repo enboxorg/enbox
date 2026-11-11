@@ -4,7 +4,6 @@ import type { RegistrationManager } from '../../src/registration/registration-ma
 import type { JsonRpcRequest, JsonRpcResponse, ProofOfWorkChallengeModel, RegistrationData, RegistrationRequest } from '@enbox/dwn-clients';
 
 import { config } from '../../src/config.js';
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage } from '../utils.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
@@ -14,6 +13,7 @@ import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 import { DataStream, Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -132,10 +132,8 @@ describe('Registration scenarios', () => {
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(jsonRpcRequest),
-      },
-      body: new Blob([dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
     });
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
     expect(writeResponse.status).toBe(200);
@@ -146,10 +144,8 @@ describe('Registration scenarios', () => {
     const nonTenantJsonRpcRequest = await generateRecordsWriteJsonRpcRequest(nonTenant);
     const nonTenantJsonRpcResponse = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(nonTenantJsonRpcRequest.jsonRpcRequest),
-      },
-      body: new Blob([nonTenantJsonRpcRequest.dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(nonTenantJsonRpcRequest.jsonRpcRequest, new Blob([nonTenantJsonRpcRequest.dataBytes])),
     });
     const nonTenantJsonRpcResponseBody = await nonTenantJsonRpcResponse.json() as JsonRpcResponse;
     expect(nonTenantJsonRpcResponse.status).toBe(200);
@@ -442,10 +438,8 @@ describe('Registration scenarios', () => {
     const write1 = await generateRecordsWriteJsonRpcRequest(alice);
     const write1Response = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(write1.jsonRpcRequest),
-      },
-      body: new Blob([write1.dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(write1.jsonRpcRequest, new Blob([write1.dataBytes])),
     });
     const write1ResponseBody = await write1Response.json() as JsonRpcResponse;
     expect(write1Response.status).toBe(200);
@@ -459,10 +453,8 @@ describe('Registration scenarios', () => {
     const write2 = await generateRecordsWriteJsonRpcRequest(alice);
     const write2Response = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(write2.jsonRpcRequest),
-      },
-      body: new Blob([write2.dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(write2.jsonRpcRequest, new Blob([write2.dataBytes])),
     });
     const write2ResponseBody = await write2Response.json() as JsonRpcResponse;
     expect(write2Response.status).toBe(200);
@@ -513,10 +505,8 @@ describe('Registration scenarios', () => {
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const write3Response = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(jsonRpcRequest),
-      },
-      body: new Blob([dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
     });
     const write3ResponseBody = await write3Response.json() as JsonRpcResponse;
     expect(write3Response.status).toBe(200);
@@ -573,10 +563,8 @@ describe('Registration scenarios', () => {
 
     const writeResponse = await fetch(`http://localhost:${dwnServer.httpServer.port}`, {
       method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(jsonRpcRequest),
-      },
-      body: new Blob([dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
     });
 
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
@@ -608,9 +596,8 @@ async function installDefaultTestModuleViaHttp(endpoint: string, persona: Person
 
   const response = await fetch(endpoint, {
     method  : 'POST',
-    headers : {
-      'dwn-request': JSON.stringify(jsonRpcRequest),
-    },
+    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+    body    : createHttpDwnRpcRequestBody(jsonRpcRequest),
   });
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;

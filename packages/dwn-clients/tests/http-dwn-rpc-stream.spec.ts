@@ -1,6 +1,7 @@
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
+import { parseHttpDwnRpcRequestBody } from '../src/http-dwn-rpc-framing.js';
 import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
@@ -29,21 +30,9 @@ function streamingDwn(recordsWrite: RecordsWriteMessage): {
   const server = Bun.serve({
     hostname : '127.0.0.1',
     port     : 0,
-    fetch(request): Response {
+    async fetch(request): Promise<Response> {
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/info')) {
-        return Response.json({
-          maxFileSize              : 1_000_000,
-          registrationRequirements : [],
-          server                   : 'test',
-          sdkVersion               : 'test',
-          url                      : server.url.href,
-          version                  : 'test',
-          webSocketSupport         : false,
-        });
-      }
-
-      const { id } = JSON.parse(request.headers.get('dwn-request')!) as { id: string };
+      const { jsonRpcRequest: { id } } = await parseHttpDwnRpcRequestBody(request.body!);
       const aborted = Promise.withResolvers<void>();
       const cancelled = Promise.withResolvers<void>();
       request.signal.addEventListener('abort', (): void => { aborted.resolve(); }, { once: true });

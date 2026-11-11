@@ -5,13 +5,13 @@ import type { JsonRpcRequest, JsonRpcResponse, RegistrationData, RegistrationReq
 import type { ProviderAuthPlugin, ProviderAuthValidationResult } from '../../src/registration/provider-auth-plugin.js';
 
 import { config } from '../../src/config.js';
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { createRecordsWriteMessage } from '../utils.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 import { DataStream, Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -145,8 +145,8 @@ describe('Provider auth registration scenarios', () => {
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
     const writeResponse = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : { 'dwn-request': JSON.stringify(jsonRpcRequest) },
-      body    : new Blob([dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
     });
     const writeBody = await writeResponse.json() as JsonRpcResponse;
     expect(writeResponse.status).toBe(200);
@@ -368,8 +368,8 @@ describe('Provider auth registration scenarios', () => {
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(nonTenant);
     const response = await fetch(dwnMessageEndpoint, {
       method  : 'POST',
-      headers : { 'dwn-request': JSON.stringify(jsonRpcRequest) },
-      body    : new Blob([dataBytes]),
+      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
     });
     const body = await response.json() as JsonRpcResponse;
     expect(response.status).toBe(200);
@@ -401,7 +401,8 @@ async function installDefaultTestModuleViaHttp(endpoint: string, persona: Person
 
   const response = await fetch(endpoint, {
     method  : 'POST',
-    headers : { 'dwn-request': JSON.stringify(jsonRpcRequest) },
+    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+    body    : createHttpDwnRpcRequestBody(jsonRpcRequest),
   });
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;

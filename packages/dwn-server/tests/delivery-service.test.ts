@@ -5,11 +5,11 @@ import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
+import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
-import { DwnConstant, DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { config } from '../src/config.js';
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DeliveryService } from '../src/delivery-service.js';
 import { DwnServer } from '../src/dwn-server.js';
 import { getTestDwn } from './test-dwn.js';
@@ -362,12 +362,12 @@ describe('DeliveryService', () => {
 
       const [, fetchOptions] = fetchStub.firstCall.args;
       const headers = new Headers(fetchOptions?.headers);
-      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
 
-      const rpcRequest = JSON.parse(headers.get('dwn-request') ?? '');
-      expect(rpcRequest.params.target).toBe(alice.did);
+      const parsed = await parseHttpDwnRpcRequestBody(new Response(fetchOptions?.body).body!);
+      expect((parsed.jsonRpcRequest.params as Record<string, unknown>).target).toBe(alice.did);
 
-      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(data);
 
       await testDwn.close();
@@ -415,11 +415,12 @@ describe('DeliveryService', () => {
 
       const [, fetchOptions] = fetchStub.firstCall.args;
       const headers = new Headers(fetchOptions?.headers);
-      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOptions).toMatchObject({ duplex: 'half' });
       expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
 
-      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      const parsed = await parseHttpDwnRpcRequestBody(fetchOptions?.body as ReadableStream<Uint8Array>);
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(data);
 
       await testDwn.close();

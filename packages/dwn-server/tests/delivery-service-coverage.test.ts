@@ -5,6 +5,7 @@ import type { Dwn, GenericMessage, ModuleDefinition, RecordsQueryMessage } from 
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, Message, Poller } from '@enbox/dwn-sdk-js';
+import { HTTP_DWN_RPC_MEDIA_TYPE, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 
 import { config } from '../src/config.js';
 import { DeliveryService } from '../src/delivery-service.js';
@@ -599,10 +600,11 @@ describe('DeliveryService — coverage', () => {
 
       const [, fetchOptions] = fetchStub.firstCall.args;
       const headers = new Headers(fetchOptions?.headers);
-      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
 
-      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      const parsed = await parseHttpDwnRpcRequestBody(fetchOptions?.body as ReadableStream<Uint8Array>);
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(dataBytes);
     });
 
@@ -638,11 +640,12 @@ describe('DeliveryService — coverage', () => {
 
       const [, fetchOptions] = fetchStub.firstCall.args;
       const headers = new Headers(fetchOptions?.headers);
-      expect(headers.get('content-type')).toBe('application/octet-stream');
+      expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOptions).toMatchObject({ duplex: 'half' });
       expect(fetchOptions?.body).toBeInstanceOf(ReadableStream);
 
-      const sentBytes = new Uint8Array(await new Response(fetchOptions?.body).arrayBuffer());
+      const parsed = await parseHttpDwnRpcRequestBody(fetchOptions?.body as ReadableStream<Uint8Array>);
+      const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(dataBytes);
     });
 
@@ -785,8 +788,9 @@ describe('DeliveryService — coverage', () => {
       // ...while the JSON-RPC envelope targets the participant.
       const [, fetchOptions] = fetchStub.firstCall.args;
       const headers = new Headers(fetchOptions?.headers);
-      const rpcRequest = JSON.parse(headers.get('dwn-request') ?? '');
-      expect(rpcRequest.params.target).toBe(participant);
+      expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
+      const parsed = await parseHttpDwnRpcRequestBody(new Response(fetchOptions?.body).body!);
+      expect((parsed.jsonRpcRequest.params as Record<string, unknown>).target).toBe(participant);
     });
   });
 

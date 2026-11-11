@@ -1,10 +1,10 @@
 import type { JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { expect } from 'bun:test';
 import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ModulesConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 
 /**
  * Validator of common scenarios.
@@ -42,8 +42,9 @@ export default class CommonScenarioValidator {
     const moduleConfigureResponse = await fetch(dwnUrl, {
       method  : 'POST',
       headers : {
-        'dwn-request': JSON.stringify(moduleConfigureRequest),
-      }
+        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
+      },
+      body: createHttpDwnRpcRequestBody(moduleConfigureRequest),
     });
     const moduleConfigureResponseBody = await moduleConfigureResponse.json() as JsonRpcSuccessResponse;
 
@@ -76,9 +77,9 @@ export default class CommonScenarioValidator {
     const recordsWriteResponse = await fetch(dwnUrl, {
       method  : 'POST',
       headers : {
-        'dwn-request': JSON.stringify(recordsWriteRequest),
+        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
       },
-      body: stream
+      body: createHttpDwnRpcRequestBody(recordsWriteRequest, stream),
     });
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
@@ -102,8 +103,9 @@ export default class CommonScenarioValidator {
     const recordsReadResponse = await fetch(dwnUrl, {
       method  : 'POST',
       headers : {
-        'dwn-request': JSON.stringify(recordsReadRequest),
+        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
       },
+      body: createHttpDwnRpcRequestBody(recordsReadRequest),
     });
 
     expect(recordsReadResponse.status).toBe(200);
