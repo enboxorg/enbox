@@ -2522,6 +2522,7 @@ export class SyncEngineLevel implements SyncEngine {
    *
    * @param timeout - One shared maximum wait for an earlier lifecycle
    *   transition, subscription closure, and in-progress sync/background work.
+   * @throws {RangeError} if the timeout is negative, non-finite, or exceeds `MAX_TIMER_DELAY_MS`.
    */
   public async stopSync(timeout: number = 2000): Promise<void> {
     const deadline = SyncEngineLevel.createLifecycleDeadline({ timeout });

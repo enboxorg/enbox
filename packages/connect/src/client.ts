@@ -237,7 +237,8 @@ export class ConnectClient {
 
     const profile = await this._transport.requestProfile(state);
 
-    const request: ConnectRequest = structuredClone({
+    // `params` is already a private snapshot; only the transport-owned reply needs cloning.
+    const request: ConnectRequest = {
       clientDid                  : clientDid.uri,
       appName                    : params.appName,
       appIcon                    : params.appIcon,
@@ -253,8 +254,8 @@ export class ConnectClient {
       nonce,
       state,
       responseKey                : responsePublicKey,
-      reply                      : profile.reply,
-    });
+      reply                      : structuredClone(profile.reply),
+    };
 
     assertConnectRequest(request);
     if (request.authentication !== undefined) {

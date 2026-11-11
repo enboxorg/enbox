@@ -1065,6 +1065,7 @@ export interface SyncEngine {
    *
    * @param timeout the shared maximum wait, in milliseconds, including an
    * earlier lifecycle transition. Default is 2000 (2 seconds).
+   * @throws {RangeError} if the timeout is negative, non-finite, or exceeds the maximum timer delay.
    * @throws {Error} if the runtime fails to stop before the timeout.
    */
   stopSync(timeout?: number): Promise<void>;

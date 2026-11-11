@@ -90,9 +90,8 @@ failure prevents delivery. The service binds it to its own challenge and OAuth
 transaction, then verifies the response against that stored request; it must
 not trust browser-reported verification results.
 
-Authentication-bearing inputs must be cloneable plain JSON data; unwrap
-reactive proxies before using these new APIs. Ordinary delegation continues
-to accept JSON-serializable reactive inputs and snapshots their wire value.
+Connect and authenticate inputs are snapshotted with `structuredClone` and
+must be cloneable plain data; unwrap reactive proxies before passing them.
 
 Server verification additionally requires `expected: { audience, challenge }`
 from service configuration and the issued transaction. A replay store must
