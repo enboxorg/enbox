@@ -1221,9 +1221,13 @@ export class TypedEnbox<
     this._assertActive();
     options.signal?.throwIfAborted();
     const combinedSignal = combineAbortSignals(this._options.signal, options.signal);
-    const dwn = options.execution === undefined
-      ? this._dwn
-      : this._dwn.withRecordExecutionContext(options.execution);
+    const dwn = this._dwn.withRecordExecutionContext(options.execution ?? {
+      assertActive: async (): Promise<void> => {
+        combinedSignal?.throwIfAborted();
+      },
+      contextId : options.contextId,
+      tenantDid : this._dwn.recordTenantDid,
+    });
     return new TypedEnbox<D, C>(
       dwn,
       {
@@ -1629,7 +1633,9 @@ export class TypedEnbox<
         await closeSubscription().catch((): void => {});
       }
     };
+    const contextId = this._options.context?.contextId;
     const opening = this._dwn.subscribeRecordFrames({
+      ...(contextId === undefined ? {} : { contextId }),
       paths,
       module: this.module,
     }, async (message, record): Promise<void> => {

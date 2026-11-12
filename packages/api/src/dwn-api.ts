@@ -24,7 +24,7 @@ import { invalidateRecordReplica } from './record-types.js';
 import { Module } from './module.js';
 import { Record } from './record.js';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
-import { DwnInterfaceName, DwnMethodName, Records } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, DwnMethodName, FilterUtility, Records } from '@enbox/dwn-sdk-js';
 
 type ReadInterface =
   | DwnInterface.MessagesSubscribe
@@ -577,10 +577,10 @@ export class DwnApi {
 
   /** @internal Subscribe to exact record paths with canonical frame records attached. */
   public async subscribeRecordFrames(
-    request: { paths: readonly string[]; module: string },
+    request: { contextId?: string; paths: readonly string[]; module: string },
     subscriptionHandler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
   ): Promise<MessagesSubscribeResponse> {
-    const contextId = this.recordExecutionContext?.contextId;
+    const contextId = request.contextId ?? this.recordExecutionContext?.contextId;
     const filters: MessagesFilter[] = request.paths.map(modulePath => ({
       interface : DwnInterfaceName.Records,
       module    : request.module,
@@ -621,7 +621,8 @@ export class DwnApi {
         : message.event.initialWrite;
       if (recordsWrite === undefined
         || recordsWrite.descriptor.module !== request.module
-        || !pathSet.has(recordsWrite.descriptor.modulePath ?? '')) {
+        || !pathSet.has(recordsWrite.descriptor.modulePath ?? '')
+        || (contextId !== undefined && !FilterUtility.matchesSubtree(contextId, recordsWrite.contextId))) {
         return;
       }
       const record = this.createRecordHandle({

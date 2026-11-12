@@ -189,8 +189,9 @@ Bindings constrain child operations to that context and use the consumer's
 declared paths, such as `page/live/session`. A `$ref` attachment is still not a
 record. Observe provider and consumer records with separate views;
 `materialize.children` remains within one module. This managed API supports
-extensions attached to the exact selected root, including reference chains that
-resolve to it, rather than arbitrary descendant attachments.
+extensions with a single deterministic `$ref` attachment at the selected root or
+a descendant within its subtree, including reference chains that resolve there,
+while rejecting ambiguous multi-attachment extensions.
 
 Composition does not add a cross-owner tree, exact path-and-context grant
 intersections, historical role membership, or narrower private-key custody.

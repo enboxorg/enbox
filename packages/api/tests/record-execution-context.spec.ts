@@ -440,7 +440,14 @@ describe('context record execution', () => {
 
   it('suppresses owner-feed shadow messages outside the selected record paths', async () => {
     const subscription = { close: sinon.stub().resolves() };
-    const baseWrite = createRecordsWrite();
+    const baseWrite = {
+      ...createRecordsWrite(),
+      contextId: `workspace/${recordId}`,
+    } as DwnMessage[DwnInterface.RecordsWrite];
+    const foreignContextWrite = {
+      ...createRecordsWrite(),
+      contextId: `other-workspace/${recordId}`,
+    } as DwnMessage[DwnInterface.RecordsWrite];
     const supportWrite = {
       ...baseWrite,
       descriptor: {
@@ -466,6 +473,12 @@ describe('context record execution', () => {
       });
       await request.subscriptionHandler?.({
         cursor      : { epoch: 'epoch', position: '3', streamId: 'stream' },
+        encodedData : btoa('{}'),
+        event       : { message: foreignContextWrite },
+        type        : 'event',
+      });
+      await request.subscriptionHandler?.({
+        cursor      : { epoch: 'epoch', position: '4', streamId: 'stream' },
         encodedData : btoa('{}'),
         event       : { message: baseWrite },
         type        : 'event',

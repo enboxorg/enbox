@@ -246,6 +246,7 @@ owner internally. Native SDK views remain the lower-level primitives.
 const acceptedShares = observe(signal =>
   bindContexts(enbox(), NotebookContextsModule).observe({
     access: 'member',
+    materializeRoot: true,
     signal,
   }),
 );
