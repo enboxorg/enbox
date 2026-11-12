@@ -1,5 +1,13 @@
 # @enbox/dwn-sql-store
 
+## 0.0.57
+
+### Patch Changes
+
+- [#1838](https://github.com/enboxorg/enbox/pull/1838) [`ef110b2`](https://github.com/enboxorg/enbox/commit/ef110b2d7d8dc8f7be6fdd0a090ca36999d99bdf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Collapse DWN SQL store migrations into a single canonical baseline schema (`001-initial-schema`), drop legacy `dataStore` table definitions, and remove pre-substrate store layout checks.
+- Updated dependencies [[`06fc1a4`](https://github.com/enboxorg/enbox/commit/06fc1a48672fd26e12ff29acaf2e3f533faa9329), [`3347d41`](https://github.com/enboxorg/enbox/commit/3347d418132f9c84bd7879627b80d41f40492baf), [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d), [`ef110b2`](https://github.com/enboxorg/enbox/commit/ef110b2d7d8dc8f7be6fdd0a090ca36999d99bdf)]:
+  - @enbox/dwn-sdk-js@0.4.32
+
 ## 0.0.56
 
 ### Patch Changes
