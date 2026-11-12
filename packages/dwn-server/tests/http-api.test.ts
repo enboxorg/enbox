@@ -1,7 +1,7 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { DwnServerConfig } from '../src/config.js';
 import type { Dwn, GenericMessage, ModulesConfigureMessage, Persona, RecordsQueryReply } from '@enbox/dwn-sdk-js';
-import type { JsonRpcErrorResponse, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, ServerInfo } from '@enbox/dwn-clients';
 
 import { connect } from 'net';
 import { Convert } from '@enbox/common';
@@ -25,15 +25,13 @@ import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
-  createHttpDwnRpcRequestBody,
   createJsonRpcRequest,
-  HTTP_DWN_RPC_BODY_V1,
-  HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
   HTTP_DWN_RPC_MEDIA_TYPE,
   JsonRpcErrorCodes,
 } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
+  dwnRpcRequestInit,
   getDwnResponse,
   getFileAsReadStream,
 } from './utils.js';
@@ -66,10 +64,14 @@ describe('http api', function () {
     return { api, url: `http://${urlHostname}:${api.server.port}` };
   }
 
+  async function postDwnRpc(dwnRequest: JsonRpcRequest, data?: BodyInit): Promise<Response> {
+    return fetch(baseUrl, dwnRpcRequestInit(dwnRequest, data));
+  }
+
   beforeAll(async function () {
     clock = useFakeTimers({ shouldAdvanceTime: true });
     // TODO: Remove direct use of default config to avoid changes bleed/pollute between tests - https://github.com/enboxorg/enbox/issues/144
-    config.packageJsonPath = './package.json'; // default is Docker path; override for local tests
+    config.packageJsonPath = undefined;
     config.registrationStoreUrl = 'sqlite://';
     config.registrationProofOfWorkEnabled = true;
     config.termsOfServiceFilePath = './tests/fixtures/terms-of-service.txt';
@@ -114,7 +116,7 @@ describe('http api', function () {
   });
 
   describe('/ (rpc)', function () {
-    it('responds with a 400 if no dwn-request header is provided', async function () {
+    it('responds with a 400 if no request payload is provided', async function () {
       const response = await fetch(baseUrl, {
         method: 'POST',
       });
@@ -127,23 +129,24 @@ describe('http api', function () {
       expect(body.error.message).toBe('request payload required.');
     });
 
-    it('responds with a 400 if parsing dwn request fails', async function () {
+    it('responds with a 400 if content-type is not the DWN RPC media type', async function () {
       const response = await fetch(baseUrl, {
         method  : 'POST',
-        headers : { 'dwn-request': ';;;;@!#@!$$#!@%' },
+        headers : { 'content-type': 'application/octet-stream' },
+        body    : new Uint8Array([0]),
       });
 
       expect(response.status).toBe(400);
 
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
-      expect(body.error.message).toContain('JSON');
+      expect(body.error.message).toContain('unsupported HTTP DWN RPC content-type');
     });
 
-    it('responds with a structured 400 for malformed body-v1 framing', async function () {
+    it('responds with a structured 400 for malformed RPC body framing', async function () {
       const response = await fetch(baseUrl, {
         body    : new Uint8Array([1, 0, 0, 0, 16, 123]),
-        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
+        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
         method  : 'POST',
       });
 
@@ -154,16 +157,11 @@ describe('http api', function () {
       expect(body.error.message.length).toBeGreaterThan(0);
     });
 
-    it('rejects unsupported DWN RPC body framing instead of treating it as legacy data', async function () {
-      const legacyRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
-        message : {},
-        target  : alice.did,
-      });
+    it('rejects parameterized DWN RPC content-types', async function () {
       const response = await fetch(baseUrl, {
         body    : new Uint8Array([0]),
         headers : {
-          'content-type' : `${HTTP_DWN_RPC_MEDIA_TYPE}; version=2`,
-          'dwn-request'  : JSON.stringify(legacyRequest),
+          'content-type': `${HTTP_DWN_RPC_MEDIA_TYPE}; version=2`,
         },
         method: 'POST',
       });
@@ -171,26 +169,21 @@ describe('http api', function () {
       expect(response.status).toBe(400);
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
-      expect(body.error.message).toContain('unsupported HTTP DWN RPC body framing version');
+      expect(body.error.message).toContain('unsupported HTTP DWN RPC content-type');
     });
 
-    it('processes a body-v1 request without a data tail', async function () {
+    it('processes a framed RPC request without a data tail', async function () {
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
-        filter : { schema: 'https://example.com/body-v1' },
+        filter : { schema: 'https://example.com/framed-rpc' },
       });
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
         message,
         target: alice.did,
       });
-      const framedBody = createHttpDwnRpcRequestBody(dwnRequest);
 
-      const response = await fetch(baseUrl, {
-        body    : framedBody,
-        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
-        method  : 'POST',
-      });
+      const response = await postDwnRpc(dwnRequest);
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as JsonRpcResponse;
@@ -198,7 +191,7 @@ describe('http api', function () {
       expect(body.result.reply.status.code).toBe(200);
     });
 
-    it('accepts a large body-v1 envelope while streaming record data', async function () {
+    it('accepts a large framed RPC envelope while streaming record data', async function () {
       const data = new Uint8Array(2_600_000);
       data.fill(7);
       data[0] = 1;
@@ -212,13 +205,13 @@ describe('http api', function () {
           },
         },
         descriptor: {
-          dataCid          : 'bafkreibodyv1',
+          dataCid          : 'bafkreibody',
           dataSize         : data.byteLength,
           interface        : 'Records',
           messageTimestamp : new Date().toISOString(),
           method           : 'Write',
         },
-        recordId: 'body-v1-record',
+        recordId: 'framed-record',
       } as unknown as GenericMessage;
       const requestId = crypto.randomUUID();
       const dwnRequest = createJsonRpcRequest(requestId, 'dwn.applyReplicatedMessage', {
@@ -239,15 +232,7 @@ describe('http api', function () {
           controller.close();
         },
       });
-      const framedBody = createHttpDwnRpcRequestBody(dwnRequest, requestData);
-      const requestInit: RequestInit & { duplex?: 'half' } = {
-        body    : framedBody,
-        headers : { 'content-type': HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE },
-        method  : 'POST',
-      };
-      if (framedBody instanceof ReadableStream) {
-        requestInit.duplex = 'half';
-      }
+      const requestInit = dwnRpcRequestInit(dwnRequest, requestData);
       expect(requestInit.duplex).toBe('half');
 
       const response = await fetch(baseUrl, requestInit);
@@ -276,13 +261,7 @@ describe('http api', function () {
       const dataBytes = await DataStream.toBytes(dataStream);
 
       // Attempt an initial RecordsWrite with the invalid message to ensure the DWN returns an error.
-      const responseInitialWrite = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: new Blob([dataBytes]),
-      });
+      const responseInitialWrite = await postDwnRpc(dwnRequest, new Blob([dataBytes]));
 
       expect(responseInitialWrite.status).toBe(200);
 
@@ -319,7 +298,7 @@ describe('http api', function () {
       expect(exposedHeaders).toContain('dwn-response');
     });
 
-    it('works fine when no request body is provided', async function () {
+    it('works fine when no record data tail is provided', async function () {
       const recordsQuery = await RecordsQuery.create({
         filter: {
           schema: 'woosa',
@@ -333,10 +312,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
-      });
+      const response = await postDwnRpc(dwnRequest);
 
       expect(response.status).toBe(200);
       const body = await response.json();
@@ -367,14 +343,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body   : dataStream,
-        duplex : 'half',
-      } as RequestInit & { duplex: 'half' });
+      const response = await postDwnRpc(dwnRequest, dataStream);
 
       expect(response.status).toBe(200);
 
@@ -397,13 +366,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const responseInitialWrite = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: new Blob([dataBytes]),
-      });
+      const responseInitialWrite = await postDwnRpc(dwnRequest, new Blob([dataBytes]));
 
       expect(responseInitialWrite.status).toBe(200);
 
@@ -424,12 +387,7 @@ describe('http api', function () {
         message : overWrite.toJSON(),
         target  : alice.did,
       });
-      const responseOverwrite = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const responseOverwrite = await postDwnRpc(dwnRequest);
 
       expect(responseOverwrite.status).toBe(200);
 
@@ -452,12 +410,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const responeTombstone = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const responeTombstone = await postDwnRpc(dwnRequest);
 
       expect(responeTombstone.status).toBe(200);
     });
@@ -509,13 +462,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      let response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: stream,
-      });
+      let response = await postDwnRpc(dwnRequest, stream);
 
       expect(response.status).toBe(200);
 
@@ -553,13 +500,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      let response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: stream,
-      });
+      let response = await postDwnRpc(dwnRequest, stream);
 
       expect(response.status).toBe(200);
 
@@ -625,13 +566,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      let response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: stream,
-      });
+      let response = await postDwnRpc(dwnRequest, stream);
 
       expect(response.status).toBe(200);
 
@@ -669,13 +604,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      let response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: stream,
-      });
+      let response = await postDwnRpc(dwnRequest, stream);
 
       expect(response.status).toBe(200);
 
@@ -743,12 +672,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const response = await postDwnRpc(dwnRequest);
       expect(response.status).toBe(200);
 
 
@@ -785,12 +709,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const response = await postDwnRpc(dwnRequest);
       expect(response.status).toBe(200);
 
 
@@ -832,12 +751,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const response = await postDwnRpc(dwnRequest);
       expect(response.status).toBe(200);
 
       const moduleConfigureNotPublished = await ModulesConfigure.create({
@@ -860,12 +774,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response2 = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest2),
-        },
-      });
+      const response2 = await postDwnRpc(dwnRequest2);
 
       expect(response2.status).toBe(200);
 
@@ -906,12 +815,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const response = await postDwnRpc(dwnRequest);
       expect(response.status).toBe(200);
 
       // Create a foo record
@@ -936,13 +840,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const recordsWriteResponse = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(recordsWriteDwnRequest),
-        },
-        body: stream,
-      });
+      const recordsWriteResponse = await postDwnRpc(recordsWriteDwnRequest, stream);
       expect(recordsWriteResponse.status).toBe(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
       expect(responseJson.result.reply.status.code).toBe(202);
@@ -999,12 +897,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-      });
+      const response = await postDwnRpc(dwnRequest);
       expect(response.status).toBe(200);
 
       // Create a foo record
@@ -1029,13 +922,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const recordsWriteResponse = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(recordsWriteDwnRequest),
-        },
-        body: stream,
-      });
+      const recordsWriteResponse = await postDwnRpc(recordsWriteDwnRequest, stream);
       expect(recordsWriteResponse.status).toBe(200);
       const responseJson = await recordsWriteResponse.json() as JsonRpcResponse;
       expect(responseJson.result.reply.status.code).toBe(202);
@@ -1085,13 +972,7 @@ describe('http api', function () {
         target  : alice.did,
       });
 
-      const response = await fetch(baseUrl, {
-        method  : 'POST',
-        headers : {
-          'dwn-request': JSON.stringify(dwnRequest),
-        },
-        body: stream,
-      });
+      const response = await postDwnRpc(dwnRequest, stream);
 
       expect(response.status).toBe(200);
 
@@ -1121,8 +1002,8 @@ describe('http api', function () {
   });
 
   describe('/info', function () {
-    it('should resolve installed version metadata when the Docker manifest is absent', async () => {
-      const { api, url } = await createStartedHttpApiWithConfig({ packageJsonPath: '/dwn-server/package.json' });
+    it('should resolve installed version metadata when packageJsonPath is unset', async () => {
+      const { api, url } = await createStartedHttpApiWithConfig({ packageJsonPath: undefined });
 
       try {
         const response = await fetch(`${url}/info`);
@@ -1231,7 +1112,7 @@ describe('http api', function () {
       // verify that `sdkVersion` and `version` exist.
       expect(info['sdkVersion']).toBeDefined();
       expect(info['version']).toBeDefined();
-      expect(info['httpRpcFraming']).toEqual([HTTP_DWN_RPC_BODY_V1]);
+      expect(info['httpRpcFraming']).toBeUndefined();
 
       // restore server name config
       config.serverName = serverName;
@@ -1278,7 +1159,7 @@ describe('http api', function () {
 
     it('should include CORS headers on JSON-RPC POST responses', async () => {
       const response = await fetch(baseUrl, { method: 'POST' });
-      // Even a 400 (missing dwn-request header) should include CORS headers.
+      // Even a 400 (missing request body) should include CORS headers.
       expect(response.status).toBe(400);
 
       expect(response.headers.get('access-control-allow-origin')).toBe('*');
@@ -1349,7 +1230,7 @@ describe('http api', function () {
         expect(response.status).toBe(200);
 
         expect(response.headers.get('access-control-allow-origin')).toBe('https://unpaired.example');
-        expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type, dwn-request');
+        expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
         expect(response.headers.get('vary')).toBe('Origin');
       } finally {
         await api.close();

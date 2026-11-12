@@ -1,8 +1,8 @@
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
-import { HttpDwnRpcClient } from '@enbox/dwn-clients';
 import { describe, expect, it } from 'bun:test';
+import { HttpDwnRpcClient, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
@@ -34,21 +34,9 @@ function streamingDwn(message: GenericMessage): {
   const server = Bun.serve({
     hostname : '127.0.0.1',
     port     : 0,
-    fetch(request): Response {
-      if (new URL(request.url).pathname.endsWith('/info')) {
-        return Response.json({
-          maxFileSize              : 1_000_000,
-          registrationRequirements : [],
-          server                   : 'test',
-          sdkVersion               : 'test',
-          url                      : server.url.href,
-          version                  : 'test',
-          webSocketSupport         : false,
-        });
-      }
-      const envelope = request.headers.get('dwn-request');
-      if (envelope === null) { return new Response('Missing RPC envelope', { status: 400 }); }
-      const { id } = JSON.parse(envelope) as { id: string };
+    async fetch(request): Promise<Response> {
+      if (request.body === null) { return new Response('Missing RPC body', { status: 400 }); }
+      const { jsonRpcRequest: { id } } = await parseHttpDwnRpcRequestBody(request.body);
       request.signal.addEventListener('abort', (): void => { aborted.resolve(); }, { once: true });
       let timer: ReturnType<typeof setInterval>;
       const body = new ReadableStream<Uint8Array>({

@@ -1,4 +1,5 @@
 import type { JsonRpcResponse } from './json-rpc.js';
+import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
@@ -9,14 +10,9 @@ import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
-import {
-  createHttpDwnRpcRequestBody,
-  HTTP_DWN_RPC_BODY_V1,
-  HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE,
-} from './http-dwn-rpc-framing.js';
+import { createHttpDwnRpcRequestBody, HTTP_DWN_RPC_MEDIA_TYPE } from './http-dwn-rpc-framing.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 import { DwnRpcError, isTerminalJsonRpcErrorCode } from './dwn-rpc-error.js';
-import { executeUnlessAborted, type ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -36,12 +32,6 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Larger per-attempt timeout for data-bearing replicated apply uploads. */
 const DEFAULT_LARGE_REPLICATED_APPLY_TIMEOUT_MS = 300_000;
-
-/** Short caller wait budget for optional HTTP framing capability discovery. */
-const DEFAULT_CAPABILITY_DISCOVERY_TIMEOUT_MS = 2_000;
-
-/** Backoff after optional capability discovery fails. */
-const CAPABILITY_DISCOVERY_FAILURE_BACKOFF_MS = 30_000;
 
 /** HTTP status codes that are considered retryable. */
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
@@ -178,11 +168,6 @@ function attachRequestBody(fetchOpts: RequestInit, body: BodyInit): boolean {
   return true;
 }
 
-/** Returns whether a server advertises the version-one HTTP request body framing. */
-function advertisesHttpRpcBodyV1(serverInfo: ServerInfo): boolean {
-  return serverInfo.httpRpcFraming?.includes(HTTP_DWN_RPC_BODY_V1) === true;
-}
-
 /**
  * HTTP client that can be used to communicate with Dwn Servers.
  *
@@ -191,7 +176,6 @@ function advertisesHttpRpcBodyV1(serverInfo: ServerInfo): boolean {
  * Respects a valid `Retry-After` response header up to the configured maximum delay.
  */
 export class HttpDwnRpcClient implements DwnRpc {
-  private readonly serverInfoDiscoveryRetryAfter = new Map<string, number>();
   private readonly serverInfoCache: DwnServerInfoCache;
   private readonly serverInfoRequests = new Map<string, Promise<ServerInfo>>();
   private readonly _retryOptions: Required<HttpRetryOptions>;
@@ -220,7 +204,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       message : request.message
     });
 
-    const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
+    const { fetchOpts, isRequestBodyReplayable } = this.createDwnRequestInit({
       data   : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
@@ -279,7 +263,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(request.includeMaterializationConfirmation === true ? { includeMaterializationConfirmation: true } : {}),
     });
 
-    const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
+    const { fetchOpts, isRequestBodyReplayable } = this.createDwnRequestInit({
       data   : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
@@ -356,7 +340,7 @@ export class HttpDwnRpcClient implements DwnRpc {
     return jsonRpcResponse;
   }
 
-  private async createDwnRequestInit({
+  private createDwnRequestInit({
     data,
     dwnUrl,
     jsonRpcRequest,
@@ -366,8 +350,11 @@ export class HttpDwnRpcClient implements DwnRpc {
     dwnUrl: string;
     jsonRpcRequest: ReturnType<typeof createJsonRpcRequest>;
     signal?: AbortSignal;
-  }): Promise<{ fetchOpts: RequestInit; isRequestBodyReplayable: boolean }> {
-    const requestHeaders: Record<string, string> = {};
+  }): { fetchOpts: RequestInit; isRequestBodyReplayable: boolean } {
+    signal?.throwIfAborted();
+    const requestHeaders: Record<string, string> = {
+      'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
+    };
     attachBearerToken(requestHeaders, this._authOptions, dwnUrl);
 
     const fetchOpts: RequestInit = {
@@ -380,53 +367,8 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(signal ? { signal } : {}),
     };
 
-    if (await this.supportsHttpRpcBodyV1(dwnUrl, signal)) {
-      requestHeaders['content-type'] = HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE;
-      const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
-      return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, body) };
-    }
-
-    requestHeaders['dwn-request'] = JSON.stringify(jsonRpcRequest);
-    if (data === undefined) {
-      return { fetchOpts, isRequestBodyReplayable: true };
-    }
-
-    requestHeaders['content-type'] = 'application/octet-stream';
-    return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, data) };
-  }
-
-  private async supportsHttpRpcBodyV1(dwnUrl: string, signal?: AbortSignal): Promise<boolean> {
-    signal?.throwIfAborted();
-
-    // Fast path: a cached `/info` answers the capability question with no I/O, so
-    // skip building the discovery timeout and its listeners on every request.
-    const cached = await this.serverInfoCache.get(dwnUrl);
-    if (cached !== undefined) {
-      return advertisesHttpRpcBodyV1(cached);
-    }
-
-    const retryAfter = this.serverInfoDiscoveryRetryAfter.get(dwnUrl);
-    if (retryAfter !== undefined) {
-      if (retryAfter > Date.now()) {
-        return false;
-      }
-      this.serverInfoDiscoveryRetryAfter.delete(dwnUrl);
-    }
-
-    try {
-      const discoveryTimeout = AbortSignal.timeout(DEFAULT_CAPABILITY_DISCOVERY_TIMEOUT_MS);
-      const discoverySignal = signal === undefined
-        ? discoveryTimeout
-        : AbortSignal.any([signal, discoveryTimeout]);
-      return advertisesHttpRpcBodyV1(await executeUnlessAborted(this.getServerInfo(dwnUrl), discoverySignal));
-    } catch (error) {
-      if (signal?.aborted === true) {
-        throw error;
-      }
-      // Capability discovery must not break requests to legacy DWN servers.
-      this.serverInfoDiscoveryRetryAfter.set(dwnUrl, Date.now() + CAPABILITY_DISCOVERY_FAILURE_BACKOFF_MS);
-      return false;
-    }
+    const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
+    return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, body) };
   }
 
   private async fetchServerInfo(dwnUrl: string): Promise<ServerInfo> {
@@ -448,7 +390,6 @@ export class HttpDwnRpcClient implements DwnRpc {
         const results = await response.json() as ServerInfo;
 
         const serverInfo: ServerInfo = {
-          httpRpcFraming           : results.httpRpcFraming,
           localNode                : results.localNode,
           localPairing             : results.localPairing,
           maxFileSize              : results.maxFileSize,
@@ -462,7 +403,6 @@ export class HttpDwnRpcClient implements DwnRpc {
           webSocketSupport         : results.webSocketSupport,
         };
         await this.serverInfoCache.set(dwnUrl, serverInfo);
-        this.serverInfoDiscoveryRetryAfter.delete(dwnUrl);
 
         return serverInfo;
       } else {

@@ -17,7 +17,7 @@ describe('config — bundled deployments', () => {
 
       for (const packageJsonPath of ['', '/custom/server-package.json']) {
         const child = Bun.spawn([
-          process.execPath, '-e', 'import { config } from "./config.js"; process.stdout.write(config.packageJsonPath);',
+          process.execPath, '-e', 'import { config } from "./config.js"; process.stdout.write(config.packageJsonPath ?? "");',
         ], {
           cwd    : directory,
           env    : { ...process.env, DWN_SERVER_PACKAGE_JSON: packageJsonPath },
@@ -30,7 +30,7 @@ describe('config — bundled deployments', () => {
         if (exitCode !== 0) {
           throw new Error(`Bundled config failed: ${stderr}`);
         }
-        expect(stdout).toBe(packageJsonPath || '/dwn-server/package.json');
+        expect(stdout).toBe(packageJsonPath);
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });

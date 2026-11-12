@@ -1,19 +1,14 @@
 import type { JsonRpcRequest } from './json-rpc.js';
 
-/** Capability advertised by servers that accept DWN JSON-RPC envelopes in the HTTP request body. */
-export const HTTP_DWN_RPC_BODY_V1 = 'body-v1' as const;
-
-/** Vendor media type used for versioned DWN JSON-RPC HTTP body framing. */
+/** Vendor media type used for DWN JSON-RPC HTTP body framing. */
 export const HTTP_DWN_RPC_MEDIA_TYPE = 'application/vnd.enbox.dwn-rpc';
 
-/** Media type used by the version-one streaming HTTP request body. */
-export const HTTP_DWN_RPC_BODY_V1_CONTENT_TYPE = `${HTTP_DWN_RPC_MEDIA_TYPE}; version=1`;
+/** Maximum JSON-RPC envelope size accepted by HTTP DWN RPC body framing. */
+export const HTTP_DWN_RPC_MAX_ENVELOPE_BYTES = 1_048_576;
 
-/** Maximum JSON-RPC envelope size accepted by the version-one body framing. */
-export const HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES = 1_048_576;
-
-const BODY_V1_DATA_FOLLOWS_FLAG = 0x01;
-const BODY_V1_HEADER_BYTES = 5;
+const FRAME_DATA_FOLLOWS_FLAG = 0x01;
+const FRAME_HEADER_BYTES = 5;
+const ENVELOPE_TOO_LARGE_MESSAGE = `HTTP DWN RPC envelope exceeds the ${HTTP_DWN_RPC_MAX_ENVELOPE_BYTES}-byte limit`;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
@@ -21,12 +16,6 @@ const textDecoder = new TextDecoder('utf-8', { fatal: true });
 export type ParsedHttpDwnRpcRequestBody = {
   jsonRpcRequest: JsonRpcRequest;
   dataStream?: ReadableStream<Uint8Array>;
-};
-
-/** A Content-Type value split into its lower-cased media type and parameters. */
-type ParsedContentType = {
-  mediaType: string;
-  parameters: Array<[string, string]>;
 };
 
 /**
@@ -44,16 +33,14 @@ export function createHttpDwnRpcRequestBody(
   data?: BodyInit,
 ): BodyInit {
   const envelopeBytes = textEncoder.encode(JSON.stringify(jsonRpcRequest));
-  if (envelopeBytes.byteLength > HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES) {
-    throw new Error(
-      `HTTP DWN RPC envelope exceeds the ${HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES}-byte body-v1 limit`,
-    );
+  if (envelopeBytes.byteLength > HTTP_DWN_RPC_MAX_ENVELOPE_BYTES) {
+    throw new Error(ENVELOPE_TOO_LARGE_MESSAGE);
   }
 
-  const prefix = new Uint8Array(BODY_V1_HEADER_BYTES + envelopeBytes.byteLength);
-  prefix[0] = data === undefined ? 0 : BODY_V1_DATA_FOLLOWS_FLAG;
+  const prefix = new Uint8Array(FRAME_HEADER_BYTES + envelopeBytes.byteLength);
+  prefix[0] = data === undefined ? 0 : FRAME_DATA_FOLLOWS_FLAG;
   new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).setUint32(1, envelopeBytes.byteLength, false);
-  prefix.set(envelopeBytes, BODY_V1_HEADER_BYTES);
+  prefix.set(envelopeBytes, FRAME_HEADER_BYTES);
 
   if (data instanceof ReadableStream) {
     return readerToStream((data as ReadableStream<Uint8Array>).getReader(), prefix);
@@ -77,50 +64,18 @@ function isReplayableBlobPart(data: BodyInit): data is BlobPart {
     ArrayBuffer.isView(data);
 }
 
-/**
- * Splits a Content-Type value into its lower-cased media type and parameters.
- * Parameter names are lower-cased and values are unquoted; a value that is not
- * consistently quoted is left as-is so callers reject it.
- */
-function parseContentType(value: string | null): ParsedContentType | undefined {
-  if (value === null) {
-    return undefined;
-  }
-
-  const [mediaType, ...rest] = value.split(';').map(part => part.trim());
-  const parameters = rest.map((parameter): [string, string] => {
-    const separator = parameter.indexOf('=');
-    if (separator === -1) {
-      return [parameter.toLowerCase(), ''];
-    }
-    return [
-      parameter.slice(0, separator).trim().toLowerCase(),
-      parameter.slice(separator + 1).trim().replace(/^"(.*)"$/, '$1'),
-    ];
-  });
-
-  return { mediaType: mediaType.toLowerCase(), parameters };
-}
-
-/** Returns whether a Content-Type value selects version-one DWN RPC body framing. */
-export function isHttpDwnRpcBodyV1ContentType(value: string | null): boolean {
-  const parsed = parseContentType(value);
-  if (parsed?.mediaType !== HTTP_DWN_RPC_MEDIA_TYPE) {
+/** Returns whether a Content-Type header selects DWN RPC body framing. */
+export function isHttpDwnRpcContentType(value: string | null): boolean {
+  // Media type parameters are not part of the protocol, so any `;` is rejected.
+  if (value === null || value.includes(';')) {
     return false;
   }
 
-  // A repeated `version` parameter is ambiguous, so require exactly one.
-  const versions = parsed.parameters.filter(([name]) => name === 'version');
-  return versions.length === 1 && versions[0][1] === '1';
-}
-
-/** Returns whether a Content-Type value uses the vendor DWN RPC media type, regardless of version. */
-export function isHttpDwnRpcContentType(value: string | null): boolean {
-  return parseContentType(value)?.mediaType === HTTP_DWN_RPC_MEDIA_TYPE;
+  return value === HTTP_DWN_RPC_MEDIA_TYPE || value.trim().toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
 }
 
 /**
- * Parses a version-one streaming DWN RPC request body without buffering its raw record data.
+ * Parses a streaming DWN RPC request body without buffering its raw record data.
  */
 export async function parseHttpDwnRpcRequestBody(
   body: ReadableStream<Uint8Array>,
@@ -156,23 +111,21 @@ export async function parseHttpDwnRpcRequestBody(
   };
 
   try {
-    const header = await readExactly(BODY_V1_HEADER_BYTES);
+    const header = await readExactly(FRAME_HEADER_BYTES);
     const flags = header[0];
-    if ((flags & ~BODY_V1_DATA_FOLLOWS_FLAG) !== 0) {
+    if ((flags & ~FRAME_DATA_FOLLOWS_FLAG) !== 0) {
       throw new Error(`HTTP DWN RPC body contains unsupported flags: ${flags}`);
     }
 
     const envelopeLength = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(1, false);
-    if (envelopeLength > HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES) {
-      throw new Error(
-        `HTTP DWN RPC envelope exceeds the ${HTTP_DWN_RPC_BODY_V1_MAX_ENVELOPE_BYTES}-byte body-v1 limit`,
-      );
+    if (envelopeLength > HTTP_DWN_RPC_MAX_ENVELOPE_BYTES) {
+      throw new Error(ENVELOPE_TOO_LARGE_MESSAGE);
     }
 
     const envelopeBytes = await readExactly(envelopeLength);
     const jsonRpcRequest = JSON.parse(textDecoder.decode(envelopeBytes)) as JsonRpcRequest;
 
-    if ((flags & BODY_V1_DATA_FOLLOWS_FLAG) === 0) {
+    if ((flags & FRAME_DATA_FOLLOWS_FLAG) === 0) {
       if (remainder !== undefined && remainder.byteLength > 0) {
         throw new Error('HTTP DWN RPC body contains data without the data-follows flag');
       }

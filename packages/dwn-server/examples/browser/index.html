@@ -90,11 +90,17 @@
           id: Date.now(),
         };
 
+        const envelopeBytes = new TextEncoder().encode(JSON.stringify(jsonRpcPayload));
+        const prefix = new Uint8Array(5 + envelopeBytes.byteLength);
+        prefix[0] = 0x01;
+        new DataView(prefix.buffer).setUint32(1, envelopeBytes.byteLength, false);
+        prefix.set(envelopeBytes, 5);
+
         const options = {
           method: 'POST',
-          body: file,
+          body: new Blob([prefix, file]),
           headers: {
-            'dwn-request': JSON.stringify(jsonRpcPayload),
+            'content-type': 'application/vnd.enbox.dwn-rpc',
           },
         };
 

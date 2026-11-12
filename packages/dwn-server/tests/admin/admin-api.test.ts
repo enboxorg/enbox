@@ -1,3 +1,5 @@
+import type { JsonRpcRequest } from '@enbox/dwn-clients';
+
 import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
 
 import { join } from 'path';
@@ -9,7 +11,7 @@ import { AuditLog } from '../../src/admin/audit-log.js';
 import { config as defaultConfig } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
-import { createMigratedFileDialect, createMigratedInMemoryDialect } from '../utils.js';
+import { createMigratedFileDialect, createMigratedInMemoryDialect, dwnRpcRequestInit } from '../utils.js';
 
 const adminToken = 'test-admin-token-secret';
 
@@ -533,10 +535,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Check events endpoint.
       const response = await adminFetch({ port }, '/events');
@@ -577,10 +576,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Fetch events since cursor.
       const response = await adminFetch({ port }, `/events?since=${cursor}&limit=1`);
@@ -1553,10 +1549,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'dwn-request': JSON.stringify(dwnRequest) },
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Note: RecordsQuery messages are not stored in the message store.
       // Only writes and module configurations get stored.

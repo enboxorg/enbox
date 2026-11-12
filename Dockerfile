@@ -146,9 +146,6 @@ COPY --from=build /app/packages/dwn-server-admin-ui/package.json packages/dwn-se
 COPY --from=build /app/packages/dwn-server/dist/      packages/dwn-server/dist/
 COPY --from=build /app/packages/dwn-server/package.json packages/dwn-server/
 
-# Copy package.json to the expected location for the /info endpoint
-RUN mkdir -p /dwn-server && cp packages/dwn-server/package.json /dwn-server/package.json
-
 # Create data directory with correct ownership
 RUN mkdir -p /app/data && chown -R dwn:dwn /app/data
 

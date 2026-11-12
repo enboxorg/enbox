@@ -24,8 +24,6 @@ import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import {
   createJsonRpcErrorResponse,
-  HTTP_DWN_RPC_BODY_V1,
-  isHttpDwnRpcBodyV1ContentType,
   isHttpDwnRpcContentType,
   JsonRpcErrorCodes,
   maxWsJsonRpcPayloadBytes,
@@ -129,11 +127,7 @@ export class HttpApi {
     };
 
     try {
-      // Resolve installed metadata only when the legacy Docker manifest is absent.
-      // Keep resolution here so bundled deployments can start without manifests.
-      const packageJsonPath = config.packageJsonPath === '/dwn-server/package.json' && !existsSync(config.packageJsonPath)
-        ? require.resolve('@enbox/dwn-server/package.json')
-        : config.packageJsonPath;
+      const packageJsonPath = config.packageJsonPath ?? require.resolve('@enbox/dwn-server/package.json');
       const packageJson = JSON.parse(readFileSync(packageJsonPath).toString());
       httpApi.#packageInfo.version = packageJson.version;
     } catch (error: any) {
@@ -674,7 +668,6 @@ export class HttpApi {
     }
 
     const serverInfo: ServerInfo = {
-      httpRpcFraming           : [HTTP_DWN_RPC_BODY_V1],
       maxFileSize              : this.#config.maxRecordDataSize,
       maxInFlight              : this.#config.maxInFlight,
       registrationRequirements : registrationRequirements,
@@ -725,7 +718,7 @@ export class HttpApi {
     response.headers.set('access-control-allow-origin', allowedOrigin);
     response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
     response.headers.set('access-control-allow-headers', this.#config.localNodeProfileEnabled
-      ? 'authorization, content-type, dwn-request'
+      ? 'authorization, content-type'
       : '*');
     response.headers.set('access-control-expose-headers', 'dwn-response');
     // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
@@ -879,53 +872,24 @@ export class HttpApi {
   }
 
   /**
-   * Decodes a JSON-RPC POST from either the negotiated `body-v1` framing or the
-   * legacy `dwn-request` header, so the caller stays transport-agnostic.
+   * Decodes a JSON-RPC POST from the HTTP DWN RPC body framing.
    */
   async #decodeJsonRpcPost(req: Request): Promise<DecodedJsonRpcPost> {
-    const contentType = req.headers.get('content-type');
-
-    if (isHttpDwnRpcBodyV1ContentType(contentType)) {
-      if (req.body === null) {
-        return { errorResponse: badRequest('request payload required.') };
-      }
-
-      try {
-        const decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
-        return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
-      } catch (error) {
-        return { errorResponse: badRequest((error as Error).message) };
-      }
-    }
-
-    if (isHttpDwnRpcContentType(contentType)) {
-      return { errorResponse: badRequest('unsupported HTTP DWN RPC body framing version.') };
-    }
-
-    const dwnRpcRequestString = req.headers.get('dwn-request');
-    if (!dwnRpcRequestString) {
+    if (req.body === null) {
       return { errorResponse: badRequest('request payload required.') };
     }
 
-    let dwnRpcRequest: JsonRpcRequest;
+    const contentType = req.headers.get('content-type');
+    if (!isHttpDwnRpcContentType(contentType)) {
+      return { errorResponse: badRequest('unsupported HTTP DWN RPC content-type.') };
+    }
+
     try {
-      dwnRpcRequest = JSON.parse(dwnRpcRequestString);
-    } catch (e) {
-      return { errorResponse: badRequest((e as Error).message) };
+      const decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
+      return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
+    } catch (error) {
+      return { errorResponse: badRequest((error as Error).message) };
     }
-
-    const contentLength = req.headers.get('content-length');
-    const transferEncoding = req.headers.get('transfer-encoding');
-    if (Number.parseInt(contentLength ?? '0') > 0 || transferEncoding !== null) {
-      if (req.body === null) {
-        return {
-          errorResponse: badRequest('request advertised a body but none was provided.', dwnRpcRequest.id),
-        };
-      }
-      return { dwnRpcRequest, requestDataStream: normalizeReadableStream(req.body) };
-    }
-
-    return { dwnRpcRequest };
   }
 
   async #handleJsonRpcPost(req: Request, isLocalNodeAuthenticated: boolean): Promise<Response> {

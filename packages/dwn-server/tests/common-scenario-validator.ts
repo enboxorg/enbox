@@ -3,8 +3,8 @@ import type { Persona } from '@enbox/dwn-sdk-js';
 
 import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { expect } from 'bun:test';
-import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ModulesConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
+import { dwnRpcRequestInit, getFileAsReadStream } from './utils.js';
 
 /**
  * Validator of common scenarios.
@@ -39,12 +39,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : modulesConfig.message,
     });
-    const moduleConfigureResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(moduleConfigureRequest),
-      }
-    });
+    const moduleConfigureResponse = await fetch(dwnUrl, dwnRpcRequestInit(moduleConfigureRequest));
     const moduleConfigureResponseBody = await moduleConfigureResponse.json() as JsonRpcSuccessResponse;
 
     expect(moduleConfigureResponse.status).toBe(200);
@@ -73,13 +68,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : recordsWrite.message,
     });
-    const recordsWriteResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(recordsWriteRequest),
-      },
-      body: stream
-    });
+    const recordsWriteResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsWriteRequest, stream));
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
     expect(recordsWriteResponse.status).toBe(200);
@@ -99,12 +88,7 @@ export default class CommonScenarioValidator {
       message : recordsRead.message
     });
 
-    const recordsReadResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'dwn-request': JSON.stringify(recordsReadRequest),
-      },
-    });
+    const recordsReadResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsReadRequest));
 
     expect(recordsReadResponse.status).toBe(200);
 
