@@ -605,6 +605,7 @@ export class DwnApi {
       target,
     }, { contextId, module: request.module }, 'reject');
     const dataAccess = captureRecordDataAccess(dataRequest, false);
+    const pathSet = new Set(request.paths);
     const handleFrame = (message: DwnSubscriptionMessage): void | Promise<void> => {
       if (message.type !== 'event') {
         return subscriptionHandler(message);
@@ -620,7 +621,7 @@ export class DwnApi {
         : message.event.initialWrite;
       if (recordsWrite === undefined
         || recordsWrite.descriptor.module !== request.module
-        || !request.paths.includes(recordsWrite.descriptor.modulePath ?? '')) {
+        || !pathSet.has(recordsWrite.descriptor.modulePath ?? '')) {
         return;
       }
       const record = this.createRecordHandle({

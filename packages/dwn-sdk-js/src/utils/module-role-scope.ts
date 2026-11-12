@@ -30,13 +30,20 @@ export type ModuleContextRoot = ResolvedModuleAddress;
  * `root` or to a descendant record beneath `root`.
  */
 export function resolveModuleContextRoot(graph: ResolvedModuleGraph, root: ModuleContextRoot): ResolvedModuleNode {
-  const matchingNodes = [...graph.nodesByDeclaredPath.values()].filter(
-    node => node.ruleSet.$role !== true && isContextRootAttachment(node, root),
-  );
-  if (matchingNodes.length !== 1) {
+  let matched: ResolvedModuleNode | undefined;
+  for (const node of graph.nodesByDeclaredPath.values()) {
+    if (node.ruleSet.$role === true || !isContextRootAttachment(node, root)) {
+      continue;
+    }
+    if (matched !== undefined) {
+      throw new TypeError(`Module '${graph.rootModuleUri}' must declare one exact shared root.`);
+    }
+    matched = node;
+  }
+  if (matched === undefined) {
     throw new TypeError(`Module '${graph.rootModuleUri}' must declare one exact shared root.`);
   }
-  return matchingNodes[0];
+  return matched;
 }
 
 /** Return direct `$role` child paths under `contextPath` that have `read` access to `contextPath`, in authored `$actions` order. */

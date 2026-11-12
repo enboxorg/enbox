@@ -3,14 +3,9 @@ import type { MessagesFilter, ProgressToken, ReplicationApplyResult, ResolvedMod
 import type { EnboxPlatformAgent } from './agent.js';
 import type { FollowedSyncSource, FollowedSyncSourceInput } from '../followed-sync-source.js';
 
-import { DwnInterfaceName } from '@enbox/dwn-sdk-js';
+import { DwnInterfaceName, lexicographicalCompare } from '@enbox/dwn-sdk-js';
 
-/** Deterministic bytewise string comparator for hash inputs and canonical IDs. */
-export function lexicographicalCompare(a: string, b: string): number {
-  if (a > b) { return 1; }
-  if (a < b) { return -1; }
-  return 0;
-}
+export { lexicographicalCompare };
 
 /** Per-identity sync configuration: what to replicate, and under whose authority. */
 export type SyncIdentityOptions = {

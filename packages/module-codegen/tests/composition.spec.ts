@@ -2,7 +2,7 @@ import type { TypedModule } from '@enbox/api';
 
 import { generateModuleCode } from '../src/codegen.js';
 import { pathToFileURL } from 'node:url';
-import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
+import { resolveTypedModuleGraph } from '@enbox/api/advanced';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { join, relative } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -75,9 +75,7 @@ describe('composition-aware code generation', () => {
     const generated = await import(pathToFileURL(output).href) as { ConsumerModule: TypedModule };
     const module = generated.ConsumerModule;
     expect(Object.keys(module.codecs).sort()).toEqual(['comment', 'local', 'note']);
-    const graph = resolveModuleGraph(module.definition, uri =>
-      Object.values(module.dependencies).find(provider => provider.definition.module === uri)?.definition,
-    { requireKeyAgreement: false });
+    const graph = resolveTypedModuleGraph(module);
     expect(graph.nodesByDeclaredPath.get('note')).toMatchObject({
       kind             : 'ref',
       owningModuleUri  : BaseDefinition.module,

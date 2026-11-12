@@ -64,6 +64,7 @@ import { assertValidRecordWithin, compileRecordFilter, compileRecordQuery } from
 import {
   authoredModuleDefinitionsEqual,
   DateSort,
+  FilterUtility,
   getTypeName,
   Modules,
   preloadModuleDefinitions,
@@ -1969,7 +1970,7 @@ export class TypedEnbox<
     }
     this.assertContextPath(path);
     const resolved = within ?? context.contextId;
-    if (resolved !== context.contextId && !resolved.startsWith(`${context.contextId}/`)) {
+    if (!FilterUtility.matchesSubtree(context.contextId, resolved)) {
       throw new TypeError('Context-bound selectors cannot escape their context.');
     }
     return resolved;

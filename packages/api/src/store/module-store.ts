@@ -15,12 +15,12 @@ import type {
 } from '../typed-enbox.js';
 import type { ModulePaths, ModuleRolePaths, SingletonModulePaths, TypedModule } from '../module-types.js';
 
+import { assertValidRecordWithin } from '../record-query.js';
 import { canonicalJsonStringify } from '@enbox/common';
 import { createCommand } from './command.js';
 import { createObservedCollection } from './observed-store.js';
 import { Records } from '@enbox/dwn-sdk-js';
 import { resolveTypedModuleGraph } from '../define-module.js';
-import { assertValidRecordWithin, resolveRecordQueryNode } from '../record-query.js';
 
 type DefinitionOf<P extends TypedModule> = P['definition'];
 type CodecsOf<P extends TypedModule> = P['codecs'];
@@ -207,7 +207,7 @@ function createTypedModuleStore<
           const parents = new Map<string, StoreCollection<DataForPath<C, Path>>>();
           const family: StoreCollectionFamily<DataForPath<C, Path>> = {
             within: (parentContextId: string): StoreCollection<DataForPath<C, Path>> => {
-              assertDirectParent(graph, path, parentContextId);
+              assertDirectParent(node, parentContextId);
               let collection = parents.get(parentContextId);
               if (collection === undefined) {
                 collection = makeCollection(path, options, parentContextId);
@@ -244,11 +244,10 @@ function assertCollectionPath(graph: ResolvedModuleGraph, path: string): Resolve
   return node;
 }
 
-function assertDirectParent(graph: ResolvedModuleGraph, path: string, within: string): void {
-  const node = resolveRecordQueryNode(graph, path);
+function assertDirectParent(node: ResolvedModuleNode, within: string): void {
   assertValidRecordWithin(node, within, true);
   if (within.split('/').length !== node.parentPhysicalDepth) {
-    throw new TypeError(`Store collection: '${path}' requires its exact direct parent context ID.`);
+    throw new TypeError(`Store collection: '${node.declaringModulePath}' requires its exact direct parent context ID.`);
   }
 }
 

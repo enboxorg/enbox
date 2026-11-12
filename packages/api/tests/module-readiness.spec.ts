@@ -401,9 +401,7 @@ describe('ModuleReadinessApi', () => {
       },
     });
     const fixture = createFixture();
-    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(fixture.api))
-      .filter(name => name !== 'constructor' && typeof (fixture.api as unknown as Record<string, unknown>)[name] === 'function'
-        && name === 'ensureReady')).toEqual(['ensureReady']);
+    expect(Object.keys(fixture.api)).toEqual(['ensureReady']);
     expect('resolveGraph' in fixture.api).toBe(false);
 
     const graphA = resolveTypedModuleGraph(sharedNotesA);

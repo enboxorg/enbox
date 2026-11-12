@@ -169,11 +169,12 @@ export function compileRecordQuery(
   } = {},
 ): CompiledRecordQuery {
   assertValidQueryControls(query.dateSort, query.pagination);
-  assertValidRecordWithin(resolveRecordQueryNode(definition, modulePath), query.within, true);
+  const node = resolveRecordQueryNode(definition, modulePath);
+  assertValidRecordWithin(node, query.within, true);
 
   return {
     from       : query.from,
-    filter     : buildRecordFilter(definition, modulePath, query.filter, query.dateSort, query.within),
+    filter     : buildRecordFilter(node, query.filter, query.dateSort, query.within),
     dateSort   : query.dateSort,
     pagination : query.pagination,
     moduleRole : query.moduleRole,
@@ -187,13 +188,13 @@ export function compileRecordFilter(
   filter: RecordFilterInput | undefined,
   within?: string,
 ): RecordsFilter & { module: string; modulePath: string } {
-  assertValidRecordWithin(resolveRecordQueryNode(definition, modulePath), within, false);
-  return buildRecordFilter(definition, modulePath, filter, undefined, within);
+  const node = resolveRecordQueryNode(definition, modulePath);
+  assertValidRecordWithin(node, within, false);
+  return buildRecordFilter(node, filter, undefined, within);
 }
 
 function buildRecordFilter(
-  definition: QueryModule,
-  modulePath: string,
+  node: ResolvedModuleNode,
   filter: RecordFilterInput | undefined,
   dateSort?: DateSort,
   within?: string,
@@ -210,7 +211,6 @@ function buildRecordFilter(
     compiledFilter.published = true;
   }
 
-  const node = resolveRecordQueryNode(definition, modulePath);
   const schema = node.recordType.schema;
   return {
     ...compiledFilter,

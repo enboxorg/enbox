@@ -57,7 +57,7 @@ export function normalizeFollowedSyncSourceInput(source: FollowedSyncSourceInput
   return { ...authority, contextPath: source.contextPath, modules: normalizeFollowedModules(source.modules) };
 }
 
-/** Require the new source shape; older rows are rejected instead of synthesized. */
+/** Validate and canonicalize a persisted FollowedSyncSource record and its module scopes. */
 export function normalizeFollowedSyncSource(source: FollowedSyncSource): FollowedSyncSource {
   const authority = normalizeAuthority(source);
   assertString(source.acceptanceId, 'acceptanceId');

@@ -29,6 +29,71 @@ export type PreparedFollowedModule = {
   graph: ResolvedModuleGraph;
 };
 
+type FetchFollowedDefinitionContext = {
+  agent: EnboxPlatformAgent;
+  delegateDid?: string;
+  isLocal?: boolean;
+  messages: Map<string, ModulesConfigureMessage>;
+  module: string;
+  shouldContinue: () => boolean;
+  source: FollowedSyncSource;
+  visitedUris: Set<string>;
+};
+
+function collectRootModuleMessages(rootBatch: RoleReplicationSupportBatch): Map<string, ModulesConfigureMessage> {
+  const messages = new Map<string, ModulesConfigureMessage>();
+  for (const entry of rootBatch.dependencies) {
+    if (entry.message.descriptor.interface === DwnInterfaceName.Modules &&
+        entry.message.descriptor.method === DwnMethodName.Configure && entry.isLatestBaseState === true) {
+      const message = entry.message as ModulesConfigureMessage;
+      messages.set(message.descriptor.definition.module, message);
+    }
+  }
+  return messages;
+}
+
+async function fetchFollowedModuleDefinition(
+  context: FetchFollowedDefinitionContext,
+  uri: string,
+): Promise<ModulesConfigureMessage['descriptor']['definition']> {
+  const { agent, delegateDid, isLocal, messages, module, shouldContinue, source, visitedUris } = context;
+  if (!shouldContinue()) {throw new Error('prepareFollowedModule: followed module preparation was cancelled');}
+  if (!visitedUris.has(uri)) {
+    if (visitedUris.size >= MAX_FOLLOWED_MODULE_CONFIGS) {
+      throw new FollowedModuleUnavailableError(
+        `module '${module}' exceeds the ${MAX_FOLLOWED_MODULE_CONFIGS}-module dependency limit.`,
+      );
+    }
+    visitedUris.add(uri);
+  }
+  const known = messages.get(uri);
+  if (known !== undefined) {return known.descriptor.definition;}
+  // This intentionally requests only public metadata. An actor-to-delegate
+  // grant is never repurposed as owner authority over a foreign tenant.
+  const request = {
+    author        : delegateDid ?? source.actorDid,
+    target        : source.sourceDid,
+    messageType   : DwnInterface.ModulesQuery,
+    messageParams : { filter: { module: uri } },
+  } as const;
+  const { reply } = isLocal === true
+    ? await agent.dwn.processRequest(request)
+    : await agent.dwn.sendRequest({ ...request, remoteEndpoint: source.remoteEndpoint });
+  if (reply.status.code >= 400 && reply.status.code < 500) {
+    throw new FollowedModuleUnavailableError(`module '${uri}' metadata was denied (${reply.status.code}).`);
+  }
+  if (reply.status.code !== 200) {
+    throw new Error(`prepareFollowedModule: followed consumer module query failed (${reply.status.code}): ${reply.status.detail}`);
+  }
+  const entries = reply.entries ?? [];
+  if (entries.length !== 1 || entries[0].descriptor.definition.published !== true) {
+    throw new FollowedModuleUnavailableError(`module '${uri}' has no unique public owner configuration.`);
+  }
+  // AgentDwnApi verifies the owner's signature and requested URI before returning.
+  messages.set(uri, entries[0]);
+  return entries[0].descriptor.definition;
+}
+
 /** Resolve an accepted module from verified root support and its exact local or hosted metadata. */
 export async function prepareFollowedModule(params: {
   agent: EnboxPlatformAgent;
@@ -40,53 +105,20 @@ export async function prepareFollowedModule(params: {
   shouldContinue: () => boolean;
   isLocal?: boolean;
 }): Promise<PreparedFollowedModule> {
-  const { agent, delegateDid, module, rootBatch, source, shouldContinue } = params;
-  const messages = new Map<string, ModulesConfigureMessage>();
-  for (const entry of rootBatch.dependencies) {
-    if (entry.message.descriptor.interface === DwnInterfaceName.Modules &&
-        entry.message.descriptor.method === DwnMethodName.Configure && entry.isLatestBaseState === true) {
-      const message = entry.message as ModulesConfigureMessage;
-      messages.set(message.descriptor.definition.module, message);
-    }
-  }
-  const visitedUris = new Set<string>();
-  const fetchDefinition = async (uri: string): Promise<ModulesConfigureMessage['descriptor']['definition']> => {
-    if (!shouldContinue()) {throw new Error('prepareFollowedModule: followed module preparation was cancelled');}
-    if (!visitedUris.has(uri)) {
-      if (visitedUris.size >= MAX_FOLLOWED_MODULE_CONFIGS) {
-        throw new FollowedModuleUnavailableError(
-          `module '${module}' exceeds the ${MAX_FOLLOWED_MODULE_CONFIGS}-module dependency limit.`,
-        );
-      }
-      visitedUris.add(uri);
-    }
-    const known = messages.get(uri);
-    if (known !== undefined) {return known.descriptor.definition;}
-    // This intentionally requests only public metadata. An actor-to-delegate
-    // grant is never repurposed as owner authority over a foreign tenant.
-    const request = {
-      author        : delegateDid ?? source.actorDid,
-      target        : source.sourceDid,
-      messageType   : DwnInterface.ModulesQuery,
-      messageParams : { filter: { module: uri } },
-    } as const;
-    const { reply } = params.isLocal === true
-      ? await agent.dwn.processRequest(request)
-      : await agent.dwn.sendRequest({ ...request, remoteEndpoint: source.remoteEndpoint });
-    if (reply.status.code >= 400 && reply.status.code < 500) {
-      throw new FollowedModuleUnavailableError(`module '${uri}' metadata was denied (${reply.status.code}).`);
-    }
-    if (reply.status.code !== 200) {
-      throw new Error(`prepareFollowedModule: followed consumer module query failed (${reply.status.code}): ${reply.status.detail}`);
-    }
-    const entries = reply.entries ?? [];
-    if (entries.length !== 1 || entries[0].descriptor.definition.published !== true) {
-      throw new FollowedModuleUnavailableError(`module '${uri}' has no unique public owner configuration.`);
-    }
-    // AgentDwnApi verifies the owner's signature and requested URI before returning.
-    messages.set(uri, entries[0]);
-    return entries[0].descriptor.definition;
+  const { agent, delegateDid, isLocal, module, rootBatch, source, shouldContinue } = params;
+  const messages = collectRootModuleMessages(rootBatch);
+  const fetchContext: FetchFollowedDefinitionContext = {
+    agent,
+    delegateDid,
+    isLocal,
+    messages,
+    module,
+    shouldContinue,
+    source,
+    visitedUris: new Set<string>(),
   };
+  const fetchDefinition = (uri: string): Promise<ModulesConfigureMessage['descriptor']['definition']> =>
+    fetchFollowedModuleDefinition(fetchContext, uri);
   const definition = await fetchDefinition(module);
   let definitions: ReadonlyMap<string, ModulesConfigureMessage['descriptor']['definition']>;
   try {
