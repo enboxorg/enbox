@@ -1,5 +1,23 @@
 # @enbox/agent
 
+## 0.8.54
+
+### Patch Changes
+
+- [#1835](https://github.com/enboxorg/enbox/pull/1835) [`06fc1a4`](https://github.com/enboxorg/enbox/commit/06fc1a48672fd26e12ff29acaf2e3f533faa9329) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Support composed module extensions on followed foreign contexts and extract opinionated shared-context management into `@enbox/contexts`.
+  
+  - `@enbox/dwn-sdk-js`, `@enbox/agent` & `@enbox/auth`: Unify root and consumer replication state in `FollowedSyncSource.modules`, support descendant `$ref` attachments in `resolveModuleContextRoot` and `resolveModuleRoleScope`, add `ensureFollowedSourceModules`, bound transitive foreign `uses` loading, refresh delegate grant catalogs once per verification pass, recover cleanly when an accepted root role is replaced, preserve global sync target-plan caching when optional consumer modules are unavailable, and remove store/session format version markers.
+  - `@enbox/api` & `@enbox/browser`: Keep `defineModule()` pure without injecting hidden `enboxContextInvitation` or `enboxContextFollow` structure paths. Expose unopinionated `TypedEnbox.scope()`, `TypedEnbox.ensureReady()`, `TypedEnbox.roleDelivery`, `TypedEnbox.graph`, `Enbox.signal`, `StoreContext.enbox()`, and `ModuleContextAttachmentPath` while consolidating advanced graph/role-scope extension primitives onto `@enbox/api/advanced` and moving managed shared contexts, invitations, membership, and follow journals to `@enbox/contexts`.
+
+- [#1839](https://github.com/enboxorg/enbox/pull/1839) [`3347d41`](https://github.com/enboxorg/enbox/commit/3347d418132f9c84bd7879627b80d41f40492baf) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Persist bounded `applicationId` on connect session grant metadata, snapshot connect inputs uniformly via `structuredClone`, remove local-DWN discovery compat wrappers and storage format version tags, enforce strict `stopSync` timeout validation, and drop `syncNextV1` sublevel naming and legacy quarantine checks.
+
+- [#1840](https://github.com/enboxorg/enbox/pull/1840) [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require an explicit `squash` action for non-owner squash writes, drop the `{ nodes }` DWN service endpoint shape from delivery, stop decoding legacy `a=undefined` did:dht TXT records, reject malformed or host-less authoritative gateway URIs, and remove the `DidDhtUtils` wrapper class and the `DidKeyUtils` re-export from `did-key`.
+- Updated dependencies [[`06fc1a4`](https://github.com/enboxorg/enbox/commit/06fc1a48672fd26e12ff29acaf2e3f533faa9329), [`3347d41`](https://github.com/enboxorg/enbox/commit/3347d418132f9c84bd7879627b80d41f40492baf), [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d), [`30fd691`](https://github.com/enboxorg/enbox/commit/30fd691b5e045e302860d030fdaf3e2758aa07dc), [`ef110b2`](https://github.com/enboxorg/enbox/commit/ef110b2d7d8dc8f7be6fdd0a090ca36999d99bdf)]:
+  - @enbox/dwn-sdk-js@0.4.32
+  - @enbox/connect@0.1.29
+  - @enbox/dids@0.1.15
+  - @enbox/dwn-clients@0.4.40
+
 ## 0.8.53
 
 ### Patch Changes

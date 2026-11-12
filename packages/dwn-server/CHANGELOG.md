@@ -1,5 +1,21 @@
 # @enbox/dwn-server
 
+## 0.1.48
+
+### Patch Changes
+
+- [#1840](https://github.com/enboxorg/enbox/pull/1840) [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require an explicit `squash` action for non-owner squash writes, drop the `{ nodes }` DWN service endpoint shape from delivery, stop decoding legacy `a=undefined` did:dht TXT records, reject malformed or host-less authoritative gateway URIs, and remove the `DidDhtUtils` wrapper class and the `DidKeyUtils` re-export from `did-key`.
+
+- [#1837](https://github.com/enboxorg/enbox/pull/1837) [`30fd691`](https://github.com/enboxorg/enbox/commit/30fd691b5e045e302860d030fdaf3e2758aa07dc) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Use a single HTTP DWN RPC body framing format and remove legacy `/dwn-server/package.json` manifest fallbacks.
+  
+  - `@enbox/dwn-clients`: Always send HTTP JSON-RPC requests as `application/vnd.enbox.dwn-rpc` length-prefixed bodies without `/info` capability-discovery probes, `body-v1` version parameters, or `dwn-request` header fallbacks.
+  - `@enbox/dwn-server`: Require `application/vnd.enbox.dwn-rpc` body framing on HTTP JSON-RPC POST requests and outbound `DeliveryService` forwarding/delivery, stop advertising `httpRpcFraming` in `GET /info`, and resolve server version metadata directly from `@enbox/dwn-server/package.json`.
+- Updated dependencies [[`06fc1a4`](https://github.com/enboxorg/enbox/commit/06fc1a48672fd26e12ff29acaf2e3f533faa9329), [`3347d41`](https://github.com/enboxorg/enbox/commit/3347d418132f9c84bd7879627b80d41f40492baf), [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d), [`30fd691`](https://github.com/enboxorg/enbox/commit/30fd691b5e045e302860d030fdaf3e2758aa07dc), [`ef110b2`](https://github.com/enboxorg/enbox/commit/ef110b2d7d8dc8f7be6fdd0a090ca36999d99bdf)]:
+  - @enbox/dwn-sdk-js@0.4.32
+  - @enbox/dids@0.1.15
+  - @enbox/dwn-clients@0.4.40
+  - @enbox/dwn-sql-store@0.0.57
+
 ## 0.1.47
 
 ### Patch Changes

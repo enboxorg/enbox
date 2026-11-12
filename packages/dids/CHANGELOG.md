@@ -1,5 +1,11 @@
 # @enbox/dids
 
+## 0.1.15
+
+### Patch Changes
+
+- [#1840](https://github.com/enboxorg/enbox/pull/1840) [`24ad6cf`](https://github.com/enboxorg/enbox/commit/24ad6cffa1110bad6b65e71d7f29c1cdcc47cf6d) Thanks [@LiranCohen](https://github.com/LiranCohen)! - Require an explicit `squash` action for non-owner squash writes, drop the `{ nodes }` DWN service endpoint shape from delivery, stop decoding legacy `a=undefined` did:dht TXT records, reject malformed or host-less authoritative gateway URIs, and remove the `DidDhtUtils` wrapper class and the `DidKeyUtils` re-export from `did-key`.
+
 ## 0.1.14
 
 ### Patch Changes
