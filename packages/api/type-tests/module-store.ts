@@ -24,7 +24,13 @@ const Module = defineModule({ definition : Definition, codecs     : {
   note     : recordCodecs.json<{ title: string; completed: boolean }>(),
   settings : recordCodecs.json<{ enabled: boolean }>(),
 } });
-const Feature = defineStore({ modules: { notes: Module }, create: ({ modules }) => modules.notes });
+const Feature = defineStore({
+  modules : { notes: Module },
+  create  : ({ enbox, modules }) => {
+    void ((): string => enbox().connectedDid);
+    return modules.notes;
+  },
+});
 void Feature;
 declare const store: StoreInstance<typeof Feature>;
 const notes = store.collection('note', { filter: { tags: { status: 'draft' } } });
@@ -44,7 +50,11 @@ void store.native().records.create('note', {
   datePublished : '2026-10-27T00:00:00.000000Z',
   tags          : { status: 'draft' },
 });
-void store.native().contexts.list();
+void store.native().scope({
+  allowedPaths : new Set(['folder/note']),
+  contextId    : 'folder-id',
+  contextPath  : 'folder',
+}).query('folder/note');
 
 // @ts-expect-error module paths remain exact literals.
 store.collection('missing');

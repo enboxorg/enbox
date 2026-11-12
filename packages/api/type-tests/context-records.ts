@@ -1,12 +1,7 @@
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type {
-  ContextMember,
   ContextRecord,
-  ContextView,
-  MemberContext,
-  ModuleContext,
-  OwnedContext,
-  RecordView,
+  ContextRecordsApi,
   TypedEnbox,
 } from '@enbox/api';
 
@@ -72,22 +67,6 @@ const ContextModule = defineModule({ definition : ContextDefinition, codecs     
 } });
 void ContextModule;
 
-declare const context:
-  | OwnedContext<
-    typeof ContextDefinition,
-    typeof ContextModule.codecs,
-    'workspace'
-  >
-  | MemberContext<
-    typeof ContextDefinition,
-    typeof ContextModule.codecs,
-    'workspace/member' | 'workspace/viewer'
-  >;
-declare const catalogContext: MemberContext<
-  typeof ContextDefinition,
-  typeof ContextModule.codecs,
-  'workspace/member' | 'project/outsider'
->;
 declare const typed: TypedEnbox<
   typeof ContextDefinition,
   typeof ContextModule.codecs
@@ -95,210 +74,52 @@ declare const typed: TypedEnbox<
 declare const callerSignal: AbortSignal;
 void typed.records.subscribe('workspace/note', { signal: callerSignal }, (): void => {});
 
-if (catalogContext.role === 'workspace/member') {
-  const root: 'workspace' = catalogContext.path;
-  void root;
-  void catalogContext.records.query('workspace/note');
-  // @ts-expect-error narrowing a catalog entry also confines its record paths to that role's root.
-  void catalogContext.records.query('project');
-} else {
-  const root: 'project' = catalogContext.path;
-  void root;
-  void catalogContext.records.query('project');
-  // @ts-expect-error narrowing a catalog entry also confines its record paths to that role's root.
-  void catalogContext.records.query('workspace/note');
-}
+const scopedRecords = typed.scope({
+  allowedPaths : new Set(['workspace', 'workspace/note', 'workspace/live', 'workspace/live/session', 'workspace/title']),
+  contextId    : 'workspace-id',
+  contextPath  : 'workspace',
+});
+const context = { records: scopedRecords };
 
-const owned = typed.contexts.open('workspace', 'workspace-id');
-const listed: Promise<ModuleContext<
+// Generic / widened ContextRecordsApi retains callable create and set (#9).
+declare const genericRecords: ContextRecordsApi;
+void genericRecords.create('child', { data: {}, parentContextId: 'root-id' });
+declare const widenedRootRecords: ContextRecordsApi<
   typeof ContextDefinition,
-  typeof ContextModule.codecs
->[]> =
-  typed.contexts.list();
-const observed: Promise<ContextView<ModuleContext<
-  typeof ContextDefinition,
-  typeof ContextModule.codecs
->>> =
-  typed.contexts.observe({ signal: callerSignal });
-void listed;
-void observed;
-void typed.contexts.observe({ access: 'member', materializeRoot: true, signal: callerSignal })
-  .then((view): void => {
-    const row = view.getSnapshot().contexts[0];
-    const value: { name: string } | { projectCode: number } | undefined = row?.root.records[0]?.value;
-    const rootError: Error | undefined = row?.root.status === 'error' ? row.root.error : undefined;
-    const memberAccess: 'member' | undefined = row?.context.access;
-    void value;
-    void rootError;
-    void memberAccess;
-    void row?.context.leave();
-    // @ts-expect-error a member-only selection never exposes owner membership management.
-    void row?.context.members;
-  });
-// @ts-expect-error one-shot root materialization is not part of the catalog API.
-void typed.contexts.list({ access: 'member', materializeRoot: true });
-// @ts-expect-error root materialization is only supported for accepted member contexts.
-void typed.contexts.observe({ access: 'owner', materializeRoot: true });
-declare const listedContext: ModuleContext<
-  typeof ContextDefinition,
-  typeof ContextModule.codecs
+  typeof ContextModule.codecs,
+  string
 >;
-if (listedContext.access === 'owner') {
-  if (listedContext.path === 'workspace') {
-    void listedContext.records.query('workspace/note');
-    void listedContext.members.list();
-    // @ts-expect-error an owned workspace context cannot access the project subtree.
-    void listedContext.records.query('project');
-    // @ts-expect-error membership roles are bound to the context root.
-    void listedContext.members.set('did:example:alice', { role: 'project/outsider', data: { label: 'guest' } });
-  } else {
-    const projectPath: 'project' = listedContext.path;
-    void projectPath;
-    void listedContext.records.query('project');
-    void listedContext.members.list();
-    // @ts-expect-error an owned project context cannot access the workspace subtree.
-    void listedContext.records.query('workspace/note');
-    // @ts-expect-error membership roles are bound to the context root.
-    void listedContext.members.set('did:example:alice', { role: 'workspace/viewer', data: { expires: true } });
-  }
-}
-// @ts-expect-error role records are membership, not contexts.
-void typed.contexts.open('workspace/member', 'workspace-id/member-id');
-void owned.then((value): void => {
-  const access: 'owner' = value.access;
-  const ownerDid: string = value.ownerDid;
-  const path: 'workspace' = value.path;
-  void access;
-  void ownerDid;
-  void path;
-  void value.records.query('workspace/note');
-  void value.invite('did:example:alice', { preview: { title: 'Shared workspace' } });
-  // @ts-expect-error invitation preview values are intentionally string-only.
-  void value.invite('did:example:alice', { preview: { count: 1 } });
-  // @ts-expect-error invitations use the bound context's module policy.
-  void value.invite('did:example:alice', { path: 'project' });
-  const members = value.members;
-  const assigned: Promise<ContextMember<
-    typeof ContextDefinition,
-    typeof ContextModule.codecs,
-    'workspace/member'
-  >> = members.set('did:example:alice', {
-    data : { label: 'editor' },
-    role : 'workspace/member',
-  });
-  void assigned;
-  void members.set('did:example:bob', {
-    data : { expires: true },
-    role : 'workspace/viewer',
-  });
-  void members.list().then(async (listed): Promise<void> => {
-    const member = listed[0];
-    if (member?.role === 'workspace/member') {
-      const label: string = member.data.label;
-      void label;
-    } else if (member?.role === 'workspace/viewer') {
-      const expires: boolean = member.data.expires;
-      void expires;
-    }
-    // @ts-expect-error member rows do not expose role-record IDs.
-    void member?.recordId;
-  });
-  const memberView: Promise<RecordView<ContextMember<
-    typeof ContextDefinition,
-    typeof ContextModule.codecs,
-    'workspace/member' | 'workspace/viewer'
-  >>> = members.observe({ signal: callerSignal });
-  void memberView.then((view): void => {
-    void view.getSnapshot().records;
-    const member = view.getSnapshot().records[0];
-    // @ts-expect-error member rows do not expose role-record IDs.
-    void member?.recordId;
-  });
-  // @ts-expect-error role data is correlated with the selected path.
-  void members.set('did:example:bob', { data: { label: 'wrong' }, role: 'workspace/viewer' });
-  // @ts-expect-error a role outside this context's read rules cannot be assigned.
-  void members.set('did:example:bob', { data: {}, role: 'workspace/other' });
-  // @ts-expect-error a bound context cannot create a second copy of its root.
-  void value.records.create('workspace', { data: { name: 'duplicate' } });
-  // @ts-expect-error context records expose only their root and descendants.
-  void value.records.query('invite');
-  // @ts-expect-error every subscribed path must belong to the bound context.
-  void value.records.subscribe(['workspace/note', 'invite'], (): void => {});
-  void value.records.query('workspace', {
-    materialize: {
-      // @ts-expect-error role records cannot be materialized through context queries.
-      children: ['workspace/member'] as const,
-    },
-    pagination: { limit: 1 },
-  });
-  void value.records.observe('workspace', {
-    materialize: {
-      // @ts-expect-error role records cannot be materialized through context views.
-      children: ['workspace/member'] as const,
-    },
-    pagination: { limit: 1 },
-  });
+void widenedRootRecords.create('workspace/note', { data: { text: 'widened' } });
+void widenedRootRecords.set('workspace/title', { data: { text: 'widened' } });
+
+// @ts-expect-error a bound context cannot create a second copy of its root.
+void context.records.create('workspace', { data: { name: 'duplicate' } });
+// @ts-expect-error context records expose only their root and descendants.
+void context.records.query('invite');
+// @ts-expect-error every subscribed path must belong to the bound context.
+void context.records.subscribe(['workspace/note', 'invite'], (): void => {});
+void context.records.query('workspace', {
+  materialize: {
+    // @ts-expect-error role records cannot be materialized through context queries.
+    children: ['workspace/member'] as const,
+  },
+  pagination: { limit: 1 },
+});
+void context.records.observe('workspace', {
+  materialize: {
+    // @ts-expect-error role records cannot be materialized through context views.
+    children: ['workspace/member'] as const,
+  },
+  pagination: { limit: 1 },
 });
 
-void typed.contexts.open('project', 'project-id').then((value): void => {
-  void value.invite('did:example:alice');
-  const members = value.members;
-  void members.set('did:example:alice', {
-    data : { label: 'guest' },
-    role : 'project/outsider',
-  });
+const singletonRecords = typed.scope({
+  allowedPaths : new Set(['workspace/title']),
+  contextId    : 'workspace-id/title-id',
+  contextPath  : 'workspace/title',
 });
-
-void typed.contexts.invitations.list().then((invitations): void => {
-  const invitation = invitations[0];
-  if (invitation !== undefined) {
-    const path: 'workspace' | 'project' = invitation.path;
-    void path;
-    void invitation.accept().then((shared): void => {
-      const role: 'workspace/member' | 'workspace/viewer' | 'project/outsider' = shared.role;
-      void role;
-    });
-  }
-});
-
-void typed.contexts.invitations.observe({ signal: callerSignal }).then((view): void => {
-  const status: 'loading' | 'ready' | 'error' = view.getSnapshot().status;
-  const current: boolean = view.getSnapshot().current;
-  void status;
-  void current;
-  void view.getSnapshot().records;
-  void view.getSnapshot().hasMore;
-});
-
-void typed.contexts.open('invite', 'invite-id').then((value): void => {
-  // @ts-expect-error content without root read roles cannot invite members.
-  void value.invite('did:example:alice');
-});
-
-void typed.contexts.follow('project', {
-  id       : 'project-id',
-  ownerDid : 'did:example:owner',
-}).then((value): void => {
-  const path: 'project' = value.path;
-  const role: 'project/outsider' = value.role;
-  void path;
-  void role;
-});
-
-const singleton = typed.contexts.open('workspace/title', 'workspace-id/title-id');
-void singleton.then((value): void => {
-  // @ts-expect-error a bound context cannot set its own root record.
-  void value.records.set('workspace/title', { data: { text: 'replacement' } });
-});
-
-if (context.access === 'member') {
-  void context.role;
-  void context.forget();
-  void context.leave();
-  void context.refresh();
-  // @ts-expect-error only owners manage context membership.
-  void context.members;
-}
+// @ts-expect-error a bound context cannot set its own root record.
+void singletonRecords.set('workspace/title', { data: { text: 'replacement' } });
 
 const created: Promise<ContextRecord<{ text: string }>> = context.records.create('workspace/note', {
   data: { text: 'hello' },

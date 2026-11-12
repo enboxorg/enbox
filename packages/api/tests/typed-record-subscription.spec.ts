@@ -103,9 +103,9 @@ function contextRecords(dwn: DwnApi): ContextRecordsApi<
 > {
   return new TypedEnbox(dwn, module, {
     context: {
-      contextId   : 'noteContext',
-      modulePath  : 'note',
-      modulePaths : new Set(['note']),
+      contextId    : 'noteContext',
+      modulePath   : 'note',
+      allowedPaths : new Set(['note']),
     },
   }).records as unknown as ContextRecordsApi<typeof definition, typeof module.codecs, 'note'>;
 }
@@ -589,6 +589,109 @@ describe('typed record subscriptions', () => {
       await subscription.close();
     } finally {
       processRequest.restore();
+      await context.close();
+    }
+  });
+
+  it('isolates scoped context subscriptions and binds default execution confinement', async () => {
+    const notebookDefinition = {
+      module    : 'https://example.com/modules/scoped-context-subscription',
+      published : true,
+      types     : {
+        notebook: {
+          dataFormats : ['application/json'],
+          schema      : 'https://example.com/schemas/scoped-notebook',
+        },
+        page: {
+          dataFormats        : ['application/json'],
+          encryptionRequired : true,
+          schema             : 'https://example.com/schemas/scoped-page',
+        },
+      },
+      structure: {
+        notebook: {
+          page: {},
+        },
+      },
+    } as const satisfies ModuleDefinition;
+    const notebookModule = defineModule({
+      definition : notebookDefinition,
+      codecs     : {
+        notebook : recordCodecs.json<{ name: string }>(),
+        page     : recordCodecs.json<{ body: string }>(),
+      },
+    });
+    const scopedApp = defineApplicationManifest({ modules: [notebookModule] } as const);
+    const context = await createEnboxTestContext({ application: scopedApp });
+
+    try {
+      const notebooks = context.enbox.using(notebookModule);
+      const nbA = await notebooks.records.create('notebook', { data: { name: 'Notebook A' } });
+      const nbB = await notebooks.records.create('notebook', { data: { name: 'Notebook B' } });
+      const scopedA = notebooks.scope({
+        allowedPaths : new Set(['notebook', 'notebook/page']),
+        contextId    : nbA.contextId!,
+        contextPath  : 'notebook',
+      });
+      const scopedB = notebooks.scope({
+        allowedPaths : new Set(['notebook', 'notebook/page']),
+        contextId    : nbB.contextId!,
+        contextPath  : 'notebook',
+      });
+
+      const initialA = await scopedA.create('notebook/page', {
+        data            : { body: 'initial A' },
+        parentContextId : nbA.contextId,
+      });
+      await scopedB.create('notebook/page', {
+        data            : { body: 'initial B' },
+        parentContextId : nbB.contextId,
+      });
+
+      const observedA: Array<{ body?: string; id: string; type: 'delete' | 'write' }> = [];
+      const subscription = await scopedA.subscribe(
+        'notebook/page',
+        { initial: true },
+        async (change): Promise<void> => {
+          if (change.type === 'error') {
+            throw change.error;
+          }
+          observedA.push({
+            body : change.type === 'write' ? (await change.record.value()).body : undefined,
+            id   : change.record.id,
+            type : change.type,
+          });
+        },
+      );
+
+      expect(observedA).toEqual([{ body: 'initial A', id: initialA.id, type: 'write' }]);
+
+      await scopedB.create('notebook/page', {
+        data            : { body: 'live B' },
+        parentContextId : nbB.contextId,
+      });
+      const liveA = await scopedA.create('notebook/page', {
+        data            : { body: 'live A' },
+        parentContextId : nbA.contextId,
+      });
+
+      await Poller.pollUntilSuccessOrTimeout(async (): Promise<void> => {
+        expect(observedA).toEqual([
+          { body: 'initial A', id: initialA.id, type: 'write' },
+          { body: 'live A', id: liveA.id, type: 'write' },
+        ]);
+      });
+
+      const untypedQuery = scopedA.query as unknown as (
+        path: string,
+        request: { from?: string },
+      ) => Promise<unknown>;
+      await expect(untypedQuery('notebook/page', { from: 'did:example:foreign' })).rejects.toThrow(
+        'Context-bound operations cannot target another tenant.',
+      );
+
+      await subscription.close();
+    } finally {
       await context.close();
     }
   });

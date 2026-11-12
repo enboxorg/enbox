@@ -3,6 +3,7 @@ import type {
   AgentPermissionsApi,
   DwnMessage,
   EnboxAgent,
+  FollowedSyncSource,
   ProcessDwnRequest,
 } from '@enbox/agent';
 
@@ -11,9 +12,9 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DwnInterface } from '@enbox/agent';
 
-import { ContextNotReadyError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
+import { ContextNotReadyError, ContextRetiredError } from '../src/context-errors.js';
 
 type AgentStub = {
   decryptRecordData: sinon.SinonStub;
@@ -80,7 +81,6 @@ function eose(position: string): DwnSubscriptionMessage {
 function createApi(
   agent: AgentStub,
   options: {
-    assertActive?: () => Promise<void>;
     invalidateReplica?: () => Promise<void>;
   } = {},
 ): DwnApi {
@@ -91,7 +91,7 @@ function createApi(
     permissionsApi : permissionsApi as unknown as AgentPermissionsApi,
   });
   return dwn.withRecordExecutionContext({
-    assertActive      : options.assertActive ?? (async (): Promise<void> => {}),
+    assertActive      : async (): Promise<void> => {},
     contextId         : 'workspace',
     followedSourceId  : 'role-record',
     invalidateReplica : options.invalidateReplica,
@@ -440,7 +440,14 @@ describe('context record execution', () => {
 
   it('suppresses owner-feed shadow messages outside the selected record paths', async () => {
     const subscription = { close: sinon.stub().resolves() };
-    const baseWrite = createRecordsWrite();
+    const baseWrite = {
+      ...createRecordsWrite(),
+      contextId: `workspace/${recordId}`,
+    } as DwnMessage[DwnInterface.RecordsWrite];
+    const foreignContextWrite = {
+      ...createRecordsWrite(),
+      contextId: `other-workspace/${recordId}`,
+    } as DwnMessage[DwnInterface.RecordsWrite];
     const supportWrite = {
       ...baseWrite,
       descriptor: {
@@ -466,6 +473,12 @@ describe('context record execution', () => {
       });
       await request.subscriptionHandler?.({
         cursor      : { epoch: 'epoch', position: '3', streamId: 'stream' },
+        encodedData : btoa('{}'),
+        event       : { message: foreignContextWrite },
+        type        : 'event',
+      });
+      await request.subscriptionHandler?.({
+        cursor      : { epoch: 'epoch', position: '4', streamId: 'stream' },
         encodedData : btoa('{}'),
         event       : { message: baseWrite },
         type        : 'event',
@@ -560,27 +573,65 @@ describe('context record execution', () => {
     });
   });
 
-  it('fences retained handles after the context becomes inactive', async () => {
-    let active = true;
-    const assertActive = async (): Promise<void> => {
-      if (!active) {throw new Error('Shared context is no longer active.');}
-    };
-    agent.processDwnRequest.resolves({
-      reply: {
-        entry        : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
-        roleRecordId : 'role-record',
-        status       : { code: 200, detail: 'OK' },
-      },
-    });
-    const dwn = createApi(agent, { assertActive });
-    const { record } = await dwn.records.read({ filter: { recordId } });
-    expect(record).toBeDefined();
+  for (const retirement of ['session end', 'acceptance replacement', 'membership removal'] as const) {
+    it(`fences retained handles through the shared authority lease after ${retirement}`, async () => {
+      const source: FollowedSyncSource = {
+        acceptanceId   : 'accepted',
+        actorDid       : connectedDid,
+        contextId      : 'workspace',
+        id             : 'role-record',
+        rootModule     : module,
+        remoteEndpoint : 'https://accepted-dwn.example',
+        roles          : [moduleRole],
+        sourceDid      : tenantDid,
+        modules        : { [module]: { contextPath: 'note', moduleRole, modulePaths: ['note'] } },
+      };
+      let current: FollowedSyncSource | undefined = source;
+      const session = new AbortController();
+      const assertActive = async (): Promise<void> => {
+        session.signal.throwIfAborted();
+        if (current === undefined || current.acceptanceId !== source.acceptanceId) {
+          throw new ContextRetiredError(source.contextId);
+        }
+      };
+      agent.processDwnRequest.resolves({
+        reply: {
+          entry        : { recordsWrite: createRecordsWrite(), encodedData: btoa('{}') },
+          roleRecordId : source.id,
+          status       : { code: 200, detail: 'OK' },
+        },
+      });
+      const dwn = new DwnApi({
+        agent          : agent as unknown as EnboxAgent,
+        connectedDid,
+        permissionsApi : { getPermissionForRequest: sinon.stub() } as unknown as AgentPermissionsApi,
+      }).withRecordExecutionContext({
+        assertActive,
+        contextId        : source.contextId,
+        followedSourceId : source.id,
+        moduleRole,
+        remoteEndpoint   : source.remoteEndpoint,
+        tenantDid,
+      });
+      const { record } = await dwn.records.read({ filter: { recordId } });
+      expect(record).toBeDefined();
 
-    active = false;
-    await expect(record!.data.json()).rejects.toThrow('Shared context is no longer active.');
-    await expect(record!.update({ tags: { pinned: true } })).rejects.toThrow('Shared context is no longer active.');
-    await expect(record!.delete()).rejects.toThrow('Shared context is no longer active.');
-  });
+      if (retirement === 'session end') {
+        session.abort(new Error('Session has ended.'));
+      } else if (retirement === 'acceptance replacement') {
+        current = { ...source, acceptanceId: 'replacement' };
+      } else {
+        current = undefined;
+      }
+
+      const reason = retirement === 'session end' ? 'Session has ended.' : 'is no longer active';
+      await expect(record!.data.json()).rejects.toThrow(reason);
+      await expect(record!.update({ tags: { pinned: true } })).rejects.toThrow(reason);
+      await expect(record!.delete()).rejects.toThrow(reason);
+      expect(agent.processDwnRequest.calledOnce).toBe(true);
+      expect(agent.sendDwnRequest.notCalled).toBe(true);
+    });
+  }
 
   it('keeps lazy data reads local while updates and deletes default remote', async () => {
     let currentData: unknown = { title: 'before' };

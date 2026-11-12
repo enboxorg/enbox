@@ -78,6 +78,26 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('module stores with a real local DWN', () => {
+  it('derives parent scope from definitions instead of caller-supplied graph metadata', async () => {
+    const context = await createEnboxTestContext({ application });
+    try {
+      const artifact = Object.defineProperty({ ...Module }, 'resolvedGraph', {
+        get: (): never => { throw new Error('Supplied graph metadata must not be read.'); },
+      });
+      const store = createModuleStore(artifact, {
+        signal        : context.session.signal,
+        assertCurrent : (): void => context.session.signal.throwIfAborted(),
+        getEnbox      : (): typeof context.enbox => context.enbox,
+        onClose       : (): (() => void) => (): void => {},
+      });
+      const family = store.collection('folder/note');
+      expect(typeof family.within).toBe('function');
+      expect(() => family.within('parent/child')).toThrow('direct parent');
+    } finally {
+      await context.close();
+    }
+  });
+
   it('allows native access to be captured in an inactive feature factory', async () => {
     const Feature = defineStore({
       modules: { notes: Module },

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'bun:test';
 import { compileRecordQuery } from '../src/record-query.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
-import { defineModule, isTypedModule, orderTypedModuleDependencies } from '../src/define-module.js';
+import { defineModule, isTypedModule, orderTypedModuleDependencies, resolveTypedModuleGraph } from '../src/define-module.js';
 
 const BaseDefinition = {
   module    : 'https://example.com/modules/composition-base',
@@ -70,24 +70,24 @@ describe('typed module composition', () => {
     const module = discussion();
     expect(isTypedModule(module)).toBe(true);
     expect(Object.keys(module.codecs)).toEqual(['comment']);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note')).toMatchObject({
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note')).toMatchObject({
       kind             : 'ref',
       owningModuleUri  : BaseDefinition.module,
       owningModulePath : 'workspace/note',
     });
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note/comment')).toMatchObject({
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note/comment')).toMatchObject({
       physicalDepth       : 3,
       parentPhysicalDepth : 2,
       owningModuleUri     : DiscussionDefinition.module,
     });
-    expect(compileRecordQuery(module.resolvedGraph, 'note/comment', { within: 'W/N/C' }).filter).toEqual({
+    expect(compileRecordQuery(resolveTypedModuleGraph(module), 'note/comment', { within: 'W/N/C' }).filter).toEqual({
       module     : DiscussionDefinition.module,
       modulePath : 'note/comment',
       contextId  : 'W/N/C',
       schema     : 'https://example.com/schemas/comment',
     });
-    expect(() => compileRecordQuery(module.resolvedGraph, 'note')).toThrow('not a locally owned record path');
-    expect(() => compileRecordQuery(module.resolvedGraph, 'note/comment', { within: 'W/N/C/X' }))
+    expect(() => compileRecordQuery(resolveTypedModuleGraph(module), 'note')).toThrow('not a locally owned record path');
+    expect(() => compileRecordQuery(resolveTypedModuleGraph(module), 'note/comment', { within: 'W/N/C/X' }))
       .toThrow('cannot be deeper');
   });
 
@@ -131,8 +131,8 @@ describe('typed module composition', () => {
       dependencies: { base: BaseModule },
     });
     expect(module.codecs.note).toBe(text);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note')?.recordType.dataFormats).toEqual(['application/json']);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('folder/note')?.recordType.dataFormats).toEqual(['text/plain']);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('note')?.recordType.dataFormats).toEqual(['application/json']);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('folder/note')?.recordType.dataFormats).toEqual(['text/plain']);
   });
 
   it('does not require codecs for unused types or imported attachment nodes', () => {
@@ -148,7 +148,7 @@ describe('typed module composition', () => {
     } as never)).toThrow('unexpected: note');
   });
 
-  it('snapshots authored metadata and keeps plaintext role providers free of managed contexts', () => {
+  it('snapshots authored metadata without injecting synthetic shared-context paths and memoizes resolved graphs', () => {
     const definition = structuredClone(BaseDefinition) as ModuleDefinition;
     const module = defineModule({ definition, codecs: BaseModule.codecs });
     definition.types.note.dataFormats = ['text/plain'];
@@ -156,9 +156,10 @@ describe('typed module composition', () => {
     expect(Object.isFrozen(module.definition.structure.workspace)).toBe(true);
     expect(module.definition.structure.enboxContextFollow).toBeUndefined();
     expect(isTypedModule(module)).toBe(true);
+    expect(resolveTypedModuleGraph(module)).toBe(resolveTypedModuleGraph(module));
   });
 
-  it('resolves injected sharing paths only for locally rooted encrypted sharing modules', () => {
+  it('keeps encrypted role-bearing modules and composed extensions pure of hidden injected paths', () => {
     const definition = {
       ...BaseDefinition,
       types     : { ...BaseDefinition.types, workspace: { dataFormats: ['application/json'], encryptionRequired: true } },
@@ -170,7 +171,8 @@ describe('typed module composition', () => {
       },
     } as const satisfies ModuleDefinition;
     const module = defineModule({ definition, codecs: BaseModule.codecs });
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('enboxContextFollow')?.kind).toBe('record');
+    expect(module.definition).toEqual(definition);
+    expect(resolveTypedModuleGraph(module).nodesByDeclaredPath.get('enboxContextFollow')).toBeUndefined();
     expect(isTypedModule(module)).toBe(true);
 
     const extension = defineModule({
@@ -240,5 +242,67 @@ describe('typed module composition', () => {
     const typed = new TypedEnbox(dwn, discussion());
     await expect(typed.records.query('note/comment', { within: 'W/N' })).rejects.toThrow('is missing $keyAgreement');
     expect(configurations).toBe(0);
+  });
+
+  it('scopes a descendant $ref attachment to an ancestor contextId while requiring explicit parent depth on writes', async () => {
+    const writes: unknown[] = [];
+    const queries: unknown[] = [];
+    const dwn = {
+      isDelegate : false,
+      modules    : {
+        query: async (req: { filter: { module: string } }): Promise<unknown> => ({
+          status  : { code: 200, detail: 'OK' },
+          modules : [{
+            definition: req.filter.module === BaseDefinition.module
+              ? { ...BaseDefinition, $keyAgreement: {} }
+              : DiscussionDefinition,
+          }],
+        }),
+      },
+      records: {
+        query: async (req: unknown): Promise<unknown> => {
+          queries.push(req);
+          return { status: { code: 200, detail: 'OK' }, records: [] };
+        },
+        write: async (req: unknown): Promise<unknown> => {
+          writes.push(req);
+          return {
+            status : { code: 202, detail: 'Accepted' },
+            record : { id: 'C1', dataFormat: 'application/json' },
+          };
+        },
+      },
+      withRecordExecutionContext(): DwnApi {
+        return dwn;
+      },
+    } as unknown as DwnApi;
+
+    const scoped = new TypedEnbox(dwn, discussion()).scope({
+      allowedPaths : new Set(['note/comment']),
+      contextId    : 'W1',
+      contextPath  : 'note',
+    });
+
+    await scoped.query('note/comment');
+    expect(queries).toEqual([expect.objectContaining({
+      filter: expect.objectContaining({
+        contextId  : 'W1',
+        module     : DiscussionDefinition.module,
+        modulePath : 'note/comment',
+      }),
+    })]);
+
+    await expect(scoped.create('note/comment', { data: { text: 'missing note parent' } }))
+      .rejects.toThrow('Context-bound create at \'note/comment\' requires its direct parent context.');
+    await expect(scoped.create('note/comment', { data: { text: 'escaped context' }, parentContextId: 'W2/N1' }))
+      .rejects.toThrow('Context-bound selectors cannot escape their context.');
+
+    await scoped.create('note/comment', { data: { text: 'attached under W1/N1' }, parentContextId: 'W1/N1' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      module          : DiscussionDefinition.module,
+      modulePath      : 'note/comment',
+      parentContextId : 'W1/N1',
+    });
   });
 });

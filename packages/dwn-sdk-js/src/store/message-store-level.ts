@@ -99,8 +99,6 @@ const HEADS_PARTITION = 'heads';
 const META_PARTITION = 'meta';
 
 const EPOCH_KEY = 'epoch';
-const FORMAT_KEY = 'format';
-const STORE_FORMAT = 'enbox-modules-v1';
 const RECORD_LIMIT_RAW_PAGE_SIZE = 128;
 const RECORD_LIMIT_GROUP_CACHE_SIZE = 128;
 const CURRENT_PARTITIONS = new Set([
@@ -218,7 +216,6 @@ export class MessageStoreLevel implements MessageStore {
     const lockName = `enbox:dwn-message-store-initialize:${JSON.stringify(this.config.location!)}`;
     await runWithCrossContextLock(lockName, async (): Promise<void> => {
       await this.assertNoPreSubstrateLayout(partitions);
-      await this.assertModuleFormat(partitions);
       await this.getEpoch();
     });
   }
@@ -317,10 +314,7 @@ export class MessageStoreLevel implements MessageStore {
     }
 
     const freshEpoch = crypto.randomUUID();
-    await partitions.meta.batch([
-      { type: 'put', key: FORMAT_KEY, value: STORE_FORMAT },
-      { type: 'put', key: EPOCH_KEY, value: freshEpoch },
-    ]);
+    await partitions.meta.put(EPOCH_KEY, freshEpoch);
     return freshEpoch;
   }
 
@@ -1212,25 +1206,6 @@ export class MessageStoreLevel implements MessageStore {
   private async getHead(partitions: StorePartitions, tenant: string): Promise<bigint> {
     const headString = await partitions.heads.get(tenant);
     return headString === undefined ? 0n : BigInt(headString);
-  }
-
-  /** Unmarked nonempty stores contain the removed wire format and require an explicit reset. */
-  private async assertModuleFormat(partitions: StorePartitions): Promise<void> {
-    const format = await partitions.meta.get(FORMAT_KEY);
-    if (format === STORE_FORMAT) {
-      return;
-    }
-
-    const incompatible = (): DwnError => new DwnError(
-      DwnErrorCode.MessageStoreIncompatibleFormat,
-      `message store location ${this.config.location} uses an incompatible format; reinitialize the store before opening it`
-    );
-    if (format !== undefined) {
-      throw incompatible();
-    }
-    if (!await partitions.root.isEmpty()) {
-      throw incompatible();
-    }
   }
 
   private async assertNoPreSubstrateLayout(partitions: StorePartitions): Promise<void> {

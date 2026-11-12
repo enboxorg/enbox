@@ -108,7 +108,6 @@ describe('SyncEngineLevel dead letter tracking', () => {
         sublevel: (): { put: typeof put } => ({ put }),
       } as never,
     });
-    sinon.stub(internal as any, 'ensureStoreFormat').resolves();
     const params = {
       errorDetail    : 'test failure',
       messageCid     : 'cid',

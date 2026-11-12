@@ -1,7 +1,5 @@
 import type { BearerDid } from '@enbox/dids';
-import type { ContextMembersApi } from '../src/typed-enbox.js';
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
-import type { RecordDeleteParams } from '../src/record-types.js';
 import type {
   EncodedRecordData,
   RecordCodec,
@@ -11,9 +9,10 @@ import type {
 
 import sinon from 'sinon';
 
-import { ContextNotReadyError } from '../src/context-errors.js';
+import { ContextRetiredError } from '../src/context-errors.js';
 import { DwnApi } from '../src/dwn-api.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
+import { Enbox } from '../src/enbox.js';
 import { Module } from '../src/module.js';
 import { PlatformAgentTestHarness } from '@enbox/agent/test';
 import { Record } from '../src/record.js';
@@ -22,13 +21,6 @@ import { testDwnUrl } from './utils/test-config.js';
 import { TypedEnbox } from '../src/typed-enbox.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import {
-  CONTEXT_FOLLOW_PATH,
-  CONTEXT_INVITATION_PATH,
-  contextFollowCodec,
-  contextInvitationCodec,
-  isContextFollowIntent,
-} from '../src/shared-context-module.js';
 import { DateSort, DwnErrorCode } from '@enbox/dwn-sdk-js';
 import { defineModule, isTypedModule } from '../src/define-module.js';
 import { DwnInterface, EnboxUserAgent } from '@enbox/agent';
@@ -170,6 +162,7 @@ describe('TypedModule API', () => {
       expect(TodoModule.definition).not.toBe(TodoModuleDefinition);
       expect(Object.isFrozen(TodoModule.definition)).toBe(true);
       expect(TodoModule.definition.module).toBe('https://example.com/modules/todo');
+      expect(Object.hasOwn(TodoModule, 'resolvedGraph')).toBe(false);
     });
 
     it('should preserve the types and structure', () => {
@@ -192,168 +185,14 @@ describe('TypedModule API', () => {
       )).toThrow('invalid: task');
     });
 
-    it('adds isolated shared-context paths without mutating authored inputs', () => {
+    it('keeps encrypted role-bearing modules pure and does not reserve any path names', () => {
       const module = defineSharedModule();
 
+      expect(module.definition).toEqual(SharedDefinition);
       expect(module.definition).not.toBe(SharedDefinition);
-      expect(SharedDefinition.types).not.toHaveProperty(CONTEXT_INVITATION_PATH);
-      expect(SharedDefinition.structure).not.toHaveProperty(CONTEXT_INVITATION_PATH);
-      expect(SharedCodecs).not.toHaveProperty(CONTEXT_INVITATION_PATH);
-      expect(module.definition.types[CONTEXT_INVITATION_PATH]).toMatchObject({
-        dataFormats : ['application/json'],
-        schema      : 'https://enbox.id/schemas/context-invitation',
-      });
-      expect(module.definition.structure[CONTEXT_INVITATION_PATH]).toEqual({
-        $actions   : [{ who: 'anyone', can: ['create'] }],
-        $immutable : true,
-        $size      : { max: 8_192 },
-      });
-      expect(module.codecs[CONTEXT_INVITATION_PATH]).toBe(contextInvitationCodec);
-      expect(SharedDefinition.types).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
-      expect(SharedDefinition.structure).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
-      expect(SharedCodecs).not.toHaveProperty(CONTEXT_FOLLOW_PATH);
-      expect(module.definition.types[CONTEXT_FOLLOW_PATH]).toEqual({
-        dataFormats        : ['application/json'],
-        encryptionRequired : true,
-        schema             : 'https://enbox.id/schemas/context-follow',
-      });
-      expect(module.definition.structure[CONTEXT_FOLLOW_PATH]).toEqual({
-        $immutable : true,
-        $size      : { max: 8_192 },
-      });
-      expect(module.codecs[CONTEXT_FOLLOW_PATH]).toBe(contextFollowCodec);
+      expect(Object.keys(module.codecs).sort()).toEqual(Object.keys(SharedCodecs).sort());
       expect(isTypedModule(module)).toBe(true);
-
-      const other = defineSharedModule();
-      expect(other.definition.types[CONTEXT_INVITATION_PATH])
-        .not.toBe(module.definition.types[CONTEXT_INVITATION_PATH]);
-      expect(other.definition.structure[CONTEXT_INVITATION_PATH])
-        .not.toBe(module.definition.structure[CONTEXT_INVITATION_PATH]);
-      expect(other.definition.types[CONTEXT_FOLLOW_PATH])
-        .not.toBe(module.definition.types[CONTEXT_FOLLOW_PATH]);
-      expect(other.definition.structure[CONTEXT_FOLLOW_PATH])
-        .not.toBe(module.definition.structure[CONTEXT_FOLLOW_PATH]);
-    });
-
-    it('derives shared-context support from the authored definition', () => {
-      const module = defineModule({ definition: SharedDefinition, codecs: SharedCodecs });
-
-      expect(isTypedModule(module)).toBe(true);
-      expect(new TypedEnbox(dwnAlice, module).contexts).toHaveProperty('invitations');
       expect(isTypedModule({ definition: SharedDefinition, codecs: SharedCodecs })).toBe(false);
-    });
-
-    it('rejects altered or incomplete private following definitions', () => {
-      const module = defineSharedModule();
-      const definition = module.definition;
-      const type = definition.types[CONTEXT_FOLLOW_PATH];
-      const rule = definition.structure[CONTEXT_FOLLOW_PATH];
-      const altered = [
-        { ...definition, types: { ...definition.types, [CONTEXT_FOLLOW_PATH]: { ...type, encryptionRequired: false } } },
-        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: {
-          ...rule, $actions: [{ who: 'anyone' as const, can: ['read' as const] }],
-        } } },
-        { ...definition, structure: { ...definition.structure, [CONTEXT_FOLLOW_PATH]: { ...rule, $immutable: false } } },
-      ];
-      for (const candidate of altered) {
-        expect(isTypedModule({ ...module, definition: candidate })).toBe(false);
-      }
-      expect(isTypedModule({
-        ...module,
-        codecs: { ...module.codecs, [CONTEXT_FOLLOW_PATH]: recordCodecs.json<unknown>() },
-      })).toBe(false);
-      const missing = { ...module.codecs };
-      delete missing[CONTEXT_FOLLOW_PATH];
-      expect(isTypedModule({ ...module, codecs: missing })).toBe(false);
-    });
-
-    it('validates following and forgotten intents without trusting invalid owner coordinates', () => {
-      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', path: 'workspace', following: true };
-      const forgotten = { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false };
-      expect(isContextFollowIntent(intent)).toBe(true);
-      expect(isContextFollowIntent(forgotten)).toBe(true);
-      expect(isContextFollowIntent({ ...forgotten, path: 'unavailable' })).toBe(true);
-      for (const invalid of [
-        null, [], { ...intent, ownerDid: 'https://owner.example' },
-        { ...intent, contextId: '' }, { ...intent, path: '' }, { ...intent, path: undefined }, { ...intent, following: 'true' },
-        { ...forgotten, ownerDid: 'https://owner.example' }, { ...forgotten, contextId: '' },
-      ]) {
-        expect(isContextFollowIntent(invalid)).toBe(false);
-        expect(() => contextFollowCodec.encode(invalid as typeof intent)).toThrow();
-      }
-    });
-
-    it('encrypts following intents and keeps them private and immutable in the recipient tenant', async () => {
-      const module = defineSharedModule();
-      const typed = new TypedEnbox(dwnAlice, module);
-      const intent = { ownerDid: 'did:example:owner', contextId: 'workspaceRecord', path: 'workspace', following: true };
-      const record = await typed.records.create(CONTEXT_FOLLOW_PATH, { data: intent });
-
-      expect(record.encryption).toBeDefined();
-      expect(await record.value()).toEqual(intent);
-      await expect(record.update({ data: { ownerDid: intent.ownerDid, contextId: intent.contextId, following: false } }))
-        .rejects.toThrow(DwnErrorCode.ModuleAuthorizationImmutableRecord);
-
-      const stranger = await testHarness.agent.did.create({ method: 'jwk', store: true });
-      const { reply } = await testHarness.agent.processDwnRequest({
-        author        : stranger.uri,
-        target        : aliceDid.uri,
-        messageType   : DwnInterface.RecordsQuery,
-        messageParams : { filter: { module: module.definition.module, modulePath: CONTEXT_FOLLOW_PATH } },
-      });
-      expect(reply.status.code).toBe(200);
-      expect(reply.entries).toEqual([]);
-    });
-
-    it('rejects managed invitation fragments with altered semantics', () => {
-      const module = defineSharedModule();
-      const type = module.definition.types[CONTEXT_INVITATION_PATH];
-      const rule = module.definition.structure[CONTEXT_INVITATION_PATH];
-
-      expect(isTypedModule({
-        ...module,
-        definition: {
-          ...module.definition,
-          types: { ...module.definition.types, [CONTEXT_INVITATION_PATH]: { ...type, encryptionRequired: true } },
-        },
-      })).toBe(false);
-      expect(isTypedModule({
-        ...module,
-        definition: {
-          ...module.definition,
-          structure: { ...module.definition.structure, [CONTEXT_INVITATION_PATH]: { ...rule, $role: true } },
-        },
-      })).toBe(false);
-    });
-
-    it('reserves the invitation type name at the module boundary', () => {
-      for (const property of ['types', 'structure'] as const) {
-        const definition = {
-          ...TodoModuleDefinition,
-          [property]: {
-            ...TodoModuleDefinition[property],
-            [CONTEXT_INVITATION_PATH]: {},
-          },
-        } as unknown as typeof TodoModuleDefinition;
-        expect(() => defineModule({ definition: definition, codecs: TodoModule.codecs })).toThrow(
-          `'${CONTEXT_INVITATION_PATH}' is reserved for shared-context invitations`,
-        );
-      }
-    });
-
-    it('reserves the following type name at the module boundary', () => {
-      for (const property of ['types', 'structure'] as const) {
-        const definition = {
-          ...TodoModuleDefinition,
-          [property]: {
-            ...TodoModuleDefinition[property],
-            [CONTEXT_FOLLOW_PATH]: {},
-          },
-        } as unknown as typeof TodoModuleDefinition;
-        expect(() => defineModule({ definition: definition, codecs: TodoModule.codecs })).toThrow(
-          `'${CONTEXT_FOLLOW_PATH}' is reserved for shared-context following`,
-        );
-      }
     });
   });
 
@@ -838,42 +677,7 @@ describe('TypedModule API', () => {
         blind  : recordCodecs.json<{ note: string }>(),
         viewer : recordCodecs.json<{ readonly: boolean }>(),
       } });
-      type DeliveryRole = 'workspace/member' | 'workspace/viewer';
-      type DeliveryMembers = ContextMembersApi<
-        typeof DeliveryDefinition,
-        typeof DeliveryModule.codecs,
-        DeliveryRole
-      >;
       const recipient = 'did:example:bob';
-      const createDeliveryMembers = async (): Promise<DeliveryMembers> => {
-        const roleDelivery = {
-          get       : sinon.stub().resolves({ state: 'delivered' as const }),
-          retry     : sinon.stub().resolves({ state: 'delivered' as const }),
-          subscribe : (): (() => void) => (): void => {},
-        };
-        const roles = new TypedEnbox(dwnAlice, DeliveryModule, { roleDelivery });
-        await roles.configure();
-        const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
-        sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
-          delivered    : false,
-          failure      : 'awaiting-recipient-install',
-          recipientDid : recipient,
-          reason       : 'recipient module not installed',
-        });
-        return (await roles.contexts.open('workspace', workspace.contextId)).members;
-      };
-      const failRoleDeletion = (cause: Error, deleteFirst: boolean = false): void => {
-        const deleteRecord = Record.prototype.delete;
-        sinon.stub(Record.prototype, 'delete').callsFake(async function (
-          this: Record,
-          params?: RecordDeleteParams,
-        ): Promise<void> {
-          if (deleteFirst) {
-            await deleteRecord.call(this, params);
-          }
-          throw cause;
-        });
-      };
 
       it('rejects a missing role recipient before issuing a DWN request', async () => {
         const roles = new TypedEnbox(dwnAlice, RoleModule);
@@ -939,23 +743,15 @@ describe('TypedModule API', () => {
         expect(reassigned.recipient).toBe(recipient);
       });
 
-      it('manages encrypted context membership without exposing role records', async () => {
-        const get = sinon.stub().resolves(undefined);
-        const retry = sinon.stub().resolves({ state: 'delivered' as const });
-        const roles = new TypedEnbox(dwnAlice, DeliveryModule, {
-          roleDelivery: {
-            get,
-            retry,
-            subscribe: (): (() => void) => {
-              return (): void => {};
-            },
-          },
-        });
+      it('projects audienceKeyDelivery onto created role records and exposes roleDelivery controls', async () => {
+        const roleDelivery = {
+          get       : sinon.stub().resolves({ state: 'delivered' as const }),
+          retry     : sinon.stub().resolves({ state: 'delivered' as const }),
+          subscribe : (): (() => void) => (): void => {},
+        };
+        const roles = new TypedEnbox(dwnAlice, DeliveryModule, { roleDelivery });
         await roles.configure();
-
         const workspace = await roles.records.create('workspace', { data: { name: 'Enbox' } });
-        const owned = await roles.contexts.open('workspace', workspace.contextId);
-        const members = owned.members;
         sinon.stub(testHarness.agent.dwn as any, 'provisionAudienceKeyDeliveryForReply').resolves({
           delivered    : false,
           failure      : 'awaiting-recipient-install',
@@ -963,117 +759,87 @@ describe('TypedModule API', () => {
           reason       : 'recipient module not installed',
         });
 
-        const assigned = await members.set(recipient, {
-          data : { label: 'maintainer' },
-          role : 'workspace/member',
-        });
-        expect(assigned).toMatchObject({
-          data     : { label: 'maintainer' },
-          did      : recipient,
-          role     : 'workspace/member',
-          delivery : {
-            reason : 'recipient module not installed',
-            state  : 'awaiting-recipient-install',
-          },
-        });
-        expect(Object.keys(assigned).sort()).toEqual(['data', 'delivery', 'did', 'role']);
-        expect(get.notCalled).toBe(true);
-
-        await roles.records.create('workspace/viewer', {
-          data            : { readonly: true },
+        const assigned = await roles.records.create('workspace/member', {
+          data            : { label: 'maintainer' },
           parentContextId : workspace.contextId,
           recipient,
         });
-        expect((await members.get(recipient))?.role).toBe('workspace/member');
-
-        const changed = await members.set(recipient, {
-          data : { readonly: true },
-          role : 'workspace/viewer',
+        expect(assigned.audienceKeyDelivery).toEqual({
+          reason : 'recipient module not installed',
+          state  : 'awaiting-recipient-install',
         });
-        expect(changed).toMatchObject({
-          data     : { readonly: true },
-          did      : recipient,
-          role     : 'workspace/viewer',
-          delivery : { state: 'pending' },
+        expect(roles.roleDelivery).toBe(roleDelivery);
+      });
+
+      it('enforces pre- and post-prepare path narrowing including materialize.children and scoped subscription retirement', async () => {
+        const ScopedModule = defineModule({
+          definition: {
+            module    : 'https://example.com/modules/scoped-records-test',
+            published : true,
+            types     : {
+              workspace : { dataFormats: ['application/json'] },
+              title     : { dataFormats: ['application/json'] },
+              note      : { dataFormats: ['application/json'] },
+            },
+            structure: {
+              workspace: {
+                title : { $recordLimit: { max: 1 } },
+                note  : {},
+              },
+            },
+          },
+          codecs: {
+            workspace : recordCodecs.json<{ name: string }>(),
+            title     : recordCodecs.json<{ text: string }>(),
+            note      : recordCodecs.json<{ body: string }>(),
+          },
         });
-        expect((await members.list()).map(member => member.did)).toEqual([recipient]);
+        const enbox = new Enbox({ agent: testHarness.agent, connectedDid: aliceDid.uri });
+        const base = enbox.using(ScopedModule);
+        await base.configure();
+        const root = await base.records.create('workspace', { data: { name: 'Root' } });
+        await base.records.set('workspace/title', { within: root.contextId, data: { text: 'Secret' } });
 
-        expect(await members.retryDelivery(recipient)).toMatchObject({ delivery: { state: 'delivered' } });
-        expect(retry.calledOnce).toBe(true);
-
-        await members.remove(recipient);
-        await members.remove(recipient);
-        expect(await members.get(recipient)).toBeUndefined();
-        await expect(members.set('not-a-did', {
-          data : { label: 'invalid' },
-          role : 'workspace/member',
-        })).rejects.toThrow('is not a DID');
-      }, 15000);
-
-      it('returns a role change when cleanup fails after the requested role becomes effective', async () => {
-        const members = await createDeliveryMembers();
-        await members.set(recipient, {
-          data : { readonly: true },
-          role : 'workspace/viewer',
+        let allowed = new Set<string>(['workspace', 'workspace/title', 'workspace/note']);
+        const prepare = sinon.stub().callsFake(async () => {
+          allowed = new Set(['workspace', 'workspace/note']);
         });
-        const cleanupError = new Error('viewer cleanup failed');
-        failRoleDeletion(cleanupError);
-
-        const changed = await members.set(recipient, {
-          data : { label: 'maintainer' },
-          role : 'workspace/member',
+        const contextController = new AbortController();
+        const scoped = base.scope({
+          allowedPaths : () => allowed,
+          contextId    : root.contextId,
+          contextPath  : 'workspace',
+          prepare,
+          signal       : contextController.signal,
         });
 
-        expect(changed).toMatchObject({ did: recipient, role: 'workspace/member' });
-        expect((await members.get(recipient))?.role).toBe('workspace/member');
-      }, 15000);
+        // Pre-prepare path check (#23): invalid path must not invoke prepare().
+        await expect((scoped as any).create('unexposed', { data: {} })).rejects.toThrow('do not expose path');
+        expect(prepare.notCalled).toBe(true);
 
-      it('makes an incomplete role change retryable when the previous stronger role remains effective', async () => {
-        const members = await createDeliveryMembers();
-        await members.set(recipient, {
-          data : { label: 'maintainer' },
-          role : 'workspace/member',
+        // Post-prepare narrowing on materialize.children (#13):
+        await expect(scoped.query('workspace', {
+          materialize : { children: ['workspace/title'] },
+          pagination  : { limit: 1 },
+        })).rejects.toThrow(`do not expose path 'workspace/title'`);
+
+        // Context retirement emits ContextRetiredError on subscribe (#10), while enbox.close() does not emit spurious errors.
+        const scopedEvents: string[] = [];
+        await scoped.subscribe('workspace/note', { initial: true }, (event) => {
+          scopedEvents.push(event.type === 'error' ? event.error.name : event.type);
         });
-        const cleanupError = new Error('member cleanup failed');
-        failRoleDeletion(cleanupError);
+        contextController.abort(new ContextRetiredError(root.contextId));
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(scopedEvents).toContain('ContextRetiredError');
 
-        const error = await members.set(recipient, {
-          data : { readonly: true },
-          role : 'workspace/viewer',
-        }).then(() => undefined, reason => reason as Error);
-
-        expect(error).toBeInstanceOf(ContextNotReadyError);
-        expect(error?.cause).toBe(cleanupError);
-        expect((await members.get(recipient))?.role).toBe('workspace/member');
-      }, 15000);
-
-      it('accepts a failed removal only when its reread proves the member absent', async () => {
-        const members = await createDeliveryMembers();
-        await members.set(recipient, {
-          data : { label: 'maintainer' },
-          role : 'workspace/member',
+        const sessionEvents: string[] = [];
+        await base.records.subscribe('workspace/note', (event) => {
+          sessionEvents.push(event.type);
         });
-        failRoleDeletion(new Error('delete response was lost'), true);
-
-        await expect(members.remove(recipient)).resolves.toBeUndefined();
-        expect(await members.get(recipient)).toBeUndefined();
-      }, 15000);
-
-      it('makes a failed removal retryable while the member remains effective', async () => {
-        const members = await createDeliveryMembers();
-        await members.set(recipient, {
-          data : { label: 'maintainer' },
-          role : 'workspace/member',
-        });
-        const cleanupError = new Error('member removal failed');
-        failRoleDeletion(cleanupError);
-
-        const error = await members.remove(recipient).then(() => undefined, reason => reason as Error);
-
-        expect(error).toBeInstanceOf(ContextNotReadyError);
-        expect(error?.cause).toBe(cleanupError);
-        expect((await members.get(recipient))?.role).toBe('workspace/member');
-      }, 15000);
+        enbox.close();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(sessionEvents).toEqual([]);
+      });
     });
 
     describe('query()', () => {

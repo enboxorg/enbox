@@ -80,12 +80,12 @@ try {
 ```
 
 Definitions and collection handles perform no I/O. A feature factory declares
-handles and commands synchronously. Capture `modules.notes.native` as a
-function if needed, and invoke it inside a command or an observation opener;
-calling `native()` requires a usable session. It returns the existing full
-`TypedEnbox`, including `records` and `contexts`, rather than a second SDK.
-Resolve it for each operation; a captured native client follows the SDK's own
-lifetime and does not acquire store progress tracking or canonical-view refresh.
+handles and commands synchronously. Capture `modules.notes.native` or `enbox` as
+a function if needed, and invoke it inside a command or an observation opener;
+calling `native()` or `enbox()` requires a usable session. `native()` returns
+the existing full `TypedEnbox` rather than a second SDK. Resolve it for each
+operation; a captured native client follows the SDK's own lifetime and does not
+acquire store progress tracking or canonical-view refresh.
 
 ### Collection and native capabilities
 
@@ -95,7 +95,7 @@ lifetime and does not acquire store progress tracking or canonical-view refresh.
 | Nested records | A nested path produces a family; `pages.within(parentContextId)` resolves an exact direct-parent collection. |
 | A `$recordLimit.max: 1` slot | `modules.notes.native().records.set(...)`; singleton paths are excluded from `collection()`. |
 | Tags, publication, timestamps, recipients, full update, or prune | Existing native record operations through `modules.notes.native().records`, called inside a domain command. |
-| Invitations, memberships, accepted shares, or member writes | Existing `modules.notes.native().contexts` and context-bound `records`; observe them with the same `observe()` factory shown below. |
+| Context-scoped records, invitations, memberships, or accepted shares | `modules.notes.native().scope(...)` for direct context confinement, or `@enbox/contexts` (`defineContextModule` + `bindContexts(enbox(), ...)`) observed with `observe()`. |
 
 Collection commands accept data-only inputs; read filters never become write
 fields. Deletion first reads the ID at the declared module path, then checks
@@ -128,9 +128,10 @@ readiness, retry, and cleanup rules. The native view determines its payload
 and whether `refresh()` or `loadMore()` is available.
 
 ```ts
-// Inside defineStore({ create({ modules, observe }) { ... } }):
-const native = modules.notes.native;
-const acceptedShares = observe(signal => native().contexts.observe({ access: 'member', materializeRoot: true, signal }));
+// Inside defineStore({ create({ enbox, modules, observe }) { ... } }):
+const acceptedShares = observe(signal =>
+  bindContexts(enbox(), NotebookContextsModule).observe({ access: 'member', materializeRoot: true, signal }),
+);
 const pages = modules.notes.collection('notebook/page');
 const activePages = observe({
   source: (parentContextId: string) => pages.within(parentContextId),
@@ -821,57 +822,29 @@ one underlying stream, and inline frame data is reused when present. Use
 `observe()` when the application needs bounded current collection truth.
 Change delivery is at least once, so consumers should tolerate duplicates.
 
-## Contexts
+## Scoped Contexts & Collaboration
 
-Typed contexts expose confined records, membership, invitations, and member lifecycle
-operations such as `refresh()`, `forget()`, and `leave()`. The SDK manages tenant
-routing, grants, delivery keys, replication, and feed cursors.
+`TypedEnbox.scope()` confines record operations to one physical `contextId` and
+optional execution/role policy without adding opinionated invitation or journal
+records to `defineModule()`:
 
-The context root's `$actions` declares its direct-child roles granting `read`
-in preference order. Use `contexts.follow('notebook/page', { ownerDid, id })`
-to follow that exact root and `ownedContext.members` to manage its assignments.
-Invitations carry the root path and use the same policy. There is no separate
-app-level role list or override; preference does not change DWN authorization
-or imply role inheritance.
+```ts
+const pageRecords = notes.scope<'notebook/page'>({
+  allowedPaths : new Set(['notebook/page', 'notebook/page/title', 'notebook/page/change']),
+  contextId    : pageRecord.contextId,
+  contextPath  : 'notebook/page',
+});
 
-Following or accepting an invitation saves an encrypted choice in the application's
-module. Each device independently verifies current membership and keys; saved
-choices are not membership proof. Owner unavailability preserves the choice, and
-apps need no separate bookmark module or reconciliation controller.
+await pageRecords.set('notebook/page/title', {
+  data: { title: 'Launch plan' },
+});
+```
 
-`contexts.observe()` restores choices in the background. `contexts.list()` waits
-for one restoration attempt and may incur owner network timeouts. Recipient sync
-and owner recovery retry without another timer; unexpected restoration failures
-are logged while known contexts remain available. An explicit
-`follow(path, coordinates)` retries only its supplied target.
-
-Both observation modes expose `savedFollows` alongside usable `contexts`.
-These saved `{ key, id, ownerDid, path }` choices include unavailable shares and
-paths the current app cannot restore. Initial readiness includes the local
-journal, without awaiting remote owners. Pass a saved choice directly to
-`contexts.forget()` to remove it without a live member handle.
-
-`contexts.forget({ ownerDid, id })` works without a live acceptance and leaves the
-owner's role intact. It requires a session with sync storage and the module's
-managed following path, rejecting with `TypeError` if either is unavailable.
-The saved context path need not be supported. A member handle's `forget()` first
-checks that its acceptance is still current, so an already-retired handle cannot
-override a later follow.
-
-`leave()` withdraws the role and then saves the forget. If saving fails, the call
-rejects and coordinate-based `contexts.forget()` can finish it. These writes are
-not atomic; a retired `leave()` rejects with `ContextRetiredError`.
-
-Changing a saved choice requires own-module write access; read-only grants are
-not widened. All apps with that access can change the identity's shared choices.
-The immutable journal retains and reads its history in pages without automatic
-compaction. Future compaction must retain effective forgets so older offline follows cannot return.
-
-Each context exposes its `rootRecordId` and a collision-safe `key` equivalent
-to `moduleContextKey(context.ownerDid, context.id)`.
-
-The complete owner/member workflow and current limitations live in
-[Shared contexts](https://enbox-docs.pages.dev/docs/packages/api#shared-contexts).
+For managed shared contexts — including companion invitation inboxes, encrypted
+cross-device follow/forget journals, role membership management, audience-key
+delivery retries, and composed extension selection (`withModules()` /
+`context.using()`) — install `@enbox/contexts` and pair `defineContextModule()`
+with `bindContexts(enbox, companionModule)`.
 
 ## Anonymous Reads
 

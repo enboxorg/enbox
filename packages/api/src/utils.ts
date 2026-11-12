@@ -73,3 +73,8 @@ export function dataToBlob(data: any, dataFormat?: string): {
 
   return { dataBlob, dataFormat };
 }
+
+/** @internal Narrow an unknown value to a non-null, non-array object record. */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}

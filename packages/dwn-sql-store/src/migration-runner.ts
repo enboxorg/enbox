@@ -3,7 +3,6 @@ import type { DwnMigrationFactory } from './migration-provider.js';
 import type { Kysely, MigrationResultSet } from 'kysely';
 
 import { allDwnMigrations } from './migrations/index.js';
-import { assertModuleStoreFormat } from './module-store-format.js';
 import { DwnMigrationProvider } from './migration-provider.js';
 import { Migrator } from 'kysely';
 
@@ -31,7 +30,6 @@ export async function runDwnStoreMigrations(
   dialect: Dialect,
   migrations?: ReadonlyArray<readonly [name: string, factory: DwnMigrationFactory]>,
 ): Promise<string[]> {
-  await assertModuleStoreFormat(db);
   const provider = new DwnMigrationProvider(dialect, migrations ?? allDwnMigrations);
   const migrator = new Migrator({ db, provider });
   const resultSet: MigrationResultSet = await migrator.migrateToLatest();

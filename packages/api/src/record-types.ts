@@ -28,8 +28,6 @@ export type RecordExecutionContext = Readonly<{
   invalidateReplica?(): Promise<void>;
   /** Root context that bounds every operation. */
   contextId: string;
-  /** Opaque local acceptance when this is a followed context. */
-  followedSourceAcceptanceId?: string;
   /** Role record backing this followed context. */
   followedSourceId?: string;
   /** Role invoked for every operation when this is a followed context. */

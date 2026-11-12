@@ -5,7 +5,7 @@
  * These types are purely compile-time — they produce no runtime code.
  */
 
-import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ModuleTagsDefinition, ModuleType } from '@enbox/dwn-sdk-js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
 // ---------------------------------------------------------------------------
@@ -103,14 +103,118 @@ type RuleSetAtPath<R, Path extends string> =
         : never
       : never;
 
-// ---------------------------------------------------------------------------
-// Role extraction
-// ---------------------------------------------------------------------------
-
+/** All declared structure paths, including `$ref` attachment nodes (which are excluded from writable record paths). */
 type DeclaredPaths<R, Prefix extends string = ''> = string extends keyof R ? string : {
   [K in Extract<keyof R, string>]: K extends `$${string}` ? never
     : R[K] extends ModuleRuleSet ? `${Prefix}${K}` | DeclaredPaths<R[K], `${Prefix}${K}/`> : never;
 }[Extract<keyof R, string>];
+
+// ---------------------------------------------------------------------------
+// Attachment resolution
+// ---------------------------------------------------------------------------
+
+type AttachmentTarget = { module: string; path: string };
+
+/** Follow `$ref` links across `dependencies` to resolve the underlying owning module URI and record path. */
+type ResolveAttachmentTarget<
+  M extends ModuleDependency,
+  Path extends string,
+  Seen extends string = never,
+> = string extends keyof M['definition']['structure'] ? AttachmentTarget
+  : string extends Path ? AttachmentTarget
+    : M['definition']['module'] extends Seen ? never
+      : RuleSetAtPath<M['definition']['structure'], Path> extends infer Node
+        ? [Node] extends [never] ? never
+          : Node extends { readonly $ref: infer Reference extends string }
+            ? string extends Reference ? AttachmentTarget
+              : Reference extends `${infer Alias}:${infer Target}`
+                ? Alias extends keyof M['dependencies']
+                  ? ResolveAttachmentTarget<M['dependencies'][Alias], Target,
+                    Seen | (string extends M['definition']['module'] ? never : M['definition']['module'])>
+                  : never
+                : never
+            : { module: M['definition']['module']; path: Path }
+        : never;
+
+/** True when `Target` can match `(ModuleUri, ModulePath)` (allowing widened `string` types while rejecting mismatched string literals). */
+type MatchesAttachmentTarget<Target, ModuleUri extends string, ModulePath extends string> =
+  Target extends AttachmentTarget
+    ? [Target['module'] & ModuleUri] extends [never] ? false
+      : [Target['path'] & ModulePath] extends [never] ? false : true
+    : false;
+
+/** Resolve the owning `(module, path)` target plus all physical ancestor `(module, path)` steps for `Path` in `M`. */
+type ResolveAttachmentLineage<
+  M extends ModuleDependency,
+  Path extends string,
+  Seen extends string = never,
+> = string extends keyof M['definition']['structure'] ? AttachmentTarget
+  : string extends Path ? AttachmentTarget
+    : M['definition']['module'] extends Seen ? never
+      : RuleSetAtPath<M['definition']['structure'], Path> extends infer Node
+        ? [Node] extends [never] ? never
+          : Node extends { readonly $ref: infer Reference extends string }
+            ? string extends Reference ? AttachmentTarget
+              : Reference extends `${infer Alias}:${infer Target}`
+                ? Alias extends keyof M['dependencies']
+                  ? ResolveAttachmentLineage<M['dependencies'][Alias], Target,
+                    Seen | (string extends M['definition']['module'] ? never : M['definition']['module'])>
+                  : never
+                : never
+            : { module: M['definition']['module']; path: Path } | (
+              Path extends `${infer Parent}/${string}`
+                ? ResolveAttachmentLineage<M, Parent, Seen>
+                : never
+            )
+        : never;
+
+type IsStringUnion<Value extends string, Whole extends string = Value> =
+  Value extends unknown ? ([Whole] extends [Value] ? false : true) : false;
+
+type SingleAttachmentPath<Paths extends string> =
+  string extends Paths ? string
+    : [Paths] extends [never] ? never
+      : IsStringUnion<Paths> extends true ? never : Paths;
+
+/**
+ * Local `$ref` attachment paths in `M` that resolve to `(OwningModuleUri, OwningModulePath)`.
+ * References may chain through typed dependencies, but do not import undeclared provider children.
+ * A definition widened to the generic `ModuleDefinition` retains a runtime-checked `string` path.
+ */
+export type ModuleAttachmentPaths<
+  M extends TypedModule,
+  OwningModuleUri extends string,
+  OwningModulePath extends string,
+> = string extends keyof M['definition']['structure'] ? string : {
+  [Path in DeclaredPaths<M['definition']['structure']>]:
+    RuleSetAtPath<M['definition']['structure'], Path> extends { readonly $ref: string }
+      ? true extends MatchesAttachmentTarget<ResolveAttachmentTarget<M, Path>, OwningModuleUri, OwningModulePath>
+        ? Path : never
+      : never;
+}[DeclaredPaths<M['definition']['structure']>];
+
+/**
+ * Unique top-level `$ref` attachment path in `M` that attaches directly to or
+ * beneath the context root `(OwningModuleUri, OwningContextRootPath)`.
+ * Collapses to `never` when `M` declares zero or multiple top-level `$ref`s
+ * under the same context root, matching `resolveModuleContextRoot` at runtime.
+ */
+export type ModuleContextAttachmentPath<
+  M extends TypedModule,
+  OwningModuleUri extends string,
+  OwningContextRootPath extends string,
+> = string extends keyof M['definition']['structure'] ? string : SingleAttachmentPath<{
+  [Key in Extract<keyof M['definition']['structure'], string>]:
+    Key extends `$${string}` ? never
+      : M['definition']['structure'][Key] extends { readonly $ref: string }
+        ? true extends MatchesAttachmentTarget<ResolveAttachmentLineage<M, Key>, OwningModuleUri, OwningContextRootPath>
+          ? Key : never
+        : never;
+}[Extract<keyof M['definition']['structure'], string>]>;
+
+// ---------------------------------------------------------------------------
+// Role extraction
+// ---------------------------------------------------------------------------
 
 type ResolvedRoleAtPath<
   D extends ModuleDefinition,
@@ -150,10 +254,6 @@ export type SquashModulePaths<D extends ModuleDefinition> = {
     : never;
 }[ModulePaths<D>];
 
-type EncryptedTypeNames<D extends ModuleDefinition> = {
-  [Name in keyof D['types']]: D['types'][Name] extends { readonly encryptionRequired: true } ? Name : never;
-}[keyof D['types']];
-
 type ReadActionRole<Action> = Action extends {
   readonly role: infer Role extends string;
   readonly can: readonly string[];
@@ -170,13 +270,12 @@ type IsLocallyRooted<D extends ModuleDefinition, Path extends string> =
     ? D['structure'][Head] extends { readonly $ref: string } ? false : true
     : D['structure'][Path] extends { readonly $ref: string } ? false : true;
 
-/** Encrypted audience roles directly below a root whose actions grant them read access. */
+/** Contextual roles directly below a root whose actions grant them read access. */
 export type ContextRolesAtPath<
   D extends ModuleDefinition,
   Root extends ModulePaths<D> & string,
 > = Root extends unknown
   ? IsLocallyRooted<D, Root> extends false ? never
-    : EncryptedTypeNames<D> extends never ? never
     : RuleSetAtPath<D['structure'], Root> extends infer RuleSet
       ? RuleSet extends { readonly $role: true } ? never
         : RuleSet extends { readonly $actions: readonly (infer Action)[] }
@@ -185,7 +284,7 @@ export type ContextRolesAtPath<
       : never
   : never;
 
-/** Context roots with at least one direct encrypted audience role granted read access. */
+/** Context roots with at least one direct role granted read access. */
 export type ContextRootPath<D extends ModuleDefinition> = {
   [Path in ModulePaths<D> & string]: [ContextRolesAtPath<D, Path>] extends [never] ? never : Path;
 }[ModulePaths<D> & string];
@@ -276,7 +375,6 @@ export type ModuleDependency = {
   readonly definition: ModuleDefinition;
   readonly codecs: RecordCodecMap;
   readonly dependencies: ModuleDependencies;
-  readonly resolvedGraph: ResolvedModuleGraph;
 };
 
 /** Aliases are lexical to the module that declares them. */
@@ -316,7 +414,7 @@ export type TypedModule<
   C extends RecordCodecMap = RecordCodecMap,
   Deps extends ModuleDependencies = ModuleDependencies,
 > = {
-  /** The effective DWN module definition, including Enbox-managed module paths. */
+  /** The authored DWN module definition. */
   readonly definition: D;
 
   /** Application codecs keyed by module type name. */
@@ -325,6 +423,4 @@ export type TypedModule<
   /** Complete typed artifacts for exactly the module's own `uses` aliases. */
   readonly dependencies: Deps;
 
-  /** Canonical authored graph; installed cryptographic readiness is checked separately. */
-  readonly resolvedGraph: ResolvedModuleGraph;
 };

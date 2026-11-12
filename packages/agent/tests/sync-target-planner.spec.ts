@@ -13,6 +13,7 @@ import sinon from 'sinon';
 
 import { describe, expect, it } from 'bun:test';
 
+import { deferred } from './utils/deferred.js';
 import { SyncTargetPlanner } from '../src/sync-target-planner.js';
 
 type PlannerFixtureParams = {
@@ -25,7 +26,7 @@ type PlannerFixtureParams = {
 type PlannerFixture = {
   buildTargetResolutions: SinonStub;
   buildTargetsForEndpoint: SinonStub;
-  buildTargetForSource: SinonStub;
+  buildTargetsForSource: SinonStub;
   entries: SinonStub;
   getEndpointUrls: SinonStub;
   getIdentity: SinonStub;
@@ -53,10 +54,9 @@ function followedSource(id = 'role-a'): FollowedSyncSource {
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    module         : 'https://example.com/notebooks',
+    rootModule     : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    moduleRole     : 'notebook/viewer',
-    modulePaths    : ['notebook', 'notebook/page'],
+    modules        : { 'https://example.com/notebooks': { contextPath: 'notebook', moduleRole: 'notebook/viewer', modulePaths: ['notebook', 'notebook/page'] } },
     roles          : ['notebook/collaborator', 'notebook/viewer'],
   };
 }
@@ -97,29 +97,29 @@ function createPlanner({
   const buildTargetsForEndpoint = sinon.stub().callsFake(
     async (did: string, dwnUrl: string): Promise<SyncTarget[]> => [ownerTarget(did, dwnUrl)],
   );
-  const buildTargetForSource = sinon.stub().callsFake(async (
+  const buildTargetsForSource = sinon.stub().callsFake(async (
     source: FollowedSyncSource,
     delegateDid?: string,
-  ): Promise<SyncTarget> => ({
+  ): Promise<SyncTarget[]> => [{
     did    : source.sourceDid,
     dwnUrl : 'https://owner.example.com',
     delegateDid,
     scope  : {
       kind        : 'context',
-      module      : source.module,
+      module      : source.rootModule,
       contextId   : source.contextId,
-      modulePaths : source.modulePaths,
+      modulePaths : source.modules[source.rootModule]!.modulePaths,
     },
     authorization: {
       kind         : 'role',
       actorDid     : source.actorDid,
-      moduleRole   : source.moduleRole,
+      moduleRole   : source.modules[source.rootModule]!.moduleRole,
       roleRecordId : source.id,
     },
     authorizationEpoch : 'role-epoch',
     projectionId       : 'role-projection',
-  }));
-  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetForSource, getEndpointUrls };
+  }]);
+  const resolver = { buildTargetResolutions, buildTargetsForEndpoint, buildTargetsForSource, getEndpointUrls };
   const getTargetResolver = sinon.stub().returns(resolver);
   const warn = sinon.stub();
   let currentTime = 1_000;
@@ -137,7 +137,7 @@ function createPlanner({
   return {
     buildTargetResolutions,
     buildTargetsForEndpoint,
-    buildTargetForSource,
+    buildTargetsForSource,
     entries,
     getEndpointUrls,
     getIdentity : identityStore.get,
@@ -149,6 +149,60 @@ function createPlanner({
 }
 
 describe('SyncTargetPlanner', () => {
+  it('bounds independent followed-source resolution and preserves source order', async () => {
+    const sources = Array.from({ length: 6 }, (_, index) => followedSource(`role-${index}`));
+    const { buildTargetsForSource, planner } = createPlanner({
+      entries         : [],
+      identityOptions : { [sources[0].actorDid]: { modules: 'all' } },
+      sourceEntries   : sources.map(source => ({ status: 'valid', source })),
+    });
+    const entered = deferred();
+    const release = deferred();
+    let active = 0;
+    let maximum = 0;
+    buildTargetsForSource.callsFake(async (source: FollowedSyncSource): Promise<SyncTarget[]> => {
+      active++;
+      maximum = Math.max(maximum, active);
+      if (active === 4) {entered.resolve();}
+      await release.promise;
+      active--;
+      return [{ ...ownerTarget(source.sourceDid, source.remoteEndpoint), projectionId: source.id }];
+    });
+
+    const planning = planner.getTargets();
+    await entered.promise;
+    expect(buildTargetsForSource.callCount).toBe(4);
+    release.resolve();
+    expect((await planning).map(target => target.projectionId)).toEqual(sources.map(source => source.id));
+    expect(maximum).toBe(4);
+    expect(planner.lastResolutionComplete).toBe(true);
+  });
+
+  it('settles independent source reads before rejecting and never caches a failed plan', async () => {
+    const sources = [followedSource('role-first'), followedSource('role-second')];
+    const { buildTargetsForSource, planner } = createPlanner({
+      entries         : [],
+      identityOptions : { [sources[0].actorDid]: { modules: 'all' } },
+      sourceEntries   : sources.map(source => ({ status: 'valid', source })),
+    });
+    const entered = deferred();
+    const release = deferred();
+    const failure = new Error('first source failed');
+    buildTargetsForSource.onFirstCall().rejects(failure);
+    buildTargetsForSource.onSecondCall().callsFake(async (): Promise<SyncTarget[]> => {
+      entered.resolve();
+      await release.promise;
+      throw new Error('second source failed');
+    });
+    let settled = false;
+    const outcome = planner.getTargets().catch((error: unknown) => {settled = true; return error;});
+    await entered.promise;
+    expect(settled).toBe(false);
+    release.resolve();
+    expect(await outcome).toBe(failure);
+    expect(planner.lastResolutionComplete).toBe(false);
+  });
+
   it('should plan and cache a complete target snapshot', async () => {
     const { entries, getEndpointUrls, planner } = createPlanner({
       entries: [validEntry('did:example:alice'), validEntry('did:example:bob')],
@@ -168,7 +222,7 @@ describe('SyncTargetPlanner', () => {
 
   it('should plan ordinary identities and followed context sources together', async () => {
     const source = followedSource();
-    const { buildTargetForSource, planner } = createPlanner({
+    const { buildTargetsForSource, planner } = createPlanner({
       identityOptions : { [source.actorDid]: { modules: 'all' } },
       sourceEntries   : [{ status: 'valid', source }],
     });
@@ -176,14 +230,14 @@ describe('SyncTargetPlanner', () => {
     const targets = await planner.getTargets();
 
     expect(targets.map(({ did }) => did)).toEqual(['did:example:alice', source.sourceDid]);
-    expect(buildTargetForSource.calledOnceWithExactly(source, undefined)).toBe(true);
+    expect(buildTargetsForSource.calledOnceWithExactly(source, undefined)).toBe(true);
     expect(planner.lastResolutionComplete).toBe(true);
   });
 
   it('should resume a durable followed source with the actor current delegate', async () => {
     const source = followedSource();
     const delegateDid = 'did:example:new-delegate';
-    const { buildTargetForSource, getIdentity, planner } = createPlanner({
+    const { buildTargetsForSource, getIdentity, planner } = createPlanner({
       entries         : [],
       identityOptions : { [source.actorDid]: { modules: 'all', delegateDid } },
       sourceEntries   : [{ status: 'valid', source }],
@@ -192,7 +246,7 @@ describe('SyncTargetPlanner', () => {
     const [target] = await planner.getTargets();
 
     expect(getIdentity.calledOnceWithExactly(source.actorDid)).toBe(true);
-    expect(buildTargetForSource.calledOnceWithExactly(source, delegateDid)).toBe(true);
+    expect(buildTargetsForSource.calledOnceWithExactly(source, delegateDid)).toBe(true);
     expect(target.delegateDid).toBe(delegateDid);
     expect(source).not.toHaveProperty('delegateDid');
   });
@@ -371,5 +425,29 @@ describe('SyncTargetPlanner', () => {
     expect(planner.lastResolutionComplete).toBe(true);
     await planner.getTargets();
     expect(entries.callCount).toBe(2);
+  });
+
+  it('should keep the target plan cacheable when an optional followed consumer scope is null', async () => {
+    const source = {
+      ...followedSource(),
+      modules: {
+        ...followedSource().modules,
+        'https://example.com/optional-consumer': null,
+      },
+    };
+    const { buildTargetsForSource, entries, planner } = createPlanner({
+      identityOptions : { [source.actorDid]: { modules: 'all' } },
+      sourceEntries   : [{ status: 'valid', source }],
+    });
+    const beforeCache = sinon.stub().resolves();
+
+    const first = await planner.getTargets({ beforeCache });
+    const second = await planner.getTargets({ beforeCache });
+
+    expect(second).toBe(first);
+    expect(planner.lastResolutionComplete).toBe(true);
+    expect(beforeCache.calledOnce).toBe(true);
+    expect(buildTargetsForSource.calledOnceWithExactly(source, undefined)).toBe(true);
+    expect(entries.calledOnce).toBe(true);
   });
 });

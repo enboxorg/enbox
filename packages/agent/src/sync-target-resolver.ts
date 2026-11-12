@@ -150,22 +150,27 @@ export class SyncTargetResolver {
     })));
   }
 
-  /** Build the exact-context target represented by one accepted role record. */
+  /** Build the context-scoped sync target for one module of an accepted followed source. */
   public async buildTargetForSource(
     source: FollowedSyncSource,
     delegateDid?: string,
+    module = source.rootModule,
   ): Promise<SyncTarget> {
+    const moduleScope = source.modules[module];
+    if (moduleScope === undefined || moduleScope === null) {
+      throw new Error(`SyncTargetResolver: module '${module}' does not have a verified followed scope.`);
+    }
     const scope = {
       kind        : 'context' as const,
-      module      : source.module,
+      module,
       contextId   : source.contextId,
-      modulePaths : source.modulePaths,
+      modulePaths : moduleScope.modulePaths,
     };
 
     const authorization: Extract<SyncAuthorization, { kind: 'role' }> = {
       kind         : 'role',
       actorDid     : source.actorDid,
-      moduleRole   : source.moduleRole,
+      moduleRole   : moduleScope.moduleRole,
       roleRecordId : source.id,
     };
 
@@ -180,6 +185,13 @@ export class SyncTargetResolver {
       authorization,
       authorizationEpoch,
     };
+  }
+
+  /** Each verified module in a followed source has its own feed and checkpoint pair. */
+  public buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]> {
+    return Promise.all(Object.entries(source.modules)
+      .filter(([, scope]) => scope !== null)
+      .map(([module]) => this.buildTargetForSource(source, delegateDid, module)));
   }
 
   /** Attach the current full delegate grant immediately before a role request. */

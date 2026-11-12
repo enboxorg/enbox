@@ -2,8 +2,8 @@ import type { DwnApi } from '../src/dwn-api.js';
 import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { Record } from '../src/record.js';
 import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-clients';
+import type { FollowedSyncSource, ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncEventListener, SyncIdentityOptions } from '@enbox/agent';
 import type { RecordsQueryRequest, RecordsQueryResponse, RecordsSubscribeRequest, RecordsSubscribeResponse } from '../src/dwn-api.js';
-import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent, SyncEventListener, SyncIdentityOptions } from '@enbox/agent';
 
 import sinon from 'sinon';
 
@@ -199,6 +199,7 @@ type FakeSync = {
   listenerCount(): number;
   links: ReplicationLinkSnapshot[];
   options?: SyncIdentityOptions;
+  source?: FollowedSyncSource;
   sync: SyncEngine;
 };
 
@@ -216,6 +217,7 @@ function createSync(): FakeSync {
     sync          : undefined as unknown as SyncEngine,
   };
   state.sync = {
+    getFollowedSource   : async (id: string): Promise<FollowedSyncSource | undefined> => state.source?.id === id ? state.source : undefined,
     getIdentityOptions  : async (): Promise<SyncIdentityOptions | undefined> => state.options,
     getReplicationLinks : async (): Promise<ReplicationLinkSnapshot[]> => state.links,
     on                  : (listener: SyncEventListener): (() => void) => {
@@ -1369,17 +1371,30 @@ describe('RecordView', () => {
     await view.close();
   });
 
-  it('publishes ContextRetiredError when a followed-context acceptance changes', async () => {
+  it('retires the view through its shared authority lease when a followed-context acceptance changes', async () => {
     const sourceDid = 'did:example:source';
     const contextId = 'sharedRoot';
     const harness = createHarness(async () => ok([testRecord('shared')]));
     Object.assign(harness.dwn, {
-      followedContextId          : contextId,
-      followedSourceAcceptanceId : 'acceptance-a',
-      followedSourceId           : 'current-role',
-      recordTenantDid            : sourceDid,
+      followedContextId : contextId,
+      followedSourceId  : 'current-role',
+      recordTenantDid   : sourceDid,
     });
     const fakeSync = createSync();
+    fakeSync.source = {
+      acceptanceId   : 'acceptance-a',
+      actorDid       : TENANT_DID,
+      contextId,
+      id             : 'current-role',
+      rootModule     : ViewDefinition.module,
+      remoteEndpoint : 'https://source-dwn.example',
+      roles          : ['note/member'],
+      sourceDid,
+      modules        : {
+        [ViewDefinition.module]: { contextPath: 'note', moduleRole: 'note/member', modulePaths: ['note'] },
+      },
+    };
+    const leaseController = new AbortController();
     fakeSync.links = [{
       connectivity     : 'online',
       followedSourceId : 'current-role',
@@ -1403,23 +1418,20 @@ describe('RecordView', () => {
         pagination : { limit: 10 },
         within     : contextId,
       }),
-      sync: fakeSync.sync,
+      signal : leaseController.signal,
+      sync   : fakeSync.sync,
     });
     await waitFor(() => { expect(view.getSnapshot().status).toBe('ready'); });
 
-    fakeSync.emit({
-      type                       : 'followed-context:change',
-      actorDid                   : TENANT_DID,
-      contextId,
-      followedSourceAcceptanceId : 'acceptance-b',
-      followedSourceId           : 'current-role',
-      module                     : ViewDefinition.module,
-      tenantDid                  : sourceDid,
-    });
+    const retiredError = new ContextRetiredError(contextId);
+    leaseController.abort(retiredError);
 
     await waitFor(() => { expect(view.getSnapshot().status).toBe('error'); });
-    expect(view.getSnapshot().error).toBeInstanceOf(ContextRetiredError);
+    expect(view.getSnapshot()).toMatchObject({ status: 'error', current: false, records: ['shared'] });
+    expect(view.getSnapshot().error?.cause).toBe(retiredError);
     await view.close();
+    expect(fakeSync.listenerCount()).toBe(0);
+    expect(harness.closeCount()).toBe(1);
   });
 
   it('ignores unrelated tenants, modules, and replication links', async () => {

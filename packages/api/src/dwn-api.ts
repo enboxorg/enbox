@@ -23,8 +23,8 @@ import { dataToBlob } from './utils.js';
 import { invalidateRecordReplica } from './record-types.js';
 import { Module } from './module.js';
 import { Record } from './record.js';
-import { Records } from '@enbox/dwn-sdk-js';
 import { AgentPermissionsApi, DwnInterface, getRecordAuthor, PermissionGrantNotFoundError } from '@enbox/agent';
+import { DwnInterfaceName, DwnMethodName, FilterUtility, Records } from '@enbox/dwn-sdk-js';
 
 type ReadInterface =
   | DwnInterface.MessagesSubscribe
@@ -577,12 +577,12 @@ export class DwnApi {
 
   /** @internal Subscribe to exact record paths with canonical frame records attached. */
   public async subscribeRecordFrames(
-    request: { paths: readonly string[]; module: string },
+    request: { contextId?: string; paths: readonly string[]; module: string },
     subscriptionHandler: (message: DwnSubscriptionMessage, record?: Record) => void | Promise<void>,
   ): Promise<MessagesSubscribeResponse> {
-    const contextId = this.recordExecutionContext?.contextId;
+    const contextId = request.contextId ?? this.recordExecutionContext?.contextId;
     const filters: MessagesFilter[] = request.paths.map(modulePath => ({
-      interface : 'Records',
+      interface : DwnInterfaceName.Records,
       module    : request.module,
       modulePath,
       ...(contextId === undefined ? {} : { contextIdPrefix: contextId }),
@@ -605,14 +605,15 @@ export class DwnApi {
       target,
     }, { contextId, module: request.module }, 'reject');
     const dataAccess = captureRecordDataAccess(dataRequest, false);
+    const pathSet = new Set(request.paths);
     const handleFrame = (message: DwnSubscriptionMessage): void | Promise<void> => {
       if (message.type !== 'event') {
         return subscriptionHandler(message);
       }
 
       const descriptor = message.event.message.descriptor;
-      if (descriptor.interface !== 'Records'
-        || (descriptor.method !== 'Write' && descriptor.method !== 'Delete')) {
+      if (descriptor.interface !== DwnInterfaceName.Records
+        || (descriptor.method !== DwnMethodName.Write && descriptor.method !== DwnMethodName.Delete)) {
         return;
       }
       const recordsWrite = Records.isRecordsWrite(message.event.message)
@@ -620,7 +621,8 @@ export class DwnApi {
         : message.event.initialWrite;
       if (recordsWrite === undefined
         || recordsWrite.descriptor.module !== request.module
-        || !request.paths.includes(recordsWrite.descriptor.modulePath ?? '')) {
+        || !pathSet.has(recordsWrite.descriptor.modulePath ?? '')
+        || (contextId !== undefined && !FilterUtility.matchesSubtree(contextId, recordsWrite.contextId))) {
         return;
       }
       const record = this.createRecordHandle({
@@ -736,11 +738,6 @@ export class DwnApi {
     return this.recordExecutionContext?.followedSourceId === undefined
       ? undefined
       : this.recordExecutionContext.contextId;
-  }
-
-  /** @internal Opaque local acceptance backing this records API. */
-  public get followedSourceAcceptanceId(): string | undefined {
-    return this.recordExecutionContext?.followedSourceAcceptanceId;
   }
 
   /** @internal Role record backing this followed-context records API. */

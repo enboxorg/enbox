@@ -54,7 +54,10 @@ limited to ten physical record levels.
 
 `defineModule` accepts one options object. Supply a codec for each reachable local
 record type, including local roles. Attachments and unused type declarations need
-no codec. Supply exactly the typed dependency artifacts named by `uses`.
+no codec. Supply exactly the typed dependency artifacts named by `uses`. The
+artifact contains these definitions, codecs, and dependencies; graph consumers
+derive their graph from that information rather than accepting a separate graph
+on the artifact.
 
 ```ts
 type CommentData = { text: string };
@@ -123,12 +126,78 @@ disconnect. Typed API tests exercise scoped observation and child mutations on
 the replicated graph. All four examples below also round-trip through cold owner
 replicas using their literal JSON definitions.
 
-Managed invitation/follow records remain limited to local contexts under local
-non-reference roots. Composition does not add a cross-owner tree, a new followed
-source authority model, exact path-and-context grant intersections, historical
-role membership, or narrower private-key custody. Unsupported authority or proof
-combinations fail explicitly. Signed offline messages keep their timestamps,
-identities, and ciphertext under the existing shared-engine rules.
+## Follow a context with selected extensions
+
+The context root and its roles stay in the provider module. Companion invitation
+and follow-journal records live in a separate companion module created with
+`defineContextModule()` in `@enbox/contexts`, keeping `defineModule()` pure.
+Applications explicitly select extensions attached to that exact root:
+
+```ts
+import { bindContexts, defineContextModule } from '@enbox/contexts';
+
+const NotebookContextsModule = defineContextModule(NotebookModule);
+
+const contexts = bindContexts(enbox, NotebookContextsModule).withModules({
+  realtime: NotebookRealtimeModule,
+});
+const page = await contexts.follow('notebook/page', { ownerDid, id: pageContextId });
+const realtime = page.using(NotebookRealtimeModule);
+const adverts = await realtime.records.observe('page/live', {
+  pagination: { limit: 1 },
+});
+```
+
+Lower-level callers without `@enbox/contexts` can drive `syncEngine.followSource`
+and `syncEngine.ensureFollowedSourceModules` directly and confine record operations
+with `enbox.using(Module).scope({ contextId, execution, allowedPaths })`.
+
+`withModules` also applies to owned contexts, invitation acceptance, and contexts
+restored by `list` or `observe`. Selection and `using` do not follow a context or
+write a follow decision. The recipient still has one root follow/forget journal in
+the companion module and one local acceptance. Another device restores that root
+decision and applies its own application's explicit module selection. Installed
+reverse dependencies are never selected implicitly.
+
+The private sync catalog stores one `modules` map for each accepted context.
+Its root entry always has a verified scope; a selected consumer has either the
+same scope shape or `null` while unavailable. Root and consumer bindings use one
+lease implementation. Graphs are reconstructed from admitted local evidence;
+there is no separate graph cache or second remote recovery path.
+
+For a member, each extension gets a separate replication link at the root's
+accepted owner endpoint. The owner must publish the extension definition. The SDK
+verifies its dependency graph, exact attachment, and readable concrete paths
+against the same owner-hosted role record used for the root. A delegate also needs
+approved consumer feed and record-read grants; provider grants are not repurposed
+as consumer grants. Empty extensions can be verified before their first record
+is written.
+
+Encrypted consumers also need query access to the provider definitions used by
+the audience-key loader. Public providers satisfy this requirement. Private
+provider metadata received through replication support alone is currently
+insufficient for that loader ([tracked separately](https://github.com/enboxorg/enbox/issues/1834)).
+
+Root readiness is independent of optional extensions. Missing metadata, grants,
+or keys leave an extension unavailable without blocking the root. Consumer views
+report their own readiness and currentness, then recover through sync events when
+the extension becomes available. Retained records and direct bindings remain
+fenced to their verified authority. Forgetting or replacing the root acceptance
+retires every associated link and handle.
+
+Bindings constrain child operations to that context and use the consumer's
+declared paths, such as `page/live/session`. A `$ref` attachment is still not a
+record. Observe provider and consumer records with separate views;
+`materialize.children` remains within one module. This managed API supports
+extensions with a single deterministic `$ref` attachment at the selected root or
+a descendant within its subtree, including reference chains that resolve there,
+while rejecting ambiguous multi-attachment extensions.
+
+Composition does not add a cross-owner tree, exact path-and-context grant
+intersections, historical role membership, or narrower private-key custody.
+Unsupported authority or proof combinations fail explicitly. Signed offline
+messages keep their timestamps, identities, and ciphertext under the existing
+shared-engine rules.
 
 ## Complete examples
 

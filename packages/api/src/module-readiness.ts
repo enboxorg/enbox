@@ -11,7 +11,11 @@ import type { TypedModule } from './module-types.js';
 import { installedModuleDefinitionsEqual } from './module-definition-utils.js';
 import { resolveTypedModuleGraph } from './define-module.js';
 import { DwnResponseError, requireDwnSuccess } from './dwn-response-error.js';
-import { preloadModuleDefinitions, resolveModuleGraph, validateImportedModuleContracts } from '@enbox/dwn-sdk-js';
+import {
+  preloadModuleDefinitions,
+  resolveModuleGraph,
+  validateImportedModuleContracts,
+} from '@enbox/dwn-sdk-js';
 
 type ModuleReadinessOperation = 'install' | 'publish' | 'query';
 
@@ -75,7 +79,10 @@ type CreateModuleReadinessApiOptions = {
 
 /** @internal Creates the session-bound implementation exposed by {@link ModuleReadinessApi}. */
 export function createModuleReadinessApi(options: CreateModuleReadinessApiOptions): ModuleReadinessApi {
-  return new DefaultModuleReadinessApi(options);
+  const impl = new DefaultModuleReadinessApi(options);
+  return {
+    ensureReady: (ensureOptions: EnsureModulesReadyOptions): Promise<void> => impl.ensureReady(ensureOptions),
+  };
 }
 
 class DefaultModuleReadinessApi implements ModuleReadinessApi {

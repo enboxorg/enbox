@@ -3,10 +3,11 @@ import type { ExpandableRecordView, RecordViewState } from '../src/record-view.j
 
 import sinon from 'sinon';
 
-import { createContextView } from '../src/context-view.js';
 import { createEnboxTestContext } from '../src/testing.js';
 import { defineApplicationManifest } from '../src/application-manifest.js';
 import { defineModule } from '../src/define-module.js';
+import { ObservedView } from '../src/observed-view.js';
+import { openView } from '../src/view-opening.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { StoreRetiredError } from '../src/store/scope.js';
 import { createObservationFactory, createObservedCollection } from '../src/store/observed-store.js';
@@ -325,21 +326,61 @@ describe('observed stores', () => {
     expect(native.closes()).toBe(1);
   });
 
-  it('preserves native context payloads and reopens the same owner on retry', async () => {
+  it('preserves external catalog payloads and reopens the same owner on retry', async () => {
+    type CatalogState = Readonly<{ contexts: readonly { id: string }[] }> & Readonly<
+      | { status: 'loading'; error?: never }
+      | { status: 'ready'; error?: never }
+      | { status: 'error'; error: Error }
+    >;
+    class ExternalCatalog extends ObservedView<CatalogState> {
+      private _closeWake?: () => Promise<void>;
+
+      public constructor(
+        private readonly _list: () => Promise<readonly { id: string }[]>,
+        private readonly _subscribeWake: (notify: () => void) => Promise<{ close(): Promise<void> }>,
+        signal?: AbortSignal,
+      ) {
+        super(Object.freeze({ status: 'loading', contexts: Object.freeze([]) }), signal);
+      }
+
+      public async open(): Promise<void> {
+        const sub = await this._subscribeWake(() => this.requestMaterialization());
+        this._closeWake = sub.close;
+        this.requestMaterialization();
+      }
+
+      protected async materialize(generation: number): Promise<void> {
+        const rows = await this._list();
+        if (this.canPublishMaterialization(generation)) {
+          this.publish(Object.freeze({ status: 'ready', contexts: Object.freeze([...rows]) }));
+        }
+      }
+
+      protected async closeOwnedResources(): Promise<void> {
+        await this._closeWake?.();
+      }
+
+      protected handleLifetimeAbort(): void {}
+    }
+
     const owner = fixture();
     let contexts: readonly { id: string }[] = [{ id: 'first' }];
     let wake!: () => void;
     let opens = 0;
     let closes = 0;
-    const store = createObservationFactory(owner.scope)(signal => createContextView({
-      callerSignal         : signal,
-      list                 : async () => contexts,
-      openWakeSubscription : async (notify) => {
-        opens += 1;
-        wake = notify;
-        return { close: async (): Promise<void> => { closes += 1; } };
-      },
-    }));
+    const store = createObservationFactory(owner.scope)(async (signal) => {
+      const view = new ExternalCatalog(
+        async () => contexts,
+        async (notify) => {
+          opens += 1;
+          wake = notify;
+          return { close: async (): Promise<void> => { closes += 1; } };
+        },
+        signal,
+      );
+      await openView(view, [signal]);
+      return view;
+    });
     expect(store.getSnapshot()).toEqual({ status: 'idle', isLoadingMore: false });
     const stop = store.subscribe((): void => {});
     try {
@@ -347,7 +388,7 @@ describe('observed stores', () => {
       contexts = [{ id: 'second' }];
       wake();
       await store.retry();
-      expect(store.getSnapshot()).toEqual({ status: 'ready', contexts, savedFollows: [], isLoadingMore: false });
+      expect(store.getSnapshot()).toEqual({ status: 'ready', contexts, isLoadingMore: false });
       expect(opens).toBe(2);
       expect(closes).toBe(1);
     } finally { stop(); await owner.close(); }
@@ -561,7 +602,7 @@ describe('observed stores', () => {
     await owner.close();
   });
 
-  it('observes encrypted records, singleton children, and owned contexts through the same observe helper', async () => {
+  it('observes encrypted records, singleton children, and scoped records through the same observe helper', async () => {
     const module = defineModule({ definition: {
       module    : 'https://api.example.test/store-store/native', published : false,
       types     : {
@@ -585,9 +626,7 @@ describe('observed stores', () => {
     const notes = store(signal => typed.records.observe<'note', { children: readonly ['note/preview'] }>('note', {
       pagination: { limit: 1 }, materialize: { children: ['note/preview'] }, signal,
     }));
-    const contexts = store(signal => typed.contexts.observe({ signal }));
     const stopNotes = notes.retain();
-    const stopContexts = contexts.retain();
     try {
       const first = await typed.records.create('note', { data: { title: 'First' } });
       await typed.records.create('note', { data: { title: 'Second' } });
@@ -598,11 +637,8 @@ describe('observed stores', () => {
       await typed.records.set('note/preview', { within: first.contextId, data: { body: 'Preview' } });
       await notes.refresh();
       expect(notes.getSnapshot().records?.find(row => row.record.id === first.id)?.children.preview?.value.body).toBe('Preview');
-      await contexts.retry();
-      expect((await contexts.ready()).contexts).toHaveLength(2);
-      expect(contexts.getSnapshot().contexts?.[0]).toMatchObject({ access: 'owner', path: 'note' });
     } finally {
-      stopNotes(); stopContexts();
+      stopNotes();
       await owner.close();
       await context.close();
     }

@@ -112,11 +112,12 @@ export {
   getTypeName,
   isCrossModuleRef,
   parseCrossModuleRef,
-  resolveModuleContextRoles,
-  resolveModuleRoleContextScope,
   walkModuleRuleSets,
 } from './utils/modules.js';
 export type { CrossModuleRef, RoleRecordIdentity } from './utils/modules.js';
+export { resolveModuleContextRoles, resolveModuleContextRoot, resolveModuleRoleScope } from './utils/module-role-scope.js';
+export type { ModuleContextRoot, ResolvedModuleRoleScope } from './utils/module-role-scope.js';
+export { lexicographicalCompare } from './utils/string.js';
 export { ModulesConfigure } from './interfaces/modules-configure.js';
 export type { ModulesConfigureOptions } from './interfaces/modules-configure.js';
 export { ModulesQuery } from './interfaces/modules-query.js';

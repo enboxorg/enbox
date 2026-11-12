@@ -5,18 +5,15 @@
  * runtime codecs used by {@link TypedEnbox} for application values.
  */
 
-import type { ModuleDefinition, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
+import type { ModuleDefinition, ModuleRuleSet, ResolvedModuleGraph } from '@enbox/dwn-sdk-js';
 
 import type { DefineModuleOptions, ModuleDependencies, ModuleDependenciesFor, ModuleDependency, ModuleRecordCodecs, TypedModule } from './module-types.js';
 import type { RecordCodec, RecordCodecMap } from './record-codec.js';
 
-import {
-  addSharedContextModule,
-  assertSharedContextNamesAvailable,
-  hasSharedContextModule,
-} from './shared-context-module.js';
-import { authoredModuleDefinitionsEqual, getTypeName, ModulesConfigure, resolveModuleGraph } from '@enbox/dwn-sdk-js';
-import { collectModulePaths, hasManagedSharedContext } from './module-paths.js';
+import { isPlainObject } from './utils.js';
+import { authoredModuleDefinitionsEqual, getTypeName, ModulesConfigure, resolveModuleGraph, walkModuleRuleSets } from '@enbox/dwn-sdk-js';
+
+const resolvedGraphs = new WeakMap<object, ResolvedModuleGraph>();
 
 /**
  * Creates a {@link TypedModule} from a plain DWN module definition and
@@ -35,7 +32,7 @@ import { collectModulePaths, hasManagedSharedContext } from './module-paths.js';
  *   },
  * });
  *
- * // notes.definition is the effective ModuleDefinition
+ * // notes.definition is the authored ModuleDefinition
  * // TypedEnbox infers paths like 'note' | 'note/attachment' and
  * // data types from the codecs.
  * ```
@@ -45,32 +42,28 @@ export function defineModule<
   const C extends ModuleRecordCodecs<D>,
   const Deps extends ModuleDependenciesFor<D> = ModuleDependenciesFor<D>,
 >(options: DefineModuleOptions<D, C, Deps>): TypedModule<D, C, Deps> {
-  if (!isObjectRecord(options)) {
+  if (!isPlainObject(options)) {
     throw new TypeError('defineModule: options must be an object.');
   }
   const { definition, codecs } = options;
-  assertModuleDefinitionShape(definition);
-  assertSharedContextNamesAvailable(definition);
   assertTypedModuleComponents(definition, codecs);
   const dependencies = Object.freeze({ ...options.dependencies }) as Deps;
   assertDependencyAliases(definition, dependencies);
   const snapshot = structuredClone(definition);
-  const effective = hasManagedSharedContext(snapshot)
-    ? addSharedContextModule(snapshot, codecs)
-    : { definition: snapshot, codecs: { ...codecs } };
-  const resolvedGraph = resolveTypedModuleGraph({ ...effective, dependencies });
-  freezeDefinition(effective.definition);
-  return Object.freeze({
-    definition : effective.definition as D,
-    codecs     : Object.freeze(effective.codecs) as C,
+  const frozenCodecs = Object.freeze({ ...codecs }) as C;
+  freezeDefinition(snapshot);
+  const artifact = Object.freeze({
+    definition : snapshot as D,
+    codecs     : frozenCodecs,
     dependencies,
-    resolvedGraph,
   });
+  resolvedGraphs.set(artifact, computeTypedModuleGraph(artifact, true));
+  return artifact;
 }
 
 /** @internal Whether a runtime value satisfies the module shape required by typed APIs. */
 export function isTypedModule(value: unknown): value is TypedModule {
-  if (!isObjectRecord(value) || !isObjectRecord(value.resolvedGraph)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -82,14 +75,27 @@ export function isTypedModule(value: unknown): value is TypedModule {
   }
 }
 
-/** @internal Validate and resolve an effective typed artifact without trusting supplied graph metadata. */
+/** Derive and memoize the canonical graph from the artifact's definitions and dependency bindings. */
 export function resolveTypedModuleGraph(value: unknown): ResolvedModuleGraph {
-  if (!isObjectRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError('defineModule: module artifact must be an object.');
   }
+  if (Object.isFrozen(value)) {
+    const cached = resolvedGraphs.get(value);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = computeTypedModuleGraph(value);
+    resolvedGraphs.set(value, resolved);
+    return resolved;
+  }
+  return computeTypedModuleGraph(value);
+}
+
+function computeTypedModuleGraph(value: globalThis.Record<string, unknown>, rootValidated = false): ResolvedModuleGraph {
   const definitions = new Map<string, ModuleDefinition>();
   const visited = new Set<object>();
-  collectDependencyDefinitions(value, definitions, visited);
+  collectDependencyDefinitions(value, definitions, visited, rootValidated);
   return resolveModuleGraph(value.definition as ModuleDefinition, uri => definitions.get(uri), { requireKeyAgreement: false });
 }
 
@@ -99,7 +105,7 @@ export function orderTypedModuleDependencies(roots: readonly ModuleDependency[])
   const visited = new Set<object>();
   for (const root of roots) {
     collectDependencyDefinitions(root, definitions, visited);
-    resolveModuleGraph(root.definition, uri => definitions.get(uri), { requireKeyAgreement: false });
+    resolveTypedModuleGraph(root);
   }
   const ordered: ModuleDependency[] = [];
   const complete = new Set<string>();
@@ -123,22 +129,17 @@ function collectDependencyDefinitions(
   value: globalThis.Record<string, unknown>,
   definitions: Map<string, ModuleDefinition>,
   visited: Set<object>,
+  skipValidation = false,
 ): void {
   if (visited.has(value)) {
     return;
   }
   visited.add(value);
-  assertTypedModuleComponents(value.definition, value.codecs);
-  const definition = value.definition as ModuleDefinition;
-  const codecs = value.codecs as RecordCodecMap;
-  assertDependencyAliases(definition, value.dependencies);
-  if (hasManagedSharedContext(definition)) {
-    if (!hasSharedContextModule(definition, codecs)) {
-      throw new TypeError('defineModule: managed shared-context paths and codecs must match the SDK definitions.');
-    }
-  } else {
-    assertSharedContextNamesAvailable(definition);
+  if (!skipValidation && !resolvedGraphs.has(value)) {
+    assertTypedModuleComponents(value.definition, value.codecs);
+    assertDependencyAliases(value.definition as ModuleDefinition, value.dependencies);
   }
+  const definition = value.definition as ModuleDefinition;
   const previous = definitions.get(definition.module);
   if (previous !== undefined && !authoredModuleDefinitionsEqual(previous, definition)) {
     throw new TypeError(`defineModule: conflicting dependency definitions for module '${definition.module}'.`);
@@ -150,7 +151,7 @@ function collectDependencyDefinitions(
 }
 
 function assertDependencyAliases(definition: ModuleDefinition, value: unknown): asserts value is ModuleDependencies {
-  if (!isObjectRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new TypeError('defineModule: dependencies must be an object.');
   }
   const uses = definition.uses ?? {};
@@ -161,7 +162,7 @@ function assertDependencyAliases(definition: ModuleDefinition, value: unknown): 
   }
   for (const alias of required) {
     const dependency = value[alias];
-    if (!isObjectRecord(dependency) || !isObjectRecord(dependency.definition) || dependency.definition.module !== uses[alias]) {
+    if (!isPlainObject(dependency) || !isPlainObject(dependency.definition) || dependency.definition.module !== uses[alias]) {
       throw new TypeError(`defineModule: dependency '${alias}' must provide module '${uses[alias]}'.`);
     }
   }
@@ -180,7 +181,7 @@ function freezeDefinition(value: unknown): void {
 function assertTypedModuleComponents(definition: unknown, codecs: unknown): void {
   assertModuleDefinitionShape(definition);
 
-  if (!isObjectRecord(codecs)) {
+  if (!isPlainObject(codecs)) {
     throw new TypeError('defineModule: codecs must be an object.');
   }
 
@@ -191,12 +192,12 @@ function assertTypedModuleComponents(definition: unknown, codecs: unknown): void
 }
 
 function assertModuleDefinitionShape(definition: unknown): asserts definition is ModuleDefinition {
-  if (!isObjectRecord(definition)
+  if (!isPlainObject(definition)
     || typeof definition.module !== 'string'
     || definition.module === ''
     || typeof definition.published !== 'boolean'
-    || !isObjectRecord(definition.types)
-    || !isObjectRecord(definition.structure)) {
+    || !isPlainObject(definition.types)
+    || !isPlainObject(definition.structure)) {
     throw new TypeError(
       'defineModule: definition must include a non-empty module URI, boolean published flag, ' +
       'and object-valued types and structure.',
@@ -208,7 +209,7 @@ function assertModuleDefinitionShape(definition: unknown): asserts definition is
 /** Validate the runtime fields consumed from every module type declaration. */
 function assertModuleTypes(types: globalThis.Record<string, unknown>): void {
   for (const [typeName, type] of Object.entries(types)) {
-    if (!isObjectRecord(type)
+    if (!isPlainObject(type)
       || (type.schema !== undefined && typeof type.schema !== 'string')
       || (type.dataFormats !== undefined
         && (!Array.isArray(type.dataFormats) || type.dataFormats.some((format) => typeof format !== 'string')))
@@ -229,7 +230,7 @@ function assertModuleStructureNodes(
     }
 
     const path = prefix === '' ? key : `${prefix}/${key}`;
-    if (!isObjectRecord(child)) {
+    if (!isPlainObject(child)) {
       throw new TypeError(`defineModule: definition.structure['${path}'] must be an object rule-set node.`);
     }
     assertModuleStructureNodes(child, path);
@@ -238,9 +239,7 @@ function assertModuleStructureNodes(
 
 /** Enforce one valid codec for every reachable module type and no others. */
 function assertModuleCodecs(definition: ModuleDefinition, codecs: RecordCodecMap): void {
-  const requiredTypeNames = new Set(
-    [...collectModulePaths(definition.structure)].map((path) => getTypeName(path)),
-  );
+  const requiredTypeNames = collectReachableTypeNames(definition.structure);
   const missingTypeDefinitions = [...requiredTypeNames]
     .filter((typeName) => !Object.hasOwn(definition.types, typeName))
     .sort((a, b) => a.localeCompare(b));
@@ -269,14 +268,20 @@ function assertModuleCodecs(definition: ModuleDefinition, codecs: RecordCodecMap
   }
 }
 
+function collectReachableTypeNames(structure: globalThis.Record<string, unknown>): Set<string> {
+  const typeNames = new Set<string>();
+  walkModuleRuleSets(structure as ModuleRuleSet, (path, ruleSet): void => {
+    if (typeof ruleSet.$ref !== 'string') {
+      typeNames.add(getTypeName(path));
+    }
+  });
+  return typeNames;
+}
+
 function isRecordCodec(value: unknown): value is RecordCodec<unknown> {
   if (value === null || typeof value !== 'object') {
     return false;
   }
   const candidate = value as Partial<RecordCodec<unknown>>;
   return typeof candidate.encode === 'function' && typeof candidate.decode === 'function';
-}
-
-function isObjectRecord(value: unknown): value is globalThis.Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

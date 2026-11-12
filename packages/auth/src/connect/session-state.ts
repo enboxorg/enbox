@@ -5,30 +5,6 @@ import type { StorageAdapter } from '../types.js';
 
 import { STORAGE_KEYS } from '../types.js';
 
-/** Sessions from the protocol format cannot restore against module-format stores. */
-export const AUTH_SESSION_STORAGE_FORMAT = 'modules-v1';
-
-async function assertSessionStorageFormat(storage: StorageAdapter): Promise<void> {
-  const [format, session, retries] = await Promise.all([
-    storage.get(STORAGE_KEYS.SESSION_FORMAT),
-    storage.get(STORAGE_KEYS.SESSION),
-    storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT),
-  ]);
-  if (format === AUTH_SESSION_STORAGE_FORMAT ||
-      (format === null && session === null && retries === null)) {
-    return;
-  }
-
-  throw new Error('AuthManager: Stored auth state uses an unsupported format. Clear auth storage before connecting.');
-}
-
-async function initializeSessionStorageFormat(storage: StorageAdapter): Promise<void> {
-  await assertSessionStorageFormat(storage);
-  if (await storage.get(STORAGE_KEYS.SESSION_FORMAT) === null) {
-    await storage.set(STORAGE_KEYS.SESSION_FORMAT, AUTH_SESSION_STORAGE_FORMAT);
-  }
-}
-
 /** One atomic record binds restoration and revocations to their owning DIDs. */
 export type PersistedSession = {
   connectedDid: string;
@@ -37,7 +13,6 @@ export type PersistedSession = {
 };
 
 export async function readPersistedSession(storage: StorageAdapter): Promise<PersistedSession | null> {
-  await assertSessionStorageFormat(storage);
   const json = await storage.get(STORAGE_KEYS.SESSION);
   return json === null ? null : parsePersistedSession(json);
 }
@@ -82,7 +57,6 @@ export async function persistSessionBinding(params: {
   sessionRevocations?: RevocationEntry[];
 }): Promise<void> {
   const { userAgent, storage, connectedDid, delegateDid, sessionRevocations } = params;
-  await initializeSessionStorageFormat(storage);
   const previous = await readPersistedSession(storage);
   const sameBinding = hasSessionBinding(previous, connectedDid, delegateDid);
   const session: PersistedSession = {
@@ -124,7 +98,6 @@ const MAX_REVOCATION_RETRY_ENTRIES = 4_096;
 export async function readRevocationRetryEntries(
   storage: StorageAdapter,
 ): Promise<RetryEntry[]> {
-  await assertSessionStorageFormat(storage);
   const json = await storage.get(STORAGE_KEYS.REVOCATION_RETRY_CONTEXT);
   if (json === null) {
     return [];
@@ -167,7 +140,6 @@ export async function stageRevocationRetryEntry(
   entries: RetryEntry[],
   entry: RetryEntry,
 ): Promise<RetryEntry[]> {
-  await initializeSessionStorageFormat(storage);
   if (!isRetryEntry(entry)) {
     throw new Error('AuthManager: Session revocation binding is invalid.');
   }

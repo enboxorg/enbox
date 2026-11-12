@@ -1,7 +1,6 @@
 import type {
-  ContextView,
-  ContextViewState,
   ExpandableRecordView,
+  ObservableStore,
   ObservationFactory,
   ObservedStore,
   ObservedStoreState,
@@ -10,10 +9,23 @@ import type {
   StoreCollection,
 } from '@enbox/api';
 
+type ExternalCatalogState = Readonly<{
+  contexts: readonly { id: string }[];
+}> & Readonly<
+  | { status: 'loading'; error?: never }
+  | { status: 'ready'; error?: never }
+  | { status: 'error'; error: Error }
+>;
+
+interface ExternalCatalogView extends ObservableStore<ExternalCatalogState> {
+  ready(options?: Readonly<{ signal?: AbortSignal }>): Promise<Extract<ExternalCatalogState, { status: 'ready' }>>;
+  close(): Promise<void>;
+}
+
 declare const observe: ObservationFactory;
 declare const recordView: RecordView<string>;
 declare const expandableView: ExpandableRecordView<string>;
-declare const contextView: ContextView<{ id: string }>;
+declare const contextView: ExternalCatalogView;
 declare const pages: StoreCollection<{ title: string }>;
 
 async function observationContracts(): Promise<void> {
@@ -36,7 +48,7 @@ async function observationContracts(): Promise<void> {
   void closing;
 
   const contexts = observe(async () => contextView);
-  const contextStore: ObservedStore<ContextViewState<{ id: string }>> = contexts;
+  const contextStore: ObservedStore<ExternalCatalogState> = contexts;
   const contextState = contexts.getSnapshot();
   const optionalContexts: readonly { id: string }[] | undefined = contextState.contexts;
   const contextReady = await contextStore.ready();

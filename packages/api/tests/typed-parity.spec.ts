@@ -224,9 +224,18 @@ describe('typed api parity batch', () => {
         parentContextId : list.contextId,
       });
       await typed.records.delete('list', { recordId: list.id });
-      const context = await typed.contexts.open('list', list.contextId!);
+      const scoped = typed.scope({
+        allowedPaths : new Set(['list', 'list/task']),
+        contextId    : list.contextId!,
+        contextPath  : 'list',
+        execution    : {
+          assertActive : async (): Promise<void> => {},
+          contextId    : list.contextId!,
+          tenantDid    : aliceDid.uri,
+        },
+      });
 
-      await context.records.delete('list', { prune: true, recordId: list.id });
+      await scoped.delete('list', { prune: true, recordId: list.id });
 
       expect((await typed.records.query('list/task', { within: list.contextId })).records).toHaveLength(0);
     });

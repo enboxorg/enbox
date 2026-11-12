@@ -37,9 +37,6 @@ export type { ObservationFactory, ObservedStore, ObservedStoreState } from './st
 export { StoreNotConnectedError, StoreRetiredError } from './store/scope.js';
 export * from './connection-store.js';
 export * from './context-errors.js';
-export { moduleContextKey } from './shared-context-module.js';
-export type { ContextInvitationPreview } from './shared-context-module.js';
-export type { ContextView, ContextViewState, SavedContextFollow } from './context-view.js';
 export { defineModule } from './define-module.js';
 export * from './did-api.js';
 export { DwnResponseError, RecordParentNotFoundError, RecordSquashBackstopError } from './dwn-response-error.js';
@@ -63,6 +60,8 @@ export type {
   DefineModuleOptions,
   ExactModuleCodecs,
   ExactModuleDependencies,
+  ModuleAttachmentPaths,
+  ModuleContextAttachmentPath,
   ModuleDependencies,
   ModuleDependenciesFor,
   ModuleDependency,

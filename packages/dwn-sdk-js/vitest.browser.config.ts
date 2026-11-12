@@ -102,6 +102,7 @@ export default defineConfig({
       'tests/utils/jws.spec.ts',
       'tests/utils/memory-cache.spec.ts',
       'tests/utils/messages.spec.ts',
+      'tests/utils/module-role-scope.spec.ts',
       // object.spec.ts removed: `@enbox/common` now owns these helpers
       // and tests them in `packages/common/tests/object.test.ts` (a
       // superset of the cases that lived here). Fuzz coverage stays in
@@ -117,6 +118,7 @@ export default defineConfig({
       'tests/core/message-reply.spec.ts',
       'tests/core/message.spec.ts',
       'tests/core/module-authorization.spec.ts',
+      'tests/core/module-role-records.spec.ts',
       'tests/jose/jws/general.spec.ts',
       'tests/store/blockstore-mock.spec.ts',
       'tests/store/message-store-cross-context.spec.ts',

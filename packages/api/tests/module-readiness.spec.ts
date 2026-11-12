@@ -14,6 +14,13 @@ import { defineModule } from '../src/define-module.js';
 import { DwnResponseError } from '../src/dwn-response-error.js';
 import { recordCodecs } from '../src/record-codec.js';
 import { createModuleReadinessApi, ModuleReadinessError } from '../src/module-readiness.js';
+import {
+  recordRepresentationsEqual,
+  resolveModuleContextRoles,
+  resolveModuleContextRoot,
+  resolveModuleRoleScope,
+  resolveTypedModuleGraph,
+} from '../src/advanced.js';
 
 const OWNER_DID = 'did:example:owner';
 const DELEGATE_DID = 'did:example:delegate';
@@ -357,5 +364,56 @@ describe('ModuleReadinessApi', () => {
       target      : TARGET_DID,
     });
     expect(fixture.hosted.get(hostedKey(TARGET_DID, NotesDefinition.module))).toEqual(NotesDefinition);
+  });
+
+  it('keeps ModuleReadinessApi focused on ensureReady while @enbox/api/advanced exposes graph helpers', () => {
+    const sharedNotesA = defineModule({
+      definition: {
+        module    : 'https://example.com/modules/shared-notes',
+        published : true,
+        types     : {
+          member : { dataFormats: ['application/json'] },
+          note   : { dataFormats: ['text/plain', 'application/json'] },
+        },
+        structure: {
+          note: {
+            $actions : [{ role: 'note/member', can: ['read'] }],
+            member   : { $role: true },
+          },
+        },
+      },
+      codecs: {
+        member : recordCodecs.json<{ role: string }>(),
+        note   : recordCodecs.text(),
+      },
+    });
+    const sharedNotesB = defineModule({
+      definition: {
+        ...sharedNotesA.definition,
+        types: {
+          member : { dataFormats: ['application/json'] },
+          note   : { dataFormats: ['application/json', 'text/plain', 'text/plain'] },
+        },
+      },
+      codecs: {
+        member : recordCodecs.json<{ role: string }>(),
+        note   : recordCodecs.text(),
+      },
+    });
+    const fixture = createFixture();
+    expect(Object.keys(fixture.api)).toEqual(['ensureReady']);
+    expect('resolveGraph' in fixture.api).toBe(false);
+
+    const graphA = resolveTypedModuleGraph(sharedNotesA);
+    const graphB = resolveTypedModuleGraph(sharedNotesB);
+    const rootNode = resolveModuleContextRoot(graphA, graphA.nodesByDeclaredPath.get('note')!);
+    expect(rootNode.declaringModulePath).toBe('note');
+    expect(resolveModuleContextRoles(graphA, 'note')).toEqual(['note/member']);
+    const scope = resolveModuleRoleScope(graphA, graphA.resolveInvokedRole('note/member'));
+    expect(scope.readablePaths).toEqual(['note']);
+    expect(recordRepresentationsEqual(
+      graphA.nodesByDeclaredPath.get('note')!,
+      graphB.nodesByDeclaredPath.get('note')!,
+    )).toBe(true);
   });
 });

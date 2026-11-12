@@ -6,8 +6,6 @@ import type { DwnSubscriptionHandler, DwnSubscriptionMessage } from '@enbox/dwn-
 import type { ModuleDefinition, RecordsFilter, ResolvedModuleGraph, ResolvedModuleNode } from '@enbox/dwn-sdk-js';
 import type { ReplicationLinkSnapshot, SyncEngine, SyncEvent } from '@enbox/agent';
 
-import { ContextRetiredError } from './context-errors.js';
-import { followedContextChangeRetiresSource } from './followed-context-lifecycle.js';
 import { latestPausedRecoveryLink } from './sync-status-error.js';
 import { ObservedView } from './observed-view.js';
 import { openView } from './view-opening.js';
@@ -148,7 +146,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
   private readonly _sync?: SyncEngine;
   private readonly _tenantDid: string;
   private readonly _followedContextId?: string;
-  private readonly _followedSourceAcceptanceId?: string;
   private readonly _followedSourceId?: string;
 
   private _hasMaterialized = false;
@@ -183,7 +180,6 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     this._sync = this._isDirectRemote ? undefined : options.sync;
     this._tenantDid = options.dwn.recordTenantDid;
     this._followedContextId = options.dwn.followedContextId;
-    this._followedSourceAcceptanceId = options.dwn.followedSourceAcceptanceId;
     this._followedSourceId = options.dwn.followedSourceId;
     this._syncUnsubscribe = this._sync?.on((event): void => {
       this.handleSyncEvent(event);
@@ -404,21 +400,7 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
       || (this._followedContextId !== undefined && event.contextId !== this._followedContextId)) {
       return;
     }
-
-    // An exact source change retires this view; other context changes requery.
     if (this._followedSourceId !== undefined) {
-      if (
-        event.type === 'followed-context:change' &&
-        event.actorDid === this._dwn.connectedDid &&
-        followedContextChangeRetiresSource({
-          acceptanceId : this._followedSourceAcceptanceId!,
-          id           : this._followedSourceId,
-        }, event)
-      ) {
-        this.publishError(new ContextRetiredError(this._followedContextId!));
-        void this.close().catch((): void => {});
-        return;
-      }
       this.requestMaterialization();
       return;
     }
@@ -477,9 +459,12 @@ class ObservedRecordView<Item> extends ObservedView<RecordViewState<Item>> imple
     try {
       const result = await this._dwn.records.query(query);
       requireDwnSuccess('RecordView query', result);
-      const records = await this._materializeRecords(result.records);
+      const [records, resolvedCurrentness] = await Promise.all([
+        this._materializeRecords(result.records),
+        this.resolveCurrentness(),
+      ]);
 
-      let currentness = await this.resolveCurrentness();
+      let currentness = resolvedCurrentness;
       if (this._isDirectRemote && this._directRemoteUnavailableSubscriptions.size > 0) {
         currentness = { current: false };
       }

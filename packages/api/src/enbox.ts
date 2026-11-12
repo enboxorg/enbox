@@ -18,13 +18,13 @@ import { AnonymousDwnApi } from '@enbox/agent';
 import { EnboxRpcClient } from '@enbox/dwn-clients';
 import { createDidDhtMethod, DidDht, DidJwk, DidKey, DidResolverCacheMemory, DidWeb, UniversalResolver } from '@enbox/dids';
 
+import { combineAbortSignals } from './view-opening.js';
 import { createModuleReadinessApi } from './module-readiness.js';
 import { DidApi } from './did-api.js';
 import { DwnApi } from './dwn-api.js';
 import { DwnReaderApi } from './dwn-reader-api.js';
-import { orderTypedModuleDependencies } from './define-module.js';
 import { TypedEnbox } from './typed-enbox.js';
-import { collectModulePaths, isModuleRolePath } from './module-paths.js';
+import { orderTypedModuleDependencies, resolveTypedModuleGraph } from './define-module.js';
 
 /**
  * The main Enbox API interface. It provides module-scoped access to
@@ -89,9 +89,7 @@ export class Enbox {
 
   public constructor({ agent, connectedDid, delegateDid, signal }: EnboxParams) {
     this.agent = agent;
-    this._lifetimeSignal = signal === undefined
-      ? this._lifetimeController.signal
-      : AbortSignal.any([signal, this._lifetimeController.signal]);
+    this._lifetimeSignal = combineAbortSignals(signal, this._lifetimeController.signal)!;
     this.did = new DidApi({ agent, connectedDid });
     this._dwn = new DwnApi({ agent, connectedDid, delegateDid, permissionsApi: agent.permissions });
     this._connectedDid = connectedDid;
@@ -133,6 +131,14 @@ export class Enbox {
    */
   public get delegateDid(): string | undefined {
     return this._delegateDid;
+  }
+
+  /**
+   * Combined session and facade lifetime signal; aborts when the owning session
+   * ends or {@link Enbox.close} is called.
+   */
+  public get signal(): AbortSignal {
+    return this._lifetimeSignal;
   }
 
   /**
@@ -200,8 +206,13 @@ export class Enbox {
       sync   : this.agent.sync,
     });
     for (const artifact of orderTypedModuleDependencies([module])) {
-      const rolePaths = [...collectModulePaths(artifact.definition.structure)]
-        .filter(path => isModuleRolePath(artifact.definition, path));
+      const graph = resolveTypedModuleGraph(artifact);
+      const rolePaths: string[] = [];
+      for (const node of graph.nodesByDeclaredPath.values()) {
+        if (node.kind === 'record' && node.ruleSet.$role === true) {
+          rolePaths.push(node.declaringModulePath);
+        }
+      }
       if (rolePaths.length > 0) {
         this.agent.dwn.registerAudienceKeyDeliveryModule({
           ...deliverySession,

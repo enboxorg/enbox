@@ -2,6 +2,7 @@ import type { TypedModule } from '@enbox/api';
 
 import { generateModuleCode } from '../src/codegen.js';
 import { pathToFileURL } from 'node:url';
+import { resolveTypedModuleGraph } from '@enbox/api/advanced';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { join, relative } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -74,13 +75,14 @@ describe('composition-aware code generation', () => {
     const generated = await import(pathToFileURL(output).href) as { ConsumerModule: TypedModule };
     const module = generated.ConsumerModule;
     expect(Object.keys(module.codecs).sort()).toEqual(['comment', 'local', 'note']);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note')).toMatchObject({
+    const graph = resolveTypedModuleGraph(module);
+    expect(graph.nodesByDeclaredPath.get('note')).toMatchObject({
       kind             : 'ref',
       owningModuleUri  : BaseDefinition.module,
       owningModulePath : 'folder/note',
     });
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('note/comment')?.physicalDepth).toBe(3);
-    expect(module.resolvedGraph.nodesByDeclaredPath.get('local/note')?.recordType.dataFormats)
+    expect(graph.nodesByDeclaredPath.get('note/comment')?.physicalDepth).toBe(3);
+    expect(graph.nodesByDeclaredPath.get('local/note')?.recordType.dataFormats)
       .toEqual(['application/octet-stream']);
     expect((await module.codecs.note.encode(new Uint8Array([1, 2]))).dataFormat).toBe('application/octet-stream');
     expect(consumer.code).toContain('dependencies: {');

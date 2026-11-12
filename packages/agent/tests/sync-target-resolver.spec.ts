@@ -309,14 +309,14 @@ describe('SyncTargetResolver', () => {
         dwnUrl : source.remoteEndpoint,
         scope  : {
           kind        : 'context',
-          module      : source.module,
+          module      : source.rootModule,
           contextId   : source.contextId,
-          modulePaths : source.modulePaths,
+          modulePaths : source.modules[source.rootModule]!.modulePaths,
         },
         authorization: {
           kind         : 'role',
           actorDid     : source.actorDid,
-          moduleRole   : source.moduleRole,
+          moduleRole   : source.modules[source.rootModule]!.moduleRole,
           roleRecordId : source.id,
         },
       });
@@ -338,7 +338,7 @@ describe('SyncTargetResolver', () => {
       expect(target.authorization).toEqual({
         kind         : 'role',
         actorDid     : source.actorDid,
-        moduleRole   : source.moduleRole,
+        moduleRole   : source.modules[source.rootModule]!.moduleRole,
         roleRecordId : source.id,
       });
       expect(target.authorDelegatedGrant).toBeUndefined();
@@ -348,7 +348,7 @@ describe('SyncTargetResolver', () => {
     it('should refresh the full role delegate grant without changing durable target identity', async () => {
       const delegateDid = 'did:example:delegate';
       const source = followedSource();
-      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.module);
+      const initialGrant = createGrant('delegate-grant', source.actorDid, delegateDid, source.rootModule);
       const refreshedGrant = { ...initialGrant, message: { recordId: 'fresh-grant' } } as PermissionGrantEntry;
       const { getPermissionForRequest, resolver } = createResolver({
         remoteEndpoints: ['https://owner.example.com'],
@@ -371,6 +371,38 @@ describe('SyncTargetResolver', () => {
       expect(second.authorization).toBe(target.authorization);
       expect(second.authorizationEpoch).toBe(target.authorizationEpoch);
     });
+
+    it('should build distinct targets for verified modules while filtering null optional consumers', async () => {
+      const consumerUri = 'https://example.com/notebooks/realtime';
+      const unavailableUri = 'https://example.com/notebooks/unavailable';
+      const source = followedSource({
+        modules: {
+          ...followedSource().modules,
+          [consumerUri]: {
+            contextPath : 'page',
+            moduleRole  : 'notes:notebook/viewer',
+            modulePaths : ['page/live'],
+          },
+          [unavailableUri]: null,
+        },
+      });
+      const { resolver } = createResolver({ remoteEndpoints: ['https://owner.example.com'] });
+
+      const targets = await resolver.buildTargetsForSource(source);
+
+      expect(targets).toHaveLength(2);
+      expect(targets.map(target => target.scope.kind === 'context' ? target.scope.module : '')).toEqual([
+        source.rootModule,
+        consumerUri,
+      ]);
+      expect(targets[0].projectionId).not.toBe(targets[1].projectionId);
+      expect(targets[1].authorization).toEqual({
+        kind         : 'role',
+        actorDid     : source.actorDid,
+        moduleRole   : 'notes:notebook/viewer',
+        roleRecordId : source.id,
+      });
+    });
   });
 });
 
@@ -381,10 +413,9 @@ function followedSource(overrides: Partial<FollowedSyncSource> = {}): FollowedSy
     sourceDid      : 'did:example:owner',
     remoteEndpoint : 'https://owner.example.com',
     actorDid       : 'did:example:member',
-    module         : 'https://example.com/notebooks',
+    rootModule     : 'https://example.com/notebooks',
     contextId      : 'notebook-a',
-    moduleRole     : 'notebook/viewer',
-    modulePaths    : ['notebook', 'notebook/page', 'notebook/page/delta'],
+    modules        : { 'https://example.com/notebooks': { contextPath: 'notebook', moduleRole: 'notebook/viewer', modulePaths: ['notebook', 'notebook/page', 'notebook/page/delta'] } },
     roles          : ['notebook/collaborator', 'notebook/viewer'],
     ...overrides,
   };

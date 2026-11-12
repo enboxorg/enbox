@@ -1,9 +1,11 @@
 import type { SyncIdentityOptions } from './types/sync.js';
 import type { SyncIdentityStore } from './sync-identity-store.js';
-import type { FollowedSyncSource, FollowedSyncSourceStore } from './followed-sync-source.js';
+import type { FollowedSyncSource, FollowedSyncSourceStore, FollowedSyncSourceStoreEntry } from './followed-sync-source.js';
 import type { SyncTarget, SyncTargetResolution } from './sync-target-resolver.js';
 
+import { FOLLOWED_SOURCE_CONCURRENCY } from './followed-sync-source.js';
 import { isDidResolutionUnavailableError } from './did-resolution-error.js';
+import { mapConcurrentSettled } from './utils.js';
 import { syncScopeFromModules } from './types/sync.js';
 
 /** Target-resolution surface required to plan registered sync targets. */
@@ -20,10 +22,7 @@ export interface SyncTargetPlanningResolver {
     options: SyncIdentityOptions,
     resolvedTargets?: SyncTargetResolution[],
   ): Promise<SyncTarget[]>;
-  buildTargetForSource(
-    source: FollowedSyncSource,
-    delegateDid?: string,
-  ): Promise<SyncTarget>;
+  buildTargetsForSource(source: FollowedSyncSource, delegateDid?: string): Promise<SyncTarget[]>;
 }
 
 export type SyncTargetPlannerParams = {
@@ -136,24 +135,14 @@ export class SyncTargetPlanner {
       anyTargetUnavailable ||= resolved.unavailable;
     }
 
-    for (const entry of await this._sourceStore.list()) {
-      hasRegistrations = true;
-      if (entry.status === 'corrupt') {
-        this._warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping source:`, entry.error);
-        anyTargetUnavailable = true;
-        continue;
-      }
-
-      const identity = await this._identityStore.get(entry.source.actorDid);
-      if (identity === undefined) {
-        // Retain the source while its actor is inactive. Registration changes
-        // invalidate the plan so it can include the source when the actor returns.
-        continue;
-      }
-      if (this._isIdentityPaused(entry.source.actorDid, identity.delegateDid)) {
-        continue;
-      }
-      targets.push(await this._getTargetResolver().buildTargetForSource(entry.source, identity.delegateDid));
+    const sources = await this._sourceStore.list();
+    hasRegistrations ||= sources.length > 0;
+    const sourceResults = await mapConcurrentSettled(sources, FOLLOWED_SOURCE_CONCURRENCY,
+      entry => this.resolveFollowedSource(entry));
+    for (const result of sourceResults) {
+      if (result.status === 'rejected') {throw result.reason;}
+      targets.push(...result.value.targets);
+      anyTargetUnavailable ||= result.value.unavailable;
     }
 
     await this.cacheCompleteTargets({
@@ -164,6 +153,21 @@ export class SyncTargetPlanner {
       targets,
     });
     return targets;
+  }
+
+  /** Each accepted root resolves independently; optional null consumers do not invalidate the plan cache. */
+  private async resolveFollowedSource(entry: FollowedSyncSourceStoreEntry): Promise<RegisteredIdentityTargets> {
+    if (entry.status === 'corrupt') {
+      this._warn(`SyncEngineLevel: Corrupt followed source ${entry.id}, skipping source:`, entry.error);
+      return { targets: [], unavailable: true };
+    }
+    const identity = await this._identityStore.get(entry.source.actorDid);
+    if (identity === undefined || this._isIdentityPaused(entry.source.actorDid, identity.delegateDid)) {
+      // Keep the accepted source while its actor is inactive; registration changes invalidate the plan.
+      return { targets: [], unavailable: false };
+    }
+    const targets = await this._getTargetResolver().buildTargetsForSource(entry.source, identity.delegateDid);
+    return { targets, unavailable: false };
   }
 
   /** Shared prerequisite for endpoint planning and durable-link retention. */

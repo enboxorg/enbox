@@ -48,7 +48,6 @@ describe('SyncEngineLevel', () => {
         agentDid: 'did:method:abc123'
       };
       const syncEngine = new SyncEngineLevel({ agent: mockAgent, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const agent = syncEngine.agent;
       expect(agent).toBeDefined();
       expect(agent.agentDid).toBe('did:method:abc123');
@@ -56,7 +55,6 @@ describe('SyncEngineLevel', () => {
 
     it(`throws an error if the 'agent' instance property is undefined`, async () => {
       const syncEngine = new SyncEngineLevel({ db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       expect(() =>
         syncEngine.agent
       ).toThrow('Unable to determine agent execution context');
@@ -66,7 +64,6 @@ describe('SyncEngineLevel', () => {
   describe('live subscription delivery', () => {
     it('retains a durable pull wake until the paired replication baseline is ready', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const dwnUrl = 'https://dwn.example';
       const linkKey = 'link-key';
@@ -127,7 +124,6 @@ describe('SyncEngineLevel', () => {
 
     it('uses durable pull for events missing metadata and refuses uncovered ACKs', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -208,7 +204,6 @@ describe('SyncEngineLevel', () => {
 
     it('restores pull currentness only after the last coalesced pull reaches its head', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -265,7 +260,6 @@ describe('SyncEngineLevel', () => {
 
     it('keeps repair reconciliation non-current until the live gap-closing pass drains', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -313,7 +307,6 @@ describe('SyncEngineLevel', () => {
 
     it('clears pulled and pushed echo state when live sync stops', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const tenantDid = 'did:example:alice';
       const messageCid = 'bafy-message';
@@ -329,7 +322,6 @@ describe('SyncEngineLevel', () => {
 
     it('degrades pull currentness before stop waits for subscription closure', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const link: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -374,7 +366,6 @@ describe('SyncEngineLevel', () => {
 
     it('degrades pull currentness when a same-key controller is hot-replaced', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const linkKey = 'link-key';
       const link: ReplicationLinkState = {
@@ -421,7 +412,6 @@ describe('SyncEngineLevel', () => {
   describe('replication status projection', () => {
     it('overlays active runtime state without exposing uncommitted checkpoints', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const durableLive: ReplicationLinkState = {
         authorization      : { kind: 'owner' },
@@ -525,7 +515,6 @@ describe('SyncEngineLevel', () => {
         },
       };
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: db as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const currentTarget = target('https://a.example');
       sinon.stub(internal.targetResolver, 'getEndpointUrls').resolves([currentTarget.dwnUrl]);
@@ -556,7 +545,6 @@ describe('SyncEngineLevel', () => {
 
     it('abandons a Retry-now request queued across an engine lifecycle change', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const getSyncTargets = sinon.stub(internal, 'getSyncTargets').resolves([]);
       expect(internal._lifecycle.tryAcquireSync()).toBe(true);
@@ -592,7 +580,6 @@ describe('SyncEngineLevel', () => {
 
     it('does not transition a feed push after its link becomes stale in flight', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       let current = true;
       let releasePush!: () => void;
@@ -630,7 +617,6 @@ describe('SyncEngineLevel', () => {
 
     it('attributes an unexpected feed push exception to the exact entry', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       const entries = [
         { seq: '1', messageCid: 'cid-1', isLatestBaseState: true },
@@ -658,7 +644,6 @@ describe('SyncEngineLevel', () => {
 
     it('does not transition a permission-grant response after its link becomes stale in flight', async () => {
       const syncEngine = new SyncEngineLevel({ agent: {} as any, db: {} as any });
-      sinon.stub(syncEngine as any, 'ensureStoreFormat').resolves();
       const internal = syncEngine as any;
       let current = true;
       let releasePush!: () => void;
@@ -4088,7 +4073,6 @@ describe('SyncEngineLevel', () => {
   describe('connectivityState', () => {
     it('should default to unknown', () => {
       const engine = new SyncEngineLevel({ db: {} as any });
-      sinon.stub(engine as any, 'ensureStoreFormat').resolves();
       expect(engine.connectivityState).toBe('unknown');
     });
   });

@@ -79,14 +79,6 @@ describe('@enbox/browser exports', () => {
     expect(browser.RecordValidationError).toBe(api.RecordValidationError);
   });
 
-  it('re-exports moduleContextKey from @enbox/api', async () => {
-    const [browser, api] = await Promise.all([
-      getBrowserExports(),
-      import('@enbox/api'),
-    ]);
-    expect(browser.moduleContextKey).toBe(api.moduleContextKey);
-  });
-
   it('re-exports Time from @enbox/api', async () => {
     const [browser, api, dwnSdk] = await Promise.all([
       getBrowserExports(),

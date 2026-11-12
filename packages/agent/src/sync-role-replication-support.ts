@@ -71,6 +71,8 @@ type RoleReplicationSupportParams = DelegatedRoleReadParams & {
   runRemoteRequest?: SyncRemoteRequestRunner;
   shouldContinue?: () => boolean;
   sourceDid: string;
+  /** Read an already admitted replica through the same actor/role authorization boundary. */
+  isLocal?: boolean;
 };
 
 type ExactRoleReadFilter = {
@@ -96,6 +98,7 @@ type SupportValidationParams = {
 
 type ResolvedSupportValidationParams = SupportValidationParams & {
   graph: ResolvedModuleGraph;
+  graphsByModule: Map<string, ResolvedModuleGraph>;
   resolvedRole: ResolvedRoleReference;
   roleIdentity: RoleRecordIdentity;
 };
@@ -201,7 +204,7 @@ async function requestRoleReplicationSupport(
   delegatedGrant: DwnDataEncodedRecordsWriteMessage | undefined,
   message: RecordsReadMessage,
 ): Promise<RecordsReadReply> {
-  const requestDwnUrl = await resolveRoleReadUrl(params);
+  const requestDwnUrl = params.isLocal === true ? params.dwnUrl : await resolveRoleReadUrl(params);
   if (params.rootData !== undefined) {
     const reply = await sendRecordsRead(params, requestDwnUrl, message);
     if (reply.status.code === 200 && reply.entry !== undefined) {
@@ -237,6 +240,11 @@ function sendRecordsRead(
   dwnUrl: string,
   message: RecordsReadMessage,
 ): Promise<RecordsReadReply> {
+  if (params.isLocal === true) {
+    return params.agent.dwn.processRequest({
+      author: params.actorDid, target: params.sourceDid, messageType: DwnInterface.RecordsRead, rawMessage: message,
+    }).then(result => result.reply);
+  }
   return runSyncRemoteRequest(params.runRemoteRequest, (signal): Promise<RecordsReadReply> =>
     params.agent.rpc.sendDwnRequest({
       dwnUrl,
@@ -371,18 +379,20 @@ async function collectSupportDependencies(
   support: readonly RecordsReadReplicationSupportEntry[],
   rootCid: string,
 ): Promise<SyncMessageEntry[]> {
-  const dependencies = new Map<string, SyncMessageEntry>();
-  const append = async (entry: SyncMessageEntry): Promise<void> => {
-    const cid = await Message.getCid(entry.message);
-    if (cid !== rootCid) {
-      dependencies.set(cid, entry);
-    }
-  };
+  const entries: SyncMessageEntry[] = [];
   if (reply.entry?.initialWrite !== undefined) {
-    await append({ message: reply.entry.initialWrite, isLatestBaseState: false });
+    entries.push({ message: reply.entry.initialWrite, isLatestBaseState: false });
   }
   for (const entry of support) {
-    await append(toSyncEntry(entry));
+    entries.push(toSyncEntry(entry));
+  }
+  const cids = await Promise.all(entries.map(entry => Message.getCid(entry.message)));
+  const dependencies = new Map<string, SyncMessageEntry>();
+  for (let index = 0; index < entries.length; index++) {
+    const cid = cids[index]!;
+    if (cid !== rootCid) {
+      dependencies.set(cid, entries[index]!);
+    }
   }
   return [...dependencies.values()];
 }
@@ -457,8 +467,9 @@ async function validateSupport(
   const resolvedParams: ResolvedSupportValidationParams = {
     ...params,
     graph,
+    graphsByModule : new Map([[graph.rootModuleUri, graph]]),
     resolvedRole,
-    roleIdentity: getRoleRecordIdentity({ role: resolvedRole, contextId: params.contextId, recipient: params.actorDid }),
+    roleIdentity   : getRoleRecordIdentity({ role: resolvedRole, contextId: params.contextId, recipient: params.actorDid }),
   };
   const audienceContextId = getRoleAudienceContextId(resolvedRole, params.contextId);
   const wrappedKeyIds = new Set(params.root.encryption?.keyEncryption
@@ -532,17 +543,16 @@ async function scanRecordsWriteSupport(
   const isAncestor = isExpectedAncestor(entry, message, ancestorIds);
   const identity = getRecordsWriteRoleIdentity(message);
   const isRoleVersion = message.recordId === params.replyRoleId && identity?.key === params.roleIdentity.key;
+  const isAuthorCandidate = identity !== undefined && authorRoles.has(identity.key);
+  const isInitialCandidate = (isRoleVersion || isAuthorCandidate) &&
+    entry.isLatestBaseState === false &&
+    entry.encodedData === undefined &&
+    await RecordsWrite.isInitialWrite(message);
   const isRole = isRoleVersion &&
     entry.isLatestBaseState === true &&
     typeof entry.encodedData === 'string';
-  const isInitialRole = isRoleVersion &&
-    entry.isLatestBaseState === false &&
-    entry.encodedData === undefined &&
-    await RecordsWrite.isInitialWrite(message);
-  const isAuthorRole = identity !== undefined && authorRoles.has(identity.key) &&
-    entry.isLatestBaseState === false &&
-    entry.encodedData === undefined &&
-    await RecordsWrite.isInitialWrite(message);
+  const isInitialRole = isRoleVersion && isInitialCandidate;
+  const isAuthorRole = isAuthorCandidate && isInitialCandidate;
   const isRoleAudience = isTaggedEncryptionControl(
     message,
     ENCRYPTION_CONTROL_AUDIENCE_PATH,
@@ -550,7 +560,7 @@ async function scanRecordsWriteSupport(
     params.resolvedRole.owningModulePath,
     audienceContextId,
   );
-  const isAudience = isRoleAudience || isRootAudienceControl(message, params.root, params.graph);
+  const isAudience = isRoleAudience || isRootAudienceControl(message, params);
   const isUsableAudience = isAudience &&
     entry.isLatestBaseState === true && typeof entry.encodedData === 'string';
   const isDelivery = isTaggedEncryptionControl(
@@ -598,11 +608,10 @@ function expectedAuthorRoleProofs(
     if (recipient === undefined) {
       throw new RoleReplicationSupportError('a role-authored record has no logical author.');
     }
-    const definition = params.graph.definitionsByUri.get(module);
-    if (definition === undefined) {
+    const authorGraph = resolveSupportModuleGraph(params, module);
+    if (authorGraph === undefined) {
       throw new RoleReplicationSupportError(`missing author-role module '${module}'.`);
     }
-    const authorGraph = resolveModuleGraph(definition, uri => params.graph.definitionsByUri.get(uri));
     const identity = getRoleRecordIdentity({ role: authorGraph.resolveInvokedRole(modulePath), contextId, recipient });
     if (identity.key === params.roleIdentity.key) {
       return;
@@ -647,9 +656,9 @@ function assertRoleAudienceReady(
   const roleRuleSet = params.resolvedRole.ruleSet;
   const deliveryRequired = roleRuleSet?.$role === true && roleRuleSet.$keyAgreement !== undefined;
   const missingAudience = (params.rootDelete === undefined && deliveryRequired && scan.audienceKeyIds.size === 0) ||
-    [...wrappedKeyIds].some(keyId => !scan.audienceKeyIds.has(keyId));
+    hasMissingKey(wrappedKeyIds, scan.audienceKeyIds);
   const missingDelivery = params.rootDelete === undefined &&
-    [...scan.audienceKeyIds].some(keyId => !scan.deliveredKeyIds.has(keyId));
+    hasMissingKey(scan.audienceKeyIds, scan.deliveredKeyIds);
   if (missingAudience || missingDelivery) {
     throw new FollowedSourceNotReadyError(
       missingAudience
@@ -657,6 +666,32 @@ function assertRoleAudienceReady(
         : `the audience key has not been delivered to ${params.actorDid}.`,
     );
   }
+}
+
+function hasMissingKey(required: ReadonlySet<string>, present: ReadonlySet<string>): boolean {
+  for (const keyId of required) {
+    if (!present.has(keyId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveSupportModuleGraph(
+  params: ResolvedSupportValidationParams,
+  module: string,
+): ResolvedModuleGraph | undefined {
+  const cached = params.graphsByModule.get(module);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const definition = params.graph.definitionsByUri.get(module);
+  if (definition === undefined) {
+    return undefined;
+  }
+  const resolved = resolveModuleGraph(definition, uri => params.graph.definitionsByUri.get(uri));
+  params.graphsByModule.set(module, resolved);
+  return resolved;
 }
 
 function isTaggedEncryptionControl(
@@ -672,8 +707,7 @@ function isTaggedEncryptionControl(
 
 function isRootAudienceControl(
   message: RecordsWriteMessage,
-  root: RecordsWriteMessage,
-  graph: ResolvedModuleGraph,
+  params: ResolvedSupportValidationParams,
 ): boolean {
   const tags = message.descriptor.tags;
   if (message.descriptor.modulePath !== ENCRYPTION_CONTROL_AUDIENCE_PATH ||
@@ -681,16 +715,15 @@ function isRootAudienceControl(
       typeof tags.contextId !== 'string' || typeof tags.keyId !== 'string') {
     return false;
   }
-  const definition = graph.definitionsByUri.get(message.descriptor.module);
-  if (definition === undefined) {
+  const roleGraph = resolveSupportModuleGraph(params, message.descriptor.module);
+  if (roleGraph === undefined) {
     return false;
   }
-  const roleGraph = resolveModuleGraph(definition, uri => graph.definitionsByUri.get(uri));
   const role = roleGraph.resolveInvokedRole(tags.rolePath);
-  return root.encryption?.keyEncryption.some(entry =>
+  return params.root.encryption?.keyEncryption.some(entry =>
     entry.derivationScheme === ROLE_AUDIENCE_DERIVATION_SCHEME && 'module' in entry &&
     entry.module === role.owningModuleUri && entry.rolePath === role.owningModulePath && entry.keyId === tags.keyId &&
-    getRoleAudienceContextId(role, root.contextId) === tags.contextId
+    getRoleAudienceContextId(role, params.root.contextId) === tags.contextId
   ) === true;
 }
 

@@ -775,9 +775,6 @@ export const DEFAULT_DWN_ENDPOINTS = ['https://enbox-dwn.fly.dev'];
  * @internal
  */
 export const STORAGE_KEYS = {
-  /** Data-format boundary for sessions and their revocation retry journal. */
-  SESSION_FORMAT: 'enbox:auth:sessionFormat',
-
   /** Complete session binding and revocation metadata; presence enables restore. */
   SESSION: 'enbox:auth:session',
 

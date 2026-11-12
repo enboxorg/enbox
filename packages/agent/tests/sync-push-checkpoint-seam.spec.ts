@@ -9,7 +9,6 @@ import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 
 import { buildLinkKey } from '../src/sync-link-key.js';
-import { ensureSyncStoreFormat } from '../src/sync-store-format.js';
 import { SyncEngineLevel } from '../src/sync-engine-level.js';
 
 const DID = 'did:example:seam-alice';
@@ -34,7 +33,6 @@ describe('SyncEngineLevel — durable push replay seam', () => {
   beforeAll(async () => {
     db = new Level<string, string>(TEST_DB_LOCATION);
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-push-checkpoint-seam.spec.ts');
   });
 
   afterEach(async () => {
@@ -43,7 +41,6 @@ describe('SyncEngineLevel — durable push replay seam', () => {
       db = new Level<string, string>(TEST_DB_LOCATION);
     }
     await db.clear();
-    await ensureSyncStoreFormat(db, 'sync-push-checkpoint-seam.spec.ts');
   });
 
   afterAll(async () => {
