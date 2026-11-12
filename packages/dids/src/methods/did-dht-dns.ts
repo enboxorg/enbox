@@ -282,12 +282,8 @@ async function applyVerificationMethodRecord({ didUri, dnsRecordId, answer, didD
   // Convert the public key from a byte array to JWK format.
   const publicKey = await keyConverter(namedCurve).bytesToPublicKey({ publicKeyBytes });
 
-  // Use the parsed algorithm, or fall back to the key type's default. Records published by
-  // `@enbox/dids` <= 0.1.3 serialized an absent `alg` as the literal string `a=undefined`;
-  // decode that legacy value as the default so the resolved JWK is canonical.
-  publicKey.alg = !parsedAlg || parsedAlg === 'undefined'
-    ? KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType]
-    : parsedAlg;
+  // Use the parsed algorithm, or fall back to the key type's default.
+  publicKey.alg = parsedAlg || KeyTypeToDefaultAlgorithmMap[Number(t) as DidDhtRegisteredKeyType];
 
   // TODO: when this is complete https://github.com/enboxorg/enbox/issues/638 then we can add this back and
   // update the test vectors kid back to '0'
@@ -404,6 +400,7 @@ function applyVerificationRelationshipsRecord(didDocument: DidDocument, answer: 
  * gateway's host is emitted in FQDN form; IP-literal gateways produce no NS record.
  * @param params.previousDidProof - The signature proof that this DID is linked to the given previous DID.
  * @returns A promise that resolves to a DNS packet.
+ * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if a gateway URI is malformed or has no host.
  */
 export async function toDnsPacket({ didDocument, didMetadata, authoritativeGatewayUris, previousDidProof }: {
   didDocument: DidDocument;
@@ -688,11 +685,11 @@ const IPV4_ADDRESS_REGEX = /^\d{1,3}(\.\d{1,3}){3}$/;
  * Gateway URIs may be full URIs (`https://gateway.example:8443/some/path`) or bare hosts
  * (`gateway.example`, as used by the DID DHT specification test vectors). IP-literal gateways
  * (e.g. `http://127.0.0.1:7527`) carry no NS metadata, so `undefined` is returned and no NS
- * record should be emitted for them. URIs that cannot be parsed or have no host are passed
- * through unchanged (in FQDN form), preserving the historical behavior for such inputs.
+ * record should be emitted for them. URIs that cannot be parsed or have no host are rejected.
  *
  * @param gatewayUri - The gateway URI to normalize.
  * @returns The FQDN form of the gateway host, or `undefined` for IP-literal gateways.
+ * @throws {@link DidError} with {@link DidErrorCode.InvalidGatewayUri} if the URI is malformed or has no host.
  */
 function getGatewayNsTarget(gatewayUri: string): string | undefined {
   // Accept both full URIs and bare hosts; a dummy scheme lets bare hosts parse. Malformed URIs
@@ -704,10 +701,11 @@ function getGatewayNsTarget(gatewayUri: string): string | undefined {
     hostname = '';
   }
 
-  // Legacy passthrough: emit the URI as-is rather than rejecting inputs that older versions
-  // accepted. See https://github.com/enboxorg/enbox/issues/1718.
   if (hostname === '') {
-    return `${gatewayUri}.`;
+    throw new DidError(
+      DidErrorCode.InvalidGatewayUri,
+      `Authoritative gateway URI '${gatewayUri}' is malformed or has no host`,
+    );
   }
 
   // An NS record names a host; IP literals carry no NS metadata. `URL.hostname` includes the

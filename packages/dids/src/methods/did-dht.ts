@@ -1,13 +1,10 @@
+import type { Packet } from '@dnsquery/dns-packet';
 import type {
-  AsymmetricKeyConverter,
-  Jwk,
   KeyImporterExporter,
   KeyManager,
   KmsExportKeyParams,
   KmsImportKeyParams,
-  Signer,
 } from '@enbox/crypto';
-import type { Packet, TxtData } from '@dnsquery/dns-packet';
 
 import { computeJwkThumbprint, LocalKeyManager } from '@enbox/crypto';
 
@@ -27,10 +24,9 @@ import { EMPTY_DID_RESOLUTION_RESULT } from '../types/did-resolution.js';
 import { extractDidFragment } from '../utils.js';
 import { DidError, DidErrorCode } from '../did-error.js';
 
-// Re-export types from the new modules for backward compatibility.
+// Re-export types and standalone helpers from the focused did:dht modules.
 export * from './did-dht-types.js';
 
-// Re-export standalone functions from extracted modules.
 export {
   BEP44_MESSAGE_OVERHEAD_BYTES,
   BEP44_VALUE_MAX_BYTES,
@@ -76,11 +72,8 @@ import {
 
 import {
   AlgorithmToKeyTypeMap,
-  chunkDataIfNeeded,
   fromDnsPacket,
   KeyTypeToDefaultAlgorithmMap,
-  parseTxtDataToObject,
-  parseTxtDataToString,
   toDnsPacket,
 } from './did-dht-dns.js';
 
@@ -88,8 +81,6 @@ import {
   identifierToIdentityKey,
   identifierToIdentityKeyBytes,
   identityKeyToIdentifier,
-  keyConverter,
-  validatePreviousDidProof,
 } from './did-dht-utils.js';
 
 /** The default DID DHT Gateway / Pkarr Relay used when no `gatewayUri` is supplied. */
@@ -266,7 +257,7 @@ export class DidDht extends DidMethod {
     const identityKey = await keyManager.getPublicKey({ keyUri: identityKeyUri });
 
     // Compute the DID URI from the Identity Key.
-    const didUri = await DidDhtUtils.identityKeyToIdentifier({ identityKey });
+    const didUri = await identityKeyToIdentifier({ identityKey });
 
     // Begin constructing the DID Document.
     const document: DidDocument = {
@@ -398,7 +389,7 @@ export class DidDht extends DidMethod {
     if (!identityMethod?.publicKeyJwk) {
       throw new DidError(DidErrorCode.InvalidDidDocument, 'DID document must contain an Identity Key');
     }
-    const identityUri = await DidDhtUtils.identityKeyToIdentifier({ identityKey: identityMethod.publicKeyJwk });
+    const identityUri = await identityKeyToIdentifier({ identityKey: identityMethod.publicKeyJwk });
     if (identityUri !== portableDid.uri || portableDid.document.id !== portableDid.uri) {
       throw new DidError(DidErrorCode.InvalidDidDocument, 'DID identifier must match its Identity Key');
     }
@@ -473,7 +464,7 @@ export class DidDht extends DidMethod {
 
     try {
       // Attempt to decode the z-base-32-encoded identifier.
-      await DidDhtUtils.identifierToIdentityKey({ didUri });
+      await identifierToIdentityKey({ didUri });
 
       // Attempt to retrieve the DID document and metadata from the DHT network.
       const { didDocument, didDocumentMetadata } = await DidDhtDocument.get({
@@ -579,7 +570,7 @@ export class DidDhtDocument {
     allowPrivateGatewayUri?: boolean;
   }): Promise<DidResolutionResult> {
     // Decode the z-base-32 DID identifier to public key as a byte array.
-    const publicKeyBytes = DidDhtUtils.identifierToIdentityKeyBytes({ didUri });
+    const publicKeyBytes = identifierToIdentityKeyBytes({ didUri });
 
     // Retrieve the signed BEP44 message from a DID DHT Gateway or Pkarr relay.
     const bep44Message = await DidDhtDocument.pkarrGet({
@@ -589,7 +580,7 @@ export class DidDhtDocument {
     });
 
     // Verify the signature of the BEP44 message and parse the value to a DNS packet.
-    const dnsPacket = await DidDhtUtils.parseBep44GetMessage({ bep44Message });
+    const dnsPacket = await parseBep44GetMessage({ bep44Message });
 
     // Convert the DNS packet to a DID document and metadata.
     const resolutionResult = await DidDhtDocument.fromDnsPacket({ didUri, dnsPacket });
@@ -621,9 +612,9 @@ export class DidDhtDocument {
     });
 
     // Create a signed BEP44 put message from the DNS packet.
-    const bep44Message = await DidDhtUtils.createBep44PutMessage({
+    const bep44Message = await createBep44PutMessage({
       dnsPacket,
-      publicKeyBytes : DidDhtUtils.identifierToIdentityKeyBytes({ didUri: did.uri }),
+      publicKeyBytes : identifierToIdentityKeyBytes({ didUri: did.uri }),
       signer         : await did.getSigner({ methodId: '0' })
     });
 
@@ -691,76 +682,5 @@ export class DidDhtDocument {
    */
   private static getUniqueDidSuffix(did: string): string {
     return did.split(':')[2];
-  }
-}
-
-/**
- * The `DidDhtUtils` class provides utility functions to support operations in the DID DHT method.
- * Methods delegate to standalone functions extracted into focused modules for backward compatibility.
- */
-export class DidDhtUtils {
-  /** Delegates to {@link createBep44PutMessage} from `did-dht-pkarr.js`. */
-  public static async createBep44PutMessage(params: {
-    dnsPacket: Packet;
-    publicKeyBytes: Uint8Array;
-    signer: Signer;
-  }): Promise<Bep44Message> {
-    return createBep44PutMessage(params);
-  }
-
-  /** Delegates to {@link identifierToIdentityKey} from `did-dht-utils.js`. */
-  public static async identifierToIdentityKey(params: {
-    didUri: string;
-  }): Promise<Jwk> {
-    return identifierToIdentityKey(params);
-  }
-
-  /** Delegates to {@link identifierToIdentityKeyBytes} from `did-dht-utils.js`. */
-  public static identifierToIdentityKeyBytes(params: {
-    didUri: string;
-  }): Uint8Array {
-    return identifierToIdentityKeyBytes(params);
-  }
-
-  /** Delegates to {@link identityKeyToIdentifier} from `did-dht-utils.js`. */
-  public static async identityKeyToIdentifier(params: {
-    identityKey: Jwk;
-  }): Promise<string> {
-    return identityKeyToIdentifier(params);
-  }
-
-  /** Delegates to {@link keyConverter} from `did-dht-utils.js`. */
-  public static keyConverter(curve: string): AsymmetricKeyConverter {
-    return keyConverter(curve);
-  }
-
-  /** Delegates to {@link parseBep44GetMessage} from `did-dht-pkarr.js`. */
-  public static async parseBep44GetMessage(params: {
-    bep44Message: Bep44Message;
-  }): Promise<Packet> {
-    return parseBep44GetMessage(params);
-  }
-
-  /** Delegates to {@link parseTxtDataToObject} from `did-dht-dns.js`. */
-  public static parseTxtDataToObject(txtData: TxtData): Record<string, string> {
-    return parseTxtDataToObject(txtData);
-  }
-
-  /** Delegates to {@link parseTxtDataToString} from `did-dht-dns.js`. */
-  public static parseTxtDataToString(txtData: TxtData): string {
-    return parseTxtDataToString(txtData);
-  }
-
-  /** Delegates to {@link validatePreviousDidProof} from `did-dht-utils.js`. */
-  public static async validatePreviousDidProof(params: {
-    newDid: string;
-    previousDidProof: PreviousDidProof;
-  }): Promise<void> {
-    return validatePreviousDidProof(params);
-  }
-
-  /** Delegates to {@link chunkDataIfNeeded} from `did-dht-dns.js`. */
-  public static chunkDataIfNeeded(data: string): string | string[] {
-    return chunkDataIfNeeded(data);
   }
 }

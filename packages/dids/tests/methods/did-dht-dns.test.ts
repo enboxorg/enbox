@@ -1,5 +1,6 @@
 import type { Packet, StringAnswer, TxtAnswer } from '@dnsquery/dns-packet';
 
+import { DidErrorCode } from '../../src/did-error.js';
 import {
   chunkDataIfNeeded,
   parseTxtDataToObject,
@@ -130,10 +131,9 @@ describe('toDnsPacket() — authoritative gateway NS records', () => {
     expect(nsTargets(await toPacket([]))).toEqual([]);
   });
 
-  it('passes malformed or host-less gateway URIs through unchanged, as older versions did', async () => {
-    // Legacy behavior is preserved rather than rejecting such inputs; whether to validate
-    // strictly instead is an open question (https://github.com/enboxorg/enbox/issues/1718).
-    const packet = await toPacket(['https://', 'file:///etc/hosts']);
-    expect(nsTargets(packet)).toEqual(['https://.', 'file:///etc/hosts.']);
+  it('rejects malformed or host-less gateway URIs', async () => {
+    for (const gatewayUri of ['https://', 'file:///etc/hosts']) {
+      await expect(toPacket([gatewayUri])).rejects.toThrow(DidErrorCode.InvalidGatewayUri);
+    }
   });
 });

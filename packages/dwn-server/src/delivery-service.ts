@@ -543,10 +543,9 @@ export class DeliveryService implements MessageProcessedHook {
    * Extracts DWN service endpoints from a DID document.
    * Looks for services of type `DecentralizedWebNode` with `serviceEndpoint` entries.
    *
-   * Supports all endpoint formats:
+   * Supports these endpoint formats:
    * - `"https://example.com"` — bare string, implicitly full
    * - `["https://a.com", "https://b.com"]` — string array, implicitly full
-   * - `{ nodes: ["https://a.com"] }` — legacy object format, implicitly full
    * - `{ url: "https://a.com", dataRetention: "cache" }` — map format with explicit retention
    */
   static #extractDwnEndpoints(didDocument: DidDocument): DwnEndpoint[] {
@@ -564,16 +563,15 @@ export class DeliveryService implements MessageProcessedHook {
 
   /**
    * Extracts DWN endpoints from a single DID document service entry. Returns
-   * an empty array for non-`DecentralizedWebNode` services — mirrors the
-   * `continue` in the original per-service scan — and for any
-   * `serviceEndpoint` shape not covered by the string/array/object cases.
+   * an empty array for non-`DecentralizedWebNode` services and for any
+   * `serviceEndpoint` shape not covered by the string/array/map cases.
    */
   static #extractEndpointsFromService(service: DidService): DwnEndpoint[] {
     if (service.type !== 'DecentralizedWebNode') {
       return [];
     }
 
-    // serviceEndpoint can be a string, string[], object with nodes, or map with url.
+    // serviceEndpoint can be a string, string[], or map with url.
     const epValue = service.serviceEndpoint;
 
     if (typeof epValue === 'string') {
@@ -585,7 +583,8 @@ export class DeliveryService implements MessageProcessedHook {
     }
 
     if (epValue && typeof epValue === 'object') {
-      return DeliveryService.#extractEndpointsFromObject(epValue as Record<string, unknown>);
+      const mapEndpoint = DeliveryService.#extractMapEndpoint(epValue as Record<string, unknown>);
+      return mapEndpoint ? [mapEndpoint] : [];
     }
 
     return [];
@@ -594,7 +593,7 @@ export class DeliveryService implements MessageProcessedHook {
   /**
    * Extracts endpoints from a `serviceEndpoint` array. Each entry may be a
    * bare URL string or a map entry (`{ url, dataRetention? }`); any other
-   * entry shape is silently skipped, matching the original per-entry scan.
+   * entry shape is silently skipped.
    */
   static #extractEndpointsFromArray(entries: DidServiceEndpoint[]): DwnEndpoint[] {
     const endpoints: DwnEndpoint[] = [];
@@ -615,42 +614,9 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   /**
-   * Extracts endpoints from an object-shaped `serviceEndpoint`. The legacy
-   * `{ nodes: [...] }` format and the map format `{ url, dataRetention? }`
-   * are checked independently — not mutually exclusive, matching the
-   * original scan — so an object carrying both keys yields endpoints from
-   * each, `nodes` first.
-   */
-  static #extractEndpointsFromObject(epValue: Record<string, unknown>): DwnEndpoint[] {
-    const endpoints: DwnEndpoint[] = [];
-
-    // Legacy object format: { nodes: [...] }
-    if ('nodes' in epValue) {
-      const nodes = (epValue as { nodes: string[] }).nodes;
-      if (Array.isArray(nodes)) {
-        for (const node of nodes) {
-          if (typeof node === 'string') {
-            endpoints.push({ url: stripTrailingSlashes(node), isFull: true });
-          }
-        }
-      }
-    }
-
-    // Map format at top level: { url: "...", dataRetention?: "..." }
-    if ('url' in epValue) {
-      const mapEndpoint = DeliveryService.#extractMapEndpoint(epValue);
-      if (mapEndpoint) {
-        endpoints.push(mapEndpoint);
-      }
-    }
-
-    return endpoints;
-  }
-
-  /**
    * Builds a `DwnEndpoint` from a map-shaped service endpoint entry
    * (`{ url: "...", dataRetention?: "full" | "cache" }`). Returns `undefined`
-   * when `url` is not a string, matching the original guard.
+   * when `url` is not a string.
    */
   static #extractMapEndpoint(value: Record<string, unknown>): DwnEndpoint | undefined {
     const mapEntry = value as { url?: string; dataRetention?: string };

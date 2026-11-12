@@ -1,4 +1,3 @@
-import type { ModuleActionRule } from '../types/modules-types.js';
 import type { RecordsCount } from '../interfaces/records-count.js';
 import type { RecordsDelete } from '../interfaces/records-delete.js';
 import type { RecordsQuery } from '../interfaces/records-query.js';
@@ -118,15 +117,15 @@ function roleRecordNotFound(resolvedRole: ResolvedModuleRole): DwnError {
 
 /**
  * Returns the actions that can authorize the operation, before matching its current rules.
- * Initial writes require create or squash permission. Updates by the original author
- * can use update or co-update; another author needs co-update. Creation permission
- * does not imply that an author still has permission when a later update arrives.
+ * Initial writes require create permission, or squash permission for squash writes. Updates
+ * by the original author can use update or co-update; another author needs co-update.
+ * Creation permission does not imply that an author still has permission when a later
+ * update arrives.
  */
 export async function getActionsSeekingARuleMatch(
   tenant: string,
   incomingMessage: ModuleAuthorizableMessage,
   validationStateReader: ValidationStateReader,
-  actionRules?: ModuleActionRule[],
 ): Promise<ModuleAction[]> {
 
   switch (incomingMessage.message.descriptor.method) {
@@ -146,7 +145,7 @@ export async function getActionsSeekingARuleMatch(
     return [ModuleAction.Read];
 
   case DwnMethodName.Write:
-    return getWriteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader, actionRules);
+    return getWriteActionsSeekingARuleMatch(tenant, incomingMessage, validationStateReader);
   }
 
   // purely defensive programming: should not be reachable
@@ -201,18 +200,11 @@ async function getWriteActionsSeekingARuleMatch(
   tenant: string,
   incomingMessage: ModuleAuthorizableMessage,
   validationStateReader: ValidationStateReader,
-  actionRules?: ModuleActionRule[],
 ): Promise<ModuleAction[]> {
   const incomingRecordsWrite = incomingMessage as RecordsWrite;
 
   if (await incomingRecordsWrite.isInitialWrite()) {
-    if (actionRules === undefined) {
-      throw new DwnError(
-        DwnErrorCode.ModuleAuthorizationActionRulesNotFound,
-        'action rules are required when determining authorization actions for an initial RecordsWrite'
-      );
-    }
-    return getInitialWriteActionsSeekingARuleMatch(incomingRecordsWrite, actionRules);
+    return getInitialWriteActionsSeekingARuleMatch(incomingRecordsWrite);
   } else {
     // else incoming RecordsWrite not an initial write
 
@@ -235,25 +227,15 @@ async function getWriteActionsSeekingARuleMatch(
 }
 
 /**
- * Returns the actions that can authorize an initial write. An explicit `squash`
- * rule makes squash authorization exclusive; `create` remains a compatibility
- * fallback only when the rule set has no explicit squash action.
+ * Returns the actions that can authorize an initial write. Squash writes require an
+ * explicit `squash` action; `create` permission never authorizes a squash.
  */
 export function getInitialWriteActionsSeekingARuleMatch(
   incomingRecordsWrite: RecordsWrite,
-  actionRules: ModuleActionRule[],
 ): ModuleAction[] {
-  if (incomingRecordsWrite.message.descriptor.squash !== true) {
-    return [ModuleAction.Create];
-  }
-
-  const hasExplicitSquashRule = actionRules.some(
-    (actionRule: ModuleActionRule): boolean => actionRule.can.includes(ModuleAction.Squash)
-  );
-
-  return hasExplicitSquashRule
+  return incomingRecordsWrite.message.descriptor.squash === true
     ? [ModuleAction.Squash]
-    : [ModuleAction.Squash, ModuleAction.Create];
+    : [ModuleAction.Create];
 }
 
 /**
@@ -283,7 +265,7 @@ export async function authorizeAgainstAllowedActions(
   }
 
   const actionsSeekingARuleMatch = await getActionsSeekingARuleMatch(
-    tenant, incomingMessage, validationStateReader, actionRules
+    tenant, incomingMessage, validationStateReader
   );
 
   // Iterate through the action rules to find a rule that authorizes the incoming message.

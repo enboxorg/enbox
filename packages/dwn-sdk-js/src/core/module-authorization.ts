@@ -369,7 +369,7 @@ export class ModuleAuthorization {
         `no create action rule defined for stored RecordsWrite by author ${incomingMessage.author}`
       );
     }
-    const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage, actionRules);
+    const actions = getInitialWriteActionsSeekingARuleMatch(incomingMessage);
 
     const invokedRole = ModuleAuthorization.resolveStoredInitialWriteRole(incomingMessage, graph);
     if (actionRules.some(rule => ModuleAuthorization.storedCreateRuleAllowsRecord(rule, actions, invokedRole, graph))) {

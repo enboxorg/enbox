@@ -60,7 +60,7 @@ export enum DidErrorCode {
   /** The DID URL supplied to the dereferencing function does not conform to valid syntax. */
   InvalidDidUrl = 'invalidDidUrl',
 
-  /** The gateway URI supplied to a DID method targets a private, loopback, or otherwise non-routable host. */
+  /** The gateway URI supplied to a DID method is malformed, has no host, or targets a private, loopback, or otherwise non-routable host. */
   InvalidGatewayUri = 'invalidGatewayUri',
 
   /** The given proof of a previous DID is invalid */

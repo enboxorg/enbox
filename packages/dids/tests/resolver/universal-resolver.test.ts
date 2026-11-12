@@ -597,9 +597,7 @@ describe('UniversalResolver', () => {
             {
               id              : '#dwn',
               type            : 'DecentralizedWebNode',
-              serviceEndpoint : {
-                nodes: [ 'https://enbox-dwn.fly.dev' ]
-              }
+              serviceEndpoint : 'https://enbox-dwn.fly.dev'
             }
           ],
         },

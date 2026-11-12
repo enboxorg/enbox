@@ -3,9 +3,10 @@ import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '../../src/types/portable-did.js';
 
 import { DidErrorCode } from '../../src/did-error.js';
+import { DidKey } from '../../src/methods/did-key.js';
+import { DidKeyUtils } from '../../src/methods/did-key-utils.js';
 import { LocalKeyManager } from '@enbox/crypto';
 import { beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { DidKey, DidKeyUtils } from '../../src/methods/did-key.js';
 
 describe('DidKey', () => {
   let keyManager: LocalKeyManager;

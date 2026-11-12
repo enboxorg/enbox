@@ -653,32 +653,27 @@ export function testRecordsSquash(): void {
         expect(queryReply.entries![0].recordId).toBe(carolSquash.message.recordId);
       });
 
-      it('should authorize squash via create fallback when no explicit squash rule exists', async () => {
+      it('should not authorize a non-owner squash with create permission alone', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
         const { module, documentContextId } = await setupModuleAndDocument(alice);
 
-        // the default squash module only has 'create' and 'read' actions — no explicit 'squash' rule
-        // squash should fall back to create authorization
+        // the default squash module grants anyone 'create' and 'read' but no explicit 'squash' action
+        const patchTimestamp = Time.createOffsetTimestamp({ seconds: 1 });
+        const bobPatch = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
+          module,
+          modulePath       : 'document/patch',
+          parentContextId  : documentContextId,
+          messageTimestamp : patchTimestamp,
+          dateCreated      : patchTimestamp,
+        });
+        const patchReply = await dwn.processMessage(alice.did, bobPatch.message, { dataStream: bobPatch.dataStream });
+        expect(patchReply.status.code).toBe(202);
 
-        // create some patches
-        for (let i = 0; i < 3; i++) {
-          const timestamp = Time.createOffsetTimestamp({ seconds: i + 1 });
-          const patch = await TestDataGenerator.generateRecordsWrite({
-            author           : alice,
-            module,
-            modulePath       : 'document/patch',
-            parentContextId  : documentContextId,
-            messageTimestamp : timestamp,
-            dateCreated      : timestamp,
-          });
-          const reply = await dwn.processMessage(alice.did, patch.message, { dataStream: patch.dataStream });
-          expect(reply.status.code).toBe(202);
-        }
-
-        // squash write — should succeed via create fallback
         const squashTimestamp = Time.createOffsetTimestamp({ seconds: 10 });
-        const squashRecord = await TestDataGenerator.generateRecordsWrite({
-          author           : alice,
+        const bobSquash = await TestDataGenerator.generateRecordsWrite({
+          author           : bob,
           module,
           modulePath       : 'document/patch',
           parentContextId  : documentContextId,
@@ -686,8 +681,9 @@ export function testRecordsSquash(): void {
           dateCreated      : squashTimestamp,
           squash           : true,
         });
-        const squashReply = await dwn.processMessage(alice.did, squashRecord.message, { dataStream: squashRecord.dataStream });
-        expect(squashReply.status.code).toBe(202);
+        const squashReply = await dwn.processMessage(alice.did, bobSquash.message, { dataStream: bobSquash.dataStream });
+        expect(squashReply.status.code).toBe(401);
+        expect(squashReply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationActionNotAllowed);
       });
     });
 

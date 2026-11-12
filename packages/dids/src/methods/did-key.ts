@@ -712,6 +712,3 @@ export class DidKey extends DidMethod {
     );
   }
 }
-
-// Re-export DidKeyUtils from its dedicated module for backward compatibility.
-export { DidKeyUtils } from './did-key-utils.js';

@@ -11,6 +11,7 @@ export * from './bearer-did.js';
 export * from './methods/did-dht.js';
 export * from './methods/did-jwk.js';
 export * from './methods/did-key.js';
+export { DidKeyUtils } from './methods/did-key-utils.js';
 export * from './methods/did-method.js';
 export * from './methods/did-web.js';
 

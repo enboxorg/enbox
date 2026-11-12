@@ -768,7 +768,7 @@ export function testModulesConfigureHandler(): void {
         const carol = await TestDataGenerator.generateDidKeyPersona();
 
         const module = 'http://config-validity.example/squash-action-history';
-        const createSquashDefinition = (adminActions: ModuleAction[]): ModuleDefinition => ({
+        const createSquashDefinition = (editorActions: ModuleAction[]): ModuleDefinition => ({
           module,
           published : true,
           types     : {
@@ -800,29 +800,29 @@ export function testModulesConfigureHandler(): void {
                 $immutable : true,
                 $squash    : true,
                 $actions   : [
-                  { role: 'document/admin', can: adminActions },
-                  { role: 'document/editor', can: [ModuleAction.Create, ModuleAction.Read] },
+                  { role: 'document/admin', can: [ModuleAction.Create, ModuleAction.Read, ModuleAction.Squash] },
+                  { role: 'document/editor', can: editorActions },
                 ],
               },
             },
           },
         });
-        const createFallbackDefinition = createSquashDefinition([
-          ModuleAction.Create,
-          ModuleAction.Read,
-        ]);
-        const explicitSquashDefinition = createSquashDefinition([
+        const permissiveDefinition = createSquashDefinition([
           ModuleAction.Create,
           ModuleAction.Read,
           ModuleAction.Squash,
         ]);
+        const restrictedDefinition = createSquashDefinition([
+          ModuleAction.Create,
+          ModuleAction.Read,
+        ]);
 
-        const createFallbackConfig = await TestDataGenerator.generateModulesConfigure({
+        const permissiveConfig = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           messageTimestamp : '2025-06-01T00:00:00.000000Z',
-          moduleDefinition : createFallbackDefinition,
+          moduleDefinition : permissiveDefinition,
         });
-        expect((await dwn.processMessage(alice.did, createFallbackConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, permissiveConfig.message)).status.code).toBe(202);
 
         const editorDocument = await TestDataGenerator.generateRecordsWrite({
           author           : alice,
@@ -900,12 +900,12 @@ export function testModulesConfigureHandler(): void {
           alice.did, adminSquash.message, { dataStream: adminSquash.dataStream }
         )).status.code).toBe(202);
 
-        const explicitSquashConfig = await TestDataGenerator.generateModulesConfigure({
+        const restrictedConfig = await TestDataGenerator.generateModulesConfigure({
           author           : alice,
           messageTimestamp : '2025-06-02T00:00:00.000000Z',
-          moduleDefinition : explicitSquashDefinition,
+          moduleDefinition : restrictedDefinition,
         });
-        expect((await dwn.processMessage(alice.did, explicitSquashConfig.message)).status.code).toBe(202);
+        expect((await dwn.processMessage(alice.did, restrictedConfig.message)).status.code).toBe(202);
 
         const invalidEditorMessages = await messageStore.query(alice.did, [{
           interface : DwnInterfaceName.Records,
