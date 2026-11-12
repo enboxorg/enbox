@@ -176,7 +176,7 @@ export class ConnectClient {
    *          the request in the wallet.
    */
   public async connect(input: ConnectClientConnectParams): Promise<ConnectResult | undefined> {
-    const params = snapshotClientData(input);
+    const params = structuredClone(input);
     if ((params.requestType as ConnectRequestType | undefined) === 'authenticate') {
       throw new Error('Connect: use authenticate() for an authentication-only request.');
     }
@@ -237,7 +237,8 @@ export class ConnectClient {
 
     const profile = await this._transport.requestProfile(state);
 
-    const request: ConnectRequest = snapshotClientData({
+    // `params` is already a private snapshot; only the transport-owned reply needs cloning.
+    const request: ConnectRequest = {
       clientDid                  : clientDid.uri,
       appName                    : params.appName,
       appIcon                    : params.appIcon,
@@ -253,8 +254,8 @@ export class ConnectClient {
       nonce,
       state,
       responseKey                : responsePublicKey,
-      reply                      : profile.reply,
-    });
+      reply                      : structuredClone(profile.reply),
+    };
 
     assertConnectRequest(request);
     if (request.authentication !== undefined) {
@@ -307,15 +308,6 @@ export class ConnectClient {
     });
     return { response, authentication };
   }
-}
-
-/**
- * Legacy callers may supply reactive proxies: capture their JSON wire value
- * synchronously while retaining isolation across awaits. Authentication uses
- * cloneable plain data, preserving invalid values for its strict validator.
- */
-function snapshotClientData<T extends { authentication?: ConnectAuthenticationParams }>(input: T): T {
-  return input.authentication === undefined ? JSON.parse(JSON.stringify(input)) as T : structuredClone(input);
 }
 
 /**

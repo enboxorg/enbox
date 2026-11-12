@@ -47,13 +47,12 @@ type SyncNextProgressStoreOptions = {
 };
 
 /**
- * Isolated `syncNextV1` durable progress store.
+ * Isolated `sync-next` durable progress store.
  *
  * Successful outcomes are compressed into link progress. Only quarantine and
  * delivery obligations occupy pending rows.
  */
 export class SyncNextProgressStore {
-  private readonly _compatibleQuarantineLinks = new Set<string>();
   private readonly _delivery: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
   private readonly _links: AbstractSublevel<SyncNextDatabase, LevelKey, string, string>;
   private readonly _lockNamespace: string;
@@ -67,14 +66,14 @@ export class SyncNextProgressStore {
     lockNamespace = 'default',
     options: SyncNextProgressStoreOptions = {},
   ) {
-    this._delivery = _db.sublevel('syncNextV1Delivery');
-    this._links = _db.sublevel('syncNextV1Links');
+    this._delivery = _db.sublevel('syncNextDelivery');
+    this._links = _db.sublevel('syncNextLinks');
     this._lockNamespace = lockNamespace;
     this._maxDeliveryPerLink = options.maxDeliveryPerLink ?? SYNC_NEXT_DEFAULT_MAX_DELIVERY_PER_LINK;
     this._maxQuarantineBytesPerTenant = options.maxQuarantineBytesPerTenant ??
       SYNC_NEXT_DEFAULT_MAX_QUARANTINE_BYTES_PER_TENANT;
     this._maxQuarantinePerTenant = options.maxQuarantinePerTenant ?? SYNC_NEXT_DEFAULT_MAX_QUARANTINE_PER_TENANT;
-    this._quarantine = _db.sublevel('syncNextV1Quarantine');
+    this._quarantine = _db.sublevel('syncNextQuarantine');
   }
 
   public async getOrCreateLink(input: SyncNextLinkCreate): Promise<SyncNextLink> {
@@ -138,11 +137,15 @@ export class SyncNextProgressStore {
       if (current?.lifetimeId !== queriedLink.lifetimeId) {
         return;
       }
+      const [quarantine, delivery] = await Promise.all([
+        this.getQuarantineForLink(queriedLink),
+        this.getDeliveryForLink(queriedLink),
+      ]);
       const operations: SyncNextBatchOperation[] = [this.deleteOperation(this._links, key)];
-      for (const entry of await this.getQuarantineForLink(queriedLink)) {
+      for (const entry of quarantine) {
         operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(queriedLink, entry)));
       }
-      for (const entry of await this.getDeliveryForLink(queriedLink)) {
+      for (const entry of delivery) {
         operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(queriedLink, entry)));
       }
       await this._db.batch(operations);
@@ -162,7 +165,6 @@ export class SyncNextProgressStore {
       if (link?.lifetimeId !== queriedLink.lifetimeId) {
         return false;
       }
-      await this.assertCompatibleQuarantine(link);
       if (!SyncNextProgressStore.sameToken(link.pullCheckpoint, queriedLink.pullCheckpoint)) {
         return false;
       }
@@ -299,7 +301,6 @@ export class SyncNextProgressStore {
       const range = syncNextTenantRange(tenantDid);
       await this._links.clear(range);
       await Promise.all([this._delivery.clear(range), this._quarantine.clear(range)]);
-      this._compatibleQuarantineLinks.clear();
     });
   }
 
@@ -378,7 +379,6 @@ export class SyncNextProgressStore {
     await this.runMutation(async (): Promise<void> => {
       await this._links.clear();
       await Promise.all([this._delivery.clear(), this._quarantine.clear()]);
-      this._compatibleQuarantineLinks.clear();
     });
   }
 
@@ -501,15 +501,6 @@ export class SyncNextProgressStore {
     return rows.map(SyncNextProgressStore.validateQuarantineAccounting);
   }
 
-  /** One-time format check prevents an old encrypted row from outliving its checkpoint. */
-  private async assertCompatibleQuarantine(link: SyncNextLink): Promise<void> {
-    const key = syncNextLinkKey(link);
-    if (!this._compatibleQuarantineLinks.has(key)) {
-      await this.readQuarantine(this._quarantine.iterator(syncNextLinkRange(link)));
-      this._compatibleQuarantineLinks.add(key);
-    }
-  }
-
   /** Serialize progress-store mutations that must not interleave with reset. */
   private runMutation<T>(operation: () => Promise<T>): Promise<T> {
     return runWithCrossContextLock(
@@ -550,11 +541,6 @@ export class SyncNextProgressStore {
 
   /** Validate only fields used by the progress store; retry owns payload validation. */
   private static validateQuarantineAccounting(value: unknown): SyncNextQuarantineEntry {
-    if (typeof value === 'object' && value !== null && 'encryptedPayload' in value) {
-      throw new Error(
-        'SyncNextProgressStore: encrypted quarantine rows are obsolete; clear the complete sync-next progress store.',
-      );
-    }
     if (typeof value !== 'object' || value === null) {
       throw new TypeError('SyncNextProgressStore: quarantine row has an invalid schema.');
     }

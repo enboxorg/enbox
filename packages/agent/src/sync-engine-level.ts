@@ -2522,14 +2522,11 @@ export class SyncEngineLevel implements SyncEngine {
    *
    * @param timeout - One shared maximum wait for an earlier lifecycle
    *   transition, subscription closure, and in-progress sync/background work.
-   *   Non-finite values (`NaN`, `Infinity`) are
-   *   coerced to the default to avoid a tight busy-wait loop or never-exit
-   *   condition.
+   * @throws {RangeError} if the timeout is negative, non-finite, or exceeds `MAX_TIMER_DELAY_MS`.
    */
-  public stopSync(timeout: number = 2000): Promise<void> {
-    const safeTimeout = SyncEngineLevel.coerceStopSyncTimeout(timeout);
-    const deadline = createSyncLifecycleDeadline(safeTimeout);
-    return this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
+  public async stopSync(timeout: number = 2000): Promise<void> {
+    const deadline = SyncEngineLevel.createLifecycleDeadline({ timeout });
+    await this._lifecycle.runTransition(async (activeDeadline): Promise<void> => {
       await this.stopSyncRuntime(activeDeadline);
     }, deadline);
   }
@@ -2550,17 +2547,6 @@ export class SyncEngineLevel implements SyncEngine {
     this._linkInitializations.clear();
     this.installDisposedRuntime();
     this.invalidateSyncTargetsCache();
-  }
-
-  /**
-   * Preserve `stopSync`'s legacy numeric-argument coercion. The newer
-   * `SyncLifecycleOptions` APIs instead reject invalid timeout values before
-   * changing runtime or storage state.
-   */
-  private static coerceStopSyncTimeout(timeout: number): number {
-    return Number.isFinite(timeout)
-      ? Math.min(Math.max(0, timeout), MAX_TIMER_DELAY_MS)
-      : 2000;
   }
 
   /** Validate an opt-in lifecycle wait and convert it to one absolute deadline. */

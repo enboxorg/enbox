@@ -33,7 +33,6 @@ import { STORAGE_KEYS } from './types.js';
 type FetchLike = typeof fetch;
 
 export type LocalDwnPairingRecord = {
-  version: 1;
   endpoint: string;
   token: string;
   pairedOrigin: string;
@@ -42,7 +41,6 @@ export type LocalDwnPairingRecord = {
 };
 
 export type LocalDwnEjectionRecord = {
-  version: 1;
   endpoint: string;
   completedAt: number;
 };
@@ -109,8 +107,6 @@ export type LocalDwnPairingRequestResult =
   | { status: 'expired'; endpoint: string; origin: string }
   | { status: 'timeout'; endpoint: string; requestId: string; pollUrl: string };
 
-const localDwnPairingRecordVersion = 1;
-const localDwnEjectionRecordVersion = 1;
 const defaultPairingTimeoutMs = 5 * 60 * 1000;
 const defaultPairingPollIntervalMs = 1500;
 
@@ -230,15 +226,14 @@ export async function readLocalDwnPairingRecord(
   return record;
 }
 
-/** Persists the versioned local-node pairing record. */
+/** Persists the local-node pairing record. */
 export async function persistLocalDwnPairingRecord(
   storage: StorageAdapter,
   record: LocalDwnPairingRecord,
 ): Promise<void> {
   await storage.set(STORAGE_KEYS.LOCAL_DWN_ENDPOINT, JSON.stringify({
     ...record,
-    endpoint : normalizeBaseUrl(record.endpoint),
-    version  : localDwnPairingRecordVersion,
+    endpoint: normalizeBaseUrl(record.endpoint),
   }));
 }
 
@@ -266,8 +261,7 @@ export async function persistLocalDwnEjectionRecord(
 ): Promise<void> {
   await storage.set(STORAGE_KEYS.LOCAL_DWN_EJECTION, JSON.stringify({
     ...record,
-    endpoint : normalizeBaseUrl(record.endpoint),
-    version  : localDwnEjectionRecordVersion,
+    endpoint: normalizeBaseUrl(record.endpoint),
   }));
 }
 
@@ -279,10 +273,7 @@ export async function clearLocalDwnEjection(
 }
 
 /**
- * Clear the persisted local DWN pairing from auth storage.
- *
- * The storage key retains its historical name so existing installs can be
- * migrated by clearing legacy endpoint-only values.
+ * Clear the persisted local DWN pairing and any ejection marker from auth storage.
  */
 export async function clearLocalDwnEndpoint(
   storage: StorageAdapter,
@@ -340,7 +331,7 @@ export async function discoverEjectedLocalDwnPairing(
  * Revalidates a stored pairing without sweeping localhost ports.
  *
  * @returns The pairing record when the local node confirms the token,
- *   otherwise `undefined`. Stale or legacy values are cleared.
+ *   otherwise `undefined`. Stale or malformed values are cleared.
  */
 export async function discoverLocalDwnPairing(
   storage: StorageAdapter,
@@ -372,19 +363,8 @@ export async function discoverLocalDwnPairing(
 }
 
 /**
- * Backwards-compatible endpoint getter used by existing AuthManager boot code.
- * New code should use {@link discoverLocalDwnPairing} so the token travels with
- * the endpoint.
- */
-export async function discoverLocalDwn(
-  storage: StorageAdapter,
-): Promise<string | undefined> {
-  return (await discoverLocalDwnPairing(storage))?.endpoint;
-}
-
-/**
  * Restore a previously paired local DWN endpoint and inject it into the agent's
- * discovery cache. Legacy endpoint-only values are cleared.
+ * discovery cache. Malformed stored values are cleared.
  */
 export async function restoreLocalDwnEndpoint(
   agent: EnboxUserAgent,
@@ -616,7 +596,6 @@ export async function requestLocalDwnPairing(
         endpoint     : initiated.endpoint,
         pairedOrigin : pollResult.origin,
         token        : pollResult.token,
-        version      : localDwnPairingRecordVersion,
       };
       await persistLocalDwnPairingRecord(options.storage, pairing);
 
@@ -647,7 +626,8 @@ function parseLocalDwnPairingRecord(raw: string): LocalDwnPairingRecord | undefi
   try {
     const value = JSON.parse(raw) as Partial<LocalDwnPairingRecord>;
     if (
-      value.version !== localDwnPairingRecordVersion
+      typeof value !== 'object'
+      || value === null
       || typeof value.endpoint !== 'string'
       || typeof value.token !== 'string'
       || typeof value.pairedOrigin !== 'string'
@@ -662,7 +642,6 @@ function parseLocalDwnPairingRecord(raw: string): LocalDwnPairingRecord | undefi
       endpoint     : normalizeBaseUrl(value.endpoint),
       pairedOrigin : value.pairedOrigin,
       token        : value.token,
-      version      : localDwnPairingRecordVersion,
       ...(value.localNodeId === undefined ? {} : { localNodeId: value.localNodeId }),
     };
   } catch {
@@ -674,7 +653,8 @@ function parseLocalDwnEjectionRecord(raw: string): LocalDwnEjectionRecord | unde
   try {
     const value = JSON.parse(raw) as Partial<LocalDwnEjectionRecord>;
     if (
-      value.version !== localDwnEjectionRecordVersion
+      typeof value !== 'object'
+      || value === null
       || typeof value.endpoint !== 'string'
       || typeof value.completedAt !== 'number'
       || !Number.isFinite(value.completedAt)
@@ -685,7 +665,6 @@ function parseLocalDwnEjectionRecord(raw: string): LocalDwnEjectionRecord | unde
     return {
       completedAt : value.completedAt,
       endpoint    : normalizeBaseUrl(value.endpoint),
-      version     : localDwnEjectionRecordVersion,
     };
   } catch {
     return undefined;

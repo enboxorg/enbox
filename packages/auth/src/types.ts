@@ -778,10 +778,10 @@ export const STORAGE_KEYS = {
   /** Complete session binding and revocation metadata; presence enables restore. */
   SESSION: 'enbox:auth:session',
 
-  /** Versioned local-node pairing record: endpoint, bearer token, origin, and metadata. */
+  /** Local-node pairing record: endpoint, bearer token, origin, and metadata. */
   LOCAL_DWN_ENDPOINT: 'enbox:auth:localDwnEndpoint',
 
-  /** Versioned marker that allows a paired local node to become the next-session local DWN. */
+  /** Marker that allows a paired local node to become the next-session local DWN. */
   LOCAL_DWN_EJECTION: 'enbox:auth:localDwnEjection',
 
   /**

@@ -269,7 +269,6 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
 
     sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -307,12 +306,10 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : 'http://127.0.0.1:55500',
-      version     : 1,
     });
 
     sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -350,13 +347,11 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1 as const,
     };
     await persistLocalDwnPairingRecord(storage, pairing);
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : pairing.endpoint,
-      version     : 1,
     });
 
     const fetchStub = sinon.stub(globalThis, 'fetch').rejects(new Error('connection refused'));
@@ -512,7 +507,6 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
 
     const rpcAuthorizationHeaders: Array<string | undefined> = [];
@@ -583,7 +577,6 @@ describe('AuthManager.create()', () => {
     expect(await readLocalDwnEjectionRecord(storage)).toEqual({
       completedAt : expect.any(Number),
       endpoint    : 'http://127.0.0.1:55500',
-      version     : 1,
     });
 
     let capturedOptions: any;
@@ -606,7 +599,6 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
 
     sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -659,7 +651,6 @@ describe('AuthManager.create()', () => {
     await persistLocalDwnEjectionRecord(storage, {
       completedAt : 456,
       endpoint    : 'http://127.0.0.1:55500',
-      version     : 1,
     });
 
     userAgentCreateStub.onFirstCall().resolves(createMockAgent() as any);
@@ -688,7 +679,6 @@ describe('AuthManager.create()', () => {
       endpoint     : 'http://127.0.0.1:55500',
       pairedOrigin : 'https://app.example',
       token        : 'paired-token',
-      version      : 1,
     });
 
     sinon.stub(globalThis, 'fetch').callsFake(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
