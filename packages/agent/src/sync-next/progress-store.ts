@@ -137,11 +137,15 @@ export class SyncNextProgressStore {
       if (current?.lifetimeId !== queriedLink.lifetimeId) {
         return;
       }
+      const [quarantine, delivery] = await Promise.all([
+        this.getQuarantineForLink(queriedLink),
+        this.getDeliveryForLink(queriedLink),
+      ]);
       const operations: SyncNextBatchOperation[] = [this.deleteOperation(this._links, key)];
-      for (const entry of await this.getQuarantineForLink(queriedLink)) {
+      for (const entry of quarantine) {
         operations.push(this.deleteOperation(this._quarantine, syncNextReceiptKey(queriedLink, entry)));
       }
-      for (const entry of await this.getDeliveryForLink(queriedLink)) {
+      for (const entry of delivery) {
         operations.push(this.deleteOperation(this._delivery, syncNextReceiptKey(queriedLink, entry)));
       }
       await this._db.batch(operations);
