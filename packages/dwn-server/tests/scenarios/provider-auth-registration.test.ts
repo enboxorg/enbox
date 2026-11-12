@@ -1,19 +1,19 @@
 import type { DwnServerConfig } from '../../src/config.js';
 import type { Persona } from '@enbox/dwn-sdk-js';
 import type { RegistrationManager } from '../../src/registration/registration-manager.js';
-import type { JsonRpcRequest, JsonRpcResponse, RegistrationData, RegistrationRequest, ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcResponse, RegistrationData, RegistrationRequest, ServerInfo } from '@enbox/dwn-clients';
 import type { ProviderAuthPlugin, ProviderAuthValidationResult } from '../../src/registration/provider-auth-plugin.js';
 
 import { config } from '../../src/config.js';
-import { createRecordsWriteMessage } from '../utils.js';
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DwnServer } from '../../src/dwn-server.js';
 import { DwnServerErrorCode } from '../../src/dwn-error.js';
 import { ProofOfWork } from '../../src/registration/proof-of-work.js';
 import { useFakeTimers } from 'sinon';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
-import { DataStream, Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidDht, DidKey, UniversalResolver } from '@enbox/dids';
+import { dwnRpcRequestInit, generateRecordsWriteJsonRpcRequest } from '../utils.js';
+import { Jws, ModulesConfigure, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 /**
  * In-memory mock ProviderAuthPlugin for testing.
@@ -143,11 +143,7 @@ describe('Provider auth registration scenarios', () => {
     // 2. Alice can now write to the DWN.
     await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
-    const writeResponse = await fetch(dwnMessageEndpoint, {
-      method  : 'POST',
-      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
-    });
+    const writeResponse = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const writeBody = await writeResponse.json() as JsonRpcResponse;
     expect(writeResponse.status).toBe(200);
     expect(writeBody.result.reply.status.code).toBe(202);
@@ -366,11 +362,7 @@ describe('Provider auth registration scenarios', () => {
   it('should not allow a non-tenant to write to the DWN', async () => {
     const nonTenant = await TestDataGenerator.generateDidKeyPersona();
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(nonTenant);
-    const response = await fetch(dwnMessageEndpoint, {
-      method  : 'POST',
-      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-      body    : createHttpDwnRpcRequestBody(jsonRpcRequest, new Blob([dataBytes])),
-    });
+    const response = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const body = await response.json() as JsonRpcResponse;
     expect(response.status).toBe(200);
     expect(body.result.reply.status.code).toBe(401);
@@ -399,30 +391,10 @@ async function installDefaultTestModuleViaHttp(endpoint: string, persona: Person
     target  : persona.did,
   });
 
-  const response = await fetch(endpoint, {
-    method  : 'POST',
-    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-    body    : createHttpDwnRpcRequestBody(jsonRpcRequest),
-  });
+  const response = await fetch(endpoint, dwnRpcRequestInit(jsonRpcRequest));
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
   if (code !== 202) {
     throw new Error(`Failed to install default test module via HTTP: ${code} ${detail}`);
   }
-}
-
-async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{
-  jsonRpcRequest: JsonRpcRequest;
-  dataBytes: Uint8Array;
-}> {
-  const { recordsWrite, dataStream } = await createRecordsWriteMessage(persona);
-
-  const requestId = crypto.randomUUID();
-  const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
-    message : recordsWrite.toJSON(),
-    target  : persona.did,
-  });
-
-  const dataBytes = await DataStream.toBytes(dataStream);
-  return { jsonRpcRequest, dataBytes };
 }

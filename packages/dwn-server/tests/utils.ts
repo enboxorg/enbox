@@ -129,6 +129,20 @@ export function dwnRpcRequestInit(jsonRpcRequest: JsonRpcRequest, data?: BodyIni
   };
 }
 
+export async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{
+  jsonRpcRequest: JsonRpcRequest;
+  dataBytes: Uint8Array;
+}> {
+  const { recordsWrite, dataStream } = await createRecordsWriteMessage(persona);
+  const requestId = crypto.randomUUID();
+  const jsonRpcRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', {
+    message : recordsWrite.toJSON(),
+    target  : persona.did,
+  });
+  const dataBytes = await DataStream.toBytes(dataStream);
+  return { jsonRpcRequest, dataBytes };
+}
+
 export async function sendHttpMessage(options: {
   url: string,
   target: string,

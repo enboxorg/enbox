@@ -66,13 +66,12 @@ function isReplayableBlobPart(data: BodyInit): data is BlobPart {
 
 /** Returns whether a Content-Type header selects DWN RPC body framing. */
 export function isHttpDwnRpcContentType(value: string | null): boolean {
-  if (value === null) {
+  // Media type parameters are not part of the protocol, so any `;` is rejected.
+  if (value === null || value.includes(';')) {
     return false;
   }
 
-  // Media type parameters are not part of the protocol, so any `;` is rejected.
-  const [mediaType, ...parameters] = value.split(';');
-  return parameters.length === 0 && mediaType.trim().toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
+  return value === HTTP_DWN_RPC_MEDIA_TYPE || value.trim().toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
 }
 
 /**

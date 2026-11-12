@@ -1,7 +1,6 @@
 import type { JsonRpcRequest } from '@enbox/dwn-clients';
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
-import { createHttpDwnRpcRequestBody, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
 
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -12,7 +11,7 @@ import { AuditLog } from '../../src/admin/audit-log.js';
 import { config as defaultConfig } from '../../src/config.js';
 import { DwnServer } from '../../src/dwn-server.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
-import { createMigratedFileDialect, createMigratedInMemoryDialect } from '../utils.js';
+import { createMigratedFileDialect, createMigratedInMemoryDialect, dwnRpcRequestInit } from '../utils.js';
 
 const adminToken = 'test-admin-token-secret';
 
@@ -536,11 +535,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Check events endpoint.
       const response = await adminFetch({ port }, '/events');
@@ -581,11 +576,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Fetch events since cursor.
       const response = await adminFetch({ port }, `/events?since=${cursor}&limit=1`);
@@ -1558,11 +1549,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, {
-        method  : 'POST',
-        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
-        body    : createHttpDwnRpcRequestBody(dwnRequest as JsonRpcRequest),
-      });
+      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Note: RecordsQuery messages are not stored in the message store.
       // Only writes and module configurations get stored.

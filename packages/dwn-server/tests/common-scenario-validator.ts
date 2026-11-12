@@ -1,10 +1,10 @@
 import type { JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
+import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { expect } from 'bun:test';
-import { getFileAsReadStream } from './utils.js';
 import { Cid, DwnConstant, Jws, ModulesConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
+import { dwnRpcRequestInit, getFileAsReadStream } from './utils.js';
 
 /**
  * Validator of common scenarios.
@@ -39,13 +39,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : modulesConfig.message,
     });
-    const moduleConfigureResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-      },
-      body: createHttpDwnRpcRequestBody(moduleConfigureRequest),
-    });
+    const moduleConfigureResponse = await fetch(dwnUrl, dwnRpcRequestInit(moduleConfigureRequest));
     const moduleConfigureResponseBody = await moduleConfigureResponse.json() as JsonRpcSuccessResponse;
 
     expect(moduleConfigureResponse.status).toBe(200);
@@ -74,13 +68,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : recordsWrite.message,
     });
-    const recordsWriteResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-      },
-      body: createHttpDwnRpcRequestBody(recordsWriteRequest, stream),
-    });
+    const recordsWriteResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsWriteRequest, stream));
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
     expect(recordsWriteResponse.status).toBe(200);
@@ -100,13 +88,7 @@ export default class CommonScenarioValidator {
       message : recordsRead.message
     });
 
-    const recordsReadResponse = await fetch(dwnUrl, {
-      method  : 'POST',
-      headers : {
-        'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-      },
-      body: createHttpDwnRpcRequestBody(recordsReadRequest),
-    });
+    const recordsReadResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsReadRequest));
 
     expect(recordsReadResponse.status).toBe(200);
 
