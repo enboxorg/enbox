@@ -25,6 +25,8 @@ describe('filterSelectQuery', () => {
       .addColumn('id', 'integer', (col) => col.primaryKey().autoIncrement())
       .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
       .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
+      .addColumn('seq', 'bigint', (col) => col.notNull())
+      .addColumn('fingerprintScopes', 'text', (col) => col.notNull())
       .addColumn('encodedMessageBytes', 'blob', (col) => col.notNull())
       .addColumn('encodedData', 'text')
       .addColumn('interface', 'varchar(20)')
@@ -61,6 +63,8 @@ describe('filterSelectQuery', () => {
     await db.destroy();
   });
 
+  let nextSeq = 0;
+
   /**
    * Helper: insert a message row and return its auto-generated id.
    */
@@ -76,11 +80,14 @@ describe('filterSelectQuery', () => {
     dateCreated?: string;
     contextId?: string;
   }): Promise<number> {
+    nextSeq += 1;
     const result = await db
       .insertInto('messageStoreMessages')
       .values({
         tenant              : values.tenant,
         messageCid          : values.messageCid,
+        seq                 : String(nextSeq),
+        fingerprintScopes   : '[]',
         encodedMessageBytes : Buffer.from('test'),
         encodedData         : null,
         interface           : values.interface ?? null,

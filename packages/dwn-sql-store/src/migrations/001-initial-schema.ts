@@ -1,19 +1,47 @@
 import type { Dialect } from '../dialect/dialect.js';
 import type { DwnMigrationFactory } from '../migration-provider.js';
-import type { Kysely, Migration } from 'kysely';
+import type { Kysely, Migration, RawBuilder } from 'kysely';
 
 import { sql } from 'kysely';
 
+function hierarchicalColumnTypes(dialect: Dialect): {
+  modulePathType: 'varchar(200)' | RawBuilder<unknown>;
+  contextIdType: 'varchar(600)' | RawBuilder<unknown>;
+} {
+  if (dialect.name === 'SQLite') {
+    // SQLite text columns use the byte-stable BINARY collation by default.
+    return {
+      modulePathType : 'varchar(200)',
+      contextIdType  : 'varchar(600)',
+    };
+  }
+
+  if (dialect.name === 'MySQL') {
+    return {
+      modulePathType : sql`varchar(200) character set utf8mb4 collate utf8mb4_0900_bin`,
+      contextIdType  : sql`varchar(600) character set ascii collate ascii_bin`,
+    };
+  }
+
+  return {
+    modulePathType : sql`varchar(200) collate "C"`,
+    contextIdType  : sql`varchar(600) collate "C"`,
+  };
+}
+
 /**
- * Baseline migration: captures the schema as of the pre-migration era.
+ * Canonical baseline schema for DWN SQL stores.
  *
- * For existing databases that already have these tables, this migration is
- * detected as "already applied" during the adoption bootstrap (see runDwnStoreMigrations).
- * For new databases, this creates the full initial schema.
+ * Creates the message store (with embedded replication log columns and
+ * byte-stable hierarchical path collations), record tag index table,
+ * content-addressed data store (`dataRefs` + `dataBlocks`), resumable task
+ * store, and replication state tables (`replicationCounters`,
+ * `replicationFingerprints`, `replicationMeta`).
  */
 export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect): Migration => ({
 
   async up(db: Kysely<any>): Promise<void> {
+    const { modulePathType, contextIdType } = hierarchicalColumnTypes(dialect);
 
     // messageStoreMessages
     if (!(await dialect.hasTable(db, 'messageStoreMessages'))) {
@@ -22,14 +50,16 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         .ifNotExists()
         .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
         .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
+        .addColumn('seq', 'bigint', (col) => col.notNull())
+        .addColumn('fingerprintScopes', 'text', (col) => col.notNull())
         .addColumn('interface', 'varchar(20)')
         .addColumn('method', 'varchar(20)')
         .addColumn('recordId', 'varchar(60)')
         .addColumn('entryId', 'varchar(60)')
         .addColumn('parentId', 'varchar(60)')
         .addColumn('module', 'varchar(200)')
-        .addColumn('modulePath', 'varchar(200)')
-        .addColumn('contextId', 'varchar(600)')
+        .addColumn('modulePath', modulePathType)
+        .addColumn('contextId', contextIdType)
         .addColumn('schema', 'varchar(200)')
         .addColumn('author', 'varchar(255)')
         .addColumn('recipient', 'varchar(255)')
@@ -39,6 +69,7 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         .addColumn('isLatestBaseState', 'boolean')
         .addColumn('published', 'boolean')
         .addColumn('prune', 'boolean')
+        .addColumn('squash', 'boolean')
         .addColumn('dataFormat', 'varchar(30)')
         .addColumn('dataCid', 'varchar(60)')
         .addColumn('dataSize', 'integer')
@@ -53,6 +84,12 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
       await db.schema.createIndex('index_tenant_messageCid')
         .on('messageStoreMessages').columns(['tenant', 'messageCid']).unique().execute();
 
+      await db.schema.createIndex('index_messageStoreMessages_tenant_seq')
+        .on('messageStoreMessages').columns(['tenant', 'seq']).unique().execute();
+
+      await db.schema.createIndex('index_messageStoreMessages_tenant_module_seq')
+        .on('messageStoreMessages').columns(['tenant', 'module', 'seq']).execute();
+
       const indexes = [
         ['tenant', 'recordId'],
         ['tenant', 'entryId'],
@@ -62,21 +99,12 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
         ['tenant', 'permissionGrantId'],
         ['tenant', 'dateCreated'],
         ['tenant', 'datePublished'],
+        ['tenant', 'contextId', 'messageTimestamp'],
       ];
 
       for (const cols of indexes) {
         await db.schema.createIndex('index_' + cols.join('_'))
           .on('messageStoreMessages').columns(cols).execute();
-      }
-
-      // MySQL needs prefix length for contextId
-      if (dialect.name === 'MySQL') {
-        await sql`CREATE INDEX index_tenant_contextId_messageTimestamp
-          ON ${sql.table('messageStoreMessages')} (tenant, contextId(480), messageTimestamp)`
-          .execute(db);
-      } else {
-        await db.schema.createIndex('index_tenant_contextId_messageTimestamp')
-          .on('messageStoreMessages').columns(['tenant', 'contextId', 'messageTimestamp']).execute();
       }
     }
 
@@ -107,21 +135,40 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
       }
     }
 
-    // dataStore
-    if (!(await dialect.hasTable(db, 'dataStore'))) {
-      let table = db.schema
-        .createTable('dataStore')
+    // dataRefs
+    if (!(await dialect.hasTable(db, 'dataRefs'))) {
+      await db.schema
+        .createTable('dataRefs')
         .ifNotExists()
         .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
         .addColumn('recordId', 'varchar(60)', (col) => col.notNull())
-        .addColumn('dataCid', 'varchar(60)', (col) => col.notNull());
+        .addColumn('dataCid', 'varchar(60)', (col) => col.notNull())
+        .addColumn('dataSize', 'bigint', (col) => col.notNull())
+        .execute();
 
-      table = dialect.addAutoIncrementingColumn(table, 'id', (col) => col.primaryKey());
+      await db.schema.createIndex('index_dataRefs_tenant_recordId_dataCid')
+        .on('dataRefs').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
+
+      await db.schema.createIndex('index_dataRefs_dataCid')
+        .on('dataRefs').column('dataCid').execute();
+
+      await db.schema.createIndex('index_dataRefs_tenant')
+        .on('dataRefs').column('tenant').execute();
+    }
+
+    // dataBlocks
+    if (!(await dialect.hasTable(db, 'dataBlocks'))) {
+      let table = db.schema
+        .createTable('dataBlocks')
+        .ifNotExists()
+        .addColumn('rootDataCid', 'varchar(60)', (col) => col.notNull())
+        .addColumn('blockCid', 'varchar(60)', (col) => col.notNull());
+
       table = dialect.addBlobColumn(table, 'data', (col) => col.notNull());
       await table.execute();
 
-      await db.schema.createIndex('tenant_recordId_dataCid')
-        .on('dataStore').columns(['tenant', 'recordId', 'dataCid']).unique().execute();
+      await db.schema.createIndex('index_dataBlocks_rootDataCid_blockCid')
+        .on('dataBlocks').columns(['rootDataCid', 'blockCid']).unique().execute();
     }
 
     // resumableTasks
@@ -137,6 +184,43 @@ export const migration001InitialSchema: DwnMigrationFactory = (dialect: Dialect)
 
       await db.schema.createIndex('index_timeout')
         .on('resumableTasks').column('timeout').execute();
+    }
+
+    // replicationCounters
+    if (!(await dialect.hasTable(db, 'replicationCounters'))) {
+      await db.schema
+        .createTable('replicationCounters')
+        .ifNotExists()
+        .addColumn('tenant', 'varchar(255)', (col) => col.primaryKey())
+        .addColumn('seq', 'bigint', (col) => col.notNull())
+        .execute();
+    }
+
+    // replicationFingerprints
+    if (!(await dialect.hasTable(db, 'replicationFingerprints'))) {
+      await db.schema
+        .createTable('replicationFingerprints')
+        .ifNotExists()
+        .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
+        .addColumn('scope', 'varchar(512)', (col) => col.notNull())
+        .addColumn('fingerprint', 'varchar(64)', (col) => col.notNull())
+        .execute();
+
+      await db.schema.createIndex('index_replicationFingerprints_tenant_scope')
+        .on('replicationFingerprints')
+        .columns(['tenant', 'scope'])
+        .unique()
+        .execute();
+    }
+
+    // replicationMeta
+    if (!(await dialect.hasTable(db, 'replicationMeta'))) {
+      await db.schema
+        .createTable('replicationMeta')
+        .ifNotExists()
+        .addColumn('key', 'varchar(100)', (col) => col.primaryKey())
+        .addColumn('value', 'text', (col) => col.notNull())
+        .execute();
     }
 
   },

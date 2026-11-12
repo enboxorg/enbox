@@ -2,11 +2,9 @@ import type { Dialect } from '../src/dialect/dialect.js';
 import type { DwnDatabaseType, KeyValues } from '../src/types.js';
 import type { Wake, WakePublisher } from '@enbox/dwn-sdk-js';
 
-import { createBunSqliteDatabase } from '../src/dialect/bun-sqlite-adapter.js';
 import { Kysely } from 'kysely';
 import { MessageStoreSql } from '../src/message-store-sql.js';
 import { runDwnStoreMigrations } from '../src/migration-runner.js';
-import { SqliteDialect } from '../src/dialect/sqlite-dialect.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { DwnErrorCode, Message, Replication, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { testMysqlDialect, testPostgresDialect, testSqliteDialect } from './test-dialects.js';
@@ -562,30 +560,4 @@ describe('MessageStoreSql replication log', () => {
   for (const dialect of [testMysqlDialect, testPostgresDialect, testSqliteDialect]) {
     runReplicationLogTests(dialect);
   }
-
-  it('should fail fast when pre-substrate rows exist without replication metadata', async () => {
-    const sharedDb = createBunSqliteDatabase(':memory:', { create: true });
-    const dialect = new SqliteDialect({
-      database: async (): Promise<ReturnType<typeof createBunSqliteDatabase>> => sharedDb,
-    });
-    const db = new Kysely<DwnDatabaseType>({ dialect });
-    await runDwnStoreMigrations(db, dialect);
-
-    const { message } = await generateStoredMessage();
-    const encodedMessageBlock = new TextEncoder().encode(JSON.stringify(message));
-    await db
-      .insertInto('messageStoreMessages')
-      .values({
-        tenant              : 'did:example:alice',
-        messageCid          : await Message.getCid(message),
-        encodedMessageBytes : encodedMessageBlock,
-      })
-      .execute();
-
-    const messageStore = new MessageStoreSql(dialect);
-    await expect(messageStore.open()).rejects.toThrow(DwnErrorCode.MessageStorePreSubstrateLayout);
-
-    await db.destroy();
-    sharedDb.close();
-  });
 });

@@ -8,8 +8,8 @@ type MessageStoreTable = {
   messageCid: string;
   encodedMessageBytes: Uint8Array;
   encodedData: string | null;
-  seq: string | null;
-  fingerprintScopes: string | null;
+  seq: string;
+  fingerprintScopes: string;
   // "indexes" start
   interface: string | null;
   method: string | null;
@@ -45,19 +45,7 @@ type MessageStoreRecordsTagsTable = {
   valueNumber: number | null;
 };
 
-// ─── DataStore tables (legacy + content-addressed) ────────────────────────
-
-/**
- * @deprecated Legacy monolithic data table. Replaced by `dataRefs` + `dataBlocks`
- * in migration 002. Retained for type compatibility during migration.
- */
-type DataStoreTable = {
-  id: Generated<number>;
-  tenant: string;
-  recordId: string;
-  dataCid: string;
-  data: Uint8Array;
-};
+// ─── DataStore tables (content-addressed) ──────────────────────────────────
 
 /**
  * Reference table linking (tenant, recordId) to a content-addressed dataCid.
@@ -106,7 +94,6 @@ type ReplicationMetaTable = {
 export type DwnDatabaseType = {
   messageStoreMessages: MessageStoreTable;
   messageStoreRecordsTags: MessageStoreRecordsTagsTable;
-  dataStore: DataStoreTable;
   dataRefs: DataRefsTable;
   dataBlocks: DataBlocksTable;
   resumableTasks: ResumableTaskTable;

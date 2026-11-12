@@ -138,7 +138,6 @@ export class MessageStoreSql implements MessageStore {
 
     try {
       await this.assertTablesExist();
-      await this.assertNoPreSubstrateRows();
       await this.epoch();
     } catch (error) {
       await this.close();
@@ -1225,24 +1224,6 @@ export class MessageStoreSql implements MessageStore {
     }
   }
 
-  private async assertNoPreSubstrateRows(): Promise<void> {
-    const row = await this.#db!
-      .selectFrom('messageStoreMessages')
-      .select('messageCid')
-      .where(({ eb, or }) => or([
-        eb('seq', 'is', null),
-        eb('fingerprintScopes', 'is', null),
-      ]))
-      .executeTakeFirst();
-
-    if (row !== undefined) {
-      throw new DwnError(
-        DwnErrorCode.MessageStorePreSubstrateLayout,
-        'messageStoreMessages contains rows without replication log metadata; reset the SQL store before opening it'
-      );
-    }
-  }
-
   private requireDb(operation: string): Kysely<DwnDatabaseType> {
     if (!this.#db) {
       throw new Error(
@@ -1318,24 +1299,10 @@ export class MessageStoreSql implements MessageStore {
     // every position-bearing read (logRead/getHead/increment) selects the `*Text` columns, so the
     // fallback should never carry a real position; it exists only for rows fetched without them.
     const value = row.seqText ?? row.seq;
-    if (value === null || value === undefined) {
-      throw new DwnError(
-        DwnErrorCode.MessageStorePreSubstrateLayout,
-        `message ${row.messageCid} is missing replication position seq`
-      );
-    }
-
     return BigInt(String(value));
   }
 
-  private static parseFingerprintScopes(scopes: string | null, messageCid: string): string[] {
-    if (scopes === null) {
-      throw new DwnError(
-        DwnErrorCode.MessageStorePreSubstrateLayout,
-        `message ${messageCid} is missing persisted fingerprint scopes`
-      );
-    }
-
+  private static parseFingerprintScopes(scopes: string, messageCid: string): string[] {
     const parsed = JSON.parse(scopes);
     if (!Array.isArray(parsed) || parsed.some((scope) => typeof scope !== 'string')) {
       throw new DwnError(

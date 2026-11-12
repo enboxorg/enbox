@@ -76,8 +76,8 @@ function processSubtreeFilterProperty<DB = DwnDatabaseType, TB extends keyof DB 
 ): void {
   const column = new DynamicModule().ref(property);
   const descendantPrefix = `${value.subtree}/`;
-  // `/` is immediately followed by `0` in the byte ordering installed by
-  // migration 005. The enclosing range is indexable; the final OR excludes
+  // `/` is immediately followed by `0` in the byte-stable collation installed by
+  // the baseline schema. The enclosing range is indexable; the final OR excludes
   // prefix siblings that sort between the exact value and its descendants.
   const subtreeUpperBound = `${value.subtree}0`;
 

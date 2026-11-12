@@ -25,6 +25,8 @@ describe('TagTables', () => {
       .addColumn('id', 'integer', (col) => col.primaryKey().autoIncrement())
       .addColumn('tenant', 'varchar(255)', (col) => col.notNull())
       .addColumn('messageCid', 'varchar(60)', (col) => col.notNull())
+      .addColumn('seq', 'bigint', (col) => col.notNull())
+      .addColumn('fingerprintScopes', 'text', (col) => col.notNull())
       .addColumn('encodedMessageBytes', 'blob', (col) => col.notNull())
       .addColumn('encodedData', 'text')
       .execute();
@@ -53,15 +55,20 @@ describe('TagTables', () => {
     await db.destroy();
   });
 
+  let nextSeq = 0;
+
   /**
    * Helper: insert a parent message row and return its auto-generated id.
    */
   async function insertParentMessage(): Promise<number> {
+    nextSeq += 1;
     const result = await db
       .insertInto('messageStoreMessages')
       .values({
         tenant              : 'did:example:test',
-        messageCid          : `cid-${Date.now()}`,
+        messageCid          : `cid-${Date.now()}-${nextSeq}`,
+        seq                 : String(nextSeq),
+        fingerprintScopes   : '[]',
         encodedMessageBytes : Buffer.from('test'),
         encodedData         : null,
       })
