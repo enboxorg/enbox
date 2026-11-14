@@ -1,5 +1,11 @@
 # @enbox/auth
 
+## 0.6.101
+
+### Patch Changes
+
+- [#1843](https://github.com/enboxorg/enbox/pull/1843) [`f2145cb`](https://github.com/enboxorg/enbox/commit/f2145cb8f9a3af2384760c9f60edcbf350f3b44a) Thanks [@LiranCohen](https://github.com/LiranCohen)! - fix(auth): start background sync when restoring agent-only vault sessions
+
 ## 0.6.100
 
 ### Patch Changes

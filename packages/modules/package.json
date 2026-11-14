@@ -1,6 +1,6 @@
 {
   "name": "@enbox/modules",
-  "version": "0.2.123",
+  "version": "0.2.124",
   "description": "Standard reusable DWN module definitions for the Enbox ecosystem",
   "type": "module",
   "main": "./dist/esm/index.js",
