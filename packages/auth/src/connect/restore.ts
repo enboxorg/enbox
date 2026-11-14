@@ -17,6 +17,7 @@ import { Convert } from '@enbox/common';
 import { DataStream } from '@enbox/dwn-sdk-js';
 import { DwnInterface, DwnPermissionGrant } from '@enbox/agent';
 
+import { AGENT_DID_SYNC_MODULES } from './recovery.js';
 import { applyLocalDwnDiscovery } from '../discovery.js';
 import { STORAGE_KEYS } from '../types.js';
 import { ensureVaultReady, finalizeSession, registerSyncScopeForIdentity, resolveIdentityDids, resolvePassword, runAuthSessionLifecycle, startSyncAndWaitIfEnabled, startSyncInBackgroundIfEnabled } from './lifecycle.js';
@@ -233,7 +234,20 @@ async function handleMissingRestoreIdentity(
     if (!await isRestoreSnapshotCurrent(storage, snapshot)) {
       return undefined;
     }
-    return finalizeSession({
+
+    let syncRepairFailed = false;
+    if (ctx.defaultSync !== 'off') {
+      try {
+        await userAgent.sync.ensureIdentityOptions(
+          { did: userAgent.agentDid.uri, options: { modules: [...AGENT_DID_SYNC_MODULES] } },
+          { timeout: SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS },
+        );
+      } catch {
+        syncRepairFailed = true;
+      }
+    }
+
+    const session = await finalizeSession({
       userAgent,
       emitter,
       storage,
@@ -241,6 +255,12 @@ async function handleMissingRestoreIdentity(
       emitIdentityAdded : false,
       signal            : ctx.sessionSignal,
     });
+
+    if (!syncRepairFailed) {
+      startSyncInBackgroundIfEnabled(userAgent, ctx.defaultSync, ctx.sessionSignal);
+    }
+
+    return session;
   });
 }
 
