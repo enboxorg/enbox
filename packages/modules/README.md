@@ -51,6 +51,10 @@ await store.dispose();
 
 ## Module Catalog
 
+The [personal data module proposal](../../docs/modules/README.md) explores
+additional everyday domains and provides a machine-readable candidate menu for
+review. Those candidates are not yet installable definitions or package exports.
+
 ### Profile
 
 **URI**: `https://identity.foundation/modules/profile`
