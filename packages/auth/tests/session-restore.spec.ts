@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { DwnPermissionGrant } from '@enbox/agent';
 
+import { AGENT_DID_SYNC_MODULES } from '../src/connect/recovery.js';
 import { AuthEventEmitter } from '../src/events.js';
 import { createFlowContext } from './helpers/flow-context.js';
 import { MemoryStorage } from '../src/storage/storage.js';
@@ -80,23 +81,86 @@ describe('restoreSession', () => {
     expect(await storage.get(STORAGE_KEYS.SESSION)).toBeNull();
   });
 
-  test('restores agent-only session when active identity is the agent DID', async () => {
+  test('restores agent-only session when active identity is the agent DID and starts sync', async () => {
     const emitter = new AuthEventEmitter();
     const storage = new MemoryStorage();
     await setStoredSession(storage, 'did:dht:testagent');
 
+    const ensureCalls: Array<{ params: any; options: any }> = [];
+    const syncCalls: any[] = [];
+    let finishCatchUp!: () => void;
+    const catchUp = new Promise<void>((resolve) => { finishCatchUp = resolve; });
 
     const agent = createMockAgent({
       firstLaunch               : async () => false,
       identityConnectedIdentity : async () => undefined,
       identityGet               : async () => undefined,
-      identityList              : async () => [],
+      identityList              : async () => [createMockIdentity()],
+      syncEnsureIdentityOptions : async (params, options) => {
+        ensureCalls.push({ params, options });
+        return false;
+      },
+      syncStartSync: (params) => {
+        syncCalls.push(params);
+        return catchUp;
+      },
     });
 
-    const session = await restoreSession({ userAgent: agent, emitter, storage });
+    const session = await restoreSession({ userAgent: agent, emitter, storage, defaultSync: '30s' });
     expect(session).toBeDefined();
     expect(session!.did).toBe('did:dht:testagent');
     expect(session!.identity.name).toBe('Agent');
+    expect(ensureCalls).toEqual([{
+      params  : { did: 'did:dht:testagent', options: { modules: [...AGENT_DID_SYNC_MODULES] } },
+      options : { timeout: 10_000 },
+    }]);
+    expect(syncCalls).toEqual([{ interval: '30s' }]);
+    finishCatchUp();
+    await catchUp;
+  });
+
+  test('skips agent DID sync registration and startup when restoring an agent-only session with sync off', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await setStoredSession(storage, 'did:dht:testagent');
+
+    const ensureCalls: any[] = [];
+    const syncCalls: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch               : async () => false,
+      identityConnectedIdentity : async () => undefined,
+      identityGet               : async () => undefined,
+      identityList              : async () => [],
+      syncEnsureIdentityOptions : async (params) => { ensureCalls.push(params); return false; },
+      syncStartSync             : async (params) => { syncCalls.push(params); },
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage, defaultSync: 'off' });
+    expect(session).toBeDefined();
+    expect(session!.did).toBe('did:dht:testagent');
+    expect(ensureCalls).toHaveLength(0);
+    expect(syncCalls).toHaveLength(0);
+  });
+
+  test('restores agent-only session locally without starting sync when agent DID sync repair fails', async () => {
+    const emitter = new AuthEventEmitter();
+    const storage = new MemoryStorage();
+    await setStoredSession(storage, 'did:dht:testagent');
+
+    const syncCalls: any[] = [];
+    const agent = createMockAgent({
+      firstLaunch               : async () => false,
+      identityConnectedIdentity : async () => undefined,
+      identityGet               : async () => undefined,
+      identityList              : async () => [],
+      syncEnsureIdentityOptions : async () => { throw new Error('storage unavailable'); },
+      syncStartSync             : async (params) => { syncCalls.push(params); },
+    });
+
+    const session = await restoreSession({ userAgent: agent, emitter, storage, defaultSync: 'live' });
+    expect(session).toBeDefined();
+    expect(session!.did).toBe('did:dht:testagent');
+    expect(syncCalls).toHaveLength(0);
   });
 
   test('restores session from connected identity', async () => {

@@ -79,6 +79,7 @@ export interface MockAgentOverrides {
   dwnClearDelegateDecryptionKeys?: (delegateDid?: string) => void;
   syncResolveOwnerModuleScope?: (params: any, lifecycleOptions?: any) => Promise<[string, ...string[]]>;
   syncSetIdentityOptions?: (params: any, lifecycleOptions?: any) => Promise<void>;
+  syncEnsureIdentityOptions?: (params: any, lifecycleOptions?: any) => Promise<boolean>;
   syncRemoveIdentity?: (did: string, lifecycleOptions?: any) => Promise<void>;
   syncStartSync?: (params: any) => Promise<void>;
   syncStopSync?: (timeout: number) => Promise<void>;
@@ -206,7 +207,7 @@ export function createMockAgent(overrides: MockAgentOverrides = {}): EnboxUserAg
       ),
       pauseIdentity          : async (): Promise<boolean> => true,
       setIdentityOptions     : overrides.syncSetIdentityOptions ?? (async (): Promise<void> => {}),
-      ensureIdentityOptions  : async (): Promise<boolean> => true,
+      ensureIdentityOptions  : overrides.syncEnsureIdentityOptions ?? (async (): Promise<boolean> => true),
       removeIdentity         : overrides.syncRemoveIdentity ?? (async (): Promise<void> => {}),
       startSync              : overrides.syncStartSync ?? (async (): Promise<void> => {}),
       stopSync               : overrides.syncStopSync ?? (async (): Promise<void> => {}),
