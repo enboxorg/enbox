@@ -193,7 +193,10 @@ jobs:
 
             modules:
               - 'packages/modules/src/**'
+              - 'packages/modules/modules/**'
+              - 'packages/modules/build/**'
               - 'packages/modules/tests/**'
+              - 'packages/modules/type-tests/**'
               - 'packages/modules/package.json'
               - 'packages/modules/tsconfig.json'
 
