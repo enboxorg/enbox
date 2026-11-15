@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/events/v1/schemas/attendee",
+  "title": "AttendeeData",
+  "description": "An owner-issued attendee role. Recipient identity is in the signed descriptor.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false,
+  "examples": [
+    {}
+  ]
+}

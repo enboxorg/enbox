@@ -68,9 +68,7 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete",
-              "co-prune"
+              "co-update"
             ]
           },
           {
@@ -91,7 +89,7 @@
               "can": [
                 "create",
                 "read",
-                "co-delete"
+                "delete"
               ]
             },
             {
@@ -114,7 +112,12 @@
             "who": "recipient",
             "of": "pantry/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -131,7 +134,12 @@
             "who": "recipient",
             "of": "pantry/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

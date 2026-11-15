@@ -822,6 +822,7 @@ export const WarrantiesCatalog: ModuleCatalogEntry = {
     exportName      : 'WarrantiesModule',
     status          : 'experimental',
     captureExamples : ['The washing machine has a three-year warranty.'],
+    notes           : [],
     dependencies    : {
       belongings: 'https://enbox.id/modules/belongings/v1',
     },
@@ -838,6 +839,12 @@ export const WarrantiesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/warranties/v1/schemas/warranty',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update', 'co-delete', 'co-prune'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: WarrantiesSchemas['warranty'],
     },
@@ -851,6 +858,12 @@ export const WarrantiesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/warranties/v1/schemas/claim',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: WarrantiesSchemas['claim'],
     },

@@ -91,7 +91,7 @@
             "can": [
               "create",
               "read",
-              "co-delete"
+              "delete"
             ]
           },
           {
@@ -113,7 +113,12 @@
             "who": "recipient",
             "of": "route/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -130,7 +135,12 @@
             "who": "recipient",
             "of": "route/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

@@ -69,7 +69,7 @@
             "can": [
               "create",
               "read",
-              "co-delete"
+              "delete"
             ]
           },
           {
@@ -90,8 +90,8 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete"
+              "update",
+              "delete"
             ]
           },
           {
@@ -113,7 +113,12 @@
             "who": "recipient",
             "of": "pet/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -130,7 +135,12 @@
             "who": "recipient",
             "of": "pet/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

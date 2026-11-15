@@ -43,6 +43,13 @@
         "application/json"
       ],
       "encryptionRequired": false
+    },
+    "attendee": {
+      "schema": "https://enbox.id/modules/events/v1/schemas/attendee",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
     }
   },
   "structure": {
@@ -56,6 +63,12 @@
           "can": [
             "read",
             "co-update"
+          ]
+        },
+        {
+          "role": "event/attendee",
+          "can": [
+            "read"
           ]
         },
         {
@@ -77,6 +90,12 @@
               "read",
               "co-update",
               "co-delete"
+            ]
+          },
+          {
+            "role": "event/attendee",
+            "can": [
+              "read"
             ]
           },
           {
@@ -102,12 +121,18 @@
             ]
           },
           {
-            "role": "event/viewer",
+            "role": "event/attendee",
             "can": [
               "create",
               "read",
               "update",
               "delete"
+            ]
+          },
+          {
+            "role": "event/viewer",
+            "can": [
+              "read"
             ]
           }
         ]
@@ -123,7 +148,12 @@
             "who": "recipient",
             "of": "event/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -140,7 +170,34 @@
             "who": "recipient",
             "of": "event/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "attendee": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "event/attendee",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

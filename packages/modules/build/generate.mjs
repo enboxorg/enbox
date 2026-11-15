@@ -40,6 +40,9 @@ for (const id of directories) {
   if (catalog.id !== id || catalog.moduleUri !== definition.module || !/^[A-Z][A-Za-z0-9]*Module$/.test(catalog.exportName)) {
     throw new Error(`Module metadata does not identify its definition: ${id}`);
   }
+  if (JSON.stringify(catalog.dependencies) !== JSON.stringify(definition.uses ?? {})) {
+    throw new Error(`Module metadata has different dependencies: ${id}`);
+  }
   if (inputs.has(definition.module)) {
     throw new Error(`Duplicate module URI: ${definition.module}`);
   }
@@ -71,6 +74,47 @@ function localPaths(structure, prefix = '') {
     const path = prefix === '' ? key : `${prefix}/${key}`;
     return [...(rule.$ref === undefined ? [path] : []), ...localPaths(rule, path)];
   });
+}
+
+function ruleAt(definition, path) {
+  return path.split('/').reduce((rule, segment) => rule[segment], definition.structure);
+}
+
+function codecOverrides(source, catalog, name) {
+  const overrides = catalog.records.filter(record => record.codec !== undefined);
+  if (overrides.length === 0) { return source; }
+  const syntaxTree = ts.createSourceFile(`${catalog.id}.ts`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const replacements = [];
+  for (const record of overrides) {
+    const { kind, formatId, maxContentBytes } = record.codec;
+    if (kind !== 'file-envelope' || !/^[\x21-\x7e]{6}$/.test(formatId) || !Number.isSafeInteger(maxContentBytes) || maxContentBytes < 0) {
+      throw new Error(`Invalid file-envelope codec: ${catalog.id}/${record.path}`);
+    }
+    const typeName = record.type[0].toUpperCase() + record.type.slice(1) + 'Data';
+    const type = syntaxTree.statements.find(statement => ts.isTypeAliasDeclaration(statement) && statement.name.text === typeName);
+    const declaration = syntaxTree.statements.filter(ts.isVariableStatement).flatMap(statement => [...statement.declarationList.declarations])
+      .find(declaration => declaration.name.getText(syntaxTree) === `${name}Codecs`);
+    const initializer = declaration?.initializer;
+    const object = initializer !== undefined && ts.isAsExpression(initializer) ? initializer.expression : initializer;
+    const codec = object?.properties?.find(property => property.name?.getText(syntaxTree) === record.type);
+    if (type?.type.getText(syntaxTree) !== 'Uint8Array' || codec?.initializer?.getText(syntaxTree) !== 'recordCodecs.bytes()') {
+      throw new Error(`File-envelope override must target a binary codec: ${catalog.id}/${record.path}`);
+    }
+    replacements.push({ start: type.type.getStart(syntaxTree), end: type.type.end, text: 'FileEnvelopeData' });
+    replacements.push({ start: codec.initializer.getStart(syntaxTree), end: codec.initializer.end,
+      text: `recordCodecs.fileEnvelope(${JSON.stringify({ formatId, maxContentBytes })})` });
+  }
+  for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+    source = source.slice(0, replacement.start) + replacement.text + source.slice(replacement.end);
+  }
+  return `import type { FileEnvelopeData } from '@enbox/api';\n${source}`;
+}
+
+function actionDescription(action) {
+  const actor = action.role === undefined
+    ? action.who === 'anyone' ? 'anyone' : `${action.who}${action.of === undefined ? ' of this record' : ` of ${action.of}`}`
+    : `role ${action.role}`;
+  return `${actor}: ${action.can.join(', ')}`;
 }
 
 async function typescript(source, filePath) {
@@ -139,6 +183,15 @@ for (const input of inputs.values()) {
   }
   const schemas = {};
   for (const record of catalog.records) {
+    const type = definition.types[record.type];
+    const rule = ruleAt(definition, record.path);
+    if (record.type !== record.path.split('/').at(-1) ||
+        record.encryptionRequired !== (type.encryptionRequired ?? false) ||
+        record.role !== (rule.$role ?? false) || record.immutable !== (rule.$immutable ?? false) ||
+        record.singleton !== (rule.$recordLimit?.max === 1) ||
+        JSON.stringify(record.dataFormats) !== JSON.stringify(type.dataFormats) || record.schema !== type.schema) {
+      throw new Error(`Record metadata disagrees with the definition: ${id}/${record.path}`);
+    }
     if (record.schemaFile !== undefined) {
       const schemaName = record.type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
       if (record.schemaFile !== `schemas/${schemaName}.json`) {
@@ -156,17 +209,21 @@ for (const input of inputs.values()) {
     moduleName: name,
     dependencies: dependenciesFor(input),
   });
-  const records = catalog.records.map(({ schema, schemaFile, ...record }) => ({ ...record, ...(schema === undefined ? {} : { schemaUri: schema }) }));
+  const records = catalog.records.map(({ schema, schemaFile, ...record }) => {
+    const rule = ruleAt(definition, record.path);
+    return { ...record, ...(schema === undefined ? {} : { schemaUri: schema }),
+      squashable: rule.$squash ?? false, maxBytes: rule.$size?.max, actions: rule.$actions ?? [] };
+  });
   const metadata = {
     id, name: catalog.name, category: catalog.category, description: catalog.description,
     uri: definition.module, exportName: catalog.exportName, status: catalog.status,
-    captureExamples: catalog.captureExamples, dependencies: definition.uses ?? {},
+    captureExamples: catalog.captureExamples, notes: catalog.notes ?? [], dependencies: definition.uses ?? {},
   };
-  let source = `import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';\n${code}\n`;
+  let source = `import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';\n${codecOverrides(code, catalog, name)}\n`;
   source += `export const ${name}Schemas: Readonly<Record<string, PayloadSchema>> = ${JSON.stringify(schemas, null, 2)};\n`;
   source += `export const ${name}Catalog: ModuleCatalogEntry = {\n...${JSON.stringify(metadata, null, 2)},\n`;
   source += `definition: ${name}Definition,\nrecords: [\n`;
-  source += records.map(record => `{ ...${JSON.stringify(record)}, ${record.schemaUri === undefined ? '' : `schema: ${name}Schemas[${JSON.stringify(record.type)}],`} }`).join(',\n');
+  source += records.map(record => `{ ...${JSON.stringify(record)}, ${schemas[record.type] === undefined ? '' : `schema: ${name}Schemas[${JSON.stringify(record.type)}],`} }`).join(',\n');
   source += `\n],\nexamples: ${JSON.stringify(examples, null, 2)}\n};\n`;
   const generatedPath = join(generatedRoot, `${id}.ts`);
   expected.set(generatedPath, await typescript(source, generatedPath));
@@ -186,7 +243,8 @@ for (const input of inputs.values()) {
   index.push({ id, name: catalog.name, category: catalog.category, moduleUri: definition.module,
     definition: `${id}/definition.json`, catalog: `${id}/catalog.json`, examples: `${id}/examples.json` });
 
-  const rows = catalog.records.map(record => `| \`${record.path}\` | ${record.schemaFile ? `[JSON Schema](${record.schemaFile})` : record.dataFormats.join(', ')} | ${record.encryptionRequired ? 'Encrypted' : 'Plaintext'} | ${record.role ? 'Membership' : record.immutable ? 'Immutable' : 'Mutable'} |`);
+  const rows = catalog.records.map(record => `| \`${record.path}\` | ${record.schemaFile ? `[JSON Schema](${record.schemaFile})` : record.codec?.kind ?? record.dataFormats.join(', ')} | ${record.encryptionRequired ? 'Encrypted' : 'Plaintext'} | ${record.role ? 'Membership' : record.immutable ? 'Immutable' : 'Mutable'} |`);
+  const actionRows = records.map(record => `| \`${record.path}\` | ${record.actions.length === 0 ? 'Owner only' : record.actions.map(actionDescription).join('<br>')} |`);
   const providerLines = Object.entries(definition.uses ?? {}).map(([alias, uri]) => {
     const provider = inputs.get(uri);
     return `- \`${alias}\`: [${provider.catalog.name}](../${provider.id}/README.md) — \`${uri}\``;
@@ -205,10 +263,15 @@ for (const input of inputs.values()) {
     `## Dependencies and ownership\n\n${providerLines.length ? providerLines.join('\n') + '\n\nOnly concrete local child paths are writable through this module; attachment aliases remain owned by their providers.\n' : 'This module has no structural module dependencies. Payload links retain their targets\' ownership and permissions.\n'}\n` +
     `The definition's \`published\` flag describes definition discovery. Record access is governed by the definition's explicit actions. ` +
     `Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is \`{}\`. ` +
-    `Without assigned roles or grants, private paths remain owner-only. An editor can change shared content; a viewer can read the paths explicitly granting that role. ` +
-    `Record-specific action lists remain authoritative.\n\n` +
+    `Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.\n\n` +
+    `## Actions\n\nThe owner retains tenant authority. These rules describe additional authority. ` +
+    `\`update\`, \`delete\`, and \`prune\` act on the signer's own authored records; their \`co-\` variants allow acting on other authors' records. ` +
+    `A \`who: recipient\` rule is scoped to that record's recipient: \`co-delete\` on a role assignment allows self-removal, never removal of another recipient. ` +
+    `Self-removal uses the actor rule without invoking \`moduleRole\`. Viewers are read-only apart from leaving their own membership.\n\n` +
+    `| Path | Additional authority |\n| --- | --- |\n${actionRows.join('\n')}\n\n` +
     `Immutable records reject updates. A singleton uses \`$recordLimit\` projection semantics; it does not reject every competing create. ` +
     `Pruning follows actual descendants, including composed descendants; data links do not cascade.\n\n` +
+    ((catalog.notes ?? []).length === 0 ? '' : `## Contract notes\n\n${catalog.notes.map(note => `- ${note}`).join('\n')}\n\n`) +
     `## Use\n\nStart with an authenticated Enbox session and include this module in the application's module manifest. ` +
     `Dependency artifacts are carried by the typed module and installed before consumers.\n${parentNote}\n` +
     '```ts\n' + `import { ${name}Module } from '@enbox/modules/${id}';\n\n${usage}\n` + '```\n\n' +

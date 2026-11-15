@@ -91,5 +91,10 @@
       "immutable": true,
       "singleton": false
     }
+  ],
+  "notes": [
+    "Messages and reactions are authored contributions. Editors create contributions and manage their own mutable messages; viewers only read. All signed authorship comes from the DWN record descriptor.",
+    "Conversation owners control the shared context and role roster; member access never permits pruning the conversation or another writer's history.",
+    "A message author may delete their message without pruning. Existing reactions remain separate records; only the owner can prune the conversation or message subtree."
   ]
 }

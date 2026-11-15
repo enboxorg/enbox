@@ -1,30 +1,22 @@
 import type { EnboxTestContext } from '@enbox/api/testing';
+import type { ModuleCatalogEntry } from '../src/catalog-types.js';
 import type { Record as DwnRecord, TypedModule } from '@enbox/api';
-import type { ModuleCatalogEntry, ModuleRecordExample } from '../src/catalog-types.js';
 
+import { BelongingsModule } from '../src/belongings.js';
 import { createEnboxTestContext } from '@enbox/api/testing';
 import { defineApplicationManifest } from '@enbox/api';
 import { DidJwk } from '@enbox/dids';
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { DataStream, DwnMethodName, Encoder, RecordsDelete, RecordsRead, RecordsWrite } from '@enbox/dwn-sdk-js';
-
-import { BelongingsModule } from '../src/belongings.js';
 import { FilesModule } from '../src/files.js';
 import { GroceriesModule } from '../src/groceries.js';
 import { IdentityDocumentsModule } from '../src/identity-documents.js';
 import { WarrantiesModule } from '../src/warranties.js';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { DataStream, DwnMethodName, Encoder, RecordsDelete, RecordsRead, RecordsWrite } from '@enbox/dwn-sdk-js';
+import { exampleValue, expectExample } from './utils/record-examples.js';
 import { moduleCatalog, standardModules } from '../src/catalog.js';
 
 const modulesByUri = new Map(standardModules.map((module): [string, TypedModule] => [module.definition.module, module]));
 const entriesByUri = new Map(moduleCatalog.map((entry): [string, ModuleCatalogEntry] => [entry.uri, entry]));
-
-function valueFor(example: ModuleRecordExample): unknown {
-  if (example.encoding === 'json') {
-    return structuredClone(example.data);
-  }
-  const bytes = Uint8Array.from(Buffer.from(example.data as string, 'base64'));
-  return example.dataFormat === undefined ? bytes : new Blob([bytes], { type: example.dataFormat });
-}
 
 describe('standard modules on a real DWN', () => {
   let context: EnboxTestContext;
@@ -56,7 +48,7 @@ describe('standard modules on a real DWN', () => {
         : await ensureRecord(node.expectedParent.owningModuleUri, node.expectedParent.owningModulePath);
     const example = entriesByUri.get(uri)!.examples.find((value): boolean => value.path === path)!;
     const record = await api.records.create(path, {
-      data            : valueFor(example),
+      data            : exampleValue(example),
       parentContextId : parent?.contextId,
       tags            : example.tags,
     });
@@ -75,13 +67,8 @@ describe('standard modules on a real DWN', () => {
         expect('encryption' in message && message.encryption !== undefined).toBe(contract.encryptionRequired);
         const loaded = await api.records.read(contract.path, record.id);
         expect(loaded).toBeDefined();
-        const expected = valueFor(entry.examples.find((example): boolean => example.path === contract.path)!);
-        const actual = await loaded!.value();
-        if (actual instanceof Blob && expected instanceof Blob) {
-          expect(await actual.bytes()).toEqual(await expected.bytes());
-        } else {
-          expect(actual).toEqual(expected);
-        }
+        const example = entry.examples.find((example): boolean => example.path === contract.path)!;
+        await expectExample(await loaded!.value(), exampleValue(example), example);
       }
     }, 30_000);
   }
@@ -105,6 +92,84 @@ describe('standard modules on a real DWN', () => {
         });
         const reply = await context.enbox.agent.dwn.node.processMessage(context.enbox.connectedDid, read.message);
         expect(reply.status.code, `${entry.id}/${contract.path}`).toBe(401);
+      }
+    }
+  }, 30_000);
+
+  it('scopes every membership leave to its recipient and every viewer to read-only access', async () => {
+    const owner = (await context.enbox.agent.did.get({ didUri: context.enbox.connectedDid }))!;
+    const ownerSigner = await owner.getSigner();
+    const first = await DidJwk.create();
+    const second = await DidJwk.create();
+    const firstSigner = await first.getSigner();
+    const ownerSignature = {
+      algorithm : ownerSigner.algorithm,
+      keyId     : ownerSigner.keyId,
+      sign      : (data: Uint8Array): Promise<Uint8Array> => ownerSigner.sign({ data }),
+    };
+    const firstSignature = {
+      algorithm : firstSigner.algorithm,
+      keyId     : firstSigner.keyId,
+      sign      : (data: Uint8Array): Promise<Uint8Array> => firstSigner.sign({ data }),
+    };
+    const dwn = context.enbox.agent.dwn.node;
+    for (const entry of moduleCatalog) {
+      for (const membership of entry.records.filter((record): boolean => record.role)) {
+        const node = context.enbox.using(modulesByUri.get(entry.uri)!).graph.nodesByDeclaredPath.get(membership.path)!;
+        const parent = await ensureRecord(node.expectedParent!.owningModuleUri, node.expectedParent!.owningModulePath);
+        const assignments = [];
+        for (const recipient of [first.uri, second.uri]) {
+          const data = Encoder.objectToBytes({});
+          const assignment = await RecordsWrite.create({
+            module          : entry.uri,
+            modulePath      : membership.path,
+            schema          : membership.schemaUri,
+            parentContextId : parent.contextId,
+            recipient,
+            dataFormat      : 'application/json',
+            data,
+            signer          : ownerSignature,
+          });
+          const reply = await dwn.processMessage(owner.uri, assignment.message, { dataStream: DataStream.fromBytes(data) });
+          expect(reply.status.code, `${entry.id}/${membership.path}: ${reply.status.detail}`).toBe(202);
+          assignments.push(assignment.message);
+        }
+        for (const moduleRole of [undefined, membership.path]) {
+          const request = await RecordsDelete.create({ recordId: assignments[1].recordId, signer: firstSignature, moduleRole });
+          expect((await dwn.processMessage(owner.uri, request.message)).status.code, `${entry.id}/${membership.path}`).toBe(401);
+        }
+        if (membership.type === 'viewer') {
+          for (const consumer of moduleCatalog) {
+            for (const contract of consumer.records) {
+              const action = contract.actions.find((rule): boolean => {
+                if (rule.role === undefined) {
+                  return false;
+                }
+                const [alias, path] = rule.role.includes(':') ? rule.role.split(':') : [undefined, rule.role];
+                return path === membership.path && (alias === undefined ? consumer.uri : consumer.dependencies[alias]) === entry.uri;
+              });
+              if (action === undefined) {
+                continue;
+              }
+              const target = contract.role
+                ? undefined // Notebook writer rosters are covered by the notebook integration test.
+                : await ensureRecord(consumer.uri, contract.path);
+              if (target === undefined) {
+                continue;
+              }
+              const read = await RecordsRead.create({ filter: { recordId: target.id }, signer: firstSignature, moduleRole: action.role });
+              expect((await dwn.processMessage(owner.uri, read.message)).status.code, `${consumer.id}/${contract.path}`).toBe(200);
+              for (const prune of [false, true]) {
+                const remove = await RecordsDelete.create({ recordId: target.id, signer: firstSignature, moduleRole: action.role, prune });
+                expect((await dwn.processMessage(owner.uri, remove.message)).status.code, `${consumer.id}/${contract.path}`).toBe(401);
+              }
+            }
+          }
+        }
+        const leave = await RecordsDelete.create({ recordId: assignments[0].recordId, signer: firstSignature });
+        expect((await dwn.processMessage(owner.uri, leave.message)).status.code, `${entry.id}/${membership.path}`).toBe(202);
+        const revoke = await RecordsDelete.create({ recordId: assignments[1].recordId, signer: ownerSignature });
+        expect((await dwn.processMessage(owner.uri, revoke.message)).status.code).toBe(202);
       }
     }
   }, 30_000);

@@ -325,13 +325,22 @@
       "examples": "music/examples.json"
     },
     {
-      "id": "notes",
-      "name": "Notes",
+      "id": "notebook",
+      "name": "Notebook",
       "category": "General personal records",
-      "moduleUri": "https://enbox.id/modules/notes/v1",
-      "definition": "notes/definition.json",
-      "catalog": "notes/catalog.json",
-      "examples": "notes/examples.json"
+      "moduleUri": "https://enbox.id/modules/notebook/v1",
+      "definition": "notebook/definition.json",
+      "catalog": "notebook/catalog.json",
+      "examples": "notebook/examples.json"
+    },
+    {
+      "id": "notebook-realtime",
+      "name": "Notebook Realtime",
+      "category": "General personal records",
+      "moduleUri": "https://enbox.id/modules/notebook-realtime/v1",
+      "definition": "notebook-realtime/definition.json",
+      "catalog": "notebook-realtime/catalog.json",
+      "examples": "notebook-realtime/examples.json"
     },
     {
       "id": "online-accounts",

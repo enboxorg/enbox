@@ -256,7 +256,7 @@ export const StockWatchlistsDefinition = {
         $actions: [
           {
             role : 'watchlist/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete', 'co-prune'],
+            can  : ['create', 'read', 'co-update'],
           },
           {
             role : 'watchlist/viewer',
@@ -270,7 +270,7 @@ export const StockWatchlistsDefinition = {
           $actions: [
             {
               role : 'watchlist/editor',
-              can  : ['create', 'read', 'co-update', 'co-delete'],
+              can  : ['create', 'read', 'update', 'delete'],
             },
             {
               role : 'watchlist/viewer',
@@ -289,7 +289,11 @@ export const StockWatchlistsDefinition = {
           {
             who : 'recipient',
             of  : 'watchlist/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -303,7 +307,11 @@ export const StockWatchlistsDefinition = {
           {
             who : 'recipient',
             of  : 'watchlist/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -929,6 +937,7 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
     exportName      : 'StockWatchlistsModule',
     status          : 'experimental',
     captureExamples : ['Add NVDA to my watchlist.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : StockWatchlistsDefinition,
@@ -943,6 +952,12 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/stock-watchlists/v1/schemas/watchlist',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'watchlist/editor', can: ['read', 'co-update'] },
+          { role: 'watchlist/viewer', can: ['read'] },
+        ],
       },
       schema: StockWatchlistsSchemas['watchlist'],
     },
@@ -956,6 +971,12 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/stock-watchlists/v1/schemas/instrument',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'watchlist/editor', can: ['create', 'read', 'co-update'] },
+          { role: 'watchlist/viewer', can: ['read'] },
+        ],
       },
       schema: StockWatchlistsSchemas['instrument'],
     },
@@ -969,6 +990,12 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/stock-watchlists/v1/schemas/note',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'watchlist/editor', can: ['create', 'read', 'update', 'delete'] },
+          { role: 'watchlist/viewer', can: ['read'] },
+        ],
       },
       schema: StockWatchlistsSchemas['note'],
     },
@@ -982,6 +1009,12 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/stock-watchlists/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'watchlist/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: StockWatchlistsSchemas['editor'],
     },
@@ -995,6 +1028,12 @@ export const StockWatchlistsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/stock-watchlists/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'watchlist/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: StockWatchlistsSchemas['viewer'],
     },

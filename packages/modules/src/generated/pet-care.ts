@@ -281,7 +281,7 @@ export const PetCareDefinition = {
         $actions   : [
           {
             role : 'pet/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'pet/viewer',
@@ -296,7 +296,7 @@ export const PetCareDefinition = {
         $actions: [
           {
             role : 'pet/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete'],
+            can  : ['create', 'read', 'update', 'delete'],
           },
           {
             role : 'pet/viewer',
@@ -314,7 +314,11 @@ export const PetCareDefinition = {
           {
             who : 'recipient',
             of  : 'pet/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -328,7 +332,11 @@ export const PetCareDefinition = {
           {
             who : 'recipient',
             of  : 'pet/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -996,6 +1004,7 @@ export const PetCareCatalog: ModuleCatalogEntry = {
     exportName      : 'PetCareModule',
     status          : 'experimental',
     captureExamples : ['Luna has a vet appointment next Tuesday.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : PetCareDefinition,
@@ -1010,6 +1019,12 @@ export const PetCareCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pet-care/v1/schemas/pet',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pet/editor', can: ['read', 'co-update'] },
+          { role: 'pet/viewer', can: ['read'] },
+        ],
       },
       schema: PetCareSchemas['pet'],
     },
@@ -1023,6 +1038,12 @@ export const PetCareCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pet-care/v1/schemas/care',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pet/editor', can: ['create', 'read', 'delete'] },
+          { role: 'pet/viewer', can: ['read'] },
+        ],
       },
       schema: PetCareSchemas['care'],
     },
@@ -1036,6 +1057,12 @@ export const PetCareCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pet-care/v1/schemas/vet-record',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pet/editor', can: ['create', 'read', 'update', 'delete'] },
+          { role: 'pet/viewer', can: ['read'] },
+        ],
       },
       schema: PetCareSchemas['vetRecord'],
     },
@@ -1049,6 +1076,12 @@ export const PetCareCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pet-care/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'pet/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PetCareSchemas['editor'],
     },
@@ -1062,6 +1095,12 @@ export const PetCareCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pet-care/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'pet/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PetCareSchemas['viewer'],
     },

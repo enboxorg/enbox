@@ -232,7 +232,7 @@ export const VehiclesDefinition = {
         $actions: [
           {
             role : 'belongings:item/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete', 'co-prune'],
+            can  : ['create', 'read', 'co-update'],
           },
           {
             role : 'belongings:item/viewer',
@@ -247,7 +247,7 @@ export const VehiclesDefinition = {
           $actions   : [
             {
               role : 'belongings:item/editor',
-              can  : ['create', 'read', 'co-delete'],
+              can  : ['create', 'read', 'delete'],
             },
             {
               role : 'belongings:item/viewer',
@@ -263,7 +263,7 @@ export const VehiclesDefinition = {
           $actions   : [
             {
               role : 'belongings:item/editor',
-              can  : ['create', 'read', 'co-delete'],
+              can  : ['create', 'read', 'delete'],
             },
             {
               role : 'belongings:item/viewer',
@@ -882,6 +882,7 @@ export const VehiclesCatalog: ModuleCatalogEntry = {
     exportName      : 'VehiclesModule',
     status          : 'experimental',
     captureExamples : ['The car odometer is at 42,000 miles.'],
+    notes           : [],
     dependencies    : {
       belongings: 'https://enbox.id/modules/belongings/v1',
     },
@@ -898,6 +899,12 @@ export const VehiclesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/vehicles/v1/schemas/vehicle',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: VehiclesSchemas['vehicle'],
     },
@@ -911,6 +918,12 @@ export const VehiclesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/vehicles/v1/schemas/odometer',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: VehiclesSchemas['odometer'],
     },
@@ -924,6 +937,12 @@ export const VehiclesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/vehicles/v1/schemas/energy',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: VehiclesSchemas['energy'],
     },

@@ -1,0 +1,20 @@
+[
+  {
+    "path": "page/live",
+    "encoding": "json",
+    "data": {
+      "transport": "nostr",
+      "endpoint": "wss://relay.example.com",
+      "topic": "demo-page-topic",
+      "topicKey": "ZGVtby1vbmx5LW5vdC1hLXJlYWwtc2VjcmV0",
+      "peerKey": "demo-owner-peer"
+    }
+  },
+  {
+    "path": "page/live/session",
+    "encoding": "json",
+    "data": {
+      "peerKey": "demo-editor-peer"
+    }
+  }
+]

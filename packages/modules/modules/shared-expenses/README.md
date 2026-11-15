@@ -24,9 +24,26 @@ Import `SharedExpensesModule`, `SharedExpensesDefinition`, `SharedExpensesCodecs
 
 This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
 
-The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. An editor can change shared content; a viewer can read the paths explicitly granting that role. Record-specific action lists remain authoritative.
+The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
+
+## Actions
+
+The owner retains tenant authority. These rules describe additional authority. `update`, `delete`, and `prune` act on the signer's own authored records; their `co-` variants allow acting on other authors' records. A `who: recipient` rule is scoped to that record's recipient: `co-delete` on a role assignment allows self-removal, never removal of another recipient. Self-removal uses the actor rule without invoking `moduleRole`. Viewers are read-only apart from leaving their own membership.
+
+| Path | Additional authority |
+| --- | --- |
+| `group` | role group/editor: read<br>role group/viewer: read |
+| `group/expense` | role group/editor: create, read, update, delete<br>role group/viewer: read |
+| `group/settlement` | role group/editor: create, read, delete<br>role group/viewer: read |
+| `group/editor` | recipient of group/editor: read<br>recipient of this record: co-delete |
+| `group/viewer` | recipient of group/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- The owner maintains the group participant roster. Editors record, update, and delete expenses they authored; settlements are immutable and only their author or the owner may delete them.
+- Payer and participant IDs are claims within an authored expense, not signatures by those participants. Applications reconcile shares, currencies, totals, and participant membership before treating a record as an agreed balance.
 
 ## Use
 

@@ -136,7 +136,7 @@ export const FilesDefinition = {
         $actions   : [
           {
             role : 'file/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'file/viewer',
@@ -154,7 +154,11 @@ export const FilesDefinition = {
           {
             who : 'recipient',
             of  : 'file/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -168,7 +172,11 @@ export const FilesDefinition = {
           {
             who : 'recipient',
             of  : 'file/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -417,7 +425,12 @@ export const FilesCatalog: ModuleCatalogEntry = {
     exportName      : 'FilesModule',
     status          : 'experimental',
     captureExamples : ['Keep this PDF with my other documents.'],
-    dependencies    : {},
+    notes           : [
+      'A viewer may read file metadata and content, or leave their own viewer assignment. Role recipients cannot remove other members; the owner controls membership.',
+      'Editors may update shared file metadata, append immutable content revisions, and delete only their own revisions. They cannot delete or prune the file context and thereby erase other writers\' revisions.',
+      'currentContent is a link to the selected file/content revision. Clients verify the target type and parent context when resolving it; JSON Schema validates the link shape, not the existence or authority of its target.',
+    ],
+    dependencies: {},
   },
   definition : FilesDefinition,
   records    : [
@@ -431,6 +444,12 @@ export const FilesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/files/v1/schemas/file',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'file/editor', can: ['read', 'co-update'] },
+          { role: 'file/viewer', can: ['read'] },
+        ],
       },
       schema: FilesSchemas['file'],
     },
@@ -443,6 +462,12 @@ export const FilesCatalog: ModuleCatalogEntry = {
         role               : false,
         immutable          : true,
         singleton          : false,
+        squashable         : false,
+        maxBytes           : 104857600,
+        actions            : [
+          { role: 'file/editor', can: ['create', 'read', 'delete'] },
+          { role: 'file/viewer', can: ['read'] },
+        ],
       },
     },
     {
@@ -455,6 +480,12 @@ export const FilesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/files/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'file/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: FilesSchemas['editor'],
     },
@@ -468,6 +499,12 @@ export const FilesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/files/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'file/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: FilesSchemas['viewer'],
     },

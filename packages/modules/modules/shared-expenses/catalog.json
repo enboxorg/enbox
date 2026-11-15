@@ -9,7 +9,7 @@
   "definitionFile": "definition.json",
   "examplesFile": "examples.json",
   "captureExamples": [
-    "Split the £60 dinner equally between the three of us."
+    "Split the \u00a360 dinner equally between the three of us."
   ],
   "dependencies": {},
   "records": [
@@ -78,5 +78,9 @@
       "immutable": true,
       "singleton": false
     }
+  ],
+  "notes": [
+    "The owner maintains the group participant roster. Editors record, update, and delete expenses they authored; settlements are immutable and only their author or the owner may delete them.",
+    "Payer and participant IDs are claims within an authored expense, not signatures by those participants. Applications reconcile shares, currencies, totals, and participant membership before treating a record as an agreed balance."
   ]
 }

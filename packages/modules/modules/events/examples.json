@@ -49,5 +49,10 @@
     "path": "event/viewer",
     "encoding": "json",
     "data": {}
+  },
+  {
+    "path": "event/attendee",
+    "encoding": "json",
+    "data": {}
   }
 ]

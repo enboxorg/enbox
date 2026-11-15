@@ -56,7 +56,7 @@
             "can": [
               "create",
               "read",
-              "co-delete"
+              "delete"
             ]
           },
           {

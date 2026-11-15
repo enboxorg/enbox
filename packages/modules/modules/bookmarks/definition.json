@@ -69,7 +69,12 @@
             "who": "recipient",
             "of": "bookmark/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -86,7 +91,12 @@
             "who": "recipient",
             "of": "bookmark/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -145,7 +155,12 @@
             "who": "recipient",
             "of": "folder/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -162,7 +177,12 @@
             "who": "recipient",
             "of": "folder/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

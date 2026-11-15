@@ -469,7 +469,7 @@ export const RecipesDefinition = {
         $actions: [
           {
             role : 'recipe/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete'],
+            can  : ['create', 'read', 'update', 'delete'],
           },
           {
             role : 'recipe/viewer',
@@ -487,7 +487,11 @@ export const RecipesDefinition = {
           {
             who : 'recipient',
             of  : 'recipe/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -501,7 +505,11 @@ export const RecipesDefinition = {
           {
             who : 'recipient',
             of  : 'recipe/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -1045,6 +1053,7 @@ export const RecipesCatalog: ModuleCatalogEntry = {
     exportName      : 'RecipesModule',
     status          : 'experimental',
     captureExamples : ['Save this lentil soup recipe; it serves four.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : RecipesDefinition,
@@ -1059,6 +1068,12 @@ export const RecipesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/recipes/v1/schemas/recipe',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'recipe/editor', can: ['read', 'co-update'] },
+          { role: 'recipe/viewer', can: ['read'] },
+        ],
       },
       schema: RecipesSchemas['recipe'],
     },
@@ -1072,6 +1087,12 @@ export const RecipesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/recipes/v1/schemas/variation',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'recipe/editor', can: ['create', 'read', 'update', 'delete'] },
+          { role: 'recipe/viewer', can: ['read'] },
+        ],
       },
       schema: RecipesSchemas['variation'],
     },
@@ -1085,6 +1106,12 @@ export const RecipesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/recipes/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'recipe/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: RecipesSchemas['editor'],
     },
@@ -1098,6 +1125,12 @@ export const RecipesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/recipes/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'recipe/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: RecipesSchemas['viewer'],
     },

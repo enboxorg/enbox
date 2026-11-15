@@ -40,9 +40,7 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete",
-              "co-prune"
+              "co-update"
             ]
           },
           {
@@ -63,7 +61,7 @@
               "can": [
                 "create",
                 "read",
-                "co-delete"
+                "delete"
               ]
             },
             {
@@ -85,7 +83,7 @@
               "can": [
                 "create",
                 "read",
-                "co-delete"
+                "delete"
               ]
             },
             {

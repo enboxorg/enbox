@@ -289,7 +289,7 @@ export const ConversationsDefinition = {
         $actions: [
           {
             role : 'conversation/editor',
-            can  : ['create', 'read', 'update', 'delete', 'prune'],
+            can  : ['create', 'read', 'update', 'delete'],
           },
           {
             role : 'conversation/viewer',
@@ -308,7 +308,7 @@ export const ConversationsDefinition = {
             },
             {
               role : 'conversation/viewer',
-              can  : ['create', 'read', 'delete'],
+              can  : ['read'],
             },
           ],
         },
@@ -323,7 +323,11 @@ export const ConversationsDefinition = {
           {
             who : 'recipient',
             of  : 'conversation/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -337,7 +341,11 @@ export const ConversationsDefinition = {
           {
             who : 'recipient',
             of  : 'conversation/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -1073,7 +1081,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
     exportName      : 'ConversationsModule',
     status          : 'experimental',
     captureExamples : ['Keep the conversation about the kitchen renovation.'],
-    dependencies    : {},
+    notes           : [
+      'Messages and reactions are authored contributions. Editors create contributions and manage their own mutable messages; viewers only read. All signed authorship comes from the DWN record descriptor.',
+      'Conversation owners control the shared context and role roster; member access never permits pruning the conversation or another writer\'s history.',
+      'A message author may delete their message without pruning. Existing reactions remain separate records; only the owner can prune the conversation or message subtree.',
+    ],
+    dependencies: {},
   },
   definition : ConversationsDefinition,
   records    : [
@@ -1087,6 +1100,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/conversation',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'conversation/editor', can: ['read', 'co-update'] },
+          { role: 'conversation/viewer', can: ['read'] },
+        ],
       },
       schema: ConversationsSchemas['conversation'],
     },
@@ -1100,6 +1119,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/message',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'conversation/editor', can: ['create', 'read', 'update', 'delete'] },
+          { role: 'conversation/viewer', can: ['read'] },
+        ],
       },
       schema: ConversationsSchemas['message'],
     },
@@ -1113,6 +1138,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/reaction',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'conversation/editor', can: ['create', 'read', 'delete'] },
+          { role: 'conversation/viewer', can: ['read'] },
+        ],
       },
       schema: ConversationsSchemas['reaction'],
     },
@@ -1126,6 +1157,9 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/state',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [],
       },
       schema: ConversationsSchemas['state'],
     },
@@ -1139,6 +1173,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'conversation/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: ConversationsSchemas['editor'],
     },
@@ -1152,6 +1192,12 @@ export const ConversationsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/conversations/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'conversation/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: ConversationsSchemas['viewer'],
     },

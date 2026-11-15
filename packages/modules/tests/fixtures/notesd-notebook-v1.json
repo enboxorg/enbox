@@ -1,0 +1,313 @@
+{
+  "notebook": {
+    "module": "https://enbox.id/modules/notebook/v1",
+    "published": true,
+    "types": {
+      "notebook": {
+        "schema": "https://enbox.id/schemas/notebook/v1/notebook",
+        "dataFormats": [
+          "application/json"
+        ],
+        "encryptionRequired": true
+      },
+      "page": {
+        "schema": "https://enbox.id/schemas/notebook/v1/page",
+        "dataFormats": [
+          "application/json"
+        ],
+        "encryptionRequired": true
+      },
+      "delta": {
+        "dataFormats": [
+          "application/octet-stream"
+        ],
+        "encryptionRequired": true
+      },
+      "attachment": {
+        "schema": "https://enbox.id/schemas/notebook/v1/attachment",
+        "dataFormats": [
+          "application/octet-stream"
+        ],
+        "encryptionRequired": true
+      },
+      "admin": {
+        "schema": "https://enbox.id/schemas/notebook/v1/admin",
+        "dataFormats": [
+          "application/json"
+        ]
+      },
+      "editor": {
+        "schema": "https://enbox.id/schemas/notebook/v1/editor",
+        "dataFormats": [
+          "application/json"
+        ]
+      },
+      "viewer": {
+        "schema": "https://enbox.id/schemas/notebook/v1/viewer",
+        "dataFormats": [
+          "application/json"
+        ]
+      }
+    },
+    "structure": {
+      "notebook": {
+        "$size": {
+          "max": 65536
+        },
+        "page": {
+          "$size": {
+            "max": 32768
+          },
+          "$actions": [
+            {
+              "role": "notebook/page/admin",
+              "can": [
+                "read"
+              ]
+            },
+            {
+              "role": "notebook/page/editor",
+              "can": [
+                "read"
+              ]
+            },
+            {
+              "role": "notebook/page/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ],
+          "delta": {
+            "$immutable": true,
+            "$squash": true,
+            "$size": {
+              "max": 2097152
+            },
+            "$actions": [
+              {
+                "role": "notebook/page/admin",
+                "can": [
+                  "create",
+                  "squash",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/editor",
+                "can": [
+                  "create",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/viewer",
+                "can": [
+                  "read"
+                ]
+              }
+            ]
+          },
+          "attachment": {
+            "$immutable": true,
+            "$size": {
+              "max": 50004108
+            },
+            "$actions": [
+              {
+                "role": "notebook/page/admin",
+                "can": [
+                  "create",
+                  "delete",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/editor",
+                "can": [
+                  "create",
+                  "delete",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/viewer",
+                "can": [
+                  "read"
+                ]
+              }
+            ]
+          },
+          "admin": {
+            "$role": true,
+            "$immutable": true,
+            "$size": {
+              "max": 2
+            },
+            "$actions": [
+              {
+                "who": "recipient",
+                "can": [
+                  "co-delete"
+                ]
+              },
+              {
+                "role": "notebook/page/admin",
+                "can": [
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/editor",
+                "can": [
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/viewer",
+                "can": [
+                  "read"
+                ]
+              }
+            ]
+          },
+          "editor": {
+            "$role": true,
+            "$immutable": true,
+            "$size": {
+              "max": 2
+            },
+            "$actions": [
+              {
+                "who": "recipient",
+                "can": [
+                  "co-delete"
+                ]
+              },
+              {
+                "role": "notebook/page/admin",
+                "can": [
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/editor",
+                "can": [
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook/page/viewer",
+                "can": [
+                  "read"
+                ]
+              }
+            ]
+          },
+          "viewer": {
+            "$role": true,
+            "$immutable": true,
+            "$size": {
+              "max": 2
+            },
+            "$actions": [
+              {
+                "who": "recipient",
+                "can": [
+                  "co-delete"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "realtime": {
+    "module": "https://enbox.id/modules/notebook-realtime/v1",
+    "published": true,
+    "uses": {
+      "notebook": "https://enbox.id/modules/notebook/v1"
+    },
+    "types": {
+      "live": {
+        "schema": "https://enbox.id/schemas/notebook-realtime/v1/live",
+        "dataFormats": [
+          "application/json"
+        ],
+        "encryptionRequired": true
+      },
+      "session": {
+        "schema": "https://enbox.id/schemas/notebook-realtime/v1/session",
+        "dataFormats": [
+          "application/json"
+        ]
+      }
+    },
+    "structure": {
+      "page": {
+        "$ref": "notebook:notebook/page",
+        "live": {
+          "$recordLimit": {
+            "max": 1
+          },
+          "$size": {
+            "max": 2048
+          },
+          "$actions": [
+            {
+              "role": "notebook:notebook/page/admin",
+              "can": [
+                "read"
+              ]
+            },
+            {
+              "role": "notebook:notebook/page/editor",
+              "can": [
+                "read"
+              ]
+            },
+            {
+              "role": "notebook:notebook/page/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ],
+          "session": {
+            "$immutable": true,
+            "$size": {
+              "max": 1024
+            },
+            "$actions": [
+              {
+                "role": "notebook:notebook/page/admin",
+                "can": [
+                  "create",
+                  "delete",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook:notebook/page/editor",
+                "can": [
+                  "create",
+                  "delete",
+                  "read"
+                ]
+              },
+              {
+                "role": "notebook:notebook/page/viewer",
+                "can": [
+                  "read"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "attachmentMaxBytes": 50004108,
+  "commit": "377645c881b0d1a86710130957cc5d583b249c8f"
+}

@@ -788,7 +788,7 @@ export const PlantsDefinition = {
         $actions   : [
           {
             role : 'plant/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'plant/viewer',
@@ -806,7 +806,11 @@ export const PlantsDefinition = {
           {
             who : 'recipient',
             of  : 'plant/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -820,7 +824,11 @@ export const PlantsDefinition = {
           {
             who : 'recipient',
             of  : 'plant/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -1329,6 +1337,7 @@ export const PlantsCatalog: ModuleCatalogEntry = {
     exportName      : 'PlantsModule',
     status          : 'experimental',
     captureExamples : ['I repotted the monstera this morning.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : PlantsDefinition,
@@ -1343,6 +1352,12 @@ export const PlantsCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/plants/v1/schemas/plant',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'plant/editor', can: ['read', 'co-update'] },
+          { role: 'plant/viewer', can: ['read'] },
+        ],
       },
       schema: PlantsSchemas['plant'],
     },
@@ -1356,6 +1371,12 @@ export const PlantsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/plants/v1/schemas/care',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'plant/editor', can: ['create', 'read', 'delete'] },
+          { role: 'plant/viewer', can: ['read'] },
+        ],
       },
       schema: PlantsSchemas['care'],
     },
@@ -1369,6 +1390,12 @@ export const PlantsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/plants/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'plant/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PlantsSchemas['editor'],
     },
@@ -1382,6 +1409,12 @@ export const PlantsCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/plants/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'plant/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PlantsSchemas['viewer'],
     },

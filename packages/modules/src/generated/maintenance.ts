@@ -605,7 +605,7 @@ export const MaintenanceDefinition = {
         $actions   : [
           {
             role : 'belongings:item/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'belongings:item/viewer',
@@ -1192,6 +1192,7 @@ export const MaintenanceCatalog: ModuleCatalogEntry = {
     exportName      : 'MaintenanceModule',
     status          : 'experimental',
     captureExamples : ['I replaced the air filter today.'],
+    notes           : [],
     dependencies    : {
       belongings: 'https://enbox.id/modules/belongings/v1',
     },
@@ -1208,6 +1209,12 @@ export const MaintenanceCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/maintenance/v1/schemas/plan',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: MaintenanceSchemas['plan'],
     },
@@ -1221,6 +1228,12 @@ export const MaintenanceCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/maintenance/v1/schemas/service',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: MaintenanceSchemas['service'],
     },

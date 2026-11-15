@@ -1,39 +1,17 @@
-import type { ModuleCatalogEntry, ModuleRecordExample } from '../src/catalog-types.js';
-import type { RecordCodec, RecordData, TypedModule } from '@enbox/api';
+import type { ModuleCatalogEntry } from '../src/catalog-types.js';
+import type { RecordCodec, TypedModule } from '@enbox/api';
 
 import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
-import { readFile } from 'node:fs/promises';
 import { RecordValidationError } from '@enbox/api';
 import { resolveTypedModuleGraph } from '@enbox/api/advanced';
 import { describe, expect, it } from 'bun:test';
-
+import { exampleValue, expectExample, recordData } from './utils/record-examples.js';
 import { getModuleCatalogEntry, moduleCatalog, searchModuleCatalog, standardModules } from '../src/catalog.js';
+import { readdir, readFile } from 'node:fs/promises';
 
 const modulesByUri = new Map(standardModules.map((module): [string, TypedModule] => [module.definition.module, module]));
 type CodecMap = globalThis.Record<string, RecordCodec<unknown>>;
-
-/** Real Blob/stream access with the same consumption contract as record.data. */
-function recordData(blob: Blob): RecordData {
-  const stream = async (): Promise<ReadableStream> => blob.stream();
-  return {
-    stream,
-    blob  : async (): Promise<Blob> => blob,
-    bytes : async (): Promise<Uint8Array> => new Uint8Array(await blob.arrayBuffer()),
-    json  : async (): Promise<unknown> => JSON.parse(await blob.text()),
-    text  : async (): Promise<string> => blob.text(),
-    then  : (onFulfilled, onRejected): Promise<ReadableStream> => stream().then(onFulfilled, onRejected),
-    catch : (onRejected): Promise<ReadableStream> => stream().catch(onRejected),
-  };
-}
-
-function exampleValue(example: ModuleRecordExample): unknown {
-  if (example.encoding === 'json') {
-    return structuredClone(example.data);
-  }
-  const bytes = Uint8Array.from(Buffer.from(example.data as string, 'base64'));
-  return example.dataFormat === undefined ? bytes : new Blob([bytes], { type: example.dataFormat });
-}
 
 function moduleFor(entry: ModuleCatalogEntry): TypedModule {
   const module = modulesByUri.get(entry.uri);
@@ -44,8 +22,14 @@ function moduleFor(entry: ModuleCatalogEntry): TypedModule {
 }
 
 describe('standard module catalog', () => {
-  it('provides unique identities and searchable domain metadata', () => {
-    expect(moduleCatalog).toHaveLength(67);
+  it('provides unique identities and searchable domain metadata', async () => {
+    const folders = await readdir(new URL('../modules/', import.meta.url), { withFileTypes: true });
+    expect(moduleCatalog.map((entry): string => entry.id).sort()).toEqual(
+      folders
+        .filter((entry): boolean => entry.isDirectory())
+        .map((entry): string => entry.name)
+        .sort(),
+    );
     expect(new Set(moduleCatalog.map((entry): string => entry.id)).size).toBe(moduleCatalog.length);
     expect(new Set(moduleCatalog.map((entry): string => entry.uri)).size).toBe(moduleCatalog.length);
     expect(getModuleCatalogEntry(' GROCERIES ')?.id).toBe('groceries');
@@ -75,11 +59,13 @@ describe('standard module catalog', () => {
     const method = resolution.didDocument!.verificationMethod![0];
     expect(method.id).toBe(header.kid);
     expect(method.publicKeyJwk!.d).toBeUndefined();
-    expect(await Ed25519.verify({
-      key       : method.publicKeyJwk!,
-      data      : new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
-      signature : Uint8Array.from(Buffer.from(parts[2], 'base64url')),
-    })).toBe(true);
+    expect(
+      await Ed25519.verify({
+        key       : method.publicKeyJwk!,
+        data      : new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+        signature : Uint8Array.from(Buffer.from(parts[2], 'base64url')),
+      }),
+    ).toBe(true);
   });
 
   for (const entry of moduleCatalog) {
@@ -101,7 +87,7 @@ describe('standard module catalog', () => {
         expect(entry.examples.map((example): string => example.path).sort()).toEqual(paths);
         expect(Object.keys(module.codecs).sort()).toEqual([...new Set(entry.records.map((record): string => record.type))].sort());
         for (const record of entry.records) {
-          expect(definition.types[record.type].encryptionRequired).toBe(record.encryptionRequired);
+          expect(definition.types[record.type].encryptionRequired ?? false).toBe(record.encryptionRequired);
           if (record.schema !== undefined) {
             const schemaName = record.type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
             const schema = JSON.parse(await readFile(new URL(`schemas/${schemaName}.json`, base), 'utf8'));
@@ -120,12 +106,7 @@ describe('standard module catalog', () => {
           const value = exampleValue(example);
           const encoded = await codecs[type].encode(value, { modulePath: example.path });
           const decoded = await codecs[type].decode(recordData(encoded.data), encoded.dataFormat, { modulePath: example.path });
-          if (decoded instanceof Blob && value instanceof Blob) {
-            expect(decoded.type).toBe(value.type);
-            expect(await decoded.bytes()).toEqual(await value.bytes());
-          } else {
-            expect(decoded).toEqual(value);
-          }
+          await expectExample(decoded, value, example);
         }
       });
 
@@ -186,4 +167,71 @@ describe('domain constraints', () => {
       expect(() => moduleFor(entry).codecs[sample.type].encode(sample.data)).toThrow(RecordValidationError);
     });
   }
+});
+
+describe('schema references and access boundaries', () => {
+  it('resolves embedded references for DID-relative and explicitly located file links', async () => {
+    const files = moduleFor(getModuleCatalogEntry('files')!).codecs.file;
+    const links = [
+      { recordId: 'revision' },
+      { recordId: 'revision', tenantDid: 'did:example:alice', moduleUri: 'https://enbox.id/modules/files/v1', modulePath: 'file/content' },
+    ];
+    for (const currentContent of links) {
+      const value = { name: 'document.txt', mediaType: 'text/plain', currentContent, source: { kind: 'import', record: currentContent } };
+      const encoded = await files.encode(value);
+      expect(await files.decode(recordData(encoded.data), encoded.dataFormat)).toEqual(value);
+    }
+    for (const record of [
+      {},
+      { recordId: 'revision', tenantDid: 'alice' },
+      { recordId: 'revision', moduleUri: 'not a URI' },
+      { recordId: 'revision', unexpected: true },
+    ]) {
+      expect(() => files.encode({ name: 'document.txt', mediaType: 'text/plain', currentContent: record })).toThrow(RecordValidationError);
+      expect(() => files.encode({ name: 'document.txt', mediaType: 'text/plain', source: { kind: 'import', record } })).toThrow(
+        RecordValidationError,
+      );
+    }
+  });
+
+  it('keeps viewer content authority read-only and membership mutation recipient-scoped', () => {
+    for (const entry of moduleCatalog) {
+      for (const record of entry.records) {
+        const label = `${entry.id}/${record.path}`;
+        for (const action of record.actions) {
+          if (action.role?.endsWith('/viewer')) {
+            expect(action.can, label).toEqual(['read']);
+          }
+          if (record.role && action.can.some((can): boolean => can !== 'read')) {
+            expect(action.role, label).toBeUndefined();
+            expect(action.who, label).toBe('recipient');
+            expect(action.of === undefined || action.of === record.path, label).toBe(true);
+            expect(action.can, label).toEqual(['co-delete']);
+          }
+          if (record.immutable && !record.role) {
+            expect(action.can, label).not.toContain('co-delete');
+            expect(action.can, label).not.toContain('co-update');
+          }
+        }
+      }
+    }
+  });
+
+  it('does not let member pruning of an ancestor bypass immutable contribution protections', () => {
+    for (const entry of moduleCatalog) {
+      const graph = resolveTypedModuleGraph(moduleFor(entry));
+      for (const record of entry.records.filter((record): boolean => record.immutable && !record.role)) {
+        let parent = graph.nodesByDeclaredPath.get(record.path)!.expectedParent;
+        while (parent !== undefined) {
+          const provider = getModuleCatalogEntry(parent.owningModuleUri)!;
+          const ancestor = provider.records.find((record): boolean => record.path === parent!.owningModulePath)!;
+          for (const action of ancestor.actions.filter((action): boolean => action.role !== undefined)) {
+            expect(action.can, `${entry.id}/${record.path} through ${provider.id}/${ancestor.path}`).not.toContain('prune');
+            expect(action.can, `${entry.id}/${record.path} through ${provider.id}/${ancestor.path}`).not.toContain('co-prune');
+          }
+          parent = resolveTypedModuleGraph(moduleFor(provider)).nodesByDeclaredPath.get(ancestor.path)!.expectedParent;
+        }
+      }
+    }
+  });
 });

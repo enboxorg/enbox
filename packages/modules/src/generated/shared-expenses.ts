@@ -264,7 +264,7 @@ export const SharedExpensesDefinition = {
       $actions: [
         {
           role : 'group/editor',
-          can  : ['read', 'co-update'],
+          can  : ['read'],
         },
         {
           role : 'group/viewer',
@@ -278,7 +278,7 @@ export const SharedExpensesDefinition = {
         $actions: [
           {
             role : 'group/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete'],
+            can  : ['create', 'read', 'update', 'delete'],
           },
           {
             role : 'group/viewer',
@@ -294,7 +294,7 @@ export const SharedExpensesDefinition = {
         $actions   : [
           {
             role : 'group/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'group/viewer',
@@ -312,7 +312,11 @@ export const SharedExpensesDefinition = {
           {
             who : 'recipient',
             of  : 'group/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -326,7 +330,11 @@ export const SharedExpensesDefinition = {
           {
             who : 'recipient',
             of  : 'group/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -995,7 +1003,11 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
     exportName      : 'SharedExpensesModule',
     status          : 'experimental',
     captureExamples : ['Split the £60 dinner equally between the three of us.'],
-    dependencies    : {},
+    notes           : [
+      'The owner maintains the group participant roster. Editors record, update, and delete expenses they authored; settlements are immutable and only their author or the owner may delete them.',
+      'Payer and participant IDs are claims within an authored expense, not signatures by those participants. Applications reconcile shares, currencies, totals, and participant membership before treating a record as an agreed balance.',
+    ],
+    dependencies: {},
   },
   definition : SharedExpensesDefinition,
   records    : [
@@ -1009,6 +1021,12 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/shared-expenses/v1/schemas/group',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'group/editor', can: ['read'] },
+          { role: 'group/viewer', can: ['read'] },
+        ],
       },
       schema: SharedExpensesSchemas['group'],
     },
@@ -1022,6 +1040,12 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/shared-expenses/v1/schemas/expense',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'group/editor', can: ['create', 'read', 'update', 'delete'] },
+          { role: 'group/viewer', can: ['read'] },
+        ],
       },
       schema: SharedExpensesSchemas['expense'],
     },
@@ -1035,6 +1059,12 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/shared-expenses/v1/schemas/settlement',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'group/editor', can: ['create', 'read', 'delete'] },
+          { role: 'group/viewer', can: ['read'] },
+        ],
       },
       schema: SharedExpensesSchemas['settlement'],
     },
@@ -1048,6 +1078,12 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/shared-expenses/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'group/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: SharedExpensesSchemas['editor'],
     },
@@ -1061,6 +1097,12 @@ export const SharedExpensesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/shared-expenses/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'group/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: SharedExpensesSchemas['viewer'],
     },

@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@enbox/agent": "workspace:*",
+    "@enbox/crdt": "0.3.1",
     "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@typescript-eslint/eslint-plugin": "8.72.0",

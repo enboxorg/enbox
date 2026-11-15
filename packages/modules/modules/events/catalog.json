@@ -90,6 +90,23 @@
       "role": true,
       "immutable": true,
       "singleton": false
+    },
+    {
+      "path": "event/attendee",
+      "type": "attendee",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/events/v1/schemas/attendee",
+      "schemaFile": "schemas/attendee.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
     }
+  ],
+  "notes": [
+    "Editors jointly maintain event details and recurrence exceptions. Attendees submit and manage their own RSVP response records; viewers only read. The signed author identifies the responding principal.",
+    "The owner issues editor, attendee, and viewer assignments. Private state and reminder preferences are owner-local links rather than shared event children."
   ]
 }

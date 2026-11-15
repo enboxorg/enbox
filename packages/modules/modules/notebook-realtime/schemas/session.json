@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/notebook-realtime/v1/session",
+  "title": "SessionData",
+  "description": "NotebookRealtime: page/live/session; compatible with notesd notebook v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "peerKey": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "peerKey"
+  ]
+}

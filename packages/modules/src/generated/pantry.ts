@@ -249,7 +249,7 @@ export const PantryDefinition = {
         $actions: [
           {
             role : 'pantry/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete', 'co-prune'],
+            can  : ['create', 'read', 'co-update'],
           },
           {
             role : 'pantry/viewer',
@@ -264,7 +264,7 @@ export const PantryDefinition = {
           $actions   : [
             {
               role : 'pantry/editor',
-              can  : ['create', 'read', 'co-delete'],
+              can  : ['create', 'read', 'delete'],
             },
             {
               role : 'pantry/viewer',
@@ -283,7 +283,11 @@ export const PantryDefinition = {
           {
             who : 'recipient',
             of  : 'pantry/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -297,7 +301,11 @@ export const PantryDefinition = {
           {
             who : 'recipient',
             of  : 'pantry/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -899,6 +907,7 @@ export const PantryCatalog: ModuleCatalogEntry = {
     exportName      : 'PantryModule',
     status          : 'experimental',
     captureExamples : ['We have three cans of chickpeas in the cupboard.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : PantryDefinition,
@@ -913,6 +922,12 @@ export const PantryCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pantry/v1/schemas/pantry',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pantry/editor', can: ['read', 'co-update'] },
+          { role: 'pantry/viewer', can: ['read'] },
+        ],
       },
       schema: PantrySchemas['pantry'],
     },
@@ -926,6 +941,12 @@ export const PantryCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pantry/v1/schemas/item',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pantry/editor', can: ['create', 'read', 'co-update'] },
+          { role: 'pantry/viewer', can: ['read'] },
+        ],
       },
       schema: PantrySchemas['item'],
     },
@@ -939,6 +960,12 @@ export const PantryCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pantry/v1/schemas/change',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'pantry/editor', can: ['create', 'read', 'delete'] },
+          { role: 'pantry/viewer', can: ['read'] },
+        ],
       },
       schema: PantrySchemas['change'],
     },
@@ -952,6 +979,12 @@ export const PantryCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pantry/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'pantry/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PantrySchemas['editor'],
     },
@@ -965,6 +998,12 @@ export const PantryCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/pantry/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'pantry/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: PantrySchemas['viewer'],
     },

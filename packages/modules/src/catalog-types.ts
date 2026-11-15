@@ -1,4 +1,4 @@
-import type { ModuleDefinition, ModuleTagsDefinition } from '@enbox/dwn-sdk-js';
+import type { ModuleActionRule, ModuleDefinition, ModuleTagsDefinition } from '@enbox/dwn-sdk-js';
 
 /** JSON values exposed by the local schema directory. */
 export type SchemaValue = null | boolean | number | string | readonly SchemaValue[] | { readonly [key: string]: SchemaValue };
@@ -9,7 +9,7 @@ export type PayloadSchema = { readonly [key: string]: SchemaValue };
 /** A complete example for a concrete writable record path. */
 export type ModuleRecordExample = {
   readonly path: string;
-  readonly encoding: 'json' | 'base64';
+  readonly encoding: 'json' | 'base64' | 'file-envelope';
   readonly data: SchemaValue;
   readonly dataFormat?: string;
   readonly tags?: Readonly<Record<string, string>>;
@@ -26,6 +26,10 @@ export type ModuleRecordContract = {
   readonly role: boolean;
   readonly immutable: boolean;
   readonly singleton: boolean;
+  readonly squashable: boolean;
+  readonly maxBytes?: number;
+  readonly actions: readonly ModuleActionRule[];
+  readonly codec?: { readonly kind: 'file-envelope'; readonly formatId: string; readonly maxContentBytes: number };
   readonly tags?: ModuleTagsDefinition;
 };
 
@@ -39,6 +43,7 @@ export type ModuleCatalogEntry = {
   readonly exportName: string;
   readonly status: 'experimental';
   readonly captureExamples: readonly string[];
+  readonly notes: readonly string[];
   readonly dependencies: Readonly<Record<string, string>>;
   readonly definition: ModuleDefinition;
   readonly records: readonly ModuleRecordContract[];

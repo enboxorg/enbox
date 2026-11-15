@@ -47,8 +47,7 @@
         {
           "role": "group/editor",
           "can": [
-            "read",
-            "co-update"
+            "read"
           ]
         },
         {
@@ -68,8 +67,8 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete"
+              "update",
+              "delete"
             ]
           },
           {
@@ -91,7 +90,7 @@
             "can": [
               "create",
               "read",
-              "co-delete"
+              "delete"
             ]
           },
           {
@@ -113,7 +112,12 @@
             "who": "recipient",
             "of": "group/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -130,7 +134,12 @@
             "who": "recipient",
             "of": "group/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

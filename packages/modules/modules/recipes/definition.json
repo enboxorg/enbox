@@ -61,8 +61,8 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete"
+              "update",
+              "delete"
             ]
           },
           {
@@ -84,7 +84,12 @@
             "who": "recipient",
             "of": "recipe/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -101,7 +106,12 @@
             "who": "recipient",
             "of": "recipe/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

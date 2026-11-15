@@ -84,7 +84,12 @@
             "who": "recipient",
             "of": "plan/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -101,7 +106,12 @@
             "who": "recipient",
             "of": "plan/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

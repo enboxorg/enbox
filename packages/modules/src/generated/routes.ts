@@ -291,7 +291,7 @@ export const RoutesDefinition = {
         $actions   : [
           {
             role : 'route/editor',
-            can  : ['create', 'read', 'co-delete'],
+            can  : ['create', 'read', 'delete'],
           },
           {
             role : 'route/viewer',
@@ -309,7 +309,11 @@ export const RoutesDefinition = {
           {
             who : 'recipient',
             of  : 'route/editor',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -323,7 +327,11 @@ export const RoutesDefinition = {
           {
             who : 'recipient',
             of  : 'route/viewer',
-            can : ['read', 'co-delete'],
+            can : ['read'],
+          },
+          {
+            who : 'recipient',
+            can : ['co-delete'],
           },
         ],
       },
@@ -1011,6 +1019,7 @@ export const RoutesCatalog: ModuleCatalogEntry = {
     exportName      : 'RoutesModule',
     status          : 'experimental',
     captureExamples : ['Save the walking route from the station to the hotel.'],
+    notes           : [],
     dependencies    : {},
   },
   definition : RoutesDefinition,
@@ -1025,6 +1034,12 @@ export const RoutesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/routes/v1/schemas/route',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'route/editor', can: ['read', 'co-update'] },
+          { role: 'route/viewer', can: ['read'] },
+        ],
       },
       schema: RoutesSchemas['route'],
     },
@@ -1038,6 +1053,12 @@ export const RoutesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/routes/v1/schemas/waypoint',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'route/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'route/viewer', can: ['read'] },
+        ],
       },
       schema: RoutesSchemas['waypoint'],
     },
@@ -1051,6 +1072,12 @@ export const RoutesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/routes/v1/schemas/track',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'route/editor', can: ['create', 'read', 'delete'] },
+          { role: 'route/viewer', can: ['read'] },
+        ],
       },
       schema: RoutesSchemas['track'],
     },
@@ -1064,6 +1091,12 @@ export const RoutesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/routes/v1/schemas/editor',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'route/editor', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: RoutesSchemas['editor'],
     },
@@ -1077,6 +1110,12 @@ export const RoutesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/routes/v1/schemas/viewer',
+        squashable         : false,
+        maxBytes           : 2,
+        actions            : [
+          { who: 'recipient', of: 'route/viewer', can: ['read'] },
+          { who: 'recipient', can: ['co-delete'] },
+        ],
       },
       schema: RoutesSchemas['viewer'],
     },

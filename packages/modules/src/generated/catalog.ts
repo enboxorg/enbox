@@ -73,8 +73,10 @@ import { MoviesTvCatalog } from './movies-tv.js';
 import { MoviesTvModule } from './movies-tv.js';
 import { MusicCatalog } from './music.js';
 import { MusicModule } from './music.js';
-import { NotesCatalog } from './notes.js';
-import { NotesModule } from './notes.js';
+import { NotebookCatalog } from './notebook.js';
+import { NotebookModule } from './notebook.js';
+import { NotebookRealtimeCatalog } from './notebook-realtime.js';
+import { NotebookRealtimeModule } from './notebook-realtime.js';
 import { OnlineAccountsCatalog } from './online-accounts.js';
 import { OnlineAccountsModule } from './online-accounts.js';
 import { PackingCatalog } from './packing.js';
@@ -173,7 +175,8 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   MoodCatalog,
   MoviesTvCatalog,
   MusicCatalog,
-  NotesCatalog,
+  NotebookCatalog,
+  NotebookRealtimeCatalog,
   OnlineAccountsCatalog,
   PackingCatalog,
   PantryCatalog,
@@ -242,7 +245,8 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   MoodModule,
   MoviesTvModule,
   MusicModule,
-  NotesModule,
+  NotebookModule,
+  NotebookRealtimeModule,
   OnlineAccountsModule,
   PackingModule,
   PantryModule,

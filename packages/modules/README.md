@@ -81,7 +81,8 @@ import type { ItemData } from '@enbox/modules/groceries';
 | --- | --- | --- |
 | [Bookmarks](modules/bookmarks/README.md) | `@enbox/modules/bookmarks` | `bookmark`, `folder`, `folder/entry` |
 | [Files](modules/files/README.md) | `@enbox/modules/files` | `file`, `file/content` |
-| [Notes](modules/notes/README.md) | `@enbox/modules/notes` | `note` |
+| [Notebook](modules/notebook/README.md) | `@enbox/modules/notebook` | `notebook`, `notebook/page`, `notebook/page/delta`, `notebook/page/attachment` |
+| [Notebook Realtime](modules/notebook-realtime/README.md) | `@enbox/modules/notebook-realtime` | `page/live`, `page/live/session` |
 | [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state` |
 | [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |
 
@@ -192,7 +193,8 @@ and examples. No aggregate file is the sole source of module definitions.
 
 Warranties, Maintenance, Vehicles, and Devices attach local children to a
 Belongings `item`. Investment Holdings attaches positions to a Transactions
-`account`. Learning Plans attaches a plan to a Goals `goal`.
+`account`. Learning Plans attaches a plan to a Goals `goal`. Notebook Realtime
+attaches live collaboration records to a Notebook `notebook/page`.
 
 ```ts
 import { BelongingsModule } from '@enbox/modules/belongings';
@@ -213,6 +215,13 @@ as a consumer record. Dependencies are supplied by the typed artifact and
 installed in provider order. Reads, queries, and observations stay scoped to the
 owning module. See [module composition](../../docs/MODULE-COMPOSITION.md).
 
+Composition attaches new owned children; it does not copy or override a provider's
+definition. A consumer declares `uses`, attaches with a DWN structure reference
+such as `$ref: "notebook:notebook/page"`, and explicitly authorizes provider roles
+such as `notebook:notebook/page/editor`. Provider roles retain their original
+context scope. A role on one page does not grant access to a sibling page or its
+realtime records.
+
 Bookmarks, document scans, purchase evidence, and presentation credentials use
 payload links when the target's identity and lifecycle are independent. A link
 with an omitted `tenantDid` is relative to the DID owning the referring record,
@@ -221,7 +230,7 @@ owner requires preserving or explicitly rebinding that meaning.
 
 ## Access, encryption, and lifecycle
 
-New personal data paths require DWN encryption. They are owner-only unless
+Personal content paths require DWN encryption. They are owner-only unless
 explicit role actions or delegated grants authorize another principal. Public
 Profile/Connect behavior and the existing owner-only plaintext preference paths
 are retained; privacy and the new preference profiles are encrypted.
@@ -230,8 +239,23 @@ Shared modules declare contextual `editor` and `viewer` roles. The owner issues
 role records with the member's DID in the record descriptor's `recipient`, an
 empty `{}` payload, and the direct parent's `contextId`. Membership records are
 immutable and the recipient can read or remove their own assignment. Each data
-path's action list specifies the member's powers; chat responses and messages
-use author-only mutations where appropriate.
+path's action list specifies the member's powers. `update`, `delete`, and `prune`
+require authorship; `co-update`, `co-delete`, and `co-prune` can affect another
+author's records when an applicable action rule permits it. The
+`who: "recipient", can: ["co-delete"]` rule on a role record permits only its
+recipient to leave that assignment, without invoking `moduleRole`. It does not
+let viewers remove other viewers. The owner may revoke any assignment.
+
+Viewers cannot create or change shared content. Events uses a distinct `attendee`
+role for author-managed RSVP responses. Editors can jointly edit shared list
+state, such as grocery items, but authored contributions and immutable history
+do not grant deletion of other writers' records. Parent contexts do not grant
+pruning that would bypass those protections. Shared Expenses keeps the group
+roster owner-managed and each expense author-managed. Individual module guides
+and `entry.records[].actions` expose every path's additional authority.
+
+Notebook Realtime sessions intentionally store plaintext ephemeral public peer
+keys so members can authenticate live writers. They never contain private keys.
 
 For managed invitations and following, use the optional
 [`@enbox/contexts`](https://github.com/enboxorg/enbox-contexts) companion API.
@@ -261,14 +285,42 @@ independent. Root sharing contexts remain under owner lifecycle control.
 - JSON objects reject unknown fields, invalid enum values, malformed dates/URLs,
   and other declared constraints on both encode and decode. Codecs do not coerce
   types, insert defaults, or strip invalid fields.
-- JSON Schemas are bundled Draft-07 documents with local references. Source,
-  address, reference, money, quantity, and alert shapes are reused consistently.
+- JSON Schemas are bundled Draft-07 documents with local references. A reference
+  such as `#/definitions/fileRecordReference` correctly resolves inside the same
+  schema document. The document's `$id` and DWN type's `schema` are full URI
+  identities; the local fragment need not become a full URL. These schema
+  references are independent of DWN composition references such as
+  `notebook:notebook/page`. See [JSON Schema reference resolution](https://json-schema.org/understanding-json-schema/structuring).
+- JSON payload validation runs in the codecs. The DWN enforces descriptor schema
+  identity, formats, size, encryption, lifecycle, and authorization; it cannot
+  inspect encrypted JSON to validate payload fields. A record link's syntax does
+  not prove that its target exists, has the expected parent/type, or is readable.
 - Source metadata is provenance information, not an authorization grant or proof
   that an assertion is true. Financial totals, references to other records, and
   clinical interpretations need their application's appropriate reconciliation.
 - Tasks and Events store alert preferences, including private state for shared
   records. Applications schedule/deliver alerts; installing a module does not run
   a scheduler.
+
+## Notebook interoperability
+
+Notebook and Notebook Realtime preserve the executable definitions in
+[notesd](https://github.com/enboxorg/notesd/blob/377645c881b0d1a86710130957cc5d583b249c8f/src/features/notebooks/module.ts)
+and its [realtime extension](https://github.com/enboxorg/notesd/blob/377645c881b0d1a86710130957cc5d583b249c8f/src/features/notebooks/realtime-module.ts).
+The owner manages notebook and page metadata. Editors append immutable
+`@enbox/crdt` yjs1 frames; administrators can also squash the log. Page members
+can inspect writer assignments, while the viewer roster remains private.
+
+Page attachments use `recordCodecs.fileEnvelope({ formatId: 'notesd',
+maxContentBytes: 50_000_000 })`: filename, MIME type, and bytes are encrypted
+together. The attachment schema URI identifies this binary contract; there is
+no JSON Schema for its bytes. The catalog's `codec` metadata and `file-envelope`
+examples describe the representation. Delta examples contain real CRDT frames,
+which applications materialize into text with `@enbox/crdt`.
+
+Realtime imports the existing page and its roles. The owner advertises the live
+session; editors and administrators create and delete their own session records.
+Installing this extension adds no page-writing or membership-management powers.
 
 ## Identity documents and credentials
 

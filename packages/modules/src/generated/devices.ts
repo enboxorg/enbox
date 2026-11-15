@@ -220,7 +220,7 @@ export const DevicesDefinition = {
         $actions: [
           {
             role : 'belongings:item/editor',
-            can  : ['create', 'read', 'co-update', 'co-delete', 'co-prune'],
+            can  : ['create', 'read', 'co-update'],
           },
           {
             role : 'belongings:item/viewer',
@@ -250,7 +250,7 @@ export const DevicesDefinition = {
           $actions   : [
             {
               role : 'belongings:item/editor',
-              can  : ['create', 'read', 'co-delete'],
+              can  : ['create', 'read', 'delete'],
             },
             {
               role : 'belongings:item/viewer',
@@ -856,6 +856,7 @@ export const DevicesCatalog: ModuleCatalogEntry = {
     exportName      : 'DevicesModule',
     status          : 'experimental',
     captureExamples : ['I replaced my old laptop with this one.'],
+    notes           : [],
     dependencies    : {
       belongings: 'https://enbox.id/modules/belongings/v1',
     },
@@ -872,6 +873,12 @@ export const DevicesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/devices/v1/schemas/device',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: DevicesSchemas['device'],
     },
@@ -885,6 +892,12 @@ export const DevicesCatalog: ModuleCatalogEntry = {
         immutable          : false,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/devices/v1/schemas/configuration',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: DevicesSchemas['configuration'],
     },
@@ -898,6 +911,12 @@ export const DevicesCatalog: ModuleCatalogEntry = {
         immutable          : true,
         singleton          : false,
         schemaUri          : 'https://enbox.id/modules/devices/v1/schemas/service',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'belongings:item/editor', can: ['create', 'read', 'delete'] },
+          { role: 'belongings:item/viewer', can: ['read'] },
+        ],
       },
       schema: DevicesSchemas['service'],
     },

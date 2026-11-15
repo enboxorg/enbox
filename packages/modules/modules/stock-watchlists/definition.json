@@ -68,9 +68,7 @@
             "can": [
               "create",
               "read",
-              "co-update",
-              "co-delete",
-              "co-prune"
+              "co-update"
             ]
           },
           {
@@ -90,8 +88,8 @@
               "can": [
                 "create",
                 "read",
-                "co-update",
-                "co-delete"
+                "update",
+                "delete"
               ]
             },
             {
@@ -114,7 +112,12 @@
             "who": "recipient",
             "of": "watchlist/editor",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }
@@ -131,7 +134,12 @@
             "who": "recipient",
             "of": "watchlist/viewer",
             "can": [
-              "read",
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
               "co-delete"
             ]
           }

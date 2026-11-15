@@ -86,6 +86,7 @@ export type {
   StateData as EventsStateData,
   EditorData as EventsEditorData,
   ViewerData as EventsViewerData,
+  AttendeeData as EventsAttendeeData,
 } from './events.js';
 export { FilesModule, FilesDefinition, FilesCodecs, FilesSchemas, FilesCatalog } from './files.js';
 export type {
@@ -223,8 +224,24 @@ export { MoviesTvModule, MoviesTvDefinition, MoviesTvCodecs, MoviesTvSchemas, Mo
 export type { TitleData as MoviesTvTitleData, ViewingData as MoviesTvViewingData, RatingData as MoviesTvRatingData } from './movies-tv.js';
 export { MusicModule, MusicDefinition, MusicCodecs, MusicSchemas, MusicCatalog } from './music.js';
 export type { ItemData as MusicItemData, ListeningData as MusicListeningData } from './music.js';
-export { NotesModule, NotesDefinition, NotesCodecs, NotesSchemas, NotesCatalog } from './notes.js';
-export type { NoteData as NotesNoteData, EditorData as NotesEditorData, ViewerData as NotesViewerData } from './notes.js';
+export { NotebookModule, NotebookDefinition, NotebookCodecs, NotebookSchemas, NotebookCatalog } from './notebook.js';
+export type {
+  NotebookData as NotebookNotebookData,
+  PageData as NotebookPageData,
+  DeltaData as NotebookDeltaData,
+  AttachmentData as NotebookAttachmentData,
+  AdminData as NotebookAdminData,
+  EditorData as NotebookEditorData,
+  ViewerData as NotebookViewerData,
+} from './notebook.js';
+export {
+  NotebookRealtimeModule,
+  NotebookRealtimeDefinition,
+  NotebookRealtimeCodecs,
+  NotebookRealtimeSchemas,
+  NotebookRealtimeCatalog,
+} from './notebook-realtime.js';
+export type { LiveData as NotebookRealtimeLiveData, SessionData as NotebookRealtimeSessionData } from './notebook-realtime.js';
 export {
   OnlineAccountsModule,
   OnlineAccountsDefinition,

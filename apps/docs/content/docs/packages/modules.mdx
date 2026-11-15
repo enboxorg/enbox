@@ -53,7 +53,8 @@ for each module's record structure, examples, access policy, and dependencies.
 
 Warranties, Maintenance, Vehicles, and Devices attach records to a Belongings
 item. Investment Holdings extends a Transactions account, and Learning Plans
-extends a Goals record. Their typed artifacts carry the required provider
+extends a Goals record. Notebook Realtime attaches to an existing Notebook page
+and reuses its contextual roles. Their typed artifacts carry the required provider
 definitions and codecs.
 
 ```ts
@@ -89,10 +90,27 @@ import definition from '@enbox/modules/artifacts/groceries/definition.json' with
 import schema from '@enbox/modules/artifacts/groceries/schemas/item.json' with { type: 'json' };
 ```
 
-New personal-data paths require encryption and remain private until their access
+Personal content paths require encryption and remain private until their access
 rules or grants authorize another principal. Selected modules support
 owner-issued contextual editor/viewer roles. Definition publication and record
 publication are separate policies.
+
+Viewers have read access and may leave their own membership; they cannot remove
+other viewers. Owner-issued membership is immutable. Events uses a separate
+attendee role for RSVP. Editors can share list editing, while authored contributions
+use author-only updates/deletes. Each module guide and catalog record lists the
+exact additional actions.
+
+Notebook uses notesd's notebook/page hierarchy, immutable `@enbox/crdt` yjs1
+updates, and encrypted `notesd` file envelopes. Its optional realtime extension
+stores an encrypted owner-managed advertisement and plaintext public peer-key
+sessions. Page roles remain scoped to their original page.
+
+JSON Schema references such as `#/definitions/fileRecordReference` resolve inside
+the bundled schema; the schema `$id` and DWN type schema identities are full URIs.
+These payload references are separate from DWN composition's `alias:path`
+references. Codecs validate JSON on both encode and decode; the DWN does not
+inspect encrypted payload fields.
 
 ## Relationship to @enbox/api
 
@@ -108,6 +126,7 @@ from `@enbox/api` instead.
 | `ProfileModule` | Public profile, image, and link records |
 | `PreferencesModule` | Owner-only application preferences |
 | `ConnectModule` | Public wallet discovery information |
+| `NotebookModule`, `NotebookRealtimeModule` | notesd-compatible notebook storage and optional live collaboration |
 | `GroceriesModule`, `StockWatchlistsModule`, and other domain modules | Complete typed personal-data contracts |
 | `moduleCatalog` | Bundled definitions, actual record paths, schemas, and examples |
 | `getModuleCatalogEntry()`, `searchModuleCatalog()` | Discovery by identity or metadata text |
