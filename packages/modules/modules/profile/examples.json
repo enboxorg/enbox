@@ -1,0 +1,30 @@
+[
+  {
+    "path": "profile",
+    "encoding": "json",
+    "data": {
+      "displayName": "Alex Example",
+      "bio": "Personal data, owned by people."
+    }
+  },
+  {
+    "path": "profile/link",
+    "encoding": "json",
+    "data": {
+      "url": "https://example.com",
+      "title": "Website"
+    }
+  },
+  {
+    "path": "profile/avatar",
+    "encoding": "base64",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7fkAAAAASUVORK5CYII=",
+    "dataFormat": "image/png"
+  },
+  {
+    "path": "profile/hero",
+    "encoding": "base64",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7fkAAAAASUVORK5CYII=",
+    "dataFormat": "image/png"
+  }
+]

@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/notes/v1/schemas/note",
+  "title": "NoteData",
+  "description": "Notes: note record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "content": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "plain",
+        "markdown"
+      ]
+    },
+    "writtenOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/noteRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/noteRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/noteSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "title",
+    "content",
+    "format"
+  ],
+  "examples": [
+    {
+      "title": "Weekend itinerary",
+      "content": "Take the morning train.",
+      "format": "plain"
+    }
+  ],
+  "definitions": {
+    "noteRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "noteSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/noteRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

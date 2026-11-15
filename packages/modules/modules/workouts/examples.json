@@ -1,0 +1,39 @@
+[
+  {
+    "path": "routine",
+    "encoding": "json",
+    "data": {
+      "name": "Easy run",
+      "exercises": [
+        {
+          "name": "Running",
+          "durationSeconds": 1800
+        }
+      ]
+    }
+  },
+  {
+    "path": "workout",
+    "encoding": "json",
+    "data": {
+      "name": "Morning run",
+      "startedAt": "2026-01-15T12:00:00Z",
+      "distance": {
+        "value": "5",
+        "unit": "km"
+      }
+    }
+  },
+  {
+    "path": "workout/exercise",
+    "encoding": "json",
+    "data": {
+      "name": "Running",
+      "durationSeconds": 1800,
+      "distance": {
+        "value": "5",
+        "unit": "km"
+      }
+    }
+  }
+]

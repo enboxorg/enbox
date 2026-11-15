@@ -1,0 +1,17 @@
+[
+  {
+    "path": "cycle",
+    "encoding": "json",
+    "data": {
+      "startedOn": "2026-01-15"
+    }
+  },
+  {
+    "path": "cycle/observation",
+    "encoding": "json",
+    "data": {
+      "date": "2026-01-15",
+      "bleeding": "light"
+    }
+  }
+]

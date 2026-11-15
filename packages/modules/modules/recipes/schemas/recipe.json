@@ -1,0 +1,300 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/recipes/v1/schemas/recipe",
+  "title": "RecipeData",
+  "description": "Recipes: recipe record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "servings": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 10000
+    },
+    "prepMinutes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "cookMinutes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "ingredients": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "quantity": {
+            "$ref": "#/definitions/recipeQuantity"
+          },
+          "preparation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "optional": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 500
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "minutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        "required": [
+          "instruction"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 500
+    },
+    "cuisine": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "dietaryLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "originalUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/recipeRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/recipeSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "name",
+    "ingredients",
+    "steps"
+  ],
+  "examples": [
+    {
+      "name": "Lentil soup",
+      "servings": 4,
+      "ingredients": [
+        {
+          "name": "Lentils",
+          "quantity": {
+            "value": "200",
+            "unit": "g"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "instruction": "Simmer the lentils in water until tender.",
+          "minutes": 25
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "recipeQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "description": "A supplied decimal quantity with an explicit unit."
+    },
+    "recipeRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "recipeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/recipeRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

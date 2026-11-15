@@ -1,0 +1,43 @@
+{
+  "id": "gifts",
+  "name": "Gifts",
+  "category": "Food and shopping",
+  "description": "Recipients, occasions, gift ideas, budget, and purchase/wrapping/giving state.",
+  "moduleUri": "https://enbox.id/modules/gifts/v1",
+  "exportName": "GiftsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "A cookbook could be a good birthday gift for Sam."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "plan",
+      "type": "plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/gifts/v1/schemas/plan",
+      "schemaFile": "schemas/plan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "plan/idea",
+      "type": "idea",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/gifts/v1/schemas/idea",
+      "schemaFile": "schemas/idea.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

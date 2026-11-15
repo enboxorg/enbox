@@ -1,0 +1,82 @@
+{
+  "id": "routes",
+  "name": "Routes",
+  "category": "Travel and outdoors",
+  "description": "Planned routes or recorded tracks, waypoints, travel mode, and relevant geometry.",
+  "moduleUri": "https://enbox.id/modules/routes/v1",
+  "exportName": "RoutesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save the walking route from the station to the hotel."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "route",
+      "type": "route",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/routes/v1/schemas/route",
+      "schemaFile": "schemas/route.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "route/waypoint",
+      "type": "waypoint",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/routes/v1/schemas/waypoint",
+      "schemaFile": "schemas/waypoint.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "route/track",
+      "type": "track",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/routes/v1/schemas/track",
+      "schemaFile": "schemas/track.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "route/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/routes/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "route/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/routes/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

@@ -12,9 +12,11 @@
     "build": "bun run clean && bun run build:esm",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test:node": "bun test .spec.ts",
-    "test:node:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
-    "typecheck:contracts": "bun tsc -p type-tests/tsconfig.json"
+    "test:node": "bun run check:generated && bun test .spec.ts",
+    "test:node:coverage": "bun run check:generated && bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage .spec.ts",
+    "typecheck:contracts": "bun tsc -p type-tests/tsconfig.json",
+    "generate": "bun build/generate.mjs",
+    "check:generated": "bun build/generate.mjs --check"
   },
   "homepage": "https://github.com/enboxorg/enbox/tree/main/packages/modules#readme",
   "bugs": "https://github.com/enboxorg/enbox/issues",
@@ -26,14 +28,20 @@
   "license": "Apache-2.0",
   "files": [
     "dist",
-    "schemas",
+    "modules",
     "src"
   ],
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
-    }
+    },
+    "./*": {
+      "types": "./dist/types/*.d.ts",
+      "import": "./dist/esm/*.js"
+    },
+    "./artifacts/*": "./modules/*",
+    "./package.json": "./package.json"
   },
   "keywords": [
     "decentralized",
@@ -53,11 +61,14 @@
   },
   "devDependencies": {
     "@enbox/agent": "workspace:*",
+    "@enbox/crypto": "workspace:*",
     "@enbox/dids": "workspace:*",
     "@typescript-eslint/eslint-plugin": "8.72.0",
     "@typescript-eslint/parser": "8.72.0",
     "bun-types": "1.4.3",
     "eslint": "9.7.0",
+    "prettier": "3.9.10",
     "typescript": "5.9.3"
-  }
+  },
+  "sideEffects": false
 }

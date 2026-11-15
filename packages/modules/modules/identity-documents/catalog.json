@@ -1,0 +1,56 @@
+{
+  "id": "identity-documents",
+  "name": "Identity Documents",
+  "category": "Identity and digital life",
+  "description": "Structured ID/passport/licence fields, scan references, extraction provenance, and reviewed corrections.",
+  "moduleUri": "https://enbox.id/modules/identity-documents/v1",
+  "exportName": "IdentityDocumentsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Extract the fields from this ID card."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "document",
+      "type": "document",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/document",
+      "schemaFile": "schemas/document.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "document/extraction",
+      "type": "extraction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
+      "schemaFile": "schemas/extraction.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "document/review",
+      "type": "review",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/review",
+      "schemaFile": "schemas/review.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pantry/v1/schemas/viewer",
+  "title": "ViewerData",
+  "description": "Empty role payload. Membership identity is the signed record recipient.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false,
+  "examples": [
+    {}
+  ]
+}

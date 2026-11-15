@@ -1,0 +1,196 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/relationships/v1/schemas/connection",
+  "title": "ConnectionData",
+  "description": "Relationships: connection record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "peerDid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "direction": {
+      "type": "string",
+      "enum": [
+        "incoming",
+        "outgoing"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "accepted",
+        "declined",
+        "ended"
+      ]
+    },
+    "requestedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "respondedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "evidence": {
+      "$ref": "#/definitions/connectionRecordReference"
+    },
+    "contact": {
+      "$ref": "#/definitions/connectionRecordReference"
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/connectionSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "peerDid",
+    "direction",
+    "state"
+  ],
+  "examples": [
+    {
+      "peerDid": "did:example:friend",
+      "direction": "outgoing",
+      "state": "requested"
+    }
+  ],
+  "definitions": {
+    "connectionRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "connectionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/connectionRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

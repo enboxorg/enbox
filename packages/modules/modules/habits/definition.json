@@ -1,0 +1,32 @@
+{
+  "module": "https://enbox.id/modules/habits/v1",
+  "published": true,
+  "types": {
+    "habit": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/habits/v1/schemas/habit"
+    },
+    "checkIn": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/habits/v1/schemas/check-in"
+    }
+  },
+  "structure": {
+    "habit": {
+      "$size": {
+        "max": 1048576
+      },
+      "checkIn": {
+        "$size": {
+          "max": 1048576
+        }
+      }
+    }
+  }
+}

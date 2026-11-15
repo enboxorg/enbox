@@ -1,0 +1,19 @@
+[
+  {
+    "path": "account",
+    "encoding": "json",
+    "data": {
+      "service": "Example Service",
+      "username": "riverbird",
+      "state": "active"
+    }
+  },
+  {
+    "path": "account/identityLink",
+    "encoding": "json",
+    "data": {
+      "did": "did:example:holder",
+      "state": "linked"
+    }
+  }
+]

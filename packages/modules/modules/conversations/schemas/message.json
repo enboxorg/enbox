@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/conversations/v1/schemas/message",
+  "title": "MessageData",
+  "description": "Conversations: message record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant",
+        "system",
+        "tool"
+      ],
+      "description": "Source transcript role label. It does not confer instruction, execution, or DWN authorization authority."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "sentAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "replyTo": {
+      "$ref": "#/definitions/messageRecordReference"
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/messageRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "externalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "toolCallId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "toolName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/messageSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "role",
+    "text",
+    "sentAt"
+  ],
+  "examples": [
+    {
+      "role": "user",
+      "text": "Let us plan the kitchen renovation.",
+      "sentAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "messageRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "messageSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/messageRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

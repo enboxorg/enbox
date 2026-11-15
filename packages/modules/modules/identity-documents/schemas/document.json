@@ -1,0 +1,456 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/document",
+  "title": "DocumentData",
+  "description": "Identity Documents: document record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "documentType": {
+      "type": "string",
+      "enum": [
+        "passport",
+        "national-id",
+        "state-id",
+        "drivers-licence",
+        "other",
+        "unknown"
+      ]
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "givenNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 20
+        },
+        "familyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "personalNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingCountry": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{2,3}$"
+        },
+        "issuingRegion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingAuthority": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "nationalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3,
+            "pattern": "^[A-Z]{2,3}$"
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "issueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "address": {
+          "$ref": "#/definitions/documentAddress"
+        },
+        "licenceCategories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "validFrom": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "validUntil": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "restrictions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/documentRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "reviewState": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "reviewed",
+        "corrected",
+        "rejected"
+      ]
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/documentAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/documentSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "label",
+    "documentType",
+    "reviewState"
+  ],
+  "examples": [
+    {
+      "label": "Personal passport",
+      "documentType": "passport",
+      "reviewState": "unreviewed",
+      "fields": {
+        "fullName": "Alex Example",
+        "documentNumber": "EXAMPLE123",
+        "issuingCountry": "GBR"
+      }
+    }
+  ],
+  "definitions": {
+    "documentAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "street": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "locality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "postalCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "countryCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "documentAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "offsetSeconds": {
+          "type": "integer",
+          "minimum": -315360000,
+          "maximum": 315360000
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "start",
+            "end",
+            "due"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "app",
+            "push",
+            "email"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "snoozedUntil": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "dismissedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "at"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "offsetSeconds"
+                ]
+              },
+              {
+                "required": [
+                  "anchor"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "offsetSeconds",
+            "anchor"
+          ],
+          "not": {
+            "required": [
+              "at"
+            ]
+          }
+        }
+      ]
+    },
+    "documentRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "documentSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/documentRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

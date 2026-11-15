@@ -1,0 +1,274 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/stock-watchlists/v1/schemas/instrument",
+  "title": "InstrumentData",
+  "description": "Stock Watchlists: instrument record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "instrument": {
+      "$ref": "#/definitions/instrumentInstrument"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "targetPrice": {
+      "$ref": "#/definitions/instrumentMoney"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "watching",
+        "archived"
+      ]
+    },
+    "addedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "research": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/instrumentRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/instrumentSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "instrument",
+    "state"
+  ],
+  "examples": [
+    {
+      "instrument": {
+        "symbol": "NVDA",
+        "assetClass": "stock"
+      },
+      "state": "watching"
+    }
+  ],
+  "definitions": {
+    "instrumentInstrument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "isin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12,
+          "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+        },
+        "exchange": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{3}$"
+        },
+        "assetClass": {
+          "type": "string",
+          "enum": [
+            "stock",
+            "etf",
+            "fund",
+            "bond",
+            "crypto",
+            "other"
+          ]
+        }
+      },
+      "required": [],
+      "anyOf": [
+        {
+          "required": [
+            "symbol"
+          ]
+        },
+        {
+          "required": [
+            "isin"
+          ]
+        },
+        {
+          "required": [
+            "name"
+          ]
+        }
+      ]
+    },
+    "instrumentMoney": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{3}$"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "description": "Non-negative decimal amount in an explicitly named currency; no floating-point currency conversion."
+    },
+    "instrumentRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "instrumentSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/instrumentRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

@@ -1,0 +1,358 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/review",
+  "title": "ReviewData",
+  "description": "Identity Documents: review record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "corrected",
+        "rejected"
+      ]
+    },
+    "extraction": {
+      "$ref": "#/definitions/reviewRecordReference"
+    },
+    "corrections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "givenNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 20
+        },
+        "familyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "personalNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingCountry": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{2,3}$"
+        },
+        "issuingRegion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingAuthority": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "nationalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3,
+            "pattern": "^[A-Z]{2,3}$"
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "issueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "address": {
+          "$ref": "#/definitions/reviewAddress"
+        },
+        "licenceCategories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "validFrom": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "validUntil": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "restrictions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/reviewSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "reviewedAt",
+    "decision"
+  ],
+  "examples": [
+    {
+      "reviewedAt": "2026-01-15T12:00:00Z",
+      "decision": "accepted"
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "corrected"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "corrections"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "reviewAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "street": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "locality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "postalCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "countryCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "reviewRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "reviewSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/reviewRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

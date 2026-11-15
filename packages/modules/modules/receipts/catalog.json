@@ -1,0 +1,56 @@
+{
+  "id": "receipts",
+  "name": "Receipts",
+  "category": "Money and investing",
+  "description": "Structured purchase evidence: merchant, date, line items, totals, and source-file references.",
+  "moduleUri": "https://enbox.id/modules/receipts/v1",
+  "exportName": "ReceiptsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Here is the receipt from yesterday's grocery trip."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "receipt",
+      "type": "receipt",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/receipts/v1/schemas/receipt",
+      "schemaFile": "schemas/receipt.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "receipt/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/receipts/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "receipt/extraction",
+      "type": "extraction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/receipts/v1/schemas/extraction",
+      "schemaFile": "schemas/extraction.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

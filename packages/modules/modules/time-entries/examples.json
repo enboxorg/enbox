@@ -1,0 +1,11 @@
+[
+  {
+    "path": "entry",
+    "encoding": "json",
+    "data": {
+      "activity": "Bicycle restoration",
+      "durationSeconds": 7200,
+      "kind": "leisure"
+    }
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "path": "subscription",
+    "encoding": "json",
+    "data": {
+      "service": "Example Music",
+      "state": "active",
+      "billingCycle": "monthly"
+    }
+  },
+  {
+    "path": "subscription/change",
+    "encoding": "json",
+    "data": {
+      "changedAt": "2026-01-15T12:00:00Z",
+      "kind": "plan-changed",
+      "plan": "Family"
+    }
+  }
+]

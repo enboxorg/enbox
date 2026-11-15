@@ -1,0 +1,56 @@
+{
+  "id": "medications",
+  "name": "Medications",
+  "category": "Health and fitness",
+  "description": "Medication and prescription details, supplied regimens, dose logs, and changes.",
+  "moduleUri": "https://enbox.id/modules/medications/v1",
+  "exportName": "MedicationsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My prescribed dose changed yesterday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "medication",
+      "type": "medication",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medications/v1/schemas/medication",
+      "schemaFile": "schemas/medication.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "medication/regimen",
+      "type": "regimen",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medications/v1/schemas/regimen",
+      "schemaFile": "schemas/regimen.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "medication/dose",
+      "type": "dose",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medications/v1/schemas/dose",
+      "schemaFile": "schemas/dose.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

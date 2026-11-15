@@ -1,20 +1,98 @@
 ---
 title: "@enbox/modules"
-description: Module definitions and type-safe schema helpers for structuring data in Decentralized Web Nodes.
+description: Complete personal-data modules, validating codecs, schemas, and searchable discovery metadata.
 ---
 
-`@enbox/modules` provides pre-built module definitions, codecs, and readers for common DWN data.
+`@enbox/modules` provides complete definitions, payload schemas, and typed codecs
+for personal DWN data. Each module has its own import subpath and artifact
+directory, including examples and usage documentation.
 
 ## What it does
 
-- **Typed modules** — Ships ready-to-use definitions and runtime codecs for profiles, preferences, and wallet discovery.
+- **Typed modules** — Ships definitions for groceries, pantry stock, recipes,
+  investments, purchases, health records, travel, learning, identity documents,
+  credentials, and other personal data, alongside profiles and wallet discovery.
+- **Validating codecs** — JSON payloads are validated on both write and read.
+  The package bundles standalone validators without a runtime schema compiler.
 - **Profile reader** — Resolves and caches public profile data from other users' DWNs.
 - **JSON Schemas** — Publishes schemas alongside module data types for validation and code generation.
+- **Discovery metadata** — Exposes actual writable paths, schemas, examples, and
+  dependencies for applications and AI-assisted capture.
 
 ## When to use it
 
 - When you want to reuse a well-tested module definition rather than writing one from scratch
 - When you need to read another user's public profile without building a cache and retry layer
+
+## Use an individual module
+
+Register the module in your application's manifest. With a connected Enbox
+session, the record API infers its paths and payload types:
+
+```ts
+import { GroceriesModule } from '@enbox/modules/groceries';
+
+const groceries = enbox.using(GroceriesModule);
+const list = await groceries.records.create('list', {
+  data: { name: 'Weekly groceries' },
+});
+await groceries.records.create('list/item', {
+  parentContextId: list.contextId,
+  data: {
+    name: 'Lemons',
+    state: 'needed',
+    quantity: { value: '2', unit: 'piece' },
+  },
+});
+```
+
+Browse the [full module library](https://github.com/enboxorg/enbox/tree/main/packages/modules#module-library)
+for each module's record structure, examples, access policy, and dependencies.
+
+## Composed modules
+
+Warranties, Maintenance, Vehicles, and Devices attach records to a Belongings
+item. Investment Holdings extends a Transactions account, and Learning Plans
+extends a Goals record. Their typed artifacts carry the required provider
+definitions and codecs.
+
+```ts
+import { BelongingsModule } from '@enbox/modules/belongings';
+import { WarrantiesModule } from '@enbox/modules/warranties';
+
+const item = await enbox.using(BelongingsModule).records.create('item', {
+  data: { name: 'Washing machine', state: 'owned' },
+});
+await enbox.using(WarrantiesModule).records.create('item/warranty', {
+  parentContextId: item.contextId,
+  data: { provider: 'Example Appliances', expiresOn: '2029-01-15' },
+});
+```
+
+The base item keeps its identity. The consumer owns its warranty records and
+declares its own access rules; installing a dependency does not grant data access.
+
+## Discover schemas and artifacts
+
+```ts
+import { getModuleCatalogEntry, searchModuleCatalog } from '@enbox/modules/catalog';
+
+const matches = searchModuleCatalog('groceries');
+const entry = getModuleCatalogEntry('groceries');
+// entry.definition, entry.records, and entry.examples describe the real module.
+```
+
+Raw definitions and schemas are also exported individually:
+
+```ts
+import definition from '@enbox/modules/artifacts/groceries/definition.json' with { type: 'json' };
+import schema from '@enbox/modules/artifacts/groceries/schemas/item.json' with { type: 'json' };
+```
+
+New personal-data paths require encryption and remain private until their access
+rules or grants authorize another principal. Selected modules support
+owner-issued contextual editor/viewer roles. Definition publication and record
+publication are separate policies.
 
 ## Relationship to @enbox/api
 
@@ -30,4 +108,7 @@ from `@enbox/api` instead.
 | `ProfileModule` | Public profile, image, and link records |
 | `PreferencesModule` | Owner-only application preferences |
 | `ConnectModule` | Public wallet discovery information |
+| `GroceriesModule`, `StockWatchlistsModule`, and other domain modules | Complete typed personal-data contracts |
+| `moduleCatalog` | Bundled definitions, actual record paths, schemas, and examples |
+| `getModuleCatalogEntry()`, `searchModuleCatalog()` | Discovery by identity or metadata text |
 | `createProfileReader()` | Cached public-profile reader for connected and anonymous records surfaces |

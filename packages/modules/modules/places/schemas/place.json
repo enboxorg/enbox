@@ -1,0 +1,324 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/places/v1/schemas/place",
+  "title": "PlaceData",
+  "description": "Places: place record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "address": {
+      "$ref": "#/definitions/placeAddress"
+    },
+    "coordinates": {
+      "$ref": "#/definitions/placeCoordinates"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "phone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "externalIds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "system",
+          "value"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/placeRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "rating": {
+      "$ref": "#/definitions/placeRating"
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/placeSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Riverside cafe",
+      "coordinates": {
+        "latitude": 38.7223,
+        "longitude": -9.1393
+      }
+    }
+  ],
+  "definitions": {
+    "placeAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "street": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "locality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "postalCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "countryCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "placeCoordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "altitudeMeters": {
+          "type": "number",
+          "minimum": -12000,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ]
+    },
+    "placeRating": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "scale": {
+          "type": "integer",
+          "enum": [
+            5,
+            10
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "scale"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scale": {
+                "const": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "maximum": 5,
+                "type": "number"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "placeRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "placeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/placeRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

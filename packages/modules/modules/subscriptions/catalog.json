@@ -1,0 +1,43 @@
+{
+  "id": "subscriptions",
+  "name": "Subscriptions",
+  "category": "Money and investing",
+  "description": "Services, plans, recurring charges, trials, renewal dates, and cancellation state.",
+  "moduleUri": "https://enbox.id/modules/subscriptions/v1",
+  "exportName": "SubscriptionsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My music subscription renews monthly."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "subscription",
+      "type": "subscription",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/subscriptions/v1/schemas/subscription",
+      "schemaFile": "schemas/subscription.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "subscription/change",
+      "type": "change",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/subscriptions/v1/schemas/change",
+      "schemaFile": "schemas/change.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

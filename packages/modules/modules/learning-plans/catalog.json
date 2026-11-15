@@ -1,0 +1,58 @@
+{
+  "id": "learning-plans",
+  "name": "Learning Plans",
+  "category": "Media and learning",
+  "description": "Learning objectives, resources/courses, planned study, and progress evidence.",
+  "moduleUri": "https://enbox.id/modules/learning-plans/v1",
+  "exportName": "LearningPlansModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I want to learn conversational Spanish before the trip."
+  ],
+  "dependencies": {
+    "goals": "https://enbox.id/modules/goals/v1"
+  },
+  "records": [
+    {
+      "path": "goal/plan",
+      "type": "plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/learning-plans/v1/schemas/plan",
+      "schemaFile": "schemas/plan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "goal/plan/activity",
+      "type": "activity",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/learning-plans/v1/schemas/activity",
+      "schemaFile": "schemas/activity.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "goal/plan/activity/progress",
+      "type": "progress",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/learning-plans/v1/schemas/progress",
+      "schemaFile": "schemas/progress.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

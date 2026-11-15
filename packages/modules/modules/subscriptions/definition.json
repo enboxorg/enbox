@@ -1,0 +1,33 @@
+{
+  "module": "https://enbox.id/modules/subscriptions/v1",
+  "published": true,
+  "types": {
+    "subscription": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/subscriptions/v1/schemas/subscription"
+    },
+    "change": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/subscriptions/v1/schemas/change"
+    }
+  },
+  "structure": {
+    "subscription": {
+      "$size": {
+        "max": 1048576
+      },
+      "change": {
+        "$size": {
+          "max": 1048576
+        },
+        "$immutable": true
+      }
+    }
+  }
+}

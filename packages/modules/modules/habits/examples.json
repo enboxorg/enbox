@@ -1,0 +1,21 @@
+[
+  {
+    "path": "habit",
+    "encoding": "json",
+    "data": {
+      "name": "Morning walk",
+      "state": "active",
+      "recurrence": {
+        "frequency": "daily"
+      }
+    }
+  },
+  {
+    "path": "habit/checkIn",
+    "encoding": "json",
+    "data": {
+      "date": "2026-01-15",
+      "state": "completed"
+    }
+  }
+]

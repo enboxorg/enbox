@@ -1,0 +1,27 @@
+[
+  {
+    "path": "item/device",
+    "encoding": "json",
+    "data": {
+      "kind": "computer",
+      "state": "active",
+      "model": "Example Laptop"
+    }
+  },
+  {
+    "path": "item/device/configuration",
+    "encoding": "json",
+    "data": {
+      "name": "Initial setup",
+      "recordedAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "item/device/service",
+    "encoding": "json",
+    "data": {
+      "performedAt": "2026-01-15T12:00:00Z",
+      "description": "Replaced battery"
+    }
+  }
+]

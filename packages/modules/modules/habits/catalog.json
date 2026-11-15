@@ -1,0 +1,43 @@
+{
+  "id": "habits",
+  "name": "Habits",
+  "category": "People and personal life",
+  "description": "Repeated routines, schedules/targets, and actual check-ins.",
+  "moduleUri": "https://enbox.id/modules/habits/v1",
+  "exportName": "HabitsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I want to walk every morning."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "habit",
+      "type": "habit",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/habits/v1/schemas/habit",
+      "schemaFile": "schemas/habit.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "habit/checkIn",
+      "type": "checkIn",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/habits/v1/schemas/check-in",
+      "schemaFile": "schemas/check-in.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

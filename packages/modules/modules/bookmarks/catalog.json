@@ -1,0 +1,108 @@
+{
+  "id": "bookmarks",
+  "name": "Bookmarks",
+  "category": "General personal records",
+  "description": "Saved web/DID-relative references, annotations, folders, and ordered entries.",
+  "moduleUri": "https://enbox.id/modules/bookmarks/v1",
+  "exportName": "BookmarksModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Bookmark this DWN record for later."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "bookmark",
+      "type": "bookmark",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/bookmark",
+      "schemaFile": "schemas/bookmark.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "folder",
+      "type": "folder",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/folder",
+      "schemaFile": "schemas/folder.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "folder/entry",
+      "type": "entry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/entry",
+      "schemaFile": "schemas/entry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "bookmark/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "bookmark/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "folder/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "folder/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

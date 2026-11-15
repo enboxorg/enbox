@@ -1,0 +1,28 @@
+[
+  {
+    "path": "follow",
+    "encoding": "json",
+    "data": {
+      "targetDid": "did:example:friend",
+      "state": "following"
+    }
+  },
+  {
+    "path": "connection",
+    "encoding": "json",
+    "data": {
+      "peerDid": "did:example:friend",
+      "direction": "outgoing",
+      "state": "requested"
+    }
+  },
+  {
+    "path": "restriction",
+    "encoding": "json",
+    "data": {
+      "targetDid": "did:example:other",
+      "kind": "mute",
+      "active": true
+    }
+  }
+]

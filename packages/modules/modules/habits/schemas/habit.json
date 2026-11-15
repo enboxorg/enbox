@@ -1,0 +1,365 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/habits/v1/schemas/habit",
+  "title": "HabitData",
+  "description": "Habits: habit record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "recurrence": {
+      "$ref": "#/definitions/habitRecurrence"
+    },
+    "target": {
+      "$ref": "#/definitions/habitQuantity"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "ended"
+      ]
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "goal": {
+      "$ref": "#/definitions/habitRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/habitAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/habitSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Morning walk",
+      "state": "active",
+      "recurrence": {
+        "frequency": "daily"
+      }
+    }
+  ],
+  "definitions": {
+    "habitAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "offsetSeconds": {
+          "type": "integer",
+          "minimum": -315360000,
+          "maximum": 315360000
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "start",
+            "end",
+            "due"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "app",
+            "push",
+            "email"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "snoozedUntil": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "dismissedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "at"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "offsetSeconds"
+                ]
+              },
+              {
+                "required": [
+                  "anchor"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "offsetSeconds",
+            "anchor"
+          ],
+          "not": {
+            "required": [
+              "at"
+            ]
+          }
+        }
+      ]
+    },
+    "habitQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "description": "A supplied decimal quantity with an explicit unit."
+    },
+    "habitRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "habitRecurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "weekdays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "MO",
+              "TU",
+              "WE",
+              "TH",
+              "FR",
+              "SA",
+              "SU"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 7
+        },
+        "until": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "frequency"
+      ],
+      "not": {
+        "required": [
+          "until",
+          "count"
+        ]
+      }
+    },
+    "habitSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/habitRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

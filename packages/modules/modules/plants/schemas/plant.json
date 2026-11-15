@@ -1,0 +1,301 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/plants/v1/schemas/plant",
+  "title": "PlantData",
+  "description": "Plants: plant record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "species": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "acquiredOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "careInstructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "light": {
+      "type": "string",
+      "enum": [
+        "low",
+        "indirect",
+        "direct",
+        "mixed"
+      ]
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/plantRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "growing",
+        "dormant",
+        "given-away",
+        "dead"
+      ]
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/plantAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "source": {
+      "$ref": "#/definitions/plantSource"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Monstera",
+      "location": "Living room"
+    }
+  ],
+  "definitions": {
+    "plantAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "offsetSeconds": {
+          "type": "integer",
+          "minimum": -315360000,
+          "maximum": 315360000
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "start",
+            "end",
+            "due"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "app",
+            "push",
+            "email"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "snoozedUntil": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "dismissedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "at"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "offsetSeconds"
+                ]
+              },
+              {
+                "required": [
+                  "anchor"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "offsetSeconds",
+            "anchor"
+          ],
+          "not": {
+            "required": [
+              "at"
+            ]
+          }
+        }
+      ]
+    },
+    "plantRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "plantSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/plantRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "path": "entry",
+    "encoding": "json",
+    "data": {
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "meal": "breakfast",
+      "foods": [
+        {
+          "name": "Oatmeal"
+        }
+      ]
+    }
+  }
+]

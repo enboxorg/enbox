@@ -1,0 +1,48 @@
+[
+  {
+    "path": "route",
+    "encoding": "json",
+    "data": {
+      "name": "Station to hotel",
+      "mode": "walk"
+    }
+  },
+  {
+    "path": "route/waypoint",
+    "encoding": "json",
+    "data": {
+      "name": "Station",
+      "order": 0,
+      "coordinates": {
+        "latitude": 38.7223,
+        "longitude": -9.1393
+      }
+    }
+  },
+  {
+    "path": "route/track",
+    "encoding": "json",
+    "data": {
+      "startedAt": "2026-01-15T12:00:00Z",
+      "points": [
+        {
+          "at": "2026-01-15T12:00:00Z",
+          "coordinates": {
+            "latitude": 38.7223,
+            "longitude": -9.1393
+          }
+        }
+      ]
+    }
+  },
+  {
+    "path": "route/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "route/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

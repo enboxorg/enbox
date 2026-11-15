@@ -1,0 +1,38 @@
+[
+  {
+    "path": "watchlist",
+    "encoding": "json",
+    "data": {
+      "name": "Technology watchlist"
+    }
+  },
+  {
+    "path": "watchlist/instrument",
+    "encoding": "json",
+    "data": {
+      "instrument": {
+        "symbol": "NVDA",
+        "assetClass": "stock"
+      },
+      "state": "watching"
+    }
+  },
+  {
+    "path": "watchlist/instrument/note",
+    "encoding": "json",
+    "data": {
+      "headline": "Research question",
+      "body": "Review the next earnings report."
+    }
+  },
+  {
+    "path": "watchlist/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "watchlist/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

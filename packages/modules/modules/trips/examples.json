@@ -1,0 +1,32 @@
+[
+  {
+    "path": "trip",
+    "encoding": "json",
+    "data": {
+      "name": "Lisbon holiday",
+      "destinations": [
+        "Lisbon"
+      ],
+      "state": "planning"
+    }
+  },
+  {
+    "path": "trip/item",
+    "encoding": "json",
+    "data": {
+      "name": "Walk by the river",
+      "kind": "activity",
+      "sortOrder": 1
+    }
+  },
+  {
+    "path": "trip/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "trip/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,82 @@
+{
+  "id": "packing",
+  "name": "Packing",
+  "category": "Travel and outdoors",
+  "description": "Packing lists with items, quantities, travellers, bags, and packed state.",
+  "moduleUri": "https://enbox.id/modules/packing/v1",
+  "exportName": "PackingModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Put two spare shirts in my carry-on list."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/packing/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/bag",
+      "type": "bag",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/packing/v1/schemas/bag",
+      "schemaFile": "schemas/bag.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/packing/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/packing/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "list/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/packing/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

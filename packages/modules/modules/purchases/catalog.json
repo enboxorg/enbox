@@ -1,0 +1,56 @@
+{
+  "id": "purchases",
+  "name": "Purchases",
+  "category": "Food and shopping",
+  "description": "Consumer orders and items, merchant, cost, delivery progress, and personal return/refund tracking.",
+  "moduleUri": "https://enbox.id/modules/purchases/v1",
+  "exportName": "PurchasesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "The headphones I ordered are due Friday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "purchase",
+      "type": "purchase",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/purchases/v1/schemas/purchase",
+      "schemaFile": "schemas/purchase.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "purchase/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/purchases/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "purchase/return",
+      "type": "return",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/purchases/v1/schemas/return",
+      "schemaFile": "schemas/return.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

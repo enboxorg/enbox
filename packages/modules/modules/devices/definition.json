@@ -1,0 +1,102 @@
+{
+  "module": "https://enbox.id/modules/devices/v1",
+  "published": true,
+  "uses": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "types": {
+    "device": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/device"
+    },
+    "configuration": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/configuration"
+    },
+    "service": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/service"
+    }
+  },
+  "structure": {
+    "item": {
+      "$ref": "belongings:item",
+      "device": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "belongings:item/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete",
+              "co-prune"
+            ]
+          },
+          {
+            "role": "belongings:item/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "configuration": {
+          "$size": {
+            "max": 1048576
+          },
+          "$actions": [
+            {
+              "role": "belongings:item/editor",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "belongings:item/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        },
+        "service": {
+          "$size": {
+            "max": 1048576
+          },
+          "$immutable": true,
+          "$actions": [
+            {
+              "role": "belongings:item/editor",
+              "can": [
+                "create",
+                "read",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "belongings:item/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

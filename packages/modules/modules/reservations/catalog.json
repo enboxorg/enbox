@@ -1,0 +1,43 @@
+{
+  "id": "reservations",
+  "name": "Reservations",
+  "category": "Travel and outdoors",
+  "description": "Personal flight, rail, lodging, rental, and activity confirmations and changes.",
+  "moduleUri": "https://enbox.id/modules/reservations/v1",
+  "exportName": "ReservationsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My hotel check-in is Friday at 3 pm."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "reservation",
+      "type": "reservation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/reservations/v1/schemas/reservation",
+      "schemaFile": "schemas/reservation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "reservation/change",
+      "type": "change",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/reservations/v1/schemas/change",
+      "schemaFile": "schemas/change.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

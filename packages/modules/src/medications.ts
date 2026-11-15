@@ -1,0 +1,2 @@
+/** Medications: complete definitions, codecs, schemas, and discovery metadata. */
+export * from './generated/medications.js';

@@ -1,0 +1,43 @@
+{
+  "id": "goals",
+  "name": "Goals",
+  "category": "People and personal life",
+  "description": "Explicit personal targets, measures, deadlines, and progress observations.",
+  "moduleUri": "https://enbox.id/modules/goals/v1",
+  "exportName": "GoalsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I want to complete a ten-kilometre run by September."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "goal",
+      "type": "goal",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/goals/v1/schemas/goal",
+      "schemaFile": "schemas/goal.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "goal/progress",
+      "type": "progress",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/goals/v1/schemas/progress",
+      "schemaFile": "schemas/progress.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

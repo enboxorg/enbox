@@ -115,7 +115,9 @@ describe('@enbox/modules', () => {
     it('should bind the definition and codecs via defineModule()', () => {
       expect(PreferencesModule.definition).toEqual(PreferencesDefinition);
       expect(Object.isFrozen(PreferencesModule.definition)).toBe(true);
-      expect(Object.keys(PreferencesModule.codecs).sort()).toEqual(['locale', 'notification', 'privacy', 'theme']);
+      expect(Object.keys(PreferencesModule.codecs).sort()).toEqual([
+        'accessibility', 'communication', 'food', 'locale', 'notification', 'privacy', 'theme', 'travel',
+      ]);
     });
   });
 

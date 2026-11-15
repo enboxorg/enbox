@@ -1,0 +1,70 @@
+[
+  {
+    "path": "group",
+    "encoding": "json",
+    "data": {
+      "name": "Weekend trip",
+      "participants": [
+        {
+          "id": "alex",
+          "name": "Alex"
+        },
+        {
+          "id": "sam",
+          "name": "Sam"
+        }
+      ]
+    }
+  },
+  {
+    "path": "group/expense",
+    "encoding": "json",
+    "data": {
+      "description": "Dinner",
+      "amount": {
+        "amount": "60",
+        "currency": "GBP"
+      },
+      "paidBy": "alex",
+      "shares": [
+        {
+          "participantId": "alex",
+          "amount": {
+            "amount": "30",
+            "currency": "GBP"
+          }
+        },
+        {
+          "participantId": "sam",
+          "amount": {
+            "amount": "30",
+            "currency": "GBP"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "path": "group/settlement",
+    "encoding": "json",
+    "data": {
+      "fromParticipant": "sam",
+      "toParticipant": "alex",
+      "amount": {
+        "amount": "30",
+        "currency": "GBP"
+      },
+      "paidAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "group/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "group/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,58 @@
+{
+  "id": "vehicles",
+  "name": "Vehicles",
+  "category": "Home and belongings",
+  "description": "Cars/bikes, identifiers, mileage, fuel or charging logs, and document/service references.",
+  "moduleUri": "https://enbox.id/modules/vehicles/v1",
+  "exportName": "VehiclesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "The car odometer is at 42,000 miles."
+  ],
+  "dependencies": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "records": [
+    {
+      "path": "item/vehicle",
+      "type": "vehicle",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/vehicle",
+      "schemaFile": "schemas/vehicle.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/vehicle/odometer",
+      "type": "odometer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/odometer",
+      "schemaFile": "schemas/odometer.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "item/vehicle/energy",
+      "type": "energy",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/energy",
+      "schemaFile": "schemas/energy.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

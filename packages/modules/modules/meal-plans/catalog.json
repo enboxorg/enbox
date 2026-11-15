@@ -1,0 +1,69 @@
+{
+  "id": "meal-plans",
+  "name": "Meal Plans",
+  "category": "Food and shopping",
+  "description": "Meals planned for dates, eaters, portions, and recipe references.",
+  "moduleUri": "https://enbox.id/modules/meal-plans/v1",
+  "exportName": "MealPlansModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Let's have the lentil soup on Tuesday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "plan",
+      "type": "plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/meal-plans/v1/schemas/plan",
+      "schemaFile": "schemas/plan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "plan/meal",
+      "type": "meal",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/meal-plans/v1/schemas/meal",
+      "schemaFile": "schemas/meal.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "plan/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/meal-plans/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "plan/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/meal-plans/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

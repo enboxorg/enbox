@@ -1,0 +1,58 @@
+{
+  "id": "investment-holdings",
+  "name": "Investment Holdings",
+  "category": "Money and investing",
+  "description": "Accounts, owned positions, lots, quantities, acquisition costs, and investment transactions.",
+  "moduleUri": "https://enbox.id/modules/investment-holdings/v1",
+  "exportName": "InvestmentHoldingsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I bought ten shares of NVDA."
+  ],
+  "dependencies": {
+    "transactions": "https://enbox.id/modules/transactions/v1"
+  },
+  "records": [
+    {
+      "path": "account/position",
+      "type": "position",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/position",
+      "schemaFile": "schemas/position.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/position/lot",
+      "type": "lot",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/lot",
+      "schemaFile": "schemas/lot.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "account/position/trade",
+      "type": "trade",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/trade",
+      "schemaFile": "schemas/trade.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

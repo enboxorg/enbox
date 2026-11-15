@@ -1,0 +1,56 @@
+{
+  "id": "housing",
+  "name": "Housing",
+  "category": "Home and belongings",
+  "description": "Homes, address history, occupancy, leases, rent/deposit details, and document references.",
+  "moduleUri": "https://enbox.id/modules/housing/v1",
+  "exportName": "HousingModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My lease ends on August 31."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "residence",
+      "type": "residence",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/housing/v1/schemas/residence",
+      "schemaFile": "schemas/residence.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "residence/occupancy",
+      "type": "occupancy",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/housing/v1/schemas/occupancy",
+      "schemaFile": "schemas/occupancy.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "residence/lease",
+      "type": "lease",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/housing/v1/schemas/lease",
+      "schemaFile": "schemas/lease.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

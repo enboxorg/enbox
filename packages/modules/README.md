@@ -1,168 +1,333 @@
 # @enbox/modules
 
-> **Research Preview** -- Enbox is under active development. APIs may change without notice.
+> **Research Preview** — Enbox is under active development. Module contracts are versioned; APIs may change.
 
-Ready-to-use DWN module definitions for the Enbox ecosystem. Each module ships with:
+Complete reusable modules for personal DWN data. Each module has its own
+[artifact directory](modules/index.json), containing a raw definition, strict
+JSON Schemas, capture metadata, valid examples, and usage documentation. Typed
+exports include literal definitions, data types, validating codecs, and explicit
+dependency artifacts.
 
-- A raw `ModuleDefinition` constant (for example, `ProfileDefinition`)
-- A typed module via `defineModule()` (for example, `ProfileModule`)
-- TypeScript data shape types (for example, `ProfileData`)
-- Runtime codecs mapping type names to application values
-- JSON Schema files in `schemas/` for validation and code generation
-- `$recordLimit` annotations on natural singleton types
-
-## Installation
+## Installation and use
 
 ```bash
 bun add @enbox/modules
 ```
 
-## Quick Start
+Prefer individual subpaths for applications using a small subset:
 
 ```ts
-import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
-import { ProfileModule } from '@enbox/modules';
+import { defineApplicationManifest } from '@enbox/api';
+import { GroceriesModule } from '@enbox/modules/groceries';
 
-const application = defineApplicationManifest({
-  modules: [ProfileModule],
-} as const);
-const store = createConnectionStore({ application, password: 'secret' });
-
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connectVault({ createIdentity: true });
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const profile = snapshot.enbox.using(ProfileModule);
-
-await profile.records.create('profile', {
-  data: { displayName: 'Bob', bio: 'Building the decentralized web' },
+const application = defineApplicationManifest({ modules: [GroceriesModule] });
+// Register application in your connection store and obtain a connected enbox.
+const groceries = enbox.using(GroceriesModule);
+const list = await groceries.records.create('list', {
+  data: { name: 'Weekly groceries' },
 });
-
-const { records: profiles } = await profile.records.query('profile');
-console.log(await profiles[0].value()); // ProfileData
-
-await store.disconnect();
-await store.dispose();
+const item = await groceries.records.create('list/item', {
+  parentContextId: list.contextId,
+  data: {
+    name: 'Lemons',
+    state: 'needed',
+    quantity: { value: '2', unit: 'piece' },
+  },
+});
+await item.update({ data: { name: 'Lemons', state: 'purchased' } });
 ```
 
-## Module Catalog
-
-The [personal data module proposal](../../docs/modules/README.md) explores
-additional everyday domains and provides a machine-readable candidate menu for
-review. Those candidates are not yet installable definitions or package exports.
-
-### Profile
-
-**URI**: `https://identity.foundation/modules/profile`
-**Published**: yes
-**Import**: `ProfileModule`, `ProfileDefinition`
-
-Public identity information with avatar and hero images and external links.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `profile` | `ProfileData` | **yes** | 10 KB max |
-| `profile/avatar` | `AvatarData` (Blob) | **yes** | 12 MB max, image formats |
-| `profile/hero` | `HeroData` (Blob) | **yes** | 24 MB max, image formats |
-| `profile/link` | `LinkData` | no | Links nested under profile |
+Named module exports are also available from the package root. Data-type aliases
+at the root are prefixed by the module name, such as `GroceriesItemData`; the
+individual subpath exports the local `ItemData` name.
 
 ```ts
-type ProfileData = { displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string };
-type AvatarData  = Blob; // no JSON schema -- binary only
-type HeroData    = Blob; // no JSON schema -- binary only
-type LinkData    = { url: string; title: string; icon?: string; sortOrder?: number };
+import { GroceriesModule, type GroceriesItemData } from '@enbox/modules';
+import type { ItemData } from '@enbox/modules/groceries';
 ```
 
----
+## Module library
 
-### Preferences
+### Home and belongings
 
-**URI**: `https://identity.foundation/modules/preferences`
-**Published**: no (owner-only)
-**Import**: `PreferencesModule`, `PreferencesDefinition`
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Belongings](modules/belongings/README.md) | `@enbox/modules/belongings` | `item` |
+| [Housing](modules/housing/README.md) | `@enbox/modules/housing` | `residence`, `residence/occupancy`, `residence/lease` |
+| [Maintenance](modules/maintenance/README.md) | `@enbox/modules/maintenance` | `item/plan`, `item/service` |
+| [Pet Care](modules/pet-care/README.md) | `@enbox/modules/pet-care` | `pet`, `pet/care`, `pet/vetRecord` |
+| [Plants](modules/plants/README.md) | `@enbox/modules/plants` | `plant`, `plant/care` |
+| [Utilities](modules/utilities/README.md) | `@enbox/modules/utilities` | `account`, `account/meter`, `account/meter/reading` |
+| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/odometer`, `item/vehicle/energy` |
+| [Warranties](modules/warranties/README.md) | `@enbox/modules/warranties` | `item/warranty`, `item/warranty/claim` |
 
-User configuration and settings. The `privacy` type uses `encryptionRequired: true` for at-rest encryption.
+### Money and investing
 
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `theme` | `ThemeData` | **yes** | |
-| `locale` | `LocaleData` | **yes** | |
-| `privacy` | `PrivacyData` | **yes** | Encrypted at rest |
-| `notification` | `NotificationData` | no | Multiple channels, tagged by `channel` |
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Bills](modules/bills/README.md) | `@enbox/modules/bills` | `bill`, `bill/payment` |
+| [Budgets](modules/budgets/README.md) | `@enbox/modules/budgets` | `budget`, `budget/allocation` |
+| [Debts and Loans](modules/debts-loans/README.md) | `@enbox/modules/debts-loans` | `loan`, `loan/repayment` |
+| [Investment Holdings](modules/investment-holdings/README.md) | `@enbox/modules/investment-holdings` | `account/position`, `account/position/lot`, `account/position/trade` |
+| [Receipts](modules/receipts/README.md) | `@enbox/modules/receipts` | `receipt`, `receipt/item`, `receipt/extraction` |
+| [Shared Expenses](modules/shared-expenses/README.md) | `@enbox/modules/shared-expenses` | `group`, `group/expense`, `group/settlement` |
+| [Stock Watchlists](modules/stock-watchlists/README.md) | `@enbox/modules/stock-watchlists` | `watchlist`, `watchlist/instrument`, `watchlist/instrument/note` |
+| [Subscriptions](modules/subscriptions/README.md) | `@enbox/modules/subscriptions` | `subscription`, `subscription/change` |
+| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account`, `account/transaction` |
+
+### General personal records
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Bookmarks](modules/bookmarks/README.md) | `@enbox/modules/bookmarks` | `bookmark`, `folder`, `folder/entry` |
+| [Files](modules/files/README.md) | `@enbox/modules/files` | `file`, `file/content` |
+| [Notes](modules/notes/README.md) | `@enbox/modules/notes` | `note` |
+| [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state` |
+| [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |
+
+### Media and learning
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Books](modules/books/README.md) | `@enbox/modules/books` | `book`, `book/reading`, `book/highlight`, `book/review` |
+| [Flashcards](modules/flashcards/README.md) | `@enbox/modules/flashcards` | `card`, `deck`, `deck/entry`, `studySet`, `studySet/cardState`, `studySet/cardState/review` |
+| [Games](modules/games/README.md) | `@enbox/modules/games` | `game`, `game/session`, `game/progress` |
+| [Learning Plans](modules/learning-plans/README.md) | `@enbox/modules/learning-plans` | `goal/plan`, `goal/plan/activity`, `goal/plan/activity/progress` |
+| [Movies and TV](modules/movies-tv/README.md) | `@enbox/modules/movies-tv` | `title`, `title/viewing`, `title/rating` |
+| [Music](modules/music/README.md) | `@enbox/modules/music` | `item`, `item/listening` |
+| [Podcasts](modules/podcasts/README.md) | `@enbox/modules/podcasts` | `show`, `show/episode`, `show/episode/playback` |
+
+### Travel and outdoors
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Cards and Passes](modules/cards-passes/README.md) | `@enbox/modules/cards-passes` | `pass` |
+| [Packing](modules/packing/README.md) | `@enbox/modules/packing` | `list`, `list/bag`, `list/item` |
+| [Places](modules/places/README.md) | `@enbox/modules/places` | `place` |
+| [Reservations](modules/reservations/README.md) | `@enbox/modules/reservations` | `reservation`, `reservation/change` |
+| [Routes](modules/routes/README.md) | `@enbox/modules/routes` | `route`, `route/waypoint`, `route/track` |
+| [Trips](modules/trips/README.md) | `@enbox/modules/trips` | `trip`, `trip/item` |
+
+### Identity and digital life
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Connect](modules/connect/README.md) | `@enbox/modules/connect` | `wallet` |
+| [Credentials](modules/credentials/README.md) | `@enbox/modules/credentials` | `credential`, `credential/artifact`, `credential/verification`, `presentation` |
+| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration`, `item/device/service` |
+| [Identity Documents](modules/identity-documents/README.md) | `@enbox/modules/identity-documents` | `document`, `document/extraction`, `document/review` |
+| [Insurance](modules/insurance/README.md) | `@enbox/modules/insurance` | `policy`, `policy/subject`, `policy/claim` |
+| [Online Accounts](modules/online-accounts/README.md) | `@enbox/modules/online-accounts` | `account`, `account/identityLink` |
+| [Preferences](modules/preferences/README.md) | `@enbox/modules/preferences` | `theme`, `locale`, `privacy`, `notification`, `accessibility`, `food`, `travel`, `communication` |
+| [Profiles](modules/profile/README.md) | `@enbox/modules/profile` | `profile`, `profile/link`, `profile/avatar`, `profile/hero` |
+
+### People and personal life
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Contacts](modules/contacts/README.md) | `@enbox/modules/contacts` | `contact`, `contact/endpoint`, `contact/interaction`, `group`, `group/entry` |
+| [Conversations](modules/conversations/README.md) | `@enbox/modules/conversations` | `conversation`, `conversation/message`, `conversation/message/reaction`, `state` |
+| [Events](modules/events/README.md) | `@enbox/modules/events` | `event`, `event/exception`, `event/response`, `state` |
+| [Goals](modules/goals/README.md) | `@enbox/modules/goals` | `goal`, `goal/progress` |
+| [Habits](modules/habits/README.md) | `@enbox/modules/habits` | `habit`, `habit/checkIn` |
+| [Personal Projects](modules/personal-projects/README.md) | `@enbox/modules/personal-projects` | `project`, `project/milestone` |
+| [Relationships](modules/relationships/README.md) | `@enbox/modules/relationships` | `follow`, `connection`, `restriction` |
+
+### Health and fitness
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Cycle Tracking](modules/cycle-tracking/README.md) | `@enbox/modules/cycle-tracking` | `cycle`, `cycle/observation` |
+| [Health Profile](modules/health-profile/README.md) | `@enbox/modules/health-profile` | `profile`, `profile/condition`, `profile/allergy` |
+| [Measurements](modules/measurements/README.md) | `@enbox/modules/measurements` | `measurement` |
+| [Medical Records](modules/medical-records/README.md) | `@enbox/modules/medical-records` | `document`, `visit`, `immunization` |
+| [Medications](modules/medications/README.md) | `@enbox/modules/medications` | `medication`, `medication/regimen`, `medication/dose` |
+| [Mood](modules/mood/README.md) | `@enbox/modules/mood` | `checkIn` |
+| [Sleep](modules/sleep/README.md) | `@enbox/modules/sleep` | `session` |
+| [Symptoms](modules/symptoms/README.md) | `@enbox/modules/symptoms` | `episode` |
+| [Workouts](modules/workouts/README.md) | `@enbox/modules/workouts` | `routine`, `workout`, `workout/exercise` |
+
+### Food and shopping
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Food Diary](modules/food-diary/README.md) | `@enbox/modules/food-diary` | `entry` |
+| [Gifts](modules/gifts/README.md) | `@enbox/modules/gifts` | `plan`, `plan/idea` |
+| [Groceries](modules/groceries/README.md) | `@enbox/modules/groceries` | `list`, `list/item` |
+| [Meal Plans](modules/meal-plans/README.md) | `@enbox/modules/meal-plans` | `plan`, `plan/meal` |
+| [Pantry](modules/pantry/README.md) | `@enbox/modules/pantry` | `pantry`, `pantry/item`, `pantry/item/change` |
+| [Purchases](modules/purchases/README.md) | `@enbox/modules/purchases` | `purchase`, `purchase/item`, `purchase/return` |
+| [Recipes](modules/recipes/README.md) | `@enbox/modules/recipes` | `recipe`, `recipe/variation` |
+| [Shopping Wishlists](modules/shopping-wishlists/README.md) | `@enbox/modules/shopping-wishlists` | `list`, `list/item` |
+
+## Discovery and raw artifacts
 
 ```ts
-type ThemeData        = { mode: 'light' | 'dark' | 'system'; accentColor?: string; fontSize?: 'small' | 'medium' | 'large' };
-type LocaleData       = { language: string; region?: string; timezone?: string; dateFormat?: string; hourCycle?: '12h' | '24h' };
-type PrivacyData      = { cookieConsent: { analytics: boolean; marketing: boolean; functional: boolean }; shareUsageData: boolean };
-type NotificationData = { channel: string; enabled: boolean; quietHoursStart?: string; quietHoursEnd?: string };
+import { getModuleCatalogEntry, searchModuleCatalog } from '@enbox/modules/catalog';
+
+const matches = searchModuleCatalog('groceries');
+const entry = getModuleCatalogEntry('groceries');
+// entry.definition: complete authored ModuleDefinition
+// entry.records: actual local paths, payload schemas, formats, and policies
+// entry.examples: structured examples for every path (including required tags)
 ```
 
-### Connect
+Discovery searches metadata, not personal records. Loading a catalog entry does
+not grant permission or write data. An AI can inspect the actual schema, match an
+existing record, validate a proposed value, and apply the user's save policy.
+Facts, intentions, corrections, and hypothetical statements must remain distinct.
 
-**URI**: `https://identity.foundation/modules/connect`
-**Published**: yes
-**Import**: `ConnectModule`, `ConnectDefinition`
-
-Wallet and app discovery information.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `wallet` | `WalletData` | **yes** | Publicly readable |
+Raw artifacts are also public package subpaths:
 
 ```ts
-type WalletData = { webWallets: string[] };
+import definition from '@enbox/modules/artifacts/groceries/definition.json' with { type: 'json' };
+import schema from '@enbox/modules/artifacts/groceries/schemas/item.json' with { type: 'json' };
 ```
 
-## JSON Schemas
+`@enbox/modules/artifacts/index.json` lists individual artifact locations. Each
+module's `catalog.json` names its definition, schemas, actual paths, dependencies,
+and examples. No aggregate file is the sole source of module definitions.
 
-Each module type with an `application/json` data format has a corresponding JSON Schema file in `schemas/<module>/<type>.json`. These schemas:
+## Composition
 
-- Match the TypeScript data shapes exactly
-- Use Draft-07 (`$schema: "http://json-schema.org/draft-07/schema#"`)
-- Have `$id` URIs matching the `schema` field in the module definition
-- Are compatible with `@enbox/module-codegen` for TypeScript type generation
-
-```text
-schemas/
-  profile/       profile.json, link.json
-  preferences/   theme.json, locale.json, privacy.json, notification.json
-  connect/       wallet.json
-```
-
-Binary-only types (`avatar`, `hero`) do not have JSON Schemas since they store raw image data.
-
-## Singleton Records
-
-Types annotated with `$recordLimit: { max: 1 }` expose one deterministic occupant per parent scope through Query, Read, Count, and subscription snapshots:
-
-- Create the record with `records.create()` and load it with `records.query()`.
-- Update the returned `Record<T>` explicitly with `record.update()`.
-- Competing valid writes remain stored but hidden from the projected population and may become visible if the current occupant is deleted.
-- Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`.
-
-## Exports
-
-All modules re-export from the package root:
+Warranties, Maintenance, Vehicles, and Devices attach local children to a
+Belongings `item`. Investment Holdings attaches positions to a Transactions
+`account`. Learning Plans attaches a plan to a Goals `goal`.
 
 ```ts
-import {
-  // Profile
-  ProfileModule, ProfileDefinition,
-  type ProfileData, type AvatarData, type HeroData, type LinkData,
+import { BelongingsModule } from '@enbox/modules/belongings';
+import { WarrantiesModule } from '@enbox/modules/warranties';
 
-  // Preferences
-  PreferencesModule, PreferencesDefinition,
-  type ThemeData, type LocaleData, type PrivacyData, type NotificationData,
-
-  // Connect
-  ConnectModule, ConnectDefinition,
-  type WalletData,
-} from '@enbox/modules';
+const item = await enbox.using(BelongingsModule).records.create('item', {
+  data: { name: 'Washing machine', state: 'owned' },
+});
+await enbox.using(WarrantiesModule).records.create('item/warranty', {
+  parentContextId: item.contextId,
+  data: { provider: 'Example Appliances', expiresOn: '2029-01-15' },
+});
 ```
+
+The base item remains owned by Belongings; the warranty belongs to Warranties.
+`item` is a virtual attachment in the consumer and cannot be created or queried
+as a consumer record. Dependencies are supplied by the typed artifact and
+installed in provider order. Reads, queries, and observations stay scoped to the
+owning module. See [module composition](../../docs/MODULE-COMPOSITION.md).
+
+Bookmarks, document scans, purchase evidence, and presentation credentials use
+payload links when the target's identity and lifecycle are independent. A link
+with an omitted `tenantDid` is relative to the DID owning the referring record,
+including when another user reads a replica. Copying a relative link to another
+owner requires preserving or explicitly rebinding that meaning.
+
+## Access, encryption, and lifecycle
+
+New personal data paths require DWN encryption. They are owner-only unless
+explicit role actions or delegated grants authorize another principal. Public
+Profile/Connect behavior and the existing owner-only plaintext preference paths
+are retained; privacy and the new preference profiles are encrypted.
+
+Shared modules declare contextual `editor` and `viewer` roles. The owner issues
+role records with the member's DID in the record descriptor's `recipient`, an
+empty `{}` payload, and the direct parent's `contextId`. Membership records are
+immutable and the recipient can read or remove their own assignment. Each data
+path's action list specifies the member's powers; chat responses and messages
+use author-only mutations where appropriate.
+
+For managed invitations and following, use the optional
+[`@enbox/contexts`](https://github.com/enboxorg/enbox-contexts) companion API.
+A structural dependency does not implicitly grant provider-data access, and a
+payload link never transfers its target's permissions.
+
+`published` controls discovery of the definition, not publication of records.
+Private information belongs in encrypted payloads, not unencrypted tags. The
+Preferences notification path retains its required `channel` tag, supplied in
+its example.
+
+Immutable records cannot be updated, including by the owner. Deletion still
+follows the action rules. `$recordLimit` provides a deterministic visible
+population; it does not guarantee that competing creates are rejected. Pruning
+follows structural children across modules, while linked records remain
+independent. Root sharing contexts remain under owner lifecycle control.
+
+## Data conventions
+
+- Money is `{ amount: string, currency: string }`. Decimal strings preserve the
+  supplied amount; transaction direction is explicit instead of inferred from a
+  floating-point sign. Currency conversion and reconciliation are application work.
+- Quantities include an explicit decimal string and unit. Missing quantities stay
+  absent rather than silently becoming zero or one.
+- Dates use `YYYY-MM-DD`; instants use validated RFC 3339 date-time strings. Source
+  time and user timezone matter when resolving relative chat expressions.
+- JSON objects reject unknown fields, invalid enum values, malformed dates/URLs,
+  and other declared constraints on both encode and decode. Codecs do not coerce
+  types, insert defaults, or strip invalid fields.
+- JSON Schemas are bundled Draft-07 documents with local references. Source,
+  address, reference, money, quantity, and alert shapes are reused consistently.
+- Source metadata is provenance information, not an authorization grant or proof
+  that an assertion is true. Financial totals, references to other records, and
+  clinical interpretations need their application's appropriate reconciliation.
+- Tasks and Events store alert preferences, including private state for shared
+  records. Applications schedule/deliver alerts; installing a module does not run
+  a scheduler.
+
+## Identity documents and credentials
+
+Identity Documents stores document-specific fields, scan references, extraction
+results, and review/correction history. Front/back or replacement scans can refer
+to independent Files records. OCR execution is an application integration; the
+module provides its structured storage contract.
+
+Credentials preserves native issuer-secured bytes in immutable artifact records
+and separates them from editable local metadata. Verification records identify
+which artifact was checked and when. Presentations can reference multiple
+credentials and record requested/approved disclosures. The bundled credential
+example is a signed, self-issued demonstration, not a government assertion.
+
+Payload/schema validation does not perform issuer-signature verification, establish
+holder binding, or certify extracted ID fields. Credential verification and
+presentation integrations must evaluate the native artifact, its status, issuer
+policy, holder binding, and request context. Selective disclosure depends on the
+credential's securing format. Private signing keys remain in the agent's key
+management boundary, not account/device/credential metadata fields.
+
+## Development
+
+The canonical inputs are `modules/<id>/definition.json`, `schemas/*.json`,
+`catalog.json`, and `examples.json` inside each module directory. Record paths
+use the DWN's alphabetic segments (including camelCase); schema filenames use
+kebab-case, resolved through their module-scoped schema URIs.
+
+From a monorepo checkout, build workspace prerequisites, then:
+
+```bash
+cd packages/modules
+bun run generate
+bun run build
+bun run test:node
+```
+
+Generation uses `@enbox/module-codegen` to produce literal typed definitions,
+CSP-safe standalone validators, and codecs in `src/generated/`, along with
+individual entrypoints and documentation. `bun run check:generated` verifies
+freshness without writing. Schema examples, invalid payloads, type contracts,
+real encrypted DWN round-trips, authorization, and composition/lifecycle behavior
+are exercised by the test suite.
+
+The build-time generator uses the workspace codegen source; adding a direct
+codegen package dependency here would introduce a workspace cycle through its
+browser development dependency. Runtime consumers need neither the generator,
+Ajv, Prettier, nor a runtime schema compiler.
+
+Releasable changes use a patch changeset. The existing release workflow publishes
+`@enbox/modules`; a hosted directory can consume the packaged individual catalog
+artifacts. Publishing to npm does not automatically register an unrelated hosted
+service.
+
+## Profile reader
+
+`createProfileReader` remains available from the package root and
+`@enbox/modules/profile-reader` for reading public profile data through connected
+or anonymous Enbox record surfaces.
 
 ## License
 

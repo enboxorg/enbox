@@ -1,0 +1,47 @@
+[
+  {
+    "path": "conversation",
+    "encoding": "json",
+    "data": {
+      "title": "Kitchen renovation",
+      "kind": "assistant"
+    }
+  },
+  {
+    "path": "conversation/message",
+    "encoding": "json",
+    "data": {
+      "role": "user",
+      "text": "Let us plan the kitchen renovation.",
+      "sentAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "conversation/message/reaction",
+    "encoding": "json",
+    "data": {
+      "value": "👍",
+      "reactedAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "state",
+    "encoding": "json",
+    "data": {
+      "conversation": {
+        "recordId": "example-record"
+      },
+      "muted": false
+    }
+  },
+  {
+    "path": "conversation/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "conversation/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

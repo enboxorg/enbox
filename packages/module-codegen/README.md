@@ -126,7 +126,10 @@ For a schema URI `https://example.com/schemas/inventory/product`, it looks for:
 schemas/inventory/product.json
 ```
 
-This is how `@enbox/modules` organizes its schemas -- matching the URI structure exactly.
+`@enbox/modules` bundles each definition with its own `modules/<id>/schemas/`
+directory. Alphabetic record type names can use the first strategy, while a
+module-scoped schema URI ending in `/schemas/card-state` resolves the kebab-case
+`card-state.json` file for a `cardState` record type through this strategy.
 
 ### Resolution result
 

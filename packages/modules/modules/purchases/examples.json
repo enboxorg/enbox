@@ -1,0 +1,38 @@
+[
+  {
+    "path": "purchase",
+    "encoding": "json",
+    "data": {
+      "merchant": "Example Store",
+      "state": "ordered",
+      "total": {
+        "amount": "12.50",
+        "currency": "USD"
+      }
+    }
+  },
+  {
+    "path": "purchase/item",
+    "encoding": "json",
+    "data": {
+      "name": "Headphones",
+      "quantity": {
+        "value": "1",
+        "unit": "pair"
+      }
+    }
+  },
+  {
+    "path": "purchase/return",
+    "encoding": "json",
+    "data": {
+      "items": [
+        {
+          "recordId": "example-record"
+        }
+      ],
+      "reason": "Wrong size",
+      "state": "requested"
+    }
+  }
+]

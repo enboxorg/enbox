@@ -1,0 +1,56 @@
+{
+  "id": "movies-tv",
+  "name": "Movies and TV",
+  "category": "Media and learning",
+  "description": "Films/series, watch intentions, episode progress, viewing history, and ratings.",
+  "moduleUri": "https://enbox.id/modules/movies-tv/v1",
+  "exportName": "MoviesTvModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I finished season two, episode five."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "title",
+      "type": "title",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/movies-tv/v1/schemas/title",
+      "schemaFile": "schemas/title.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "title/viewing",
+      "type": "viewing",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/movies-tv/v1/schemas/viewing",
+      "schemaFile": "schemas/viewing.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "title/rating",
+      "type": "rating",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/movies-tv/v1/schemas/rating",
+      "schemaFile": "schemas/rating.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

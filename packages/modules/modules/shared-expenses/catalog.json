@@ -1,0 +1,82 @@
+{
+  "id": "shared-expenses",
+  "name": "Shared Expenses",
+  "category": "Money and investing",
+  "description": "Participants, shared costs, allocation shares, and settlements.",
+  "moduleUri": "https://enbox.id/modules/shared-expenses/v1",
+  "exportName": "SharedExpensesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Split the £60 dinner equally between the three of us."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "group",
+      "type": "group",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/group",
+      "schemaFile": "schemas/group.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "group/expense",
+      "type": "expense",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/expense",
+      "schemaFile": "schemas/expense.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "group/settlement",
+      "type": "settlement",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/settlement",
+      "schemaFile": "schemas/settlement.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "group/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "group/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

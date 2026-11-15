@@ -1,0 +1,19 @@
+[
+  {
+    "path": "item/warranty",
+    "encoding": "json",
+    "data": {
+      "provider": "Example Appliances",
+      "startsOn": "2026-01-15",
+      "expiresOn": "2029-01-15"
+    }
+  },
+  {
+    "path": "item/warranty/claim",
+    "encoding": "json",
+    "data": {
+      "issue": "Motor stopped working",
+      "state": "opened"
+    }
+  }
+]

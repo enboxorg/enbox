@@ -1,0 +1,25 @@
+[
+  {
+    "path": "goal",
+    "encoding": "json",
+    "data": {
+      "name": "Run ten kilometres",
+      "target": {
+        "value": "10",
+        "unit": "km"
+      },
+      "state": "planned"
+    }
+  },
+  {
+    "path": "goal/progress",
+    "encoding": "json",
+    "data": {
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "value": {
+        "value": "5",
+        "unit": "km"
+      }
+    }
+  }
+]

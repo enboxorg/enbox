@@ -1,0 +1,26 @@
+[
+  {
+    "path": "file",
+    "encoding": "json",
+    "data": {
+      "name": "example.txt",
+      "mediaType": "text/plain",
+      "byteLength": 5
+    }
+  },
+  {
+    "path": "file/content",
+    "encoding": "base64",
+    "data": "aGVsbG8="
+  },
+  {
+    "path": "file/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "file/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

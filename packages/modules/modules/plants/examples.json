@@ -1,0 +1,28 @@
+[
+  {
+    "path": "plant",
+    "encoding": "json",
+    "data": {
+      "name": "Monstera",
+      "location": "Living room"
+    }
+  },
+  {
+    "path": "plant/care",
+    "encoding": "json",
+    "data": {
+      "kind": "repotted",
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "plant/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "plant/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

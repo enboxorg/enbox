@@ -1,0 +1,56 @@
+{
+  "id": "insurance",
+  "name": "Insurance",
+  "category": "Identity and digital life",
+  "description": "Personal policies, providers, covered subjects, supplied coverage details, dates, and claim/document references.",
+  "moduleUri": "https://enbox.id/modules/insurance/v1",
+  "exportName": "InsuranceModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My home insurance renews in March."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "policy",
+      "type": "policy",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/insurance/v1/schemas/policy",
+      "schemaFile": "schemas/policy.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "policy/subject",
+      "type": "subject",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/insurance/v1/schemas/subject",
+      "schemaFile": "schemas/subject.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "policy/claim",
+      "type": "claim",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/insurance/v1/schemas/claim",
+      "schemaFile": "schemas/claim.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

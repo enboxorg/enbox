@@ -1,0 +1,130 @@
+{
+  "id": "preferences",
+  "name": "Preferences",
+  "category": "Identity and digital life",
+  "description": "Explicit locale, accessibility, appearance, communication, and selected domain preferences.",
+  "moduleUri": "https://identity.foundation/modules/preferences",
+  "exportName": "PreferencesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I prefer metric units and a 24-hour clock."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "theme",
+      "type": "theme",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/preferences/theme",
+      "schemaFile": "schemas/theme.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "locale",
+      "type": "locale",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/preferences/locale",
+      "schemaFile": "schemas/locale.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "privacy",
+      "type": "privacy",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://identity.foundation/schemas/preferences/privacy",
+      "schemaFile": "schemas/privacy.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "notification",
+      "type": "notification",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/preferences/notification",
+      "schemaFile": "schemas/notification.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false,
+      "tags": {
+        "$requiredTags": [
+          "channel"
+        ],
+        "$allowUndefinedTags": false,
+        "channel": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "path": "accessibility",
+      "type": "accessibility",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/preferences/v1/schemas/accessibility",
+      "schemaFile": "schemas/accessibility.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "food",
+      "type": "food",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/preferences/v1/schemas/food",
+      "schemaFile": "schemas/food.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "travel",
+      "type": "travel",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/preferences/v1/schemas/travel",
+      "schemaFile": "schemas/travel.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "communication",
+      "type": "communication",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/preferences/v1/schemas/communication",
+      "schemaFile": "schemas/communication.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    }
+  ]
+}

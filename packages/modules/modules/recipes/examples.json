@@ -1,0 +1,45 @@
+[
+  {
+    "path": "recipe",
+    "encoding": "json",
+    "data": {
+      "name": "Lentil soup",
+      "servings": 4,
+      "ingredients": [
+        {
+          "name": "Lentils",
+          "quantity": {
+            "value": "200",
+            "unit": "g"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "instruction": "Simmer the lentils in water until tender.",
+          "minutes": 25
+        }
+      ]
+    }
+  },
+  {
+    "path": "recipe/variation",
+    "encoding": "json",
+    "data": {
+      "name": "Smoky version",
+      "changes": [
+        "Add smoked paprika."
+      ]
+    }
+  },
+  {
+    "path": "recipe/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "recipe/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,142 @@
+{
+  "module": "https://enbox.id/modules/stock-watchlists/v1",
+  "published": true,
+  "types": {
+    "watchlist": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/watchlist"
+    },
+    "instrument": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/instrument"
+    },
+    "note": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/note"
+    },
+    "editor": {
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "watchlist": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "watchlist/editor",
+          "can": [
+            "read",
+            "co-update"
+          ]
+        },
+        {
+          "role": "watchlist/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "instrument": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "watchlist/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete",
+              "co-prune"
+            ]
+          },
+          {
+            "role": "watchlist/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "note": {
+          "$size": {
+            "max": 1048576
+          },
+          "$actions": [
+            {
+              "role": "watchlist/editor",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "watchlist/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
+      },
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "watchlist/editor",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "watchlist/viewer",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

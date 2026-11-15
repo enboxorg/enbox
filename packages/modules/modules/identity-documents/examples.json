@@ -1,0 +1,41 @@
+[
+  {
+    "path": "document",
+    "encoding": "json",
+    "data": {
+      "label": "Personal passport",
+      "documentType": "passport",
+      "reviewState": "unreviewed",
+      "fields": {
+        "fullName": "Alex Example",
+        "documentNumber": "EXAMPLE123",
+        "issuingCountry": "GBR"
+      }
+    }
+  },
+  {
+    "path": "document/extraction",
+    "encoding": "json",
+    "data": {
+      "sources": [
+        {
+          "recordId": "example-record"
+        }
+      ],
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "manual-import",
+      "state": "partial",
+      "fields": {
+        "fullName": "Alex Example"
+      }
+    }
+  },
+  {
+    "path": "document/review",
+    "encoding": "json",
+    "data": {
+      "reviewedAt": "2026-01-15T12:00:00Z",
+      "decision": "accepted"
+    }
+  }
+]

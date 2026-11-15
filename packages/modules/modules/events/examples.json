@@ -1,0 +1,53 @@
+[
+  {
+    "path": "event",
+    "encoding": "json",
+    "data": {
+      "title": "Dinner with Alex",
+      "startsAt": "2026-01-16T19:00:00Z",
+      "timeZone": "Europe/London"
+    }
+  },
+  {
+    "path": "event/exception",
+    "encoding": "json",
+    "data": {
+      "originalDate": "2026-01-15",
+      "cancelled": true
+    }
+  },
+  {
+    "path": "event/response",
+    "encoding": "json",
+    "data": {
+      "response": "accepted",
+      "respondedAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "state",
+    "encoding": "json",
+    "data": {
+      "event": {
+        "recordId": "example-record"
+      },
+      "alerts": [
+        {
+          "id": "before",
+          "offsetSeconds": -1800,
+          "anchor": "start"
+        }
+      ]
+    }
+  },
+  {
+    "path": "event/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "event/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "path": "project",
+    "encoding": "json",
+    "data": {
+      "name": "Restore a bicycle",
+      "state": "active"
+    }
+  },
+  {
+    "path": "project/milestone",
+    "encoding": "json",
+    "data": {
+      "name": "Replace worn parts",
+      "state": "planned"
+    }
+  },
+  {
+    "path": "project/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "project/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

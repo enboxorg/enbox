@@ -1,0 +1,25 @@
+[
+  {
+    "path": "profile",
+    "encoding": "json",
+    "data": {
+      "name": "Personal health profile"
+    }
+  },
+  {
+    "path": "profile/condition",
+    "encoding": "json",
+    "data": {
+      "name": "Example condition",
+      "assertion": "self-reported"
+    }
+  },
+  {
+    "path": "profile/allergy",
+    "encoding": "json",
+    "data": {
+      "substance": "Peanut",
+      "assertion": "self-reported"
+    }
+  }
+]

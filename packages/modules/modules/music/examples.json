@@ -1,0 +1,19 @@
+[
+  {
+    "path": "item",
+    "encoding": "json",
+    "data": {
+      "name": "Example album",
+      "kind": "album",
+      "favorite": true
+    }
+  },
+  {
+    "path": "item/listening",
+    "encoding": "json",
+    "data": {
+      "listenedAt": "2026-01-15T12:00:00Z",
+      "completed": true
+    }
+  }
+]

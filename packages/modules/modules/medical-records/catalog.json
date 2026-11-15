@@ -1,0 +1,56 @@
+{
+  "id": "medical-records",
+  "name": "Medical Records",
+  "category": "Health and fitness",
+  "description": "Visit documents, test reports, immunizations, clinician details, and source evidence.",
+  "moduleUri": "https://enbox.id/modules/medical-records/v1",
+  "exportName": "MedicalRecordsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save the lab report I received today."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "document",
+      "type": "document",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medical-records/v1/schemas/document",
+      "schemaFile": "schemas/document.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "visit",
+      "type": "visit",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medical-records/v1/schemas/visit",
+      "schemaFile": "schemas/visit.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "immunization",
+      "type": "immunization",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/medical-records/v1/schemas/immunization",
+      "schemaFile": "schemas/immunization.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "id": "files",
+  "name": "Files",
+  "category": "General personal records",
+  "description": "File identity, metadata, content, and independently managed attachments.",
+  "moduleUri": "https://enbox.id/modules/files/v1",
+  "exportName": "FilesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Keep this PDF with my other documents."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "file",
+      "type": "file",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/files/v1/schemas/file",
+      "schemaFile": "schemas/file.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "file/content",
+      "type": "content",
+      "dataFormats": [
+        "application/octet-stream"
+      ],
+      "encryptionRequired": true,
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "file/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/files/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "file/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/files/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

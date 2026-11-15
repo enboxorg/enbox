@@ -1,0 +1,58 @@
+{
+  "id": "devices",
+  "name": "Devices",
+  "category": "Identity and digital life",
+  "description": "Personal device identity, configuration metadata, service history, and ownership/account references.",
+  "moduleUri": "https://enbox.id/modules/devices/v1",
+  "exportName": "DevicesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I replaced my old laptop with this one."
+  ],
+  "dependencies": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "records": [
+    {
+      "path": "item/device",
+      "type": "device",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/device",
+      "schemaFile": "schemas/device.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/device/configuration",
+      "type": "configuration",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/configuration",
+      "schemaFile": "schemas/configuration.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/device/service",
+      "type": "service",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/devices/v1/schemas/service",
+      "schemaFile": "schemas/service.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

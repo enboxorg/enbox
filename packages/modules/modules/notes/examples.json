@@ -1,0 +1,21 @@
+[
+  {
+    "path": "note",
+    "encoding": "json",
+    "data": {
+      "title": "Weekend itinerary",
+      "content": "Take the morning train.",
+      "format": "plain"
+    }
+  },
+  {
+    "path": "note/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "note/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

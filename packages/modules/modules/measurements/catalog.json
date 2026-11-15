@@ -1,0 +1,30 @@
+{
+  "id": "measurements",
+  "name": "Measurements",
+  "category": "Health and fitness",
+  "description": "Personal measurements with values, units, timestamps, and measurement sources.",
+  "moduleUri": "https://enbox.id/modules/measurements/v1",
+  "exportName": "MeasurementsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Log today's weight measurement."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "measurement",
+      "type": "measurement",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/measurements/v1/schemas/measurement",
+      "schemaFile": "schemas/measurement.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

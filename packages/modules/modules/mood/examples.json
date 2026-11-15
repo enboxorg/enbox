@@ -1,0 +1,13 @@
+[
+  {
+    "path": "checkIn",
+    "encoding": "json",
+    "data": {
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "feelings": [
+        "calm"
+      ],
+      "energy": 3
+    }
+  }
+]

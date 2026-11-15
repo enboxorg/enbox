@@ -1,0 +1,69 @@
+{
+  "id": "books",
+  "name": "Books",
+  "category": "Media and learning",
+  "description": "Books/editions, reading state, progress, highlights, and personal reviews.",
+  "moduleUri": "https://enbox.id/modules/books/v1",
+  "exportName": "BooksModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I finished reading Dune yesterday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "book",
+      "type": "book",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/books/v1/schemas/book",
+      "schemaFile": "schemas/book.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "book/reading",
+      "type": "reading",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/books/v1/schemas/reading",
+      "schemaFile": "schemas/reading.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "book/highlight",
+      "type": "highlight",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/books/v1/schemas/highlight",
+      "schemaFile": "schemas/highlight.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "book/review",
+      "type": "review",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/books/v1/schemas/review",
+      "schemaFile": "schemas/review.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

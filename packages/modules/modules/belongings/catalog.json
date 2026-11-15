@@ -1,0 +1,56 @@
+{
+  "id": "belongings",
+  "name": "Belongings",
+  "category": "Home and belongings",
+  "description": "Owned physical items, serial/model details, locations, acquisition records, and manuals.",
+  "moduleUri": "https://enbox.id/modules/belongings/v1",
+  "exportName": "BelongingsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My washing machine's serial number is ABC123."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "item/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

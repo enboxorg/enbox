@@ -1,0 +1,35 @@
+[
+  {
+    "path": "receipt",
+    "encoding": "json",
+    "data": {
+      "merchant": "Example Grocer",
+      "total": {
+        "amount": "42",
+        "currency": "GBP"
+      }
+    }
+  },
+  {
+    "path": "receipt/item",
+    "encoding": "json",
+    "data": {
+      "name": "Oats",
+      "quantity": {
+        "value": "1",
+        "unit": "bag"
+      }
+    }
+  },
+  {
+    "path": "receipt/extraction",
+    "encoding": "json",
+    "data": {
+      "sourceFile": {
+        "recordId": "example-record"
+      },
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "manual-import"
+    }
+  }
+]

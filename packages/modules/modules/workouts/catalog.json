@@ -1,0 +1,56 @@
+{
+  "id": "workouts",
+  "name": "Workouts",
+  "category": "Health and fitness",
+  "description": "Exercise sessions, routines, sets/reps, distance, duration, and performance.",
+  "moduleUri": "https://enbox.id/modules/workouts/v1",
+  "exportName": "WorkoutsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I ran five kilometres this morning."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "routine",
+      "type": "routine",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/workouts/v1/schemas/routine",
+      "schemaFile": "schemas/routine.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "workout",
+      "type": "workout",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/workouts/v1/schemas/workout",
+      "schemaFile": "schemas/workout.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "workout/exercise",
+      "type": "exercise",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/workouts/v1/schemas/exercise",
+      "schemaFile": "schemas/exercise.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

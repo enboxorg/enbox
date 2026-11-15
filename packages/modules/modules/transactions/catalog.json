@@ -1,0 +1,43 @@
+{
+  "id": "transactions",
+  "name": "Transactions",
+  "category": "Money and investing",
+  "description": "Personal income, expenses, transfers, amounts, currencies, dates, and counterparties.",
+  "moduleUri": "https://enbox.id/modules/transactions/v1",
+  "exportName": "TransactionsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I spent £42 on groceries today."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "account",
+      "type": "account",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/transactions/v1/schemas/account",
+      "schemaFile": "schemas/account.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/transaction",
+      "type": "transaction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/transactions/v1/schemas/transaction",
+      "schemaFile": "schemas/transaction.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

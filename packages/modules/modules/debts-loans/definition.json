@@ -1,0 +1,33 @@
+{
+  "module": "https://enbox.id/modules/debts-loans/v1",
+  "published": true,
+  "types": {
+    "loan": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/debts-loans/v1/schemas/loan"
+    },
+    "repayment": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/debts-loans/v1/schemas/repayment"
+    }
+  },
+  "structure": {
+    "loan": {
+      "$size": {
+        "max": 1048576
+      },
+      "repayment": {
+        "$size": {
+          "max": 1048576
+        },
+        "$immutable": true
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "health-profile",
+  "name": "Health Profile",
+  "category": "Health and fitness",
+  "description": "Explicitly supplied conditions, allergies, relevant history, and emergency information with provenance.",
+  "moduleUri": "https://enbox.id/modules/health-profile/v1",
+  "exportName": "HealthProfileModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I have a peanut allergy."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "profile",
+      "type": "profile",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/health-profile/v1/schemas/profile",
+      "schemaFile": "schemas/profile.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "profile/condition",
+      "type": "condition",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/health-profile/v1/schemas/condition",
+      "schemaFile": "schemas/condition.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "profile/allergy",
+      "type": "allergy",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/health-profile/v1/schemas/allergy",
+      "schemaFile": "schemas/allergy.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ]
+}

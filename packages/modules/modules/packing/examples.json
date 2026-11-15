@@ -1,0 +1,39 @@
+[
+  {
+    "path": "list",
+    "encoding": "json",
+    "data": {
+      "name": "Weekend packing"
+    }
+  },
+  {
+    "path": "list/bag",
+    "encoding": "json",
+    "data": {
+      "name": "Carry-on",
+      "kind": "carry-on"
+    }
+  },
+  {
+    "path": "list/item",
+    "encoding": "json",
+    "data": {
+      "name": "Spare shirts",
+      "quantity": {
+        "value": "2",
+        "unit": "piece"
+      },
+      "state": "needed"
+    }
+  },
+  {
+    "path": "list/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "list/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,34 @@
+[
+  {
+    "path": "item/vehicle",
+    "encoding": "json",
+    "data": {
+      "kind": "car",
+      "make": "Example Motors",
+      "model": "City"
+    }
+  },
+  {
+    "path": "item/vehicle/odometer",
+    "encoding": "json",
+    "data": {
+      "distance": {
+        "value": "42000",
+        "unit": "mile"
+      },
+      "recordedAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "item/vehicle/energy",
+    "encoding": "json",
+    "data": {
+      "kind": "charge",
+      "quantity": {
+        "value": "25",
+        "unit": "kWh"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  }
+]

@@ -1,0 +1,69 @@
+{
+  "id": "personal-projects",
+  "name": "Personal Projects",
+  "category": "People and personal life",
+  "description": "A project's purpose, outcomes, milestones, and links to tasks/resources.",
+  "moduleUri": "https://enbox.id/modules/personal-projects/v1",
+  "exportName": "PersonalProjectsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I'm restoring an old bicycle this summer."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "project",
+      "type": "project",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/personal-projects/v1/schemas/project",
+      "schemaFile": "schemas/project.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "project/milestone",
+      "type": "milestone",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/personal-projects/v1/schemas/milestone",
+      "schemaFile": "schemas/milestone.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "project/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/personal-projects/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "project/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/personal-projects/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ]
+}

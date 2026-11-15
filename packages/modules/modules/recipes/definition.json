@@ -1,0 +1,112 @@
+{
+  "module": "https://enbox.id/modules/recipes/v1",
+  "published": true,
+  "types": {
+    "recipe": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/recipe"
+    },
+    "variation": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/variation"
+    },
+    "editor": {
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "recipe": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "recipe/editor",
+          "can": [
+            "read",
+            "co-update"
+          ]
+        },
+        {
+          "role": "recipe/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "variation": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "recipe/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "recipe/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      },
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "recipe/editor",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "recipe/viewer",
+            "can": [
+              "read",
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
