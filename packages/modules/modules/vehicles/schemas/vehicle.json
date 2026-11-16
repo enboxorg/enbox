@@ -17,16 +17,6 @@
         "other"
       ]
     },
-    "make": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256
-    },
-    "model": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256
-    },
     "modelYear": {
       "type": "integer",
       "minimum": 1800,
@@ -65,22 +55,13 @@
       "$ref": "#/definitions/vehicleRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/vehicleNoteText"
     },
     "source": {
       "$ref": "#/definitions/vehicleSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/vehicleLabels"
     }
   },
   "required": [
@@ -88,9 +69,7 @@
   ],
   "examples": [
     {
-      "kind": "car",
-      "make": "Example Motors",
-      "model": "City"
+      "kind": "car"
     }
   ],
   "definitions": {
@@ -207,6 +186,21 @@
       "required": [
         "kind"
       ]
+    },
+    "vehicleNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "vehicleLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

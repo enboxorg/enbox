@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/gifts/v1/schemas/idea",
+  "title": "IdeaData",
+  "description": "A private gift idea, either independently described or linked to an existing wishlist item without copying its product metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "price": {
+      "$ref": "#/definitions/ideaMoney"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idea",
+        "selected",
+        "purchased",
+        "wrapped",
+        "given",
+        "dismissed"
+      ]
+    },
+    "purchase": {
+      "$ref": "#/definitions/ideaRecordReference"
+    },
+    "givenAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/ideaSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    },
+    "wishlistItem": {
+      "$ref": "#/definitions/ideaRecordReference"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Cookbook",
+      "state": "idea"
+    }
+  ],
+  "definitions": {
+    "ideaMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "ideaRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "ideaSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "name"
+      ],
+      "not": {
+        "required": [
+          "wishlistItem"
+        ]
+      }
+    },
+    {
+      "required": [
+        "wishlistItem"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "price"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/podcasts/v1/schemas/playback",
+  "title": "PlaybackData",
+  "description": "Podcasts: playback record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "positionSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10000000
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "completed": {
+      "type": "boolean"
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.25,
+      "maximum": 4
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/playbackSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "positionSeconds",
+    "updatedAt"
+  ],
+  "examples": [
+    {
+      "positionSeconds": 1080,
+      "updatedAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "playbackRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "playbackSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

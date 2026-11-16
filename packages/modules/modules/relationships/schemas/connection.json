@@ -47,22 +47,13 @@
       "$ref": "#/definitions/connectionRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/connectionNoteText"
     },
     "source": {
       "$ref": "#/definitions/connectionSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/connectionLabels"
     }
   },
   "required": [
@@ -191,6 +182,21 @@
       "required": [
         "kind"
       ]
+    },
+    "connectionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "connectionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

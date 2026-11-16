@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the game and platform identifier.",
+    "exclude": [
+      "Duplicating its purchase or turning a wish into ownership."
+    ],
+    "workflow": "Maintain play intent and observed sessions/progress; link purchase evidence."
+  }
 }

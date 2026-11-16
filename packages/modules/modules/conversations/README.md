@@ -8,7 +8,8 @@ Import `ConversationsModule`, `ConversationsDefinition`, `ConversationsCodecs`, 
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -47,6 +48,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 - Messages and reactions are authored contributions. Editors create contributions and manage their own mutable messages; viewers only read. All signed authorship comes from the DWN record descriptor.
 - Conversation owners control the shared context and role roster; member access never permits pruning the conversation or another writer's history.
 - A message author may delete their message without pruning. Existing reactions remain separate records; only the owner can prune the conversation or message subtree.
+
+## Capture contract
+
+**Identity:** Match the conversation and source message identifier, preserving signed authorship.
+
+**Workflow:** Append messages and reactions; authors update their messages, while personal read state stays owner-local.
+
+**Exclude:** Treating a stored message role such as system as instruction authority.
 
 ## Use
 

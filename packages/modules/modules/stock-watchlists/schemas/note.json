@@ -34,22 +34,13 @@
       "maxItems": 100
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/noteNoteText"
     },
     "source": {
       "$ref": "#/definitions/noteSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/noteLabels"
     }
   },
   "required": [
@@ -176,6 +167,21 @@
       "required": [
         "kind"
       ]
+    },
+    "noteNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "noteLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

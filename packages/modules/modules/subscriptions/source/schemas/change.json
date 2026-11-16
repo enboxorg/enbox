@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/subscriptions/v1/schemas/change",
+  "title": "ChangeData",
+  "description": "Subscriptions: change record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "changedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "started",
+        "plan-changed",
+        "price-changed",
+        "paused",
+        "resumed",
+        "cancelled",
+        "renewed"
+      ]
+    },
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "price": {
+      "$ref": "#/definitions/changeMoney"
+    },
+    "effectiveOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/changeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "changedAt",
+    "kind"
+  ],
+  "examples": [
+    {
+      "changedAt": "2026-01-15T12:00:00Z",
+      "kind": "plan-changed",
+      "plan": "Family"
+    }
+  ],
+  "definitions": {
+    "changeMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "changeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "changeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

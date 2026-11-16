@@ -44,22 +44,13 @@
       "$ref": "#/definitions/bookmarkRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/bookmarkNoteText"
     },
     "source": {
       "$ref": "#/definitions/bookmarkSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/bookmarkLabels"
     }
   },
   "required": [
@@ -207,6 +198,21 @@
       "required": [
         "kind"
       ]
+    },
+    "bookmarkNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "bookmarkLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/podcasts/v1/schemas/episode",
+  "title": "EpisodeData",
+  "description": "Podcasts: episode record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "publishedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "audioUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "file": {
+      "$ref": "#/definitions/episodeRecordReference"
+    },
+    "durationSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10000000
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "queued": {
+      "type": "boolean"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/episodeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "title",
+    "guid"
+  ],
+  "examples": [
+    {
+      "title": "Episode one",
+      "guid": "episode-1"
+    }
+  ],
+  "definitions": {
+    "episodeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "episodeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

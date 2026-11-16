@@ -8,7 +8,8 @@ Import `FoodDiaryModule`, `FoodDiaryDefinition`, `FoodDiaryCodecs`, and `FoodDia
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `entry` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the actual eating occasion and source observation.
+
+**Workflow:** Record consumption as observed; link recipes or plans without claiming the plan was eaten.
+
+**Exclude:** A planned meal or a shopping-list item.
 
 ## Use
 

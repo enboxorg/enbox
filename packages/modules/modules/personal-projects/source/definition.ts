@@ -1,0 +1,64 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+import { roleDefinition } from '../../../src/authoring/roles.js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/personal-projects/v1',
+  published : true,
+  types     : {
+    project: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/personal-projects/v1/schemas/project',
+    },
+    milestone: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/personal-projects/v1/schemas/milestone',
+    },
+    editor: {
+      schema             : 'https://enbox.id/modules/personal-projects/v1/schemas/editor',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+    viewer: {
+      schema             : 'https://enbox.id/modules/personal-projects/v1/schemas/viewer',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+  },
+  structure: {
+    project: {
+      $size: {
+        max: 1048576,
+      },
+      $actions: [
+        {
+          role : 'project/editor',
+          can  : ['read', 'co-update'],
+        },
+        {
+          role : 'project/viewer',
+          can  : ['read'],
+        },
+      ],
+      milestone: {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'project/editor',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'project/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      editor : roleDefinition('project/editor'),
+      viewer : roleDefinition('project/viewer'),
+    },
+  },
+} as const satisfies ModuleDefinition;

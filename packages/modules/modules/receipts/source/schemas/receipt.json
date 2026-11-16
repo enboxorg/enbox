@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/receipts/v1/schemas/receipt",
+  "title": "ReceiptData",
+  "description": "Receipts: receipt record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "merchant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "issuedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "receiptNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "subtotal": {
+      "$ref": "#/definitions/receiptMoney"
+    },
+    "tax": {
+      "$ref": "#/definitions/receiptMoney"
+    },
+    "total": {
+      "$ref": "#/definitions/receiptMoney"
+    },
+    "paymentMethod": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "purchase": {
+      "$ref": "#/definitions/receiptRecordReference"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/receiptRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "reviewState": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "reviewed",
+        "corrected"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/receiptSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "merchant",
+    "total"
+  ],
+  "examples": [
+    {
+      "merchant": "Example Grocer",
+      "total": {
+        "amount": "42",
+        "currency": "GBP"
+      }
+    }
+  ],
+  "definitions": {
+    "receiptMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "receiptRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "receiptSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

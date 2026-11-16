@@ -52,7 +52,7 @@ for each module's record structure, examples, access policy, and dependencies.
 ## Composed modules
 
 Warranties, Maintenance, Vehicles, and Devices attach records to a Belongings
-item. Investment Holdings extends a Transactions account, and Learning Plans
+item. Transactions and Investment Holdings extend Financial Accounts, and Learning Plans
 extends a Goals record. Notebook Realtime attaches to an existing Notebook page
 and reuses its contextual roles. Their typed artifacts carry the required provider
 definitions and codecs.
@@ -72,6 +72,22 @@ await enbox.using(WarrantiesModule).records.create('item/warranty', {
 
 The base item keeps its identity. The consumer owns its warranty records and
 declares its own access rules; installing a dependency does not grant data access.
+
+## Reusable authoring and shared membership
+
+`@enbox/modules/authoring` provides role, attached-feature, realtime, and offline
+schema-bundling helpers. They generate complete concrete definitions; runtime
+records retain one owning module and explicit action rules.
+
+Use Collaboration with Shared Groceries, Shared Meal Plans, and Shared Tasks
+when those features should share a single contextual roster. Standalone modules
+retain their independent memberships. Register the existing `@enbox/contexts`
+companion for invitations and follow journals. A role name never implies
+unlisted permissions, and space membership does not grant access to a sibling space.
+
+Device identity is stored once in Belongings, repairs in Maintenance, and
+financial-account identity in Financial Accounts. The catalogue's capture
+contracts explain record matching, excluded neighboring facts, and write workflows.
 
 ## Discover schemas and artifacts
 

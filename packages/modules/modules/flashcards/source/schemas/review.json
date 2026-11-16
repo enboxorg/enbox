@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/flashcards/v1/schemas/review",
+  "title": "ReviewData",
+  "description": "Flashcards: review record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "rating": {
+      "type": "string",
+      "enum": [
+        "again",
+        "hard",
+        "good",
+        "easy"
+      ]
+    },
+    "responseSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/reviewSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "reviewedAt",
+    "rating"
+  ],
+  "examples": [
+    {
+      "reviewedAt": "2026-01-15T12:00:00Z",
+      "rating": "good"
+    }
+  ],
+  "definitions": {
+    "reviewRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "reviewSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

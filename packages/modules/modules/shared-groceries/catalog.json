@@ -1,0 +1,57 @@
+{
+  "id": "shared-groceries",
+  "name": "Shared Groceries",
+  "category": "Food and shopping",
+  "description": "Shopping lists, items, quantities, units, stores, substitutions, and purchased state. Uses an existing Collaboration space and its membership.",
+  "moduleUri": "https://enbox.id/modules/shared-groceries/v1",
+  "exportName": "SharedGroceriesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "We need milk, oats, and two lemons."
+  ],
+  "dependencies": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
+  "records": [
+    {
+      "path": "space/list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "space/list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "This is a concrete standard extension, generated from Groceries authoring source. Record payload schema identities are shared; membership comes only from the existing Collaboration space.",
+    "Use this variant when the user has selected a shared space. Standalone Groceries remains appropriate for independently shared roots. Do not write the same fact into both variants.",
+    "Admin and editor powers are explicitly declared per path. The owner controls space membership and subtree pruning. Personal root-level state is excluded from the shared subtree; keep it in the user's own module."
+  ],
+  "capture": {
+    "identity": "Select the existing Collaboration space first. Match the selected list and item, including quantity/variant distinctions.",
+    "exclude": [
+      "Writing the same fact to both the standalone and shared variant. Existing pantry inventory or an aspirational gift wishlist."
+    ],
+    "workflow": "Record shopping intent, then update purchase state when known; link purchases and pantry items instead of copying their histories. Membership comes from the selected space; keep personal state outside the shared subtree."
+  }
+}

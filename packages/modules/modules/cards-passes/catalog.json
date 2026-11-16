@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match issuer and pass identifier, preserving the selected record ID.",
+    "exclude": [
+      "Assuming a barcode or uploaded image is an issuer-signed credential."
+    ],
+    "workflow": "Store display/validity information and link documents or native credentials."
+  }
 }

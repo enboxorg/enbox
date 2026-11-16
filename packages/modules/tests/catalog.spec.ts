@@ -73,11 +73,17 @@ describe('standard module catalog', () => {
       it('matches individual definitions, schemas, examples, and resolved local paths', async () => {
         const base = new URL(`../modules/${entry.id}/`, import.meta.url);
         const definition = JSON.parse(await readFile(new URL('definition.json', base), 'utf8'));
+        const authored = await import(new URL('source/definition.ts', base).href);
         const examples = JSON.parse(await readFile(new URL('examples.json', base), 'utf8'));
         const module = moduleFor(entry);
         expect(module.definition).toEqual(definition);
+        expect(definition).toEqual(authored.definition);
         expect(entry.definition).toEqual(definition);
         expect(entry.examples).toEqual(examples);
+        const catalog = JSON.parse(await readFile(new URL('catalog.json', base), 'utf8'));
+        expect(entry.capture).toEqual(catalog.capture);
+        expect(entry.capture.identity.length).toBeGreaterThan(0);
+        expect(entry.capture.exclude.length).toBeGreaterThan(0);
         const graph = resolveTypedModuleGraph(module);
         const paths = [...graph.nodesByDeclaredPath.values()]
           .filter((node): boolean => node.kind === 'record')

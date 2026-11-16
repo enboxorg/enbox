@@ -56,22 +56,13 @@
       "$ref": "#/definitions/returnRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/returnNoteText"
     },
     "source": {
       "$ref": "#/definitions/returnSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/returnLabels"
     }
   },
   "required": [
@@ -227,6 +218,21 @@
       "required": [
         "kind"
       ]
+    },
+    "returnNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "returnLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match merchant and order identifier, preserving item and return identities.",
+    "exclude": [
+      "A saved wishlist item as a completed order or a receipt as a second purchase."
+    ],
+    "workflow": "Maintain order/fulfilment/return state and link receipt and transaction evidence."
+  }
 }

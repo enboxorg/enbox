@@ -139,10 +139,6 @@ export const NotebookRealtimeModule = defineModule({
 
 export const NotebookRealtimeSchemas: Readonly<Record<string, PayloadSchema>> = {
   live: {
-    $schema              : 'http://json-schema.org/draft-07/schema#',
-    $id                  : 'https://enbox.id/schemas/notebook-realtime/v1/live',
-    title                : 'LiveData',
-    description          : 'NotebookRealtime: page/live; compatible with notesd notebook v1.',
     type                 : 'object',
     additionalProperties : false,
     properties           : {
@@ -162,13 +158,13 @@ export const NotebookRealtimeSchemas: Readonly<Record<string, PayloadSchema>> = 
         type: 'string',
       },
     },
-    required: ['transport', 'endpoint', 'topic', 'topicKey', 'peerKey'],
+    required    : ['transport', 'endpoint', 'topic', 'topicKey', 'peerKey'],
+    $schema     : 'http://json-schema.org/draft-07/schema#',
+    $id         : 'https://enbox.id/schemas/notebook-realtime/v1/live',
+    title       : 'LiveData',
+    description : 'NotebookRealtime: page/live; compatible with notesd notebook v1.',
   },
   session: {
-    $schema              : 'http://json-schema.org/draft-07/schema#',
-    $id                  : 'https://enbox.id/schemas/notebook-realtime/v1/session',
-    title                : 'SessionData',
-    description          : 'NotebookRealtime: page/live/session; compatible with notesd notebook v1.',
     type                 : 'object',
     additionalProperties : false,
     properties           : {
@@ -176,7 +172,11 @@ export const NotebookRealtimeSchemas: Readonly<Record<string, PayloadSchema>> = 
         type: 'string',
       },
     },
-    required: ['peerKey'],
+    required    : ['peerKey'],
+    $schema     : 'http://json-schema.org/draft-07/schema#',
+    $id         : 'https://enbox.id/schemas/notebook-realtime/v1/session',
+    title       : 'SessionData',
+    description : 'NotebookRealtime: page/live/session; compatible with notesd notebook v1.',
   },
 };
 export const NotebookRealtimeCatalog: ModuleCatalogEntry = {
@@ -190,7 +190,12 @@ export const NotebookRealtimeCatalog: ModuleCatalogEntry = {
     exportName      : 'NotebookRealtimeModule',
     status          : 'experimental',
     captureExamples : ['Collaborate live on this shared note.'],
-    notes           : [
+    capture         : {
+      identity : 'Use the existing Notebook page context; the advertisement is a singleton projection.',
+      exclude  : ['Treating transient realtime state as the durable note body or a session peerKey as a private key.'],
+      workflow : 'The owner maintains rendezvous metadata; authorized writers create their own peer-session records.',
+    },
+    notes: [
       'This module owns page/live and page/live/session only. page is an attachment to notebook:notebook/page, not a copied page record.',
       'The page owner maintains the singleton encrypted live advertisement. Editors and administrators create/delete their own plaintext session records; viewers only read. Session peerKey is public descriptor-adjacent routing metadata and must never contain a private key.',
       'Rendezvous fields are transport-neutral strings. Clients validate their chosen transport and generate fresh keys and topics; example values are illustrative, not usable secrets.',

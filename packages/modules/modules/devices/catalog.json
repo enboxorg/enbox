@@ -40,19 +40,17 @@
       "role": false,
       "immutable": false,
       "singleton": false
-    },
-    {
-      "path": "item/device/service",
-      "type": "service",
-      "dataFormats": [
-        "application/json"
-      ],
-      "encryptionRequired": true,
-      "schema": "https://enbox.id/modules/devices/v1/schemas/service",
-      "schemaFile": "schemas/service.json",
-      "role": false,
-      "immutable": true,
-      "singleton": false
     }
-  ]
+  ],
+  "notes": [
+    "The parent Belongings item owns name, manufacturer, model, serial number, and ownership state. Device data describes computing capabilities and operational state.",
+    "Use Maintenance item/service records on that same Belongings item for repairs. Configuration records are timestamped snapshots; device fields describe current configuration."
+  ],
+  "capture": {
+    "identity": "Resolve the existing Belongings item first.",
+    "exclude": [
+      "Duplicating manufacturer, model, serial number, ownership state, or maintenance history."
+    ],
+    "workflow": "Store operational device details and dated configuration snapshots; use Belongings for identity and Maintenance for repairs."
+  }
 }

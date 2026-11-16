@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/flashcards/v1/schemas/card",
+  "title": "CardData",
+  "description": "Flashcards: card record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "front": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "back": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/cardRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "media": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/cardRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/cardSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "front",
+    "back"
+  ],
+  "examples": [
+    {
+      "front": "hola",
+      "back": "hello",
+      "language": "es"
+    }
+  ],
+  "definitions": {
+    "cardRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "cardSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

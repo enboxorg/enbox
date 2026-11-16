@@ -65,22 +65,13 @@
       "$ref": "#/definitions/episodeRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/episodeNoteText"
     },
     "source": {
       "$ref": "#/definitions/episodeSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/episodeLabels"
     }
   },
   "required": [
@@ -207,6 +198,21 @@
       "required": [
         "kind"
       ]
+    },
+    "episodeNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "episodeLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

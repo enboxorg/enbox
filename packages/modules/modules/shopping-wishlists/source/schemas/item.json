@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/shopping-wishlists/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Shopping Wishlists: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "brand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "material": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": []
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "targetPrice": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "wanted",
+        "purchased",
+        "dismissed"
+      ]
+    },
+    "purchase": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Rain jacket",
+      "variant": {
+        "color": "blue",
+        "size": "M"
+      },
+      "state": "wanted"
+    }
+  ],
+  "definitions": {
+    "itemMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

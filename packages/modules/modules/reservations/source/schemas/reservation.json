@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/reservations/v1/schemas/reservation",
+  "title": "ReservationData",
+  "description": "Reservations: reservation record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "flight",
+        "rail",
+        "lodging",
+        "rental",
+        "restaurant",
+        "activity",
+        "other"
+      ]
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "confirmationCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "confirmed",
+        "changed",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "startsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "endsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "trip": {
+      "$ref": "#/definitions/reservationRecordReference"
+    },
+    "travellers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "origin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "destination": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "serviceNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "seatOrRoom": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "address": {
+      "$ref": "#/definitions/reservationAddress"
+    },
+    "price": {
+      "$ref": "#/definitions/reservationMoney"
+    },
+    "cancelBy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/reservationRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/reservationAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/reservationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "provider",
+    "state"
+  ],
+  "examples": [
+    {
+      "kind": "lodging",
+      "provider": "Example Hotel",
+      "state": "confirmed",
+      "confirmationCode": "ABC-123"
+    }
+  ],
+  "definitions": {
+    "reservationAddress": {
+      "$ref": "https://enbox.id/schemas/common/address/v1"
+    },
+    "reservationAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "reservationMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "reservationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "reservationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

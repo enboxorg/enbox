@@ -39,5 +39,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected cycle and observation date.",
+    "exclude": [
+      "Inferring a diagnosis or treating a prediction as an observed measurement."
+    ],
+    "workflow": "Record user observations and source dates without manufacturing missing symptoms or outcomes."
+  }
 }

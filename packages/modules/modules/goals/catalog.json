@@ -39,5 +39,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the user's selected outcome and time horizon.",
+    "exclude": [
+      "A single scheduled task or an unsupported claim of progress."
+    ],
+    "workflow": "Maintain intended outcomes and append observed progress with evidence."
+  }
 }

@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": true
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match feed URL and episode GUID within that feed.",
+    "exclude": [
+      "A queued episode as a completed listening."
+    ],
+    "workflow": "Maintain show/episode identity and private playback state; link cached media files."
+  }
 }

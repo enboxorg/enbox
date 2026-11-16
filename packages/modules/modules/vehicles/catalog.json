@@ -54,5 +54,15 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "notes": [
+    "Manufacturer/make and model belong to the parent Belongings item. Vehicle-specific identifiers, registration, model year, odometer and energy history belong here."
+  ],
+  "capture": {
+    "identity": "Resolve the Belongings item, then vehicle-specific identifiers such as VIN.",
+    "exclude": [
+      "Duplicating manufacturer/model/ownership facts or treating a planned trip as odometer history."
+    ],
+    "workflow": "Maintain vehicle details and append observed usage/energy records; use shared Maintenance for service history."
+  }
 }

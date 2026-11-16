@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/places/v1/schemas/place",
+  "title": "PlaceData",
+  "description": "Places: place record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "address": {
+      "$ref": "#/definitions/placeAddress"
+    },
+    "coordinates": {
+      "$ref": "#/definitions/placeCoordinates"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "phone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "externalIds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "system",
+          "value"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/placeRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "rating": {
+      "$ref": "#/definitions/placeRating"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/placeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Riverside cafe",
+      "coordinates": {
+        "latitude": 38.7223,
+        "longitude": -9.1393
+      }
+    }
+  ],
+  "definitions": {
+    "placeAddress": {
+      "$ref": "https://enbox.id/schemas/common/address/v1"
+    },
+    "placeCoordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "altitudeMeters": {
+          "type": "number",
+          "minimum": -12000,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ]
+    },
+    "placeRating": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "scale": {
+          "type": "integer",
+          "enum": [
+            5,
+            10
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "scale"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scale": {
+                "const": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "maximum": 5,
+                "type": "number"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "placeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "placeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

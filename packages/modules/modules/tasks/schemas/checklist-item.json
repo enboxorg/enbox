@@ -26,22 +26,13 @@
       "maximum": 1000000000
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/checklistItemNoteText"
     },
     "source": {
       "$ref": "#/definitions/checklistItemSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/checklistItemLabels"
     }
   },
   "required": [
@@ -168,6 +159,21 @@
       "required": [
         "kind"
       ]
+    },
+    "checklistItemNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "checklistItemLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

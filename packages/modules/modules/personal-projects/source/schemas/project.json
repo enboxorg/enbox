@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/personal-projects/v1/schemas/project",
+  "title": "ProjectData",
+  "description": "Personal Projects: project record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "outcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idea",
+        "active",
+        "paused",
+        "completed",
+        "abandoned"
+      ]
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "dueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "budget": {
+      "$ref": "#/definitions/projectMoney"
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/projectRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/projectSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Restore a bicycle",
+      "state": "active"
+    }
+  ],
+  "definitions": {
+    "projectMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "projectRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "projectSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

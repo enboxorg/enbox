@@ -10,6 +10,7 @@ examples, and documentation.
   [Stock Watchlists](../../packages/modules/modules/stock-watchlists/README.md),
   [Identity Documents](../../packages/modules/modules/identity-documents/README.md),
   or [Credentials](../../packages/modules/modules/credentials/README.md).
+- Try the [household, notebook, and portfolio examples](../../packages/modules/examples/README.md).
 - See [composition](../MODULE-COMPOSITION.md) for the engine's `uses`/`$ref` rules.
 
 The package exports a searchable directory with the actual writable paths and

@@ -8,7 +8,8 @@ Import `ContactsModule`, `ContactsDefinition`, `ContactsCodecs`, and `ContactsSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -39,6 +40,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `group/entry` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match an existing selected contact or verified external identifier; names alone are not unique.
+
+**Workflow:** Maintain private contact details and endpoints; link interactions to their actual event, conversation, or note.
+
+**Exclude:** Replacing another person's self-published Profile with local address-book claims.
 
 ## Use
 

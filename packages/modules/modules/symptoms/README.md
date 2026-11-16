@@ -8,7 +8,8 @@ Import `SymptomsModule`, `SymptomsDefinition`, `SymptomsCodecs`, and `SymptomsSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `episode` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the reported symptom episode and observation interval.
+
+**Workflow:** Record user-reported observations and context, retaining uncertainty and source evidence.
+
+**Exclude:** An inferred diagnosis or an unreported symptom.
 
 ## Use
 

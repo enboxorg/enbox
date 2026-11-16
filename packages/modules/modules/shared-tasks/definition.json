@@ -1,0 +1,90 @@
+{
+  "module": "https://enbox.id/modules/shared-tasks/v1",
+  "published": true,
+  "uses": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
+  "types": {
+    "checklistItem": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/tasks/v1/schemas/checklist-item"
+    },
+    "task": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/tasks/v1/schemas/task"
+    }
+  },
+  "structure": {
+    "space": {
+      "$ref": "collaboration:space",
+      "task": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "collaboration:space/admin",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "collaboration:space/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "delete"
+            ]
+          },
+          {
+            "role": "collaboration:space/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "checklistItem": {
+          "$size": {
+            "max": 1048576
+          },
+          "$actions": [
+            {
+              "role": "collaboration:space/admin",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "collaboration:space/editor",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "collaboration:space/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

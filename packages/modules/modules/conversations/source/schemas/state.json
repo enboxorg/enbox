@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/conversations/v1/schemas/state",
+  "title": "StateData",
+  "description": "Conversations: state record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "conversation": {
+      "$ref": "#/definitions/stateRecordReference"
+    },
+    "lastReadMessage": {
+      "$ref": "#/definitions/stateRecordReference"
+    },
+    "readAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "muted": {
+      "type": "boolean"
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/stateSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "conversation"
+  ],
+  "examples": [
+    {
+      "conversation": {
+        "recordId": "example-record"
+      },
+      "muted": false
+    }
+  ],
+  "definitions": {
+    "stateRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "stateSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

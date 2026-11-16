@@ -41,5 +41,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Resolve the existing Belongings item and the service occurrence.",
+    "exclude": [
+      "A duplicate device-specific repair record or a scheduled service marked as performed."
+    ],
+    "workflow": "Keep plans and performed services distinct; record repairs once here for any asset kind."
+  }
 }

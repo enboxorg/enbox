@@ -1,0 +1,19 @@
+[
+  {
+    "path": "space/task",
+    "encoding": "json",
+    "data": {
+      "title": "Call the dentist",
+      "state": "todo",
+      "dueOn": "2026-01-15"
+    }
+  },
+  {
+    "path": "space/task/checklistItem",
+    "encoding": "json",
+    "data": {
+      "text": "Find the phone number",
+      "completed": false
+    }
+  }
+]

@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/packing/v1/schemas/bag",
+  "title": "BagData",
+  "description": "Packing: bag record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "carry-on",
+        "checked",
+        "personal",
+        "other"
+      ]
+    },
+    "weightLimit": {
+      "$ref": "#/definitions/bagQuantity"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/bagSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Carry-on",
+      "kind": "carry-on"
+    }
+  ],
+  "definitions": {
+    "bagQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "bagRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "bagSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

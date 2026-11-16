@@ -36,22 +36,13 @@
       "$ref": "#/definitions/interactionRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/interactionNoteText"
     },
     "source": {
       "$ref": "#/definitions/interactionSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/interactionLabels"
     }
   },
   "required": [
@@ -179,6 +170,21 @@
       "required": [
         "kind"
       ]
+    },
+    "interactionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "interactionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

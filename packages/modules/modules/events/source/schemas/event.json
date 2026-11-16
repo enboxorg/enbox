@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/events/v1/schemas/event",
+  "title": "EventData",
+  "description": "Events: event record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "startsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "endsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "timeZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "recurrence": {
+      "$ref": "#/definitions/eventRecurrence"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "place": {
+      "$ref": "#/definitions/eventRecordReference"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "did": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+          },
+          "contact": {
+            "$ref": "#/definitions/eventRecordReference"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "confirmed",
+        "cancelled",
+        "completed"
+      ]
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/eventRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/eventSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "examples": [
+    {
+      "title": "Dinner with Alex",
+      "startsAt": "2026-01-16T19:00:00Z",
+      "timeZone": "Europe/London"
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "startsAt"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "startsOn"
+            ]
+          },
+          {
+            "required": [
+              "endsOn"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "startsOn"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "startsAt"
+            ]
+          },
+          {
+            "required": [
+              "endsAt"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "eventRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "eventRecurrence": {
+      "$ref": "https://enbox.id/schemas/common/recurrence/v1"
+    },
+    "eventSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

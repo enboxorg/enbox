@@ -18,13 +18,6 @@
       ],
       "encryptionRequired": true,
       "schema": "https://enbox.id/modules/devices/v1/schemas/configuration"
-    },
-    "service": {
-      "dataFormats": [
-        "application/json"
-      ],
-      "encryptionRequired": true,
-      "schema": "https://enbox.id/modules/devices/v1/schemas/service"
     }
   },
   "structure": {
@@ -62,28 +55,6 @@
                 "read",
                 "co-update",
                 "co-delete"
-              ]
-            },
-            {
-              "role": "belongings:item/viewer",
-              "can": [
-                "read"
-              ]
-            }
-          ]
-        },
-        "service": {
-          "$size": {
-            "max": 1048576
-          },
-          "$immutable": true,
-          "$actions": [
-            {
-              "role": "belongings:item/editor",
-              "can": [
-                "create",
-                "read",
-                "delete"
               ]
             },
             {

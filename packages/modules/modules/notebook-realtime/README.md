@@ -8,7 +8,8 @@ Import `NotebookRealtimeModule`, `NotebookRealtimeDefinition`, `NotebookRealtime
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -41,6 +42,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 - This module owns page/live and page/live/session only. page is an attachment to notebook:notebook/page, not a copied page record.
 - The page owner maintains the singleton encrypted live advertisement. Editors and administrators create/delete their own plaintext session records; viewers only read. Session peerKey is public descriptor-adjacent routing metadata and must never contain a private key.
 - Rendezvous fields are transport-neutral strings. Clients validate their chosen transport and generate fresh keys and topics; example values are illustrative, not usable secrets.
+
+## Capture contract
+
+**Identity:** Use the existing Notebook page context; the advertisement is a singleton projection.
+
+**Workflow:** The owner maintains rendezvous metadata; authorized writers create their own peer-session records.
+
+**Exclude:** Treating transient realtime state as the durable note body or a session peerKey as a private key.
 
 ## Use
 

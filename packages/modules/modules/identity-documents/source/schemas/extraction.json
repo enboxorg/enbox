@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
+  "title": "ExtractionData",
+  "description": "Identity Documents: extraction record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/extractionRecordReference"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "extractedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "extractor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "extractorVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "givenNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 20
+        },
+        "familyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "personalNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingCountry": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{2,3}$"
+        },
+        "issuingRegion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuingAuthority": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "nationalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3,
+            "pattern": "^[A-Z]{2,3}$"
+          },
+          "minItems": 0,
+          "maxItems": 10
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "issueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "address": {
+          "$ref": "#/definitions/extractionAddress"
+        },
+        "licenceCategories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "validFrom": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "validUntil": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "restrictions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    },
+    "rawText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/extractionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "sources",
+    "extractedAt",
+    "extractor",
+    "state"
+  ],
+  "examples": [
+    {
+      "sources": [
+        {
+          "recordId": "example-record"
+        }
+      ],
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "manual-import",
+      "state": "partial",
+      "fields": {
+        "fullName": "Alex Example"
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ]
+      },
+      "else": {
+        "required": [
+          "fields"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "extractionAddress": {
+      "$ref": "https://enbox.id/schemas/common/address/v1"
+    },
+    "extractionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "extractionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

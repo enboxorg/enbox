@@ -8,7 +8,8 @@ Import `CardsPassesModule`, `CardsPassesDefinition`, `CardsPassesCodecs`, and `C
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `pass` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match issuer and pass identifier, preserving the selected record ID.
+
+**Workflow:** Store display/validity information and link documents or native credentials.
+
+**Exclude:** Assuming a barcode or uploaded image is an issuer-signed credential.
 
 ## Use
 

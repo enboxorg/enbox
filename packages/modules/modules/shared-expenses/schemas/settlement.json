@@ -29,22 +29,13 @@
       "$ref": "#/definitions/settlementRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/settlementNoteText"
     },
     "source": {
       "$ref": "#/definitions/settlementSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/settlementLabels"
     }
   },
   "required": [
@@ -201,6 +192,21 @@
       "required": [
         "kind"
       ]
+    },
+    "settlementNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "settlementLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

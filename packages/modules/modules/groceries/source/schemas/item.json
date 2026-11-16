@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/groceries/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Groceries: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "brand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "store": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "substitutions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "needed",
+        "purchased",
+        "unavailable",
+        "cancelled"
+      ]
+    },
+    "purchasedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "paid": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "pantryItem": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "recipe": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Lemons",
+      "quantity": {
+        "value": "2",
+        "unit": "piece"
+      },
+      "state": "needed"
+    }
+  ],
+  "definitions": {
+    "itemMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

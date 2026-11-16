@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/housing/v1/schemas/lease",
+  "title": "LeaseData",
+  "description": "Housing: lease record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "landlord": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "landlordContact": {
+      "$ref": "#/definitions/leaseRecordReference"
+    },
+    "rent": {
+      "$ref": "#/definitions/leaseMoney"
+    },
+    "rentFrequency": {
+      "type": "string",
+      "enum": [
+        "weekly",
+        "monthly",
+        "yearly",
+        "other"
+      ]
+    },
+    "deposit": {
+      "$ref": "#/definitions/leaseMoney"
+    },
+    "noticeDays": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3650
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/leaseRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/leaseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "startsOn",
+    "landlord"
+  ],
+  "examples": [
+    {
+      "startsOn": "2026-01-15",
+      "endsOn": "2027-01-14",
+      "landlord": "Example Landlord"
+    }
+  ],
+  "definitions": {
+    "leaseMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "leaseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "leaseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

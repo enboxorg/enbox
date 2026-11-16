@@ -8,7 +8,8 @@ Import `MoviesTvModule`, `MoviesTvDefinition`, `MoviesTvCodecs`, and `MoviesTvSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `title/rating` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match external title identifiers and episode/season context.
+
+**Workflow:** Maintain viewing intent, observed viewing events, and personal ratings.
+
+**Exclude:** A watchlist interest as a completed viewing.
 
 ## Use
 

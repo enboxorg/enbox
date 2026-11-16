@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match document type, issuing authority and reviewed document identifier.",
+    "exclude": [
+      "Treating extracted fields as verified credentials."
+    ],
+    "workflow": "Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed."
+  }
 }

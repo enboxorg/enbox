@@ -8,7 +8,8 @@ Import `BelongingsModule`, `BelongingsDefinition`, `BelongingsCodecs`, and `Belo
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `item/viewer` | recipient of item/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the selected physical item; serial numbers identify a manufacturer-specific item, not a product model.
+
+**Workflow:** Maintain ownership and common item identity here; attach device, vehicle, warranty and maintenance records to this item.
+
+**Exclude:** An unpurchased wish or a second copy of device/vehicle identity.
 
 ## Use
 

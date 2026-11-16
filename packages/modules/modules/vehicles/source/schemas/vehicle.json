@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/vehicles/v1/schemas/vehicle",
+  "title": "VehicleData",
+  "description": "Vehicles: vehicle record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "car",
+        "motorcycle",
+        "bicycle",
+        "van",
+        "boat",
+        "other"
+      ]
+    },
+    "modelYear": {
+      "type": "integer",
+      "minimum": 1800,
+      "maximum": 2200
+    },
+    "vin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "registration": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "fuelType": {
+      "type": "string",
+      "enum": [
+        "petrol",
+        "diesel",
+        "electric",
+        "hybrid",
+        "human",
+        "other"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/vehicleRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "insurance": {
+      "$ref": "#/definitions/vehicleRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/vehicleSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "examples": [
+    {
+      "kind": "car"
+    }
+  ],
+  "definitions": {
+    "vehicleRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "vehicleSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

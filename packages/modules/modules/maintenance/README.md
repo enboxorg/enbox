@@ -8,7 +8,8 @@ Import `MaintenanceModule`, `MaintenanceDefinition`, `MaintenanceCodecs`, and `M
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `item/service` | role belongings:item/editor: create, read, delete<br>role belongings:item/viewer: read |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Resolve the existing Belongings item and the service occurrence.
+
+**Workflow:** Keep plans and performed services distinct; record repairs once here for any asset kind.
+
+**Exclude:** A duplicate device-specific repair record or a scheduled service marked as performed.
 
 ## Use
 

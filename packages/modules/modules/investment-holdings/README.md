@@ -8,7 +8,8 @@ Import `InvestmentHoldingsModule`, `InvestmentHoldingsDefinition`, `InvestmentHo
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -20,7 +21,7 @@ Import `InvestmentHoldingsModule`, `InvestmentHoldingsDefinition`, `InvestmentHo
 
 ## Dependencies and ownership
 
-- `transactions`: [Transactions](../transactions/README.md) — `https://enbox.id/modules/transactions/v1`
+- `accounts`: [Financial Accounts](../financial-accounts/README.md) — `https://enbox.id/modules/financial-accounts/v1`
 
 Only concrete local child paths are writable through this module; attachment aliases remain owned by their providers.
 
@@ -37,6 +38,19 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `account/position/trade` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- Positions attach directly to Financial Accounts; ledger installation is optional. Watchlist interest is a separate fact and uses the same shared Instrument value schema.
+- Match an existing account and instrument before updating a position snapshot; quantities and asOf describe ownership, not an intention to buy.
+
+## Capture contract
+
+**Identity:** Match the Financial Accounts parent, instrument identifiers and selected dated position.
+
+**Workflow:** Record ownership snapshots and authored lot/trade history; link optional ledger entries and research interests.
+
+**Exclude:** An intention to buy or a watchlist observation.
 
 ## Use
 

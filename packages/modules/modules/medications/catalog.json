@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected medication, regimen and actual dose occurrence.",
+    "exclude": [
+      "Inferring a taken dose from a schedule or generating treatment instructions."
+    ],
+    "workflow": "Record supplied regimen assertions and actual dose state, linking prescriptions and source evidence."
+  }
 }

@@ -47,22 +47,13 @@
       "$ref": "#/definitions/vetRecordRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/vetRecordNoteText"
     },
     "source": {
       "$ref": "#/definitions/vetRecordSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/vetRecordLabels"
     }
   },
   "required": [
@@ -212,6 +203,21 @@
       "required": [
         "kind"
       ]
+    },
+    "vetRecordNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "vetRecordLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

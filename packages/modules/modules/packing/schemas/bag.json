@@ -24,22 +24,13 @@
       "$ref": "#/definitions/bagQuantity"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/bagNoteText"
     },
     "source": {
       "$ref": "#/definitions/bagSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/bagLabels"
     }
   },
   "required": [
@@ -187,6 +178,21 @@
       "required": [
         "kind"
       ]
+    },
+    "bagNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "bagLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

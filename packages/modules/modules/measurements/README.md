@@ -8,7 +8,8 @@ Import `MeasurementsModule`, `MeasurementsDefinition`, `MeasurementsCodecs`, and
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `measurement` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the subject context, kind, observation time and source.
+
+**Workflow:** Record measurements with explicit units and provenance; preserve missing values as missing.
+
+**Exclude:** A target value or an inferred clinical interpretation.
 
 ## Use
 

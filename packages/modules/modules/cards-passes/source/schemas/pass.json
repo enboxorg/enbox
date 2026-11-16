@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/cards-passes/v1/schemas/pass",
+  "title": "PassData",
+  "description": "Cards and Passes: pass record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "membership",
+        "loyalty",
+        "transit",
+        "admission",
+        "library",
+        "other"
+      ]
+    },
+    "issuer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "holderName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "validFrom": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "validUntil": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "event": {
+      "$ref": "#/definitions/passRecordReference"
+    },
+    "barcode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "qr",
+            "aztec",
+            "pdf417",
+            "code128",
+            "other"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "format",
+        "value"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/passRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "credential": {
+      "$ref": "#/definitions/passRecordReference"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "used",
+        "cancelled"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/passSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "kind",
+    "issuer"
+  ],
+  "examples": [
+    {
+      "name": "Library card",
+      "kind": "library",
+      "issuer": "Example Library",
+      "identifier": "LIB-123"
+    }
+  ],
+  "definitions": {
+    "passRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "passSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

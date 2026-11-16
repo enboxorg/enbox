@@ -13,6 +13,8 @@ import { BudgetsCatalog } from './budgets.js';
 import { BudgetsModule } from './budgets.js';
 import { CardsPassesCatalog } from './cards-passes.js';
 import { CardsPassesModule } from './cards-passes.js';
+import { CollaborationCatalog } from './collaboration.js';
+import { CollaborationModule } from './collaboration.js';
 import { ConnectCatalog } from './connect.js';
 import { ConnectModule } from './connect.js';
 import { ContactsCatalog } from './contacts.js';
@@ -31,6 +33,8 @@ import { EventsCatalog } from './events.js';
 import { EventsModule } from './events.js';
 import { FilesCatalog } from './files.js';
 import { FilesModule } from './files.js';
+import { FinancialAccountsCatalog } from './financial-accounts.js';
+import { FinancialAccountsModule } from './financial-accounts.js';
 import { FlashcardsCatalog } from './flashcards.js';
 import { FlashcardsModule } from './flashcards.js';
 import { FoodDiaryCatalog } from './food-diary.js';
@@ -111,6 +115,12 @@ import { RoutesCatalog } from './routes.js';
 import { RoutesModule } from './routes.js';
 import { SharedExpensesCatalog } from './shared-expenses.js';
 import { SharedExpensesModule } from './shared-expenses.js';
+import { SharedGroceriesCatalog } from './shared-groceries.js';
+import { SharedGroceriesModule } from './shared-groceries.js';
+import { SharedMealPlansCatalog } from './shared-meal-plans.js';
+import { SharedMealPlansModule } from './shared-meal-plans.js';
+import { SharedTasksCatalog } from './shared-tasks.js';
+import { SharedTasksModule } from './shared-tasks.js';
 import { ShoppingWishlistsCatalog } from './shopping-wishlists.js';
 import { ShoppingWishlistsModule } from './shopping-wishlists.js';
 import { SleepCatalog } from './sleep.js';
@@ -145,6 +155,7 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   BooksCatalog,
   BudgetsCatalog,
   CardsPassesCatalog,
+  CollaborationCatalog,
   ConnectCatalog,
   ContactsCatalog,
   ConversationsCatalog,
@@ -154,6 +165,7 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   DevicesCatalog,
   EventsCatalog,
   FilesCatalog,
+  FinancialAccountsCatalog,
   FlashcardsCatalog,
   FoodDiaryCatalog,
   GamesCatalog,
@@ -194,6 +206,9 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   ReservationsCatalog,
   RoutesCatalog,
   SharedExpensesCatalog,
+  SharedGroceriesCatalog,
+  SharedMealPlansCatalog,
+  SharedTasksCatalog,
   ShoppingWishlistsCatalog,
   SleepCatalog,
   StockWatchlistsCatalog,
@@ -215,6 +230,7 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   BooksModule,
   BudgetsModule,
   CardsPassesModule,
+  CollaborationModule,
   ConnectModule,
   ContactsModule,
   ConversationsModule,
@@ -224,6 +240,7 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   DevicesModule,
   EventsModule,
   FilesModule,
+  FinancialAccountsModule,
   FlashcardsModule,
   FoodDiaryModule,
   GamesModule,
@@ -264,6 +281,9 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   ReservationsModule,
   RoutesModule,
   SharedExpensesModule,
+  SharedGroceriesModule,
+  SharedMealPlansModule,
+  SharedTasksModule,
   ShoppingWishlistsModule,
   SleepModule,
   StockWatchlistsModule,

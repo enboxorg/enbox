@@ -8,7 +8,8 @@ Import `NotebookModule`, `NotebookDefinition`, `NotebookCodecs`, and `NotebookSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -51,6 +52,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 - Delta bytes are @enbox/crdt yjs1 frames, not Markdown or raw Yjs updates. Use @enbox/crdt to apply, materialize, and compact them.
 - Attachment values are { filename, mimeType, blob }. The notesd file envelope packages metadata with the bytes in one encrypted record, with a 50,000,000-byte content limit. Its schema URI identifies a binary contract; it is not a JSON Schema.
 - Page members can read administrator/editor assignments to authenticate live writers. The viewer roster remains private. The recipient may leave an assignment without invoking a moduleRole; the owner manages membership.
+
+## Capture contract
+
+**Identity:** Match the existing notebook and stable page record ID.
+
+**Workflow:** Update owner-managed page metadata and append @enbox/crdt frames; use the notesd attachment envelope for page-owned files.
+
+**Exclude:** A second flat note format or raw Markdown in the delta path.
 
 ## Use
 

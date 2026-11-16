@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/financial-accounts/v1/schemas/account",
+  "title": "AccountData",
+  "description": "Financial account identity, independent of ledger entries and investment positions.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "bank",
+        "investment",
+        "credit",
+        "other"
+      ]
+    },
+    "institution": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    },
+    "lastFour": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4,
+      "pattern": "^[0-9]{4}$"
+    },
+    "closedOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/accountSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "kind"
+  ],
+  "examples": [
+    {
+      "name": "Personal account",
+      "kind": "bank",
+      "currency": "USD"
+    }
+  ],
+  "definitions": {
+    "accountRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "accountSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

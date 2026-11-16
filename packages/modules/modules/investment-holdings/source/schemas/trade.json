@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/investment-holdings/v1/schemas/trade",
+  "title": "TradeData",
+  "description": "Investment Holdings: trade record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell",
+        "dividend",
+        "split",
+        "transfer-in",
+        "transfer-out"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "quantity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "unitPrice": {
+      "$ref": "#/definitions/tradeMoney"
+    },
+    "total": {
+      "$ref": "#/definitions/tradeMoney"
+    },
+    "fees": {
+      "$ref": "#/definitions/tradeMoney"
+    },
+    "transaction": {
+      "$ref": "#/definitions/tradeRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/tradeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "occurredAt"
+  ],
+  "examples": [
+    {
+      "kind": "buy",
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "quantity": "10"
+    }
+  ],
+  "definitions": {
+    "tradeMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "tradeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "tradeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -52,22 +52,13 @@
       "$ref": "#/definitions/expenseRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/expenseNoteText"
     },
     "source": {
       "$ref": "#/definitions/expenseSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/expenseLabels"
     }
   },
   "required": [
@@ -239,6 +230,21 @@
       "required": [
         "kind"
       ]
+    },
+    "expenseNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "expenseLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

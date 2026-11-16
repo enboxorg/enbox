@@ -81,22 +81,13 @@
       "maxItems": 20
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/subscriptionNoteText"
     },
     "source": {
       "$ref": "#/definitions/subscriptionSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/subscriptionLabels"
     }
   },
   "required": [
@@ -335,6 +326,21 @@
       "required": [
         "kind"
       ]
+    },
+    "subscriptionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "subscriptionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

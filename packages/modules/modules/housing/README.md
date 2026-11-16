@@ -8,7 +8,8 @@ Import `HousingModule`, `HousingDefinition`, `HousingCodecs`, and `HousingSchema
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `residence/lease` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the residence address and occupancy/lease period.
+
+**Workflow:** Maintain residence and occupancy identity, linking agreements and related services.
+
+**Exclude:** A place bookmark or a utility account as the same entity.
 
 ## Use
 

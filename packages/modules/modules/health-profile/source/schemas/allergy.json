@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/health-profile/v1/schemas/allergy",
+  "title": "AllergyData",
+  "description": "Health Profile: allergy record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "substance": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "reaction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "mild",
+        "moderate",
+        "severe",
+        "unknown"
+      ]
+    },
+    "assertion": {
+      "type": "string",
+      "enum": [
+        "self-reported",
+        "clinician-reported"
+      ]
+    },
+    "recordedOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/allergyRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/allergySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "substance",
+    "assertion"
+  ],
+  "examples": [
+    {
+      "substance": "Peanut",
+      "assertion": "self-reported"
+    }
+  ],
+  "definitions": {
+    "allergyRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "allergySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

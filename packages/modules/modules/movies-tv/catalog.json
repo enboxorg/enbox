@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match external title identifiers and episode/season context.",
+    "exclude": [
+      "A watchlist interest as a completed viewing."
+    ],
+    "workflow": "Maintain viewing intent, observed viewing events, and personal ratings."
+  }
 }

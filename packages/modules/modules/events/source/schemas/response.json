@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/events/v1/schemas/response",
+  "title": "ResponseData",
+  "description": "Events: response record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "response": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "declined",
+        "tentative"
+      ]
+    },
+    "respondedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "comment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/responseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "response",
+    "respondedAt"
+  ],
+  "examples": [
+    {
+      "response": "accepted",
+      "respondedAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "responseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "responseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

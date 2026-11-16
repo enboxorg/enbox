@@ -70,22 +70,13 @@
       "$ref": "#/definitions/placeRating"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/placeNoteText"
     },
     "source": {
       "$ref": "#/definitions/placeSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/placeLabels"
     }
   },
   "required": [
@@ -319,6 +310,21 @@
       "required": [
         "kind"
       ]
+    },
+    "placeNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "placeLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

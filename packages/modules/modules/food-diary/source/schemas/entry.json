@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/food-diary/v1/schemas/entry",
+  "title": "EntryData",
+  "description": "Food Diary: entry record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "meal": {
+      "type": "string",
+      "enum": [
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snack",
+        "other"
+      ]
+    },
+    "foods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "quantity": {
+            "$ref": "#/definitions/entryQuantity"
+          },
+          "recipe": {
+            "$ref": "#/definitions/entryRecordReference"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "place": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "observations": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "plannedMeal": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/entrySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "occurredAt",
+    "foods"
+  ],
+  "examples": [
+    {
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "meal": "breakfast",
+      "foods": [
+        {
+          "name": "Oatmeal"
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "entryQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "entryRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "entrySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

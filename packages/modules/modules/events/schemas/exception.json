@@ -51,22 +51,13 @@
       "maxLength": 1024
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/exceptionNoteText"
     },
     "source": {
       "$ref": "#/definitions/exceptionSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/exceptionLabels"
     }
   },
   "required": [],
@@ -212,6 +203,21 @@
       "required": [
         "kind"
       ]
+    },
+    "exceptionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "exceptionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

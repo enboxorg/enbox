@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/health-profile/v1/schemas/profile",
+  "title": "ProfileData",
+  "description": "Health Profile: profile record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "birthDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "bloodType": {
+      "type": "string",
+      "enum": [
+        "A+",
+        "A-",
+        "B+",
+        "B-",
+        "AB+",
+        "AB-",
+        "O+",
+        "O-",
+        "unknown"
+      ]
+    },
+    "emergencyContacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/profileRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "careInstructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "clinicians": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/profileRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/profileSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Personal health profile"
+    }
+  ],
+  "definitions": {
+    "profileRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "profileSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

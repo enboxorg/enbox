@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/workouts/v1/schemas/routine",
+  "title": "RoutineData",
+  "description": "Workouts: routine record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "exercises": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sets": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "reps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "resistance": {
+            "$ref": "#/definitions/routineQuantity"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 200
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/routineSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "exercises"
+  ],
+  "examples": [
+    {
+      "name": "Easy run",
+      "exercises": [
+        {
+          "name": "Running",
+          "durationSeconds": 1800
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "routineQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "routineRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "routineSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

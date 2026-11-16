@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected trip and itinerary item purpose.",
+    "exclude": [
+      "Copying private reservations or identity documents into the trip audience automatically."
+    ],
+    "workflow": "Maintain travel intent and itinerary links; distinguish logistical plans from authoritative booking/event times."
+  }
 }

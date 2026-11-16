@@ -8,7 +8,8 @@ Import `SharedExpensesModule`, `SharedExpensesDefinition`, `SharedExpensesCodecs
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -44,6 +45,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 
 - The owner maintains the group participant roster. Editors record, update, and delete expenses they authored; settlements are immutable and only their author or the owner may delete them.
 - Payer and participant IDs are claims within an authored expense, not signatures by those participants. Applications reconcile shares, currencies, totals, and participant membership before treating a record as an agreed balance.
+
+## Capture contract
+
+**Identity:** Match the group and original expense/settlement evidence.
+
+**Workflow:** The owner maintains participants; authors manage expenses and append immutable settlements, linking receipts and transactions.
+
+**Exclude:** Treating another participant's payer field as their signature or a proposed settlement as paid.
 
 ## Use
 

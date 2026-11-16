@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/instrument/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "symbol": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "isin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12,
+      "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+    },
+    "exchange": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    },
+    "assetClass": {
+      "type": "string",
+      "enum": [
+        "stock",
+        "etf",
+        "fund",
+        "bond",
+        "crypto",
+        "other"
+      ]
+    }
+  },
+  "required": [],
+  "anyOf": [
+    {
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "required": [
+        "isin"
+      ]
+    },
+    {
+      "required": [
+        "name"
+      ]
+    }
+  ]
+}

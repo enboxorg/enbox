@@ -76,22 +76,13 @@
       "$ref": "#/definitions/tripMoney"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/tripNoteText"
     },
     "source": {
       "$ref": "#/definitions/tripSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/tripLabels"
     }
   },
   "required": [
@@ -244,6 +235,21 @@
       "required": [
         "kind"
       ]
+    },
+    "tripNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "tripLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

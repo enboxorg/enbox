@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/symptoms/v1/schemas/episode",
+  "title": "EpisodeData",
+  "description": "Symptoms: episode record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "symptom": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "startedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "endedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "severity": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "bodyLocation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "possibleTriggers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "ongoing",
+        "resolved",
+        "unknown"
+      ]
+    },
+    "relatedMedication": {
+      "$ref": "#/definitions/episodeRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/episodeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "symptom"
+  ],
+  "examples": [
+    {
+      "symptom": "Headache",
+      "startedAt": "2026-01-15T12:00:00Z",
+      "state": "ongoing"
+    }
+  ],
+  "definitions": {
+    "episodeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "episodeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

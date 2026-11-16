@@ -9,7 +9,7 @@
   "definitionFile": "definition.json",
   "examplesFile": "examples.json",
   "captureExamples": [
-    "Keep my dining-out budget at £150 this month."
+    "Keep my dining-out budget at \u00a3150 this month."
   ],
   "dependencies": {},
   "records": [
@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected budget period and currency.",
+    "exclude": [
+      "Recorded spending that belongs in Transactions."
+    ],
+    "workflow": "Maintain planned limits; reconcile actual spending from linked accounts and ledger records."
+  }
 }

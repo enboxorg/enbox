@@ -275,8 +275,13 @@ export const ProfileCatalog: ModuleCatalogEntry = {
     exportName      : 'ProfileModule',
     status          : 'experimental',
     captureExamples : ['Update my public bio to this text.'],
-    notes           : [],
-    dependencies    : {},
+    capture         : {
+      identity : 'Match the owner\'s self-published profile and selected profile links.',
+      exclude  : ['Private contact-book annotations about other people.'],
+      workflow : 'Publish deliberate profile fields and media using the established public profile paths.',
+    },
+    notes        : [],
+    dependencies : {},
   },
   definition : ProfileDefinition,
   records    : [

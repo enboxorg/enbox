@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the reported symptom episode and observation interval.",
+    "exclude": [
+      "An inferred diagnosis or an unreported symptom."
+    ],
+    "workflow": "Record user-reported observations and context, retaining uncertainty and source evidence."
+  }
 }

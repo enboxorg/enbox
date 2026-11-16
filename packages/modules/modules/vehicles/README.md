@@ -8,7 +8,8 @@ Import `VehiclesModule`, `VehiclesDefinition`, `VehiclesCodecs`, and `VehiclesSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -38,6 +39,18 @@ The owner retains tenant authority. These rules describe additional authority. `
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
 
+## Contract notes
+
+- Manufacturer/make and model belong to the parent Belongings item. Vehicle-specific identifiers, registration, model year, odometer and energy history belong here.
+
+## Capture contract
+
+**Identity:** Resolve the Belongings item, then vehicle-specific identifiers such as VIN.
+
+**Workflow:** Maintain vehicle details and append observed usage/energy records; use shared Maintenance for service history.
+
+**Exclude:** Duplicating manufacturer/model/ownership facts or treating a planned trip as odometer history.
+
 ## Use
 
 Start with an authenticated Enbox session and include this module in the application's module manifest. Dependency artifacts are carried by the typed module and installed before consumers.
@@ -51,9 +64,7 @@ const records = enbox.using(VehiclesModule).records;
 await records.create('item/vehicle', {
   parentContextId,
   data: {
-  "kind": "car",
-  "make": "Example Motors",
-  "model": "City"
+  "kind": "car"
 },
 });
 ```

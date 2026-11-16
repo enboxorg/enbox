@@ -39,5 +39,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match track/album identifiers and the selected library item.",
+    "exclude": [
+      "Copying private audio into another audience through a link alone."
+    ],
+    "workflow": "Keep media identity and observed listening activity; link files and external sources."
+  }
 }

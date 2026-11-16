@@ -39,5 +39,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match provider and confirmation identifier within the correct traveller context.",
+    "exclude": [
+      "A tentative trip idea as a confirmed booking."
+    ],
+    "workflow": "Maintain booking facts and changes; link trips and source documents without copying private evidence into shared itineraries."
+  }
 }

@@ -39,5 +39,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the issuer and bill instance or selected record ID.",
+    "exclude": [
+      "A payment already represented as a ledger transaction without a bill obligation."
+    ],
+    "workflow": "Record the obligation, then payment evidence; link actual ledger movements."
+  }
 }

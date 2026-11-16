@@ -8,7 +8,8 @@ Import `TimeEntriesModule`, `TimeEntriesDefinition`, `TimeEntriesCodecs`, and `T
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `entry` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the actual activity interval and source timer/import identifier.
+
+**Workflow:** Record observed time and link the relevant task/project.
+
+**Exclude:** Planned task duration as time already spent.
 
 ## Use
 

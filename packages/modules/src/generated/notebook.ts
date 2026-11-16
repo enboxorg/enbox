@@ -322,31 +322,31 @@ export const NotebookSchemas: Readonly<Record<string, PayloadSchema>> = {
     required: ['title'],
   },
   admin: {
+    type                 : 'object',
+    additionalProperties : false,
+    properties           : {},
     $schema              : 'http://json-schema.org/draft-07/schema#',
     $id                  : 'https://enbox.id/schemas/notebook/v1/admin',
     title                : 'AdminData',
     description          : 'Notebook: notebook/page/admin; compatible with notesd notebook v1.',
+  },
+  editor: {
     type                 : 'object',
     additionalProperties : false,
     properties           : {},
-  },
-  editor: {
     $schema              : 'http://json-schema.org/draft-07/schema#',
     $id                  : 'https://enbox.id/schemas/notebook/v1/editor',
     title                : 'EditorData',
     description          : 'Notebook: notebook/page/editor; compatible with notesd notebook v1.',
+  },
+  viewer: {
     type                 : 'object',
     additionalProperties : false,
     properties           : {},
-  },
-  viewer: {
     $schema              : 'http://json-schema.org/draft-07/schema#',
     $id                  : 'https://enbox.id/schemas/notebook/v1/viewer',
     title                : 'ViewerData',
     description          : 'Notebook: notebook/page/viewer; compatible with notesd notebook v1.',
-    type                 : 'object',
-    additionalProperties : false,
-    properties           : {},
   },
 };
 export const NotebookCatalog: ModuleCatalogEntry = {
@@ -360,7 +360,13 @@ export const NotebookCatalog: ModuleCatalogEntry = {
     exportName      : 'NotebookModule',
     status          : 'experimental',
     captureExamples : ['Save this thought in my notebook.', 'Add this PDF to my research page.'],
-    notes           : [
+    capture         : {
+      identity : 'Match the existing notebook and stable page record ID.',
+      exclude  : ['A second flat note format or raw Markdown in the delta path.'],
+      workflow:
+        'Update owner-managed page metadata and append @enbox/crdt frames; use the notesd attachment envelope for page-owned files.',
+    },
+    notes: [
       'Wire definition matches notesd commit 377645c881b0d1a86710130957cc5d583b249c8f. Schema identities, paths, size limits, actions, and binary representations are preserved.',
       'The page record holds stable metadata; its owner changes the title and page state. Editors append CRDT updates; administrators may additionally squash the log. Notebook metadata is owner-only.',
       'Delta bytes are @enbox/crdt yjs1 frames, not Markdown or raw Yjs updates. Use @enbox/crdt to apply, materialize, and compact them.',

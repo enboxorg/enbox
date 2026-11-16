@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://enbox.id/modules/gifts/v1/schemas/idea",
   "title": "IdeaData",
-  "description": "Gifts: idea record.",
+  "description": "A private gift idea, either independently described or linked to an existing wishlist item without copying its product metadata.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -41,32 +41,61 @@
       "format": "date-time"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/ideaNoteText"
     },
     "source": {
       "$ref": "#/definitions/ideaSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/ideaLabels"
+    },
+    "wishlistItem": {
+      "$ref": "#/definitions/ideaRecordReference"
     }
   },
   "required": [
-    "name",
     "state"
   ],
   "examples": [
     {
       "name": "Cookbook",
       "state": "idea"
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "name"
+      ],
+      "not": {
+        "required": [
+          "wishlistItem"
+        ]
+      }
+    },
+    {
+      "required": [
+        "wishlistItem"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "price"
+            ]
+          }
+        ]
+      }
     }
   ],
   "definitions": {
@@ -206,6 +235,21 @@
       "required": [
         "kind"
       ]
+    },
+    "ideaNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "ideaLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

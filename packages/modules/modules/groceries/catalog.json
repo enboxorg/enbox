@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected list and item, including quantity/variant distinctions.",
+    "exclude": [
+      "Existing pantry inventory or an aspirational gift wishlist."
+    ],
+    "workflow": "Record shopping intent, then update purchase state when known; link purchases and pantry items instead of copying their histories."
+  }
 }

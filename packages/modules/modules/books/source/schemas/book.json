@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/books/v1/schemas/book",
+  "title": "BookData",
+  "description": "Books: book record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "authors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "isbn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 17,
+      "pattern": "^[0-9Xx-]{10,17}$"
+    },
+    "edition": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "publishedYear": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2200
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "ebook",
+        "audio",
+        "other"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "want-to-read",
+        "reading",
+        "finished",
+        "paused",
+        "abandoned"
+      ]
+    },
+    "pageCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "file": {
+      "$ref": "#/definitions/bookRecordReference"
+    },
+    "purchase": {
+      "$ref": "#/definitions/bookRecordReference"
+    },
+    "loan": {
+      "$ref": "#/definitions/bookRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/bookSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "title",
+    "state"
+  ],
+  "examples": [
+    {
+      "title": "Dune",
+      "authors": [
+        "Frank Herbert"
+      ],
+      "state": "reading"
+    }
+  ],
+  "definitions": {
+    "bookRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "bookSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

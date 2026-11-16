@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the person and the selected condition/allergy assertion.",
+    "exclude": [
+      "Inferring diagnoses or confirming user-supplied claims as clinician-verified facts."
+    ],
+    "workflow": "Keep reported conditions, allergies and emergency information with assertion provenance and supporting records."
+  }
 }

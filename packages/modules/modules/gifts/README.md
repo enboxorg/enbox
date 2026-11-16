@@ -8,7 +8,8 @@ Import `GiftsModule`, `GiftsDefinition`, `GiftsCodecs`, and `GiftsSchemas` from 
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -33,6 +34,19 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `plan/idea` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- A gift idea can reference an existing Shopping Wishlists list/item through wishlistItem. Linked ideas keep gifting state private and cannot duplicate name, URL, or product price fields.
+- Use a standalone name/URL/price only when no existing wishlist item is selected. Linking does not grant the wishlist audience access to the gift plan.
+
+## Capture contract
+
+**Identity:** Match the selected gift plan, recipient, and occasion.
+
+**Workflow:** Keep recipient and gifting decisions private. Reference an existing wishlist item instead of copying its name, URL and product price; link actual purchases separately.
+
+**Exclude:** Sharing private gifting intent with a wishlist's audience automatically.
 
 ## Use
 

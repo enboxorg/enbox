@@ -1,8 +1,4 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://enbox.id/schemas/notebook-realtime/v1/live",
-  "title": "LiveData",
-  "description": "NotebookRealtime: page/live; compatible with notesd notebook v1.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -28,5 +24,9 @@
     "topic",
     "topicKey",
     "peerKey"
-  ]
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/notebook-realtime/v1/live",
+  "title": "LiveData",
+  "description": "NotebookRealtime: page/live; compatible with notesd notebook v1."
 }

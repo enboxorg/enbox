@@ -8,7 +8,8 @@ Import `BillsModule`, `BillsDefinition`, `BillsCodecs`, and `BillsSchemas` from 
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -33,6 +34,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `bill/payment` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the issuer and bill instance or selected record ID.
+
+**Workflow:** Record the obligation, then payment evidence; link actual ledger movements.
+
+**Exclude:** A payment already represented as a ledger transaction without a bill obligation.
 
 ## Use
 

@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/maintenance/v1/schemas/service",
+  "title": "ServiceData",
+  "description": "Maintenance: service record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "performedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "contact": {
+      "$ref": "#/definitions/serviceRecordReference"
+    },
+    "cost": {
+      "$ref": "#/definitions/serviceMoney"
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "quantity": {
+            "$ref": "#/definitions/serviceQuantity"
+          },
+          "partNumber": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "usageReading": {
+      "$ref": "#/definitions/serviceQuantity"
+    },
+    "plan": {
+      "$ref": "#/definitions/serviceRecordReference"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/serviceRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/serviceSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "description",
+    "performedAt"
+  ],
+  "examples": [
+    {
+      "description": "Replaced air filter",
+      "performedAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "serviceMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "serviceQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "serviceRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "serviceSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

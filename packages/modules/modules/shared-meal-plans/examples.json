@@ -1,0 +1,19 @@
+[
+  {
+    "path": "space/plan",
+    "encoding": "json",
+    "data": {
+      "name": "This week"
+    }
+  },
+  {
+    "path": "space/plan/meal",
+    "encoding": "json",
+    "data": {
+      "name": "Lentil soup",
+      "date": "2026-01-15",
+      "slot": "dinner",
+      "servings": 2
+    }
+  }
+]

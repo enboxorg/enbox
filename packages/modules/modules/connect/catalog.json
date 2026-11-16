@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": true
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the owner's wallet discovery record.",
+    "exclude": [
+      "Personal wallet secrets or application data."
+    ],
+    "workflow": "Publish wallet discovery endpoints using the established Connect contract."
+  }
 }

@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/devices/v1/schemas/device",
+  "title": "DeviceData",
+  "description": "Devices: device record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "phone",
+        "tablet",
+        "computer",
+        "wearable",
+        "router",
+        "sensor",
+        "other"
+      ]
+    },
+    "operatingSystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "osVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/deviceRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/deviceSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    },
+    "operatingState": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "repair",
+        "retired"
+      ],
+      "description": "Operational condition; ownership, loss and disposal remain on the Belongings item."
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "examples": [
+    {
+      "kind": "computer",
+      "operatingState": "active"
+    }
+  ],
+  "definitions": {
+    "deviceRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "deviceSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -78,5 +78,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match an existing selected contact or verified external identifier; names alone are not unique.",
+    "exclude": [
+      "Replacing another person's self-published Profile with local address-book claims."
+    ],
+    "workflow": "Maintain private contact details and endpoints; link interactions to their actual event, conversation, or note."
+  }
 }

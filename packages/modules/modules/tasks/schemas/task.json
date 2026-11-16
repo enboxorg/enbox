@@ -81,22 +81,13 @@
       "$ref": "#/definitions/taskRecurrence"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/taskNoteText"
     },
     "source": {
       "$ref": "#/definitions/taskSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/taskLabels"
     }
   },
   "required": [
@@ -287,6 +278,21 @@
       "required": [
         "kind"
       ]
+    },
+    "taskNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "taskLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

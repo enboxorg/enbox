@@ -8,7 +8,8 @@ Import `UtilitiesModule`, `UtilitiesDefinition`, `UtilitiesCodecs`, and `Utiliti
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `account/meter/reading` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the provider service account and physical meter identifier.
+
+**Workflow:** Maintain service metadata and append actual meter readings, linking residence and bill records.
+
+**Exclude:** A utility-service account as the same entity as a financial account.
 
 ## Use
 

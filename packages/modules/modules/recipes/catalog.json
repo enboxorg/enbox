@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected recipe or source identity and the intended variation.",
+    "exclude": [
+      "A meal plan or consumption log as a new recipe."
+    ],
+    "workflow": "Maintain ingredients and instructions; keep authored variations, plans and eating observations distinct."
+  }
 }

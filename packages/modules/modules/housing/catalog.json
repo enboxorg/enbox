@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the residence address and occupancy/lease period.",
+    "exclude": [
+      "A place bookmark or a utility account as the same entity."
+    ],
+    "workflow": "Maintain residence and occupancy identity, linking agreements and related services."
+  }
 }

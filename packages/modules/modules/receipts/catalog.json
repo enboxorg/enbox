@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match merchant receipt identifier and source document, not only total/date.",
+    "exclude": [
+      "Treating OCR output as reviewed evidence or duplicating the linked purchase."
+    ],
+    "workflow": "Retain receipt facts and extraction provenance; link original files, purchases and payments."
+  }
 }

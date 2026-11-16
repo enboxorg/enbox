@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/flashcards/v1/schemas/entry",
+  "title": "EntryData",
+  "description": "Flashcards: entry record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "card": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "order": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/entrySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "card"
+  ],
+  "examples": [
+    {
+      "card": {
+        "recordId": "example-record"
+      },
+      "order": 1
+    }
+  ],
+  "definitions": {
+    "entryRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "entrySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -2,7 +2,7 @@
   "module": "https://enbox.id/modules/investment-holdings/v1",
   "published": true,
   "uses": {
-    "transactions": "https://enbox.id/modules/transactions/v1"
+    "accounts": "https://enbox.id/modules/financial-accounts/v1"
   },
   "types": {
     "position": {
@@ -29,7 +29,7 @@
   },
   "structure": {
     "account": {
-      "$ref": "transactions:account",
+      "$ref": "accounts:account",
       "position": {
         "$size": {
           "max": 1048576

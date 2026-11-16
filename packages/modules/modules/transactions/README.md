@@ -8,18 +8,20 @@ Import `TransactionsModule`, `TransactionsDefinition`, `TransactionsCodecs`, and
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
 | Path | Representation | Data policy | Record policy |
 | --- | --- | --- | --- |
-| `account` | [JSON Schema](schemas/account.json) | Encrypted | Mutable |
 | `account/transaction` | [JSON Schema](schemas/transaction.json) | Encrypted | Mutable |
 
 ## Dependencies and ownership
 
-This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
+- `accounts`: [Financial Accounts](../financial-accounts/README.md) — `https://enbox.id/modules/financial-accounts/v1`
+
+Only concrete local child paths are writable through this module; attachment aliases remain owned by their providers.
 
 The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
 
@@ -29,24 +31,42 @@ The owner retains tenant authority. These rules describe additional authority. `
 
 | Path | Additional authority |
 | --- | --- |
-| `account` | Owner only |
 | `account/transaction` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- Create the account with Financial Accounts, then append ledger entries using its contextId. Portfolio apps can use the same account without installing this ledger module.
+
+## Capture contract
+
+**Identity:** Match the Financial Accounts parent and imported transaction identifier or selected ledger entry.
+
+**Workflow:** Record actual ledger facts and link supporting receipts; do not create a second account identity.
+
+**Exclude:** A bill, budget target, wishlist interest or position snapshot as a completed movement of money.
 
 ## Use
 
 Start with an authenticated Enbox session and include this module in the application's module manifest. Dependency artifacts are carried by the typed module and installed before consumers.
 
+Supply the existing direct parent record's `contextId` as `parentContextId`.
+
 ```ts
 import { TransactionsModule } from '@enbox/modules/transactions';
 
 const records = enbox.using(TransactionsModule).records;
-await records.create('account', {
+await records.create('account/transaction', {
+  parentContextId,
   data: {
-  "name": "Personal account",
-  "kind": "bank",
-  "currency": "USD"
+  "kind": "expense",
+  "amount": {
+    "amount": "42",
+    "currency": "GBP"
+  },
+  "occurredAt": "2026-01-15T12:00:00Z",
+  "category": "groceries"
 },
 });
 ```

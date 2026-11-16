@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/contacts/v1/schemas/entry",
+  "title": "EntryData",
+  "description": "Contacts: entry record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contact": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/entrySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "contact"
+  ],
+  "examples": [
+    {
+      "contact": {
+        "recordId": "example-record"
+      }
+    }
+  ],
+  "definitions": {
+    "entryRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "entrySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -8,7 +8,8 @@ Import `DebtsLoansModule`, `DebtsLoansDefinition`, `DebtsLoansCodecs`, and `Debt
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -33,6 +34,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `loan/repayment` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the agreement and counterparties; similar amounts do not identify the same loan.
+
+**Workflow:** Maintain terms and repayment evidence, linking actual transactions.
+
+**Exclude:** Treating a planned repayment as a completed transfer.
 
 ## Use
 

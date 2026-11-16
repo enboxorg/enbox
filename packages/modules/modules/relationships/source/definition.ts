@@ -1,0 +1,40 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/relationships/v1',
+  published : true,
+  types     : {
+    follow: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/relationships/v1/schemas/follow',
+    },
+    connection: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/relationships/v1/schemas/connection',
+    },
+    restriction: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/relationships/v1/schemas/restriction',
+    },
+  },
+  structure: {
+    follow: {
+      $size: {
+        max: 1048576,
+      },
+    },
+    connection: {
+      $size: {
+        max: 1048576,
+      },
+    },
+    restriction: {
+      $size: {
+        max: 1048576,
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

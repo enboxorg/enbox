@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/habits/v1/schemas/habit",
+  "title": "HabitData",
+  "description": "Habits: habit record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "recurrence": {
+      "$ref": "#/definitions/habitRecurrence"
+    },
+    "target": {
+      "$ref": "#/definitions/habitQuantity"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "ended"
+      ]
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "goal": {
+      "$ref": "#/definitions/habitRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/habitAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/habitSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Morning walk",
+      "state": "active",
+      "recurrence": {
+        "frequency": "daily"
+      }
+    }
+  ],
+  "definitions": {
+    "habitAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "habitQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "habitRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "habitRecurrence": {
+      "$ref": "https://enbox.id/schemas/common/recurrence/v1"
+    },
+    "habitSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

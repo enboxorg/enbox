@@ -118,8 +118,13 @@ export const ConnectCatalog: ModuleCatalogEntry = {
     exportName      : 'ConnectModule',
     status          : 'experimental',
     captureExamples : ['Use this web wallet.'],
-    notes           : [],
-    dependencies    : {},
+    capture         : {
+      identity : 'Match the owner\'s wallet discovery record.',
+      exclude  : ['Personal wallet secrets or application data.'],
+      workflow : 'Publish wallet discovery endpoints using the established Connect contract.',
+    },
+    notes        : [],
+    dependencies : {},
   },
   definition : ConnectDefinition,
   records    : [

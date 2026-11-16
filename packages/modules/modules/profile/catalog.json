@@ -67,5 +67,12 @@
       "immutable": false,
       "singleton": true
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the owner's self-published profile and selected profile links.",
+    "exclude": [
+      "Private contact-book annotations about other people."
+    ],
+    "workflow": "Publish deliberate profile fields and media using the established public profile paths."
+  }
 }

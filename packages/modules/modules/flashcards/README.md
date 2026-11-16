@@ -8,7 +8,8 @@ Import `FlashcardsModule`, `FlashcardsDefinition`, `FlashcardsCodecs`, and `Flas
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -49,6 +50,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `deck/viewer` | recipient of deck/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the selected card and deck membership; text alone need not identify a unique card.
+
+**Workflow:** Maintain cards and deck references; append study reviews under the user's private study state.
+
+**Exclude:** Duplicating learning goals or converting a review attempt into a new card.
 
 ## Use
 

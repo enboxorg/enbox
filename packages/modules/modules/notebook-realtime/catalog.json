@@ -46,5 +46,12 @@
     "This module owns page/live and page/live/session only. page is an attachment to notebook:notebook/page, not a copied page record.",
     "The page owner maintains the singleton encrypted live advertisement. Editors and administrators create/delete their own plaintext session records; viewers only read. Session peerKey is public descriptor-adjacent routing metadata and must never contain a private key.",
     "Rendezvous fields are transport-neutral strings. Clients validate their chosen transport and generate fresh keys and topics; example values are illustrative, not usable secrets."
-  ]
+  ],
+  "capture": {
+    "identity": "Use the existing Notebook page context; the advertisement is a singleton projection.",
+    "exclude": [
+      "Treating transient realtime state as the durable note body or a session peerKey as a private key."
+    ],
+    "workflow": "The owner maintains rendezvous metadata; authorized writers create their own peer-session records."
+  }
 }

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pet-care/v1/schemas/pet",
+  "title": "PetData",
+  "description": "Pet Care: pet record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "species": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "breed": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "birthDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "adoptedOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "microchipId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sex": {
+      "type": "string",
+      "enum": [
+        "female",
+        "male",
+        "unknown"
+      ]
+    },
+    "weight": {
+      "$ref": "#/definitions/petQuantity"
+    },
+    "diet": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "vet": {
+      "$ref": "#/definitions/petRecordReference"
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/petRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/petRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/petSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "species"
+  ],
+  "examples": [
+    {
+      "name": "Luna",
+      "species": "cat"
+    }
+  ],
+  "definitions": {
+    "petQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "petRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "petSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

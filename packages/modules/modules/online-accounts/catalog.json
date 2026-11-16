@@ -39,5 +39,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match service identity and account identifier, not just a display username.",
+    "exclude": [
+      "Passwords, recovery secrets, or private signing keys."
+    ],
+    "workflow": "Maintain non-secret service-account metadata and explicit identity-link evidence."
+  }
 }

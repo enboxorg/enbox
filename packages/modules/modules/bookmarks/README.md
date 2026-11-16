@@ -8,7 +8,8 @@ Import `BookmarksModule`, `BookmarksDefinition`, `BookmarksCodecs`, and `Bookmar
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -43,6 +44,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `folder/viewer` | recipient of folder/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the saved URL or tenant-relative record target and the user's selected bookmark.
+
+**Workflow:** Save references and reading intent; organize existing bookmarks with folder entries.
+
+**Exclude:** The contents of the linked document or an authorization grant to it.
 
 ## Use
 

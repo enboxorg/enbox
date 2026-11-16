@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the individual plant, not only its species.",
+    "exclude": [
+      "A care schedule as evidence that watering happened."
+    ],
+    "workflow": "Maintain plant metadata and append actual care observations."
+  }
 }

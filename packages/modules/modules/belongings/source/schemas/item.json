@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/belongings/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Belongings: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "manufacturer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "serialNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "acquiredOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "cost": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "owned",
+        "lent",
+        "lost",
+        "sold",
+        "donated",
+        "discarded"
+      ]
+    },
+    "purchase": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "manuals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/itemRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/itemRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Washing machine",
+      "manufacturer": "Example Appliances",
+      "serialNumber": "ABC123",
+      "state": "owned"
+    }
+  ],
+  "definitions": {
+    "itemMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

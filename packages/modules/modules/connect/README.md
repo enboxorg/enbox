@@ -8,7 +8,8 @@ Import `ConnectModule`, `ConnectDefinition`, `ConnectCodecs`, and `ConnectSchema
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -31,6 +32,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `wallet` | anyone: read |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the owner's wallet discovery record.
+
+**Workflow:** Publish wallet discovery endpoints using the established Connect contract.
+
+**Exclude:** Personal wallet secrets or application data.
 
 ## Use
 

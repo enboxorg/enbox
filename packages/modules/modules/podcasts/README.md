@@ -8,7 +8,8 @@ Import `PodcastsModule`, `PodcastsDefinition`, `PodcastsCodecs`, and `PodcastsSc
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `show/episode/playback` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match feed URL and episode GUID within that feed.
+
+**Workflow:** Maintain show/episode identity and private playback state; link cached media files.
+
+**Exclude:** A queued episode as a completed listening.
 
 ## Use
 

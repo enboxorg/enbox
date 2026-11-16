@@ -1,0 +1,81 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://identity.foundation/modules/profile',
+  published : true,
+  types     : {
+    profile: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+      schema             : 'https://identity.foundation/schemas/profile/profile',
+    },
+    link: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+      schema             : 'https://identity.foundation/schemas/profile/link',
+    },
+    avatar: {
+      dataFormats        : ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      encryptionRequired : false,
+    },
+    hero: {
+      dataFormats        : ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      encryptionRequired : false,
+    },
+  },
+  structure: {
+    profile: {
+      $size: {
+        max: 10000,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+      $actions: [
+        {
+          who : 'anyone',
+          can : ['read'],
+        },
+      ],
+      link: {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            who : 'anyone',
+            can : ['read'],
+          },
+        ],
+      },
+      avatar: {
+        $size: {
+          max: 12582912,
+        },
+        $recordLimit: {
+          max: 1,
+        },
+        $actions: [
+          {
+            who : 'anyone',
+            can : ['read'],
+          },
+        ],
+      },
+      hero: {
+        $size: {
+          max: 25165824,
+        },
+        $recordLimit: {
+          max: 1,
+        },
+        $actions: [
+          {
+            who : 'anyone',
+            can : ['read'],
+          },
+        ],
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

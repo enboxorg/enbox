@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/online-accounts/v1/schemas/identity-link",
+  "title": "IdentityLinkData",
+  "description": "Online Accounts: identityLink record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "did": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "linkedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "linked",
+        "unlinked"
+      ]
+    },
+    "evidence": {
+      "$ref": "#/definitions/identityLinkRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/identityLinkSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "did",
+    "state"
+  ],
+  "examples": [
+    {
+      "did": "did:example:holder",
+      "state": "linked"
+    }
+  ],
+  "definitions": {
+    "identityLinkRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "identityLinkSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

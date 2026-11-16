@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/investment-holdings/v1/schemas/lot",
+  "title": "LotData",
+  "description": "Investment Holdings: lot record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "quantity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "acquiredOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "unitCost": {
+      "$ref": "#/definitions/lotMoney"
+    },
+    "fees": {
+      "$ref": "#/definitions/lotMoney"
+    },
+    "externalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/lotSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "quantity",
+    "acquiredOn"
+  ],
+  "examples": [
+    {
+      "quantity": "10",
+      "acquiredOn": "2026-01-15"
+    }
+  ],
+  "definitions": {
+    "lotMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "lotRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "lotSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

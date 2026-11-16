@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/bills/v1/schemas/bill",
+  "title": "BillData",
+  "description": "Bills: bill record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "payee": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "amount": {
+      "$ref": "#/definitions/billMoney"
+    },
+    "dueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "due",
+        "partially-paid",
+        "paid",
+        "disputed",
+        "cancelled"
+      ]
+    },
+    "recurrence": {
+      "$ref": "#/definitions/billRecurrence"
+    },
+    "accountNumberLastFour": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4,
+      "pattern": "^[A-Z0-9]{4}$"
+    },
+    "document": {
+      "$ref": "#/definitions/billRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/billAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/billSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "payee",
+    "state"
+  ],
+  "examples": [
+    {
+      "payee": "Electric utility",
+      "state": "due",
+      "dueOn": "2026-01-15"
+    }
+  ],
+  "definitions": {
+    "billAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "billMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "billRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "billRecurrence": {
+      "$ref": "https://enbox.id/schemas/common/recurrence/v1"
+    },
+    "billSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

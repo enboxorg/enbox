@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/preferences/v1/schemas/food",
+  "title": "FoodData",
+  "description": "Preferences: food record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dietaryChoices": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "vegetarian",
+          "vegan",
+          "pescatarian",
+          "other"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 10
+    },
+    "likes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "dislikes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "preferredCuisines": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/foodSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [],
+  "examples": [
+    {
+      "likes": [
+        "lentils"
+      ]
+    }
+  ],
+  "minProperties": 1,
+  "definitions": {
+    "foodRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "foodSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "dietaryChoices"
+      ]
+    },
+    {
+      "required": [
+        "likes"
+      ]
+    },
+    {
+      "required": [
+        "dislikes"
+      ]
+    },
+    {
+      "required": [
+        "preferredCuisines"
+      ]
+    }
+  ]
+}

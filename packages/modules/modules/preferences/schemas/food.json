@@ -51,22 +51,13 @@
       "maxItems": 100
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/foodNoteText"
     },
     "source": {
       "$ref": "#/definitions/foodSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/foodLabels"
     }
   },
   "required": [],
@@ -78,6 +69,28 @@
     }
   ],
   "minProperties": 1,
+  "anyOf": [
+    {
+      "required": [
+        "dietaryChoices"
+      ]
+    },
+    {
+      "required": [
+        "likes"
+      ]
+    },
+    {
+      "required": [
+        "dislikes"
+      ]
+    },
+    {
+      "required": [
+        "preferredCuisines"
+      ]
+    }
+  ],
   "definitions": {
     "foodRecordReference": {
       "type": "object",
@@ -192,28 +205,21 @@
       "required": [
         "kind"
       ]
+    },
+    "foodNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "foodLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
-  },
-  "anyOf": [
-    {
-      "required": [
-        "dietaryChoices"
-      ]
-    },
-    {
-      "required": [
-        "likes"
-      ]
-    },
-    {
-      "required": [
-        "dislikes"
-      ]
-    },
-    {
-      "required": [
-        "preferredCuisines"
-      ]
-    }
-  ]
+  }
 }

@@ -8,7 +8,8 @@ Import `DevicesModule`, `DevicesDefinition`, `DevicesCodecs`, and `DevicesSchema
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -16,7 +17,6 @@ Import `DevicesModule`, `DevicesDefinition`, `DevicesCodecs`, and `DevicesSchema
 | --- | --- | --- | --- |
 | `item/device` | [JSON Schema](schemas/device.json) | Encrypted | Mutable |
 | `item/device/configuration` | [JSON Schema](schemas/configuration.json) | Encrypted | Mutable |
-| `item/device/service` | [JSON Schema](schemas/service.json) | Encrypted | Immutable |
 
 ## Dependencies and ownership
 
@@ -34,9 +34,21 @@ The owner retains tenant authority. These rules describe additional authority. `
 | --- | --- |
 | `item/device` | role belongings:item/editor: create, read, co-update<br>role belongings:item/viewer: read |
 | `item/device/configuration` | role belongings:item/editor: create, read, co-update, co-delete<br>role belongings:item/viewer: read |
-| `item/device/service` | role belongings:item/editor: create, read, delete<br>role belongings:item/viewer: read |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- The parent Belongings item owns name, manufacturer, model, serial number, and ownership state. Device data describes computing capabilities and operational state.
+- Use Maintenance item/service records on that same Belongings item for repairs. Configuration records are timestamped snapshots; device fields describe current configuration.
+
+## Capture contract
+
+**Identity:** Resolve the existing Belongings item first.
+
+**Workflow:** Store operational device details and dated configuration snapshots; use Belongings for identity and Maintenance for repairs.
+
+**Exclude:** Duplicating manufacturer, model, serial number, ownership state, or maintenance history.
 
 ## Use
 
@@ -52,8 +64,7 @@ await records.create('item/device', {
   parentContextId,
   data: {
   "kind": "computer",
-  "state": "active",
-  "model": "Example Laptop"
+  "operatingState": "active"
 },
 });
 ```

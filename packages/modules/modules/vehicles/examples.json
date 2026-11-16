@@ -3,9 +3,7 @@
     "path": "item/vehicle",
     "encoding": "json",
     "data": {
-      "kind": "car",
-      "make": "Example Motors",
-      "model": "City"
+      "kind": "car"
     }
   },
   {

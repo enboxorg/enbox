@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the user's check-in and observation time.",
+    "exclude": [
+      "An inferred mental-health diagnosis."
+    ],
+    "workflow": "Store expressed mood and context, linking a journal entry when one exists."
+  }
 }

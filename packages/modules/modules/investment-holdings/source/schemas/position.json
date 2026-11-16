@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/investment-holdings/v1/schemas/position",
+  "title": "PositionData",
+  "description": "Investment Holdings: position record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "instrument": {
+      "$ref": "#/definitions/positionInstrument"
+    },
+    "quantity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "asOf": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "averageUnitCost": {
+      "$ref": "#/definitions/positionMoney"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "held",
+        "closed"
+      ]
+    },
+    "watchlistEntry": {
+      "$ref": "#/definitions/positionRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/positionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "instrument",
+    "quantity",
+    "asOf"
+  ],
+  "examples": [
+    {
+      "instrument": {
+        "symbol": "NVDA",
+        "assetClass": "stock"
+      },
+      "quantity": "10",
+      "asOf": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "positionInstrument": {
+      "$ref": "https://enbox.id/schemas/common/instrument/v1"
+    },
+    "positionMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "positionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "positionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

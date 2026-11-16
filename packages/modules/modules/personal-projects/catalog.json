@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected project and milestone.",
+    "exclude": [
+      "Duplicating task bodies inside milestone lists."
+    ],
+    "workflow": "Maintain project intent and milestones; link existing Tasks and other resources."
+  }
 }

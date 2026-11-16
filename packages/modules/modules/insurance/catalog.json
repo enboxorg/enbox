@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match insurer, policy identifier, coverage period and selected policy.",
+    "exclude": [
+      "A warranty or a completed claim settlement without evidence."
+    ],
+    "workflow": "Maintain policy facts, covered subjects and claim progress; link source documents."
+  }
 }

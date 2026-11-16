@@ -31,6 +31,19 @@ export type {
 } from './budgets.js';
 export { CardsPassesModule, CardsPassesDefinition, CardsPassesCodecs, CardsPassesSchemas, CardsPassesCatalog } from './cards-passes.js';
 export type { PassData as CardsPassesPassData } from './cards-passes.js';
+export {
+  CollaborationModule,
+  CollaborationDefinition,
+  CollaborationCodecs,
+  CollaborationSchemas,
+  CollaborationCatalog,
+} from './collaboration.js';
+export type {
+  SpaceData as CollaborationSpaceData,
+  AdminData as CollaborationAdminData,
+  EditorData as CollaborationEditorData,
+  ViewerData as CollaborationViewerData,
+} from './collaboration.js';
 export * from './connect.js';
 export { ContactsModule, ContactsDefinition, ContactsCodecs, ContactsSchemas, ContactsCatalog } from './contacts.js';
 export type {
@@ -73,11 +86,7 @@ export type { CycleData as CycleTrackingCycleData, ObservationData as CycleTrack
 export { DebtsLoansModule, DebtsLoansDefinition, DebtsLoansCodecs, DebtsLoansSchemas, DebtsLoansCatalog } from './debts-loans.js';
 export type { LoanData as DebtsLoansLoanData, RepaymentData as DebtsLoansRepaymentData } from './debts-loans.js';
 export { DevicesModule, DevicesDefinition, DevicesCodecs, DevicesSchemas, DevicesCatalog } from './devices.js';
-export type {
-  DeviceData as DevicesDeviceData,
-  ConfigurationData as DevicesConfigurationData,
-  ServiceData as DevicesServiceData,
-} from './devices.js';
+export type { DeviceData as DevicesDeviceData, ConfigurationData as DevicesConfigurationData } from './devices.js';
 export { EventsModule, EventsDefinition, EventsCodecs, EventsSchemas, EventsCatalog } from './events.js';
 export type {
   EventData as EventsEventData,
@@ -95,6 +104,14 @@ export type {
   EditorData as FilesEditorData,
   ViewerData as FilesViewerData,
 } from './files.js';
+export {
+  FinancialAccountsModule,
+  FinancialAccountsDefinition,
+  FinancialAccountsCodecs,
+  FinancialAccountsSchemas,
+  FinancialAccountsCatalog,
+} from './financial-accounts.js';
+export type { AccountData as FinancialAccountsAccountData } from './financial-accounts.js';
 export { FlashcardsModule, FlashcardsDefinition, FlashcardsCodecs, FlashcardsSchemas, FlashcardsCatalog } from './flashcards.js';
 export type {
   CardData as FlashcardsCardData,
@@ -362,6 +379,24 @@ export type {
   ViewerData as SharedExpensesViewerData,
 } from './shared-expenses.js';
 export {
+  SharedGroceriesModule,
+  SharedGroceriesDefinition,
+  SharedGroceriesCodecs,
+  SharedGroceriesSchemas,
+  SharedGroceriesCatalog,
+} from './shared-groceries.js';
+export type { ItemData as SharedGroceriesItemData, ListData as SharedGroceriesListData } from './shared-groceries.js';
+export {
+  SharedMealPlansModule,
+  SharedMealPlansDefinition,
+  SharedMealPlansCodecs,
+  SharedMealPlansSchemas,
+  SharedMealPlansCatalog,
+} from './shared-meal-plans.js';
+export type { MealData as SharedMealPlansMealData, PlanData as SharedMealPlansPlanData } from './shared-meal-plans.js';
+export { SharedTasksModule, SharedTasksDefinition, SharedTasksCodecs, SharedTasksSchemas, SharedTasksCatalog } from './shared-tasks.js';
+export type { ChecklistItemData as SharedTasksChecklistItemData, TaskData as SharedTasksTaskData } from './shared-tasks.js';
+export {
   ShoppingWishlistsModule,
   ShoppingWishlistsDefinition,
   ShoppingWishlistsCodecs,
@@ -417,7 +452,7 @@ export {
   TransactionsSchemas,
   TransactionsCatalog,
 } from './transactions.js';
-export type { AccountData as TransactionsAccountData, TransactionData as TransactionsTransactionData } from './transactions.js';
+export type { TransactionData as TransactionsTransactionData } from './transactions.js';
 export { TripsModule, TripsDefinition, TripsCodecs, TripsSchemas, TripsCatalog } from './trips.js';
 export type {
   TripData as TripsTripData,

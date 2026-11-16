@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/goals/v1/schemas/goal",
+  "title": "GoalData",
+  "description": "Goals: goal record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "target": {
+      "$ref": "#/definitions/goalQuantity"
+    },
+    "baseline": {
+      "$ref": "#/definitions/goalQuantity"
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "dueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "active",
+        "paused",
+        "achieved",
+        "abandoned"
+      ]
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/goalRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/goalSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Run ten kilometres",
+      "target": {
+        "value": "10",
+        "unit": "km"
+      },
+      "state": "planned"
+    }
+  ],
+  "definitions": {
+    "goalQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "goalRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "goalSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

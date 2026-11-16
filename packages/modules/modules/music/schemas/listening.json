@@ -29,22 +29,13 @@
       "$ref": "#/definitions/listeningRating"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/listeningNoteText"
     },
     "source": {
       "$ref": "#/definitions/listeningSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/listeningLabels"
     }
   },
   "required": [
@@ -211,6 +202,21 @@
       "required": [
         "kind"
       ]
+    },
+    "listeningNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "listeningLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

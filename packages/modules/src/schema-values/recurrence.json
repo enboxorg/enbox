@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/recurrence/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "frequency": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly"
+      ]
+    },
+    "interval": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "weekdays": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "MO",
+          "TU",
+          "WE",
+          "TH",
+          "FR",
+          "SA",
+          "SU"
+        ]
+      },
+      "uniqueItems": true,
+      "maxItems": 7
+    },
+    "until": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    }
+  },
+  "required": [
+    "frequency"
+  ],
+  "not": {
+    "required": [
+      "until",
+      "count"
+    ]
+  }
+}

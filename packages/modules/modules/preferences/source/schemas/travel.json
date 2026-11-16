@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/preferences/v1/schemas/travel",
+  "title": "TravelData",
+  "description": "Preferences: travel record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "preferredSeat": {
+      "type": "string",
+      "enum": [
+        "aisle",
+        "window",
+        "middle",
+        "no-preference"
+      ]
+    },
+    "homeAirport": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    },
+    "preferredModes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "walk",
+          "cycle",
+          "rail",
+          "bus",
+          "car",
+          "flight"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 6
+    },
+    "accessibilityNeeds": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/travelSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [],
+  "examples": [
+    {
+      "preferredSeat": "aisle"
+    }
+  ],
+  "minProperties": 1,
+  "definitions": {
+    "travelRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "travelSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "preferredSeat"
+      ]
+    },
+    {
+      "required": [
+        "homeAirport"
+      ]
+    },
+    {
+      "required": [
+        "preferredModes"
+      ]
+    },
+    {
+      "required": [
+        "accessibilityNeeds"
+      ]
+    }
+  ]
+}

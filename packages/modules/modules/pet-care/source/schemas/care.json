@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pet-care/v1/schemas/care",
+  "title": "CareData",
+  "description": "Pet Care: care record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "fed",
+        "walked",
+        "groomed",
+        "medication",
+        "observed",
+        "other"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "quantity": {
+      "$ref": "#/definitions/careQuantity"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/careSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "occurredAt"
+  ],
+  "examples": [
+    {
+      "kind": "fed",
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "careQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "careRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "careSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

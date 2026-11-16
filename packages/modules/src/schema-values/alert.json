@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/alert/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "at": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "offsetSeconds": {
+      "type": "integer",
+      "minimum": -315360000,
+      "maximum": 315360000
+    },
+    "anchor": {
+      "type": "string",
+      "enum": [
+        "start",
+        "end",
+        "due"
+      ]
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "app",
+        "push",
+        "email"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "snoozedUntil": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "dismissedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "at"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "offsetSeconds"
+            ]
+          },
+          {
+            "required": [
+              "anchor"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "offsetSeconds",
+        "anchor"
+      ],
+      "not": {
+        "required": [
+          "at"
+        ]
+      }
+    }
+  ]
+}

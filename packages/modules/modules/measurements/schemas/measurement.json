@@ -76,22 +76,13 @@
       "$ref": "#/definitions/measurementRecordReference"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/measurementNoteText"
     },
     "source": {
       "$ref": "#/definitions/measurementSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/measurementLabels"
     }
   },
   "required": [
@@ -259,6 +250,21 @@
       "required": [
         "kind"
       ]
+    },
+    "measurementNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "measurementLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

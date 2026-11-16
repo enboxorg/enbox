@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the actual eating occasion and source observation.",
+    "exclude": [
+      "A planned meal or a shopping-list item."
+    ],
+    "workflow": "Record consumption as observed; link recipes or plans without claiming the plan was eaten."
+  }
 }

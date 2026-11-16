@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/relationships/v1/schemas/follow",
+  "title": "FollowData",
+  "description": "Relationships: follow record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "targetDid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "targetRecord": {
+      "$ref": "#/definitions/followRecordReference"
+    },
+    "targetUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "startedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "following",
+        "paused",
+        "ended"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/followSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "examples": [
+    {
+      "targetDid": "did:example:friend",
+      "state": "following"
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "targetDid"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "targetRecord"
+            ]
+          },
+          {
+            "required": [
+              "targetUrl"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "targetRecord"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "targetDid"
+            ]
+          },
+          {
+            "required": [
+              "targetUrl"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "targetUrl"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "targetDid"
+            ]
+          },
+          {
+            "required": [
+              "targetRecord"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "followRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "followSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

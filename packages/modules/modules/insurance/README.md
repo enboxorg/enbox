@@ -8,7 +8,8 @@ Import `InsuranceModule`, `InsuranceDefinition`, `InsuranceCodecs`, and `Insuran
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `policy/claim` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match insurer, policy identifier, coverage period and selected policy.
+
+**Workflow:** Maintain policy facts, covered subjects and claim progress; link source documents.
+
+**Exclude:** A warranty or a completed claim settlement without evidence.
 
 ## Use
 

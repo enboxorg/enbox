@@ -1,0 +1,117 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+import { roleDefinition } from '../../../src/authoring/roles.js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/flashcards/v1',
+  published : true,
+  types     : {
+    card: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/card',
+    },
+    deck: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/deck',
+    },
+    entry: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/entry',
+    },
+    studySet: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/study-set',
+    },
+    cardState: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/card-state',
+    },
+    review: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/review',
+    },
+    editor: {
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/editor',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+    viewer: {
+      schema             : 'https://enbox.id/modules/flashcards/v1/schemas/viewer',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+  },
+  structure: {
+    card: {
+      $size: {
+        max: 1048576,
+      },
+      $actions: [
+        {
+          role : 'card/editor',
+          can  : ['read', 'co-update'],
+        },
+        {
+          role : 'card/viewer',
+          can  : ['read'],
+        },
+      ],
+      editor : roleDefinition('card/editor'),
+      viewer : roleDefinition('card/viewer'),
+    },
+    deck: {
+      $size: {
+        max: 1048576,
+      },
+      $actions: [
+        {
+          role : 'deck/editor',
+          can  : ['read', 'co-update'],
+        },
+        {
+          role : 'deck/viewer',
+          can  : ['read'],
+        },
+      ],
+      entry: {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'deck/editor',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'deck/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      editor : roleDefinition('deck/editor'),
+      viewer : roleDefinition('deck/viewer'),
+    },
+    studySet: {
+      $size: {
+        max: 1048576,
+      },
+      cardState: {
+        $size: {
+          max: 1048576,
+        },
+        review: {
+          $size: {
+            max: 1048576,
+          },
+          $immutable: true,
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

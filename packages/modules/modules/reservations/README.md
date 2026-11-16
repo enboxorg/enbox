@@ -8,7 +8,8 @@ Import `ReservationsModule`, `ReservationsDefinition`, `ReservationsCodecs`, and
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -33,6 +34,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `reservation/change` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match provider and confirmation identifier within the correct traveller context.
+
+**Workflow:** Maintain booking facts and changes; link trips and source documents without copying private evidence into shared itineraries.
+
+**Exclude:** A tentative trip idea as a confirmed booking.
 
 ## Use
 

@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the actual activity interval and source timer/import identifier.",
+    "exclude": [
+      "Planned task duration as time already spent."
+    ],
+    "workflow": "Record observed time and link the relevant task/project."
+  }
 }

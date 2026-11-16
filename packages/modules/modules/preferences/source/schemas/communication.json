@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/preferences/v1/schemas/communication",
+  "title": "CommunicationData",
+  "description": "Preferences: communication record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "preferredChannels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "app",
+          "email",
+          "phone",
+          "sms",
+          "video"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 5
+    },
+    "quietHoursStart": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5,
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "quietHoursEnd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5,
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "timeZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/communicationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [],
+  "examples": [
+    {
+      "preferredChannels": [
+        "app"
+      ]
+    }
+  ],
+  "minProperties": 1,
+  "definitions": {
+    "communicationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "communicationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "preferredChannels"
+      ]
+    },
+    {
+      "required": [
+        "quietHoursStart"
+      ]
+    },
+    {
+      "required": [
+        "quietHoursEnd"
+      ]
+    },
+    {
+      "required": [
+        "timeZone"
+      ]
+    }
+  ]
+}

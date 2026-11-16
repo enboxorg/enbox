@@ -1,0 +1,30 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/cycle-tracking/v1',
+  published : true,
+  types     : {
+    cycle: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/cycle-tracking/v1/schemas/cycle',
+    },
+    observation: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/cycle-tracking/v1/schemas/observation',
+    },
+  },
+  structure: {
+    cycle: {
+      $size: {
+        max: 1048576,
+      },
+      observation: {
+        $size: {
+          max: 1048576,
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

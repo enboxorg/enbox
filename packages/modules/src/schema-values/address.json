@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/address/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "formatted": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "street": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "locality": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "region": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "postalCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "countryCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2,
+      "pattern": "^[A-Z]{2}$"
+    }
+  },
+  "required": [],
+  "minProperties": 1
+}

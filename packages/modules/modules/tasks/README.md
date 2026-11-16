@@ -8,7 +8,8 @@ Import `TasksModule`, `TasksDefinition`, `TasksCodecs`, and `TasksSchemas` from 
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -39,6 +40,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `task/viewer` | recipient of task/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the selected task record, project and intended action.
+
+**Workflow:** Maintain actionable state and shared checklists; keep private reminders and pinning in owner-local state.
+
+**Exclude:** A calendar appointment or habit check-in as the same task fact.
 
 ## Use
 

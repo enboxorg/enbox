@@ -41,5 +41,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Resolve the Belongings item and warranty provider/policy period.",
+    "exclude": [
+      "A general insurance policy or an unverified claim outcome."
+    ],
+    "workflow": "Attach coverage and claim records to the existing item and link evidence."
+  }
 }

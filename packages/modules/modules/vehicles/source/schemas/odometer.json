@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/vehicles/v1/schemas/odometer",
+  "title": "OdometerData",
+  "description": "Vehicles: odometer record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "distance": {
+      "$ref": "#/definitions/odometerQuantity"
+    },
+    "recordedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/odometerSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "distance",
+    "recordedAt"
+  ],
+  "examples": [
+    {
+      "distance": {
+        "value": "42000",
+        "unit": "mile"
+      },
+      "recordedAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "odometerQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "odometerRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "odometerSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

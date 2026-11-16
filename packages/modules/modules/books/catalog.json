@@ -65,5 +65,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match edition identifiers such as ISBN; distinguish editions and the user's selected copy.",
+    "exclude": [
+      "A new copy of purchase, loan, or file evidence."
+    ],
+    "workflow": "Keep book metadata and reading activity; link ownership and source files."
+  }
 }

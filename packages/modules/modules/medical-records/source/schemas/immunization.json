@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/medical-records/v1/schemas/immunization",
+  "title": "ImmunizationData",
+  "description": "Medical Records: immunization record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "vaccine": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "administeredOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "doseNumber": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "lotNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/immunizationRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "assertion": {
+      "type": "string",
+      "enum": [
+        "self-reported",
+        "document-extracted",
+        "clinician-reported"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/immunizationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "vaccine",
+    "administeredOn",
+    "assertion"
+  ],
+  "examples": [
+    {
+      "vaccine": "Example vaccine",
+      "administeredOn": "2026-01-15",
+      "assertion": "self-reported"
+    }
+  ],
+  "definitions": {
+    "immunizationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "immunizationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/medications/v1/schemas/regimen",
+  "title": "RegimenData",
+  "description": "Medications: regimen record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "dose": {
+      "$ref": "#/definitions/regimenQuantity"
+    },
+    "route": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "scheduleText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "asNeeded": {
+      "type": "boolean"
+    },
+    "maximumDailyDose": {
+      "$ref": "#/definitions/regimenQuantity"
+    },
+    "assertion": {
+      "type": "string",
+      "enum": [
+        "user-supplied",
+        "prescription-extracted",
+        "clinician-supplied"
+      ]
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/regimenAlert"
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/regimenSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "startsOn",
+    "scheduleText",
+    "assertion"
+  ],
+  "examples": [
+    {
+      "startsOn": "2026-01-15",
+      "scheduleText": "As written on the supplied prescription",
+      "assertion": "user-supplied"
+    }
+  ],
+  "definitions": {
+    "regimenAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "regimenQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "regimenRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "regimenSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the provider service account and physical meter identifier.",
+    "exclude": [
+      "A utility-service account as the same entity as a financial account."
+    ],
+    "workflow": "Maintain service metadata and append actual meter readings, linking residence and bill records."
+  }
 }

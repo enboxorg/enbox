@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the observed sleep interval and source.",
+    "exclude": [
+      "A bedtime goal as an observed sleep session."
+    ],
+    "workflow": "Record actual sleep intervals and supplied quality observations."
+  }
 }

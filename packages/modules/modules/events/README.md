@@ -8,7 +8,8 @@ Import `EventsModule`, `EventsDefinition`, `EventsCodecs`, and `EventsSchemas` f
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -48,6 +49,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 
 - Editors jointly maintain event details and recurrence exceptions. Attendees submit and manage their own RSVP response records; viewers only read. The signed author identifies the responding principal.
 - The owner issues editor, attendee, and viewer assignments. Private state and reminder preferences are owner-local links rather than shared event children.
+
+## Capture contract
+
+**Identity:** Match the selected event or recurring series and the original occurrence for exceptions.
+
+**Workflow:** Record planned occurrences; store exceptions and authored RSVP separately, with personal alerts in owner-local state.
+
+**Exclude:** A task deadline, a completed medical visit, or booking evidence by itself.
 
 ## Use
 

@@ -26,5 +26,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the subject context, kind, observation time and source.",
+    "exclude": [
+      "A target value or an inferred clinical interpretation."
+    ],
+    "workflow": "Record measurements with explicit units and provenance; preserve missing values as missing."
+  }
 }

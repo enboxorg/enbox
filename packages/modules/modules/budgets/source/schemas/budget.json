@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/budgets/v1/schemas/budget",
+  "title": "BudgetData",
+  "description": "Budgets: budget record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    },
+    "incomeTarget": {
+      "$ref": "#/definitions/budgetMoney"
+    },
+    "accountReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/budgetRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/budgetSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "startsOn",
+    "endsOn",
+    "currency"
+  ],
+  "examples": [
+    {
+      "name": "January",
+      "startsOn": "2026-01-01",
+      "endsOn": "2026-01-31",
+      "currency": "GBP"
+    }
+  ],
+  "definitions": {
+    "budgetMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "budgetRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "budgetSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -8,7 +8,8 @@ Import `PlantsModule`, `PlantsDefinition`, `PlantsCodecs`, and `PlantsSchemas` f
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -37,6 +38,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `plant/viewer` | recipient of plant/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the individual plant, not only its species.
+
+**Workflow:** Maintain plant metadata and append actual care observations.
+
+**Exclude:** A care schedule as evidence that watering happened.
 
 ## Use
 

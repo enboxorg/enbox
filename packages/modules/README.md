@@ -48,6 +48,19 @@ import type { ItemData } from '@enbox/modules/groceries';
 
 ## Module library
 
+### Optional shared contexts
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Collaboration](modules/collaboration/README.md) | `@enbox/modules/collaboration` | `space` and contextual membership |
+| [Shared Groceries](modules/shared-groceries/README.md) | `@enbox/modules/shared-groceries` | `space/list`, `space/list/item` |
+| [Shared Meal Plans](modules/shared-meal-plans/README.md) | `@enbox/modules/shared-meal-plans` | `space/plan`, `space/plan/meal` |
+| [Shared Tasks](modules/shared-tasks/README.md) | `@enbox/modules/shared-tasks` | `space/task`, `space/task/checklistItem` |
+
+Use these variants when the user selects a common membership boundary. Standalone
+Groceries, Meal Plans and Tasks keep their independent contextual roles. A fact
+belongs in the selected variant; applications should not write both copies.
+
 ### Home and belongings
 
 | Module | Import subpath | Records |
@@ -68,12 +81,13 @@ import type { ItemData } from '@enbox/modules/groceries';
 | [Bills](modules/bills/README.md) | `@enbox/modules/bills` | `bill`, `bill/payment` |
 | [Budgets](modules/budgets/README.md) | `@enbox/modules/budgets` | `budget`, `budget/allocation` |
 | [Debts and Loans](modules/debts-loans/README.md) | `@enbox/modules/debts-loans` | `loan`, `loan/repayment` |
+| [Financial Accounts](modules/financial-accounts/README.md) | `@enbox/modules/financial-accounts` | `account` |
 | [Investment Holdings](modules/investment-holdings/README.md) | `@enbox/modules/investment-holdings` | `account/position`, `account/position/lot`, `account/position/trade` |
 | [Receipts](modules/receipts/README.md) | `@enbox/modules/receipts` | `receipt`, `receipt/item`, `receipt/extraction` |
 | [Shared Expenses](modules/shared-expenses/README.md) | `@enbox/modules/shared-expenses` | `group`, `group/expense`, `group/settlement` |
 | [Stock Watchlists](modules/stock-watchlists/README.md) | `@enbox/modules/stock-watchlists` | `watchlist`, `watchlist/instrument`, `watchlist/instrument/note` |
 | [Subscriptions](modules/subscriptions/README.md) | `@enbox/modules/subscriptions` | `subscription`, `subscription/change` |
-| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account`, `account/transaction` |
+| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account/transaction` |
 
 ### General personal records
 
@@ -115,7 +129,7 @@ import type { ItemData } from '@enbox/modules/groceries';
 | --- | --- | --- |
 | [Connect](modules/connect/README.md) | `@enbox/modules/connect` | `wallet` |
 | [Credentials](modules/credentials/README.md) | `@enbox/modules/credentials` | `credential`, `credential/artifact`, `credential/verification`, `presentation` |
-| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration`, `item/device/service` |
+| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration` |
 | [Identity Documents](modules/identity-documents/README.md) | `@enbox/modules/identity-documents` | `document`, `document/extraction`, `document/review` |
 | [Insurance](modules/insurance/README.md) | `@enbox/modules/insurance` | `policy`, `policy/subject`, `policy/claim` |
 | [Online Accounts](modules/online-accounts/README.md) | `@enbox/modules/online-accounts` | `account`, `account/identityLink` |
@@ -171,12 +185,16 @@ const entry = getModuleCatalogEntry('groceries');
 // entry.definition: complete authored ModuleDefinition
 // entry.records: actual local paths, payload schemas, formats, and policies
 // entry.examples: structured examples for every path (including required tags)
+// entry.capture: identity matching, excluded concepts, and write workflow
 ```
 
 Discovery searches metadata, not personal records. Loading a catalog entry does
 not grant permission or write data. An AI can inspect the actual schema, match an
 existing record, validate a proposed value, and apply the user's save policy.
 Facts, intentions, corrections, and hypothetical statements must remain distinct.
+Each entry's `capture` contract explains identity matching, excluded neighboring
+concepts, and its write workflow. This guidance confers no authority; actual
+access still comes from the selected context, role, and grants.
 
 Raw artifacts are also public package subpaths:
 
@@ -192,7 +210,7 @@ and examples. No aggregate file is the sole source of module definitions.
 ## Composition
 
 Warranties, Maintenance, Vehicles, and Devices attach local children to a
-Belongings `item`. Investment Holdings attaches positions to a Transactions
+Belongings `item`. Transactions and Investment Holdings attach independently to a Financial Accounts
 `account`. Learning Plans attaches a plan to a Goals `goal`. Notebook Realtime
 attaches live collaboration records to a Notebook `notebook/page`.
 
@@ -342,12 +360,69 @@ policy, holder binding, and request context. Selective disclosure depends on the
 credential's securing format. Private signing keys remain in the agent's key
 management boundary, not account/device/credential metadata fields.
 
+## Reusable authoring and functional examples
+
+Use `@enbox/modules/authoring` for reusable source while publishing complete,
+concrete contracts:
+
+- `roleDefinition(path, options)` emits immutable empty membership assignments.
+  Recipients can leave their own role. Owner-only issuance/revocation is the
+  default; roster readers and any other issuers/revokers are explicit options.
+- `attachModuleDefinition(options)` selects one concrete source root, substitutes
+  explicit provider-role bindings, rebinds local actor paths, and excludes local
+  memberships and private sibling state. Root creation/deletion actions are
+  supplied explicitly. Conflicting aliases, unknown roles, dependency cycles,
+  and invalid ancestry fail validation.
+- `realtimeDefinition(options)` binds the owner-managed advertisement and
+  writer-owned sessions to an explicit provider, parent path, and ordered role set.
+  Notebook Realtime uses it while preserving the notesd wire definition exactly.
+- `bundleSchema(source, sharedSchemas)` expands registered value contracts into
+  local Draft-07 definitions. Local aliases remain stable; unknown references,
+  contract overrides, naming collisions and cycles are rejected.
+
+These are authoring helpers. Run codegen to obtain literal-preserving typed
+module exports, then have applications import the published standard module.
+A template does not make independently chosen module URIs share records.
+
+```ts
+import { roleDefinition, bundleSchema, sharedSchemas } from '@enbox/modules/authoring';
+
+const viewer = roleDefinition('document/viewer');
+const schema = bundleSchema({
+  $id: 'https://example.com/schemas/item/v1',
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    price: { $ref: 'https://enbox.id/schemas/common/money/v1' },
+  },
+}, sharedSchemas);
+```
+
+The [executable application examples](examples/README.md) exercise household,
+notebook, and portfolio workflows. The household adds `@enbox/contexts` through
+its existing `defineContextModule` API; no invitation or follow-journal paths
+are hidden inside the domain definitions. A space admin can maintain metadata
+and moderate feature content as explicitly authorized; the owner manages the
+membership roster and space pruning.
+
+Device manufacturer, model, serial number and ownership state belong to the
+parent Belongings item. Devices keeps operational state and dated configuration
+snapshots; all asset repairs use Maintenance. Vehicles likewise reads common
+manufacturer/model identity from Belongings. Financial Accounts owns the account
+identity used by both Transactions and Investment Holdings.
+
 ## Development
 
-The canonical inputs are `modules/<id>/definition.json`, `schemas/*.json`,
-`catalog.json`, and `examples.json` inside each module directory. Record paths
-use the DWN's alphabetic segments (including camelCase); schema filenames use
-kebab-case, resolved through their module-scoped schema URIs.
+Author each module in its own `modules/<id>/source/definition.ts` and
+`source/schemas/*.json`, alongside its `catalog.json` and `examples.json`.
+A source module may export a `schemas` map to reuse another module's source
+schemas, as the shared household variants do. Common value schemas live in
+`src/schema-values/` and are exported at `@enbox/modules/schemas/*.json`.
+
+Generation emits the complete `definition.json`, self-contained `schemas/*.json`,
+validating codecs, literal TypeScript declarations and README for each module.
+Edit authoring inputs rather than generated artifacts. Record paths use the DWN's
+alphabetic segments (including camelCase); schema filenames use kebab-case.
 
 From a monorepo checkout, build workspace prerequisites, then:
 
@@ -361,7 +436,8 @@ bun run test:node
 Generation uses `@enbox/module-codegen` to produce literal typed definitions,
 CSP-safe standalone validators, and codecs in `src/generated/`, along with
 individual entrypoints and documentation. `bun run check:generated` verifies
-freshness without writing. Schema examples, invalid payloads, type contracts,
+freshness without changing repository artifacts. Shared schema URIs resolve
+only against the supplied local registry; generation never fetches arbitrary URLs. Schema examples, invalid payloads, type contracts,
 real encrypted DWN round-trips, authorization, and composition/lifecycle behavior
 are exercised by the test suite.
 

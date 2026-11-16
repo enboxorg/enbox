@@ -17,22 +17,13 @@
       "maxLength": 4096
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/watchlistNoteText"
     },
     "source": {
       "$ref": "#/definitions/watchlistSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/watchlistLabels"
     }
   },
   "required": [
@@ -157,6 +148,21 @@
       "required": [
         "kind"
       ]
+    },
+    "watchlistNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "watchlistLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

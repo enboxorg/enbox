@@ -1,14 +1,5 @@
 [
   {
-    "path": "account",
-    "encoding": "json",
-    "data": {
-      "name": "Personal account",
-      "kind": "bank",
-      "currency": "USD"
-    }
-  },
-  {
     "path": "account/transaction",
     "encoding": "json",
     "data": {

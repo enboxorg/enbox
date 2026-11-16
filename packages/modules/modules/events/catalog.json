@@ -108,5 +108,12 @@
   "notes": [
     "Editors jointly maintain event details and recurrence exceptions. Attendees submit and manage their own RSVP response records; viewers only read. The signed author identifies the responding principal.",
     "The owner issues editor, attendee, and viewer assignments. Private state and reminder preferences are owner-local links rather than shared event children."
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected event or recurring series and the original occurrence for exceptions.",
+    "exclude": [
+      "A task deadline, a completed medical visit, or booking evidence by itself."
+    ],
+    "workflow": "Record planned occurrences; store exceptions and authored RSVP separately, with personal alerts in owner-local state."
+  }
 }

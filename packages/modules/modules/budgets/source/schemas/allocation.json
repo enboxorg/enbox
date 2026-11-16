@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/budgets/v1/schemas/allocation",
+  "title": "AllocationData",
+  "description": "Budgets: allocation record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "limit": {
+      "$ref": "#/definitions/allocationMoney"
+    },
+    "rollover": {
+      "type": "boolean"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/allocationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "category",
+    "limit"
+  ],
+  "examples": [
+    {
+      "category": "dining",
+      "limit": {
+        "amount": "150",
+        "currency": "GBP"
+      }
+    }
+  ],
+  "definitions": {
+    "allocationMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "allocationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "allocationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

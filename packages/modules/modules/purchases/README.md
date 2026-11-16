@@ -8,7 +8,8 @@ Import `PurchasesModule`, `PurchasesDefinition`, `PurchasesCodecs`, and `Purchas
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `purchase/return` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match merchant and order identifier, preserving item and return identities.
+
+**Workflow:** Maintain order/fulfilment/return state and link receipt and transaction evidence.
+
+**Exclude:** A saved wishlist item as a completed order or a receipt as a second purchase.
 
 ## Use
 

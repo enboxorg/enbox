@@ -78,5 +78,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected task record, project and intended action.",
+    "exclude": [
+      "A calendar appointment or habit check-in as the same task fact."
+    ],
+    "workflow": "Maintain actionable state and shared checklists; keep private reminders and pinning in owner-local state."
+  }
 }

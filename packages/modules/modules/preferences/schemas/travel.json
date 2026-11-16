@@ -43,22 +43,13 @@
       "maxLength": 8192
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/travelNoteText"
     },
     "source": {
       "$ref": "#/definitions/travelSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/travelLabels"
     }
   },
   "required": [],
@@ -68,6 +59,28 @@
     }
   ],
   "minProperties": 1,
+  "anyOf": [
+    {
+      "required": [
+        "preferredSeat"
+      ]
+    },
+    {
+      "required": [
+        "homeAirport"
+      ]
+    },
+    {
+      "required": [
+        "preferredModes"
+      ]
+    },
+    {
+      "required": [
+        "accessibilityNeeds"
+      ]
+    }
+  ],
   "definitions": {
     "travelRecordReference": {
       "type": "object",
@@ -182,28 +195,21 @@
       "required": [
         "kind"
       ]
+    },
+    "travelNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "travelLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
-  },
-  "anyOf": [
-    {
-      "required": [
-        "preferredSeat"
-      ]
-    },
-    {
-      "required": [
-        "homeAirport"
-      ]
-    },
-    {
-      "required": [
-        "preferredModes"
-      ]
-    },
-    {
-      "required": [
-        "accessibilityNeeds"
-      ]
-    }
-  ]
+  }
 }

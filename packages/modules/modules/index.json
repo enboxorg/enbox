@@ -55,6 +55,15 @@
       "examples": "cards-passes/examples.json"
     },
     {
+      "id": "collaboration",
+      "name": "Collaboration",
+      "category": "General personal records",
+      "moduleUri": "https://enbox.id/modules/collaboration/v1",
+      "definition": "collaboration/definition.json",
+      "catalog": "collaboration/catalog.json",
+      "examples": "collaboration/examples.json"
+    },
+    {
       "id": "connect",
       "name": "Connect",
       "category": "Identity and digital life",
@@ -134,6 +143,15 @@
       "definition": "files/definition.json",
       "catalog": "files/catalog.json",
       "examples": "files/examples.json"
+    },
+    {
+      "id": "financial-accounts",
+      "name": "Financial Accounts",
+      "category": "Money and investing",
+      "moduleUri": "https://enbox.id/modules/financial-accounts/v1",
+      "definition": "financial-accounts/definition.json",
+      "catalog": "financial-accounts/catalog.json",
+      "examples": "financial-accounts/examples.json"
     },
     {
       "id": "flashcards",
@@ -494,6 +512,33 @@
       "definition": "shared-expenses/definition.json",
       "catalog": "shared-expenses/catalog.json",
       "examples": "shared-expenses/examples.json"
+    },
+    {
+      "id": "shared-groceries",
+      "name": "Shared Groceries",
+      "category": "Food and shopping",
+      "moduleUri": "https://enbox.id/modules/shared-groceries/v1",
+      "definition": "shared-groceries/definition.json",
+      "catalog": "shared-groceries/catalog.json",
+      "examples": "shared-groceries/examples.json"
+    },
+    {
+      "id": "shared-meal-plans",
+      "name": "Shared Meal Plans",
+      "category": "Food and shopping",
+      "moduleUri": "https://enbox.id/modules/shared-meal-plans/v1",
+      "definition": "shared-meal-plans/definition.json",
+      "catalog": "shared-meal-plans/catalog.json",
+      "examples": "shared-meal-plans/examples.json"
+    },
+    {
+      "id": "shared-tasks",
+      "name": "Shared Tasks",
+      "category": "General personal records",
+      "moduleUri": "https://enbox.id/modules/shared-tasks/v1",
+      "definition": "shared-tasks/definition.json",
+      "catalog": "shared-tasks/catalog.json",
+      "examples": "shared-tasks/examples.json"
     },
     {
       "id": "shopping-wishlists",

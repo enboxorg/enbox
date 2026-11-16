@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/insurance/v1/schemas/policy",
+  "title": "PolicyData",
+  "description": "Insurance: policy record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "home",
+        "vehicle",
+        "health",
+        "life",
+        "travel",
+        "pet",
+        "other"
+      ]
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "policyNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "renewsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "premium": {
+      "$ref": "#/definitions/policyMoney"
+    },
+    "premiumFrequency": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "quarterly",
+        "yearly",
+        "single",
+        "other"
+      ]
+    },
+    "deductible": {
+      "$ref": "#/definitions/policyMoney"
+    },
+    "coverageText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "cancelled",
+        "pending"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/policyRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "contact": {
+      "$ref": "#/definitions/policyRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/policyAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/policySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "kind",
+    "provider",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Home policy",
+      "kind": "home",
+      "provider": "Example Insurer",
+      "state": "active"
+    }
+  ],
+  "definitions": {
+    "policyAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "policyMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "policyRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "policySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -104,5 +104,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the saved URL or tenant-relative record target and the user's selected bookmark.",
+    "exclude": [
+      "The contents of the linked document or an authorization grant to it."
+    ],
+    "workflow": "Save references and reading intent; organize existing bookmarks with folder entries."
+  }
 }

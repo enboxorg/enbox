@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the actual workout occurrence and selected routine.",
+    "exclude": [
+      "A routine or scheduled exercise as completed activity."
+    ],
+    "workflow": "Keep reusable routines and actual exercise observations distinct, linking route data."
+  }
 }

@@ -43,6 +43,12 @@ export type ModuleCatalogEntry = {
   readonly exportName: string;
   readonly status: 'experimental';
   readonly captureExamples: readonly string[];
+  /** Semantic capture guidance; these descriptions confer no record authority. */
+  readonly capture: {
+    readonly identity: string;
+    readonly exclude: readonly string[];
+    readonly workflow: string;
+  };
   readonly notes: readonly string[];
   readonly dependencies: Readonly<Record<string, string>>;
   readonly definition: ModuleDefinition;

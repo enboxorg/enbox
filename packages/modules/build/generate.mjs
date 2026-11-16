@@ -1,12 +1,15 @@
 /** Generate the published module artifacts from the per-module source directories. */
-import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ESLint } from 'eslint';
 import { format } from 'prettier';
 import ts from 'typescript';
 import { generateModuleCode } from '../../module-codegen/src/codegen.js';
+import { bundleSchema } from '../src/authoring/schema-bundle.js';
+import { sharedSchemas } from '../src/schema-values.js';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceRoot = resolve(packageRoot, '../..');
@@ -29,12 +32,14 @@ const directories = (await readdir(sourceRoot, { withFileTypes: true }))
   .map(entry => entry.name)
   .sort();
 const inputs = new Map();
+const expected = new Map();
 for (const id of directories) {
   if (!/^[a-z][a-z0-9-]*$/.test(id)) {
     throw new Error(`Invalid module directory name: ${id}`);
   }
   const directory = join(sourceRoot, id);
-  const definition = await json(join(directory, 'definition.json'));
+  const authored = await import(pathToFileURL(join(directory, 'source/definition.ts')).href);
+  const definition = authored.definition;
   const catalog = await json(join(directory, 'catalog.json'));
   const examples = await json(join(directory, 'examples.json'));
   if (catalog.id !== id || catalog.moduleUri !== definition.module || !/^[A-Z][A-Za-z0-9]*Module$/.test(catalog.exportName)) {
@@ -43,10 +48,32 @@ for (const id of directories) {
   if (JSON.stringify(catalog.dependencies) !== JSON.stringify(definition.uses ?? {})) {
     throw new Error(`Module metadata has different dependencies: ${id}`);
   }
+  if (typeof catalog.capture?.identity !== 'string' || catalog.capture.identity.length === 0 ||
+      typeof catalog.capture?.workflow !== 'string' || catalog.capture.workflow.length === 0 ||
+      !Array.isArray(catalog.capture?.exclude) || catalog.capture.exclude.length === 0 ||
+      catalog.capture.exclude.some(value => typeof value !== 'string' || value.length === 0)) {
+    throw new Error(`Module lacks a complete semantic capture contract: ${id}`);
+  }
   if (inputs.has(definition.module)) {
     throw new Error(`Duplicate module URI: ${definition.module}`);
   }
-  inputs.set(definition.module, { id, directory, definition, catalog, examples, name: catalog.exportName.slice(0, -'Module'.length) });
+  expected.set(join(directory, 'definition.json'), JSON.stringify(definition, null, 2) + '\n');
+  inputs.set(definition.module, { id, directory, definition, catalog, examples, schemaSources: authored.schemas,
+    name: catalog.exportName.slice(0, -'Module'.length) });
+}
+
+async function codeWithSchemas(input, schemas) {
+  const staging = await mkdtemp(join(tmpdir(), 'enbox-module-schemas-'));
+  try {
+    for (const record of input.catalog.records.filter(record => record.schemaFile !== undefined)) {
+      await writeFile(join(staging, record.schemaFile.slice('schemas/'.length)), JSON.stringify(schemas[record.type]));
+    }
+    return await generateModuleCode(input.definition, {
+      schemasDir: staging, moduleName: input.name, dependencies: dependenciesFor(input),
+    });
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 function dependenciesFor(input, ancestors = new Set()) {
@@ -165,7 +192,6 @@ async function typescript(source, filePath) {
   return result.output ?? formatted;
 }
 
-const expected = new Map();
 const catalogImports = [];
 const catalogNames = [];
 const moduleImports = [];
@@ -197,18 +223,16 @@ for (const input of inputs.values()) {
       if (record.schemaFile !== `schemas/${schemaName}.json`) {
         throw new Error(`Unexpected schema path: ${id}/${record.schemaFile}`);
       }
-      const schema = await json(join(directory, record.schemaFile));
+      const source = input.schemaSources?.[record.type] ?? await json(join(directory, 'source', record.schemaFile));
+      const schema = bundleSchema(source, sharedSchemas, { definitionPrefix: record.type });
       if (schema.$id !== record.schema || definition.types[record.type].schema !== schema.$id) {
         throw new Error(`Mismatched schema identity: ${id}/${record.path}`);
       }
       schemas[record.type] = schema;
+      expected.set(join(directory, record.schemaFile), JSON.stringify(schema, null, 2) + '\n');
     }
   }
-  const { code } = await generateModuleCode(definition, {
-    schemasDir: join(directory, 'schemas'),
-    moduleName: name,
-    dependencies: dependenciesFor(input),
-  });
+  const { code } = await codeWithSchemas(input, schemas);
   const records = catalog.records.map(({ schema, schemaFile, ...record }) => {
     const rule = ruleAt(definition, record.path);
     return { ...record, ...(schema === undefined ? {} : { schemaUri: schema }),
@@ -217,7 +241,7 @@ for (const input of inputs.values()) {
   const metadata = {
     id, name: catalog.name, category: catalog.category, description: catalog.description,
     uri: definition.module, exportName: catalog.exportName, status: catalog.status,
-    captureExamples: catalog.captureExamples, notes: catalog.notes ?? [], dependencies: definition.uses ?? {},
+    captureExamples: catalog.captureExamples, capture: catalog.capture, notes: catalog.notes ?? [], dependencies: definition.uses ?? {},
   };
   let source = `import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';\n${codecOverrides(code, catalog, name)}\n`;
   source += `export const ${name}Schemas: Readonly<Record<string, PayloadSchema>> = ${JSON.stringify(schemas, null, 2)};\n`;
@@ -258,7 +282,7 @@ for (const input of inputs.values()) {
     `Module URI: \`${definition.module}\`\n\n` +
     `Import \`${name}Module\`, \`${name}Definition\`, \`${name}Codecs\`, and \`${name}Schemas\` from \`@enbox/modules/${id}\`. ` +
     `\`${name}Catalog\` includes the actual writable paths, bundled schemas, and examples.\n\n` +
-    `## Artifacts\n\n- [Raw definition](definition.json)\n- [Directory metadata](catalog.json)\n- [Complete record examples](examples.json)\n\n` +
+    `## Artifacts\n\n- [Complete raw definition](definition.json)\n- [Authoring source](source/definition.ts)\n- [Directory metadata](catalog.json)\n- [Complete record examples](examples.json)\n\n` +
     `| Path | Representation | Data policy | Record policy |\n| --- | --- | --- | --- |\n${rows.join('\n')}\n\n` +
     `## Dependencies and ownership\n\n${providerLines.length ? providerLines.join('\n') + '\n\nOnly concrete local child paths are writable through this module; attachment aliases remain owned by their providers.\n' : 'This module has no structural module dependencies. Payload links retain their targets\' ownership and permissions.\n'}\n` +
     `The definition's \`published\` flag describes definition discovery. Record access is governed by the definition's explicit actions. ` +
@@ -272,6 +296,8 @@ for (const input of inputs.values()) {
     `Immutable records reject updates. A singleton uses \`$recordLimit\` projection semantics; it does not reject every competing create. ` +
     `Pruning follows actual descendants, including composed descendants; data links do not cascade.\n\n` +
     ((catalog.notes ?? []).length === 0 ? '' : `## Contract notes\n\n${catalog.notes.map(note => `- ${note}`).join('\n')}\n\n`) +
+    `## Capture contract\n\n**Identity:** ${catalog.capture.identity}\n\n**Workflow:** ${catalog.capture.workflow}\n\n` +
+    `**Exclude:** ${catalog.capture.exclude.join(' ')}\n\n` +
     `## Use\n\nStart with an authenticated Enbox session and include this module in the application's module manifest. ` +
     `Dependency artifacts are carried by the typed module and installed before consumers.\n${parentNote}\n` +
     '```ts\n' + `import { ${name}Module } from '@enbox/modules/${id}';\n\n${usage}\n` + '```\n\n' +

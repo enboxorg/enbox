@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match document/visit identifiers, provider and occurrence date.",
+    "exclude": [
+      "A future appointment as an already completed visit or a self-reported statement as verified evidence."
+    ],
+    "workflow": "Keep clinical source documents and reported visit/immunization records separate from appointments and credential artifacts."
+  }
 }

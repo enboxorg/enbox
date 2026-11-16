@@ -8,7 +8,8 @@ Import `FilesModule`, `FilesDefinition`, `FilesCodecs`, and `FilesSchemas` from 
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -43,6 +44,14 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 - A viewer may read file metadata and content, or leave their own viewer assignment. Role recipients cannot remove other members; the owner controls membership.
 - Editors may update shared file metadata, append immutable content revisions, and delete only their own revisions. They cannot delete or prune the file context and thereby erase other writers' revisions.
 - currentContent is a link to the selected file/content revision. Clients verify the target type and parent context when resolving it; JSON Schema validates the link shape, not the existence or authority of its target.
+
+## Capture contract
+
+**Identity:** Match the selected file identity and known content digest; filenames alone are not unique.
+
+**Workflow:** Store encrypted content revisions and update currentContent deliberately; verify its target and parent when resolving it.
+
+**Exclude:** Copying a linked file merely because another module references it.
 
 ## Use
 

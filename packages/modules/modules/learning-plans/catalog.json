@@ -54,5 +54,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected goal and learning plan, then the relevant activity.",
+    "exclude": [
+      "Recording progress merely because a course or resource was saved."
+    ],
+    "workflow": "Attach a plan to an existing goal and record actual activity progress with evidence."
+  }
 }

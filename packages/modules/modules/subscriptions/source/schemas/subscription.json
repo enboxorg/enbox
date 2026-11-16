@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/subscriptions/v1/schemas/subscription",
+  "title": "SubscriptionData",
+  "description": "Subscriptions: subscription record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "price": {
+      "$ref": "#/definitions/subscriptionMoney"
+    },
+    "billingCycle": {
+      "type": "string",
+      "enum": [
+        "weekly",
+        "monthly",
+        "quarterly",
+        "yearly",
+        "other"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "trial",
+        "active",
+        "paused",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "trialEndsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "renewsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "cancelledAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "managementUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "account": {
+      "$ref": "#/definitions/subscriptionRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/subscriptionAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/subscriptionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "service",
+    "state"
+  ],
+  "examples": [
+    {
+      "service": "Example Music",
+      "state": "active",
+      "billingCycle": "monthly"
+    }
+  ],
+  "definitions": {
+    "subscriptionAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "subscriptionMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "subscriptionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "subscriptionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

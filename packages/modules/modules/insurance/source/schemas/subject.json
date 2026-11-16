@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/insurance/v1/schemas/subject",
+  "title": "SubjectData",
+  "description": "Insurance: subject record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "person",
+        "property",
+        "vehicle",
+        "pet",
+        "trip",
+        "other"
+      ]
+    },
+    "record": {
+      "$ref": "#/definitions/subjectRecordReference"
+    },
+    "coverageText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "limit": {
+      "$ref": "#/definitions/subjectMoney"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/subjectSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "kind"
+  ],
+  "examples": [
+    {
+      "name": "Home",
+      "kind": "property"
+    }
+  ],
+  "definitions": {
+    "subjectMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "subjectRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "subjectSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

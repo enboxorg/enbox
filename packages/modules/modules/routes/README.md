@@ -8,7 +8,8 @@ Import `RoutesModule`, `RoutesDefinition`, `RoutesCodecs`, and `RoutesSchemas` f
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -39,6 +40,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `route/viewer` | recipient of route/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the selected route and distinct recorded track occurrence.
+
+**Workflow:** Keep planned geometry/waypoints and observed tracks distinct, linking places and workouts.
+
+**Exclude:** A planned route as an actual journey or workout.
 
 ## Use
 

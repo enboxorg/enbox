@@ -39,5 +39,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected recurring practice and check-in date.",
+    "exclude": [
+      "Inferring completion because a recurring task or reminder exists."
+    ],
+    "workflow": "Maintain the habit schedule and record actual check-ins, linking the intended goal."
+  }
 }

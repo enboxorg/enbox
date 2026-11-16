@@ -8,7 +8,8 @@ Import `MealPlansModule`, `MealPlansDefinition`, `MealPlansCodecs`, and `MealPla
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -37,6 +38,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `plan/viewer` | recipient of plan/viewer: read<br>recipient of this record: co-delete |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the selected plan, date and meal slot.
+
+**Workflow:** Plan meals and link recipes; record consumption in Food Diary and shopping intent in Groceries.
+
+**Exclude:** An eating observation or pantry stock change.
 
 ## Use
 

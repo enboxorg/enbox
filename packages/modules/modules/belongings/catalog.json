@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected physical item; serial numbers identify a manufacturer-specific item, not a product model.",
+    "exclude": [
+      "An unpurchased wish or a second copy of device/vehicle identity."
+    ],
+    "workflow": "Maintain ownership and common item identity here; attach device, vehicle, warranty and maintenance records to this item."
+  }
 }

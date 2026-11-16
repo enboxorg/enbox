@@ -65,5 +65,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected list and product variant/source.",
+    "exclude": [
+      "An expression of interest as a completed purchase or current inventory."
+    ],
+    "workflow": "Maintain desired items and target prices; link actual purchases when they occur."
+  }
 }

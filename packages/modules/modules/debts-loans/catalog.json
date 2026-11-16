@@ -9,7 +9,7 @@
   "definitionFile": "definition.json",
   "examplesFile": "examples.json",
   "captureExamples": [
-    "I lent Alex £40 yesterday."
+    "I lent Alex \u00a340 yesterday."
   ],
   "dependencies": {},
   "records": [
@@ -39,5 +39,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the agreement and counterparties; similar amounts do not identify the same loan.",
+    "exclude": [
+      "Treating a planned repayment as a completed transfer."
+    ],
+    "workflow": "Maintain terms and repayment evidence, linking actual transactions."
+  }
 }

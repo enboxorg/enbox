@@ -143,5 +143,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the selected card and deck membership; text alone need not identify a unique card.",
+    "exclude": [
+      "Duplicating learning goals or converting a review attempt into a new card."
+    ],
+    "workflow": "Maintain cards and deck references; append study reviews under the user's private study state."
+  }
 }

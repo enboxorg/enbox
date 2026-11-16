@@ -538,6 +538,7 @@
       },
       "devDependencies": {
         "@enbox/agent": "workspace:*",
+        "@enbox/contexts": "0.1.1",
         "@enbox/crdt": "0.3.1",
         "@enbox/crypto": "workspace:*",
         "@enbox/dids": "workspace:*",
@@ -730,6 +731,8 @@
     "@enbox/common": ["@enbox/common@workspace:packages/common"],
 
     "@enbox/connect": ["@enbox/connect@workspace:packages/connect"],
+
+    "@enbox/contexts": ["@enbox/contexts@0.1.1", "", {}, "sha512-8WfvNH94vSCMtZWIVPYRL9vQteVgccq+Ci7qAZVW1WhSiHpOj1KYLL78btakmXAgC1gjH4OSxPGaZnoe/bkdag=="],
 
     "@enbox/crdt": ["@enbox/crdt@0.3.1", "", { "dependencies": { "y-codemirror.next": "0.3.5", "y-indexeddb": "9.0.12", "y-protocols": "1.0.7", "yjs": "13.6.31" }, "peerDependencies": { "@codemirror/state": "^6.0.0", "@codemirror/view": "^6.0.0" }, "optionalPeers": ["@codemirror/state", "@codemirror/view"] }, "sha512-BvZOYI8eLJ3FuNqyv+co2r6Zqv/Fj39nh4ZgLPVKQeg0wKaHAs4xJ2oos2yQDgLUNuqwteNZsX5Qq9RuHb5tQg=="],
 

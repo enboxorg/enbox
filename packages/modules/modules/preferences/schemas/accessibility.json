@@ -24,22 +24,13 @@
       "type": "boolean"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/accessibilityNoteText"
     },
     "source": {
       "$ref": "#/definitions/accessibilitySource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/accessibilityLabels"
     }
   },
   "required": [],
@@ -49,6 +40,33 @@
     }
   ],
   "minProperties": 1,
+  "anyOf": [
+    {
+      "required": [
+        "reduceMotion"
+      ]
+    },
+    {
+      "required": [
+        "highContrast"
+      ]
+    },
+    {
+      "required": [
+        "textScale"
+      ]
+    },
+    {
+      "required": [
+        "captions"
+      ]
+    },
+    {
+      "required": [
+        "screenReader"
+      ]
+    }
+  ],
   "definitions": {
     "accessibilityRecordReference": {
       "type": "object",
@@ -163,33 +181,21 @@
       "required": [
         "kind"
       ]
+    },
+    "accessibilityNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "accessibilityLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
-  },
-  "anyOf": [
-    {
-      "required": [
-        "reduceMotion"
-      ]
-    },
-    {
-      "required": [
-        "highContrast"
-      ]
-    },
-    {
-      "required": [
-        "textScale"
-      ]
-    },
-    {
-      "required": [
-        "captions"
-      ]
-    },
-    {
-      "required": [
-        "screenReader"
-      ]
-    }
-  ]
+  }
 }

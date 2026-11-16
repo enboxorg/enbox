@@ -34,22 +34,13 @@
       "$ref": "#/definitions/subjectMoney"
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/subjectNoteText"
     },
     "source": {
       "$ref": "#/definitions/subjectSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/subjectLabels"
     }
   },
   "required": [
@@ -199,6 +190,21 @@
       "required": [
         "kind"
       ]
+    },
+    "subjectNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "subjectLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }

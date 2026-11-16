@@ -1,0 +1,60 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/contacts/v1',
+  published : true,
+  types     : {
+    contact: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/contacts/v1/schemas/contact',
+    },
+    endpoint: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/contacts/v1/schemas/endpoint',
+    },
+    interaction: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/contacts/v1/schemas/interaction',
+    },
+    group: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/contacts/v1/schemas/group',
+    },
+    entry: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/contacts/v1/schemas/entry',
+    },
+  },
+  structure: {
+    contact: {
+      $size: {
+        max: 1048576,
+      },
+      endpoint: {
+        $size: {
+          max: 1048576,
+        },
+      },
+      interaction: {
+        $size: {
+          max: 1048576,
+        },
+      },
+    },
+    group: {
+      $size: {
+        max: 1048576,
+      },
+      entry: {
+        $size: {
+          max: 1048576,
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

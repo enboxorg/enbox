@@ -52,5 +52,12 @@
       "immutable": false,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the peer DID or explicit target and relationship kind.",
+    "exclude": [
+      "Granting record access because someone is a contact, follower or connection."
+    ],
+    "workflow": "Store relationship intent and restrictions; actual DWN authority still comes from roles or grants."
+  }
 }

@@ -52,5 +52,12 @@
       "immutable": true,
       "singleton": false
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match coordinates, address or a qualified external place identifier.",
+    "exclude": [
+      "A planned visit as proof of being at a place."
+    ],
+    "workflow": "Maintain place metadata and links; keep events and route observations in their own records."
+  }
 }

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/housing/v1/schemas/residence",
+  "title": "ResidenceData",
+  "description": "Housing: residence record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "address": {
+      "$ref": "#/definitions/residenceAddress"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "house",
+        "apartment",
+        "room",
+        "other"
+      ]
+    },
+    "coordinates": {
+      "$ref": "#/definitions/residenceCoordinates"
+    },
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/residenceRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/residenceSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "address"
+  ],
+  "examples": [
+    {
+      "name": "Home",
+      "address": {
+        "street": "10 Example Street",
+        "locality": "Example City",
+        "countryCode": "GB"
+      }
+    }
+  ],
+  "definitions": {
+    "residenceAddress": {
+      "$ref": "https://enbox.id/schemas/common/address/v1"
+    },
+    "residenceCoordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "altitudeMeters": {
+          "type": "number",
+          "minimum": -12000,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ]
+    },
+    "residenceRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "residenceSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

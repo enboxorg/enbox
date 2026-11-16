@@ -8,7 +8,8 @@ Import `CredentialsModule`, `CredentialsDefinition`, `CredentialsCodecs`, and `C
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -37,6 +38,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `presentation` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match native credential identifier, issuer, format and the selected immutable artifact.
+
+**Workflow:** Preserve issuer-secured bytes; record verification and disclosure decisions separately from editable metadata.
+
+**Exclude:** Creating a verifiable credential from OCR fields or a user assertion.
 
 ## Use
 

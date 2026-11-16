@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/gifts/v1/schemas/plan",
+  "title": "PlanData",
+  "description": "Gifts: plan record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "recipient": {
+      "$ref": "#/definitions/planRecordReference"
+    },
+    "recipientName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "occasion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "date": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "budget": {
+      "$ref": "#/definitions/planMoney"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/planSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Birthday gift for Sam",
+      "recipientName": "Sam",
+      "occasion": "birthday"
+    }
+  ],
+  "definitions": {
+    "planMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "planRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "planSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

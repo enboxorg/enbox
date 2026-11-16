@@ -126,5 +126,12 @@
       "immutable": false,
       "singleton": true
     }
-  ]
+  ],
+  "capture": {
+    "identity": "Match the setting path and required channel discriminator where present.",
+    "exclude": [
+      "Treating another record's descriptive data as a user preference."
+    ],
+    "workflow": "Store explicit settings; notification preferences describe behavior but do not execute a scheduler."
+  }
 }

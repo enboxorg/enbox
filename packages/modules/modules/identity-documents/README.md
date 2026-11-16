@@ -8,7 +8,8 @@ Import `IdentityDocumentsModule`, `IdentityDocumentsDefinition`, `IdentityDocume
 
 ## Artifacts
 
-- [Raw definition](definition.json)
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
 - [Directory metadata](catalog.json)
 - [Complete record examples](examples.json)
 
@@ -35,6 +36,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `document/review` | Owner only |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match document type, issuing authority and reviewed document identifier.
+
+**Workflow:** Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed.
+
+**Exclude:** Treating extracted fields as verified credentials.
 
 ## Use
 

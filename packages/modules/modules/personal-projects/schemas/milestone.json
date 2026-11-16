@@ -46,22 +46,13 @@
       "maximum": 1000000000
     },
     "notes": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "$ref": "#/definitions/milestoneNoteText"
     },
     "source": {
       "$ref": "#/definitions/milestoneSource"
     },
     "labels": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
-      },
-      "uniqueItems": true,
-      "maxItems": 64
+      "$ref": "#/definitions/milestoneLabels"
     }
   },
   "required": [
@@ -188,6 +179,21 @@
       "required": [
         "kind"
       ]
+    },
+    "milestoneNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "milestoneLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
     }
   }
 }
