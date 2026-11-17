@@ -48,146 +48,154 @@ import type { ItemData } from '@enbox/modules/groceries';
 
 ## Choosing records from a conversation
 
-Chat and MCP clients can load the [conversation directory](CHAT-DIRECTORY.md)
-for a curated menu of 36 modules. Its paths distinguish purchase intent from
-orders and receipts, scheduled appointments from completed visits, and watched
-securities from owned positions. Use the [interchange profiles](INTERCHANGE.md)
-for supported JSON imports and exports.
+Enbox and Briand publish one module catalogue. The application artifact index,
+typed module registry, conversational discovery index and Briand bundle have
+the same module URIs. Each entry identifies the record paths eligible for a
+generic write. Entries for operations such as credential presentation, public
+profile publication or wallet connection describe the application workflow.
+
+Identity Documents owns one document record per issued driver's licence,
+passport or national ID. Its type selects the applicable fields, and each
+extraction or review belongs to the selected document. Media Library owns media
+items and user activity across books, films, games, music and podcasts.
+Bookmarks holds a saved URL or a link to a record.
+
+Where authority or record lifetime differs, the catalogue describes the
+relationship. A private Gifts plan can link an item in a shareable Shopping
+Wishlist. Learning Plans attaches a curriculum to an existing Goals record.
+Conversations can be selected for an authorized domain conversation or an
+explicit archive. Briand workspace history uses Briand's workspace service.
+Relationships stores the user's relationship assertions. DWN role assignments
+and grants continue to govern actual access.
+
+See [chat routing](CHAT-DIRECTORY.md) and [JSON interchange](INTERCHANGE.md).
 
 ## Module library
 
-### Optional shared contexts
+The table lists concrete paths owned by each module. Paths beneath a foreign
+parent use the dependency's existing record as their parent. See a module's
+guide for payload representations, exact roles and actions.
 
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Collaboration](modules/collaboration/README.md) | `@enbox/modules/collaboration` | `space` and contextual membership |
-| [Shared Groceries](modules/shared-groceries/README.md) | `@enbox/modules/shared-groceries` | `space/list`, `space/list/item` |
-| [Shared Meal Plans](modules/shared-meal-plans/README.md) | `@enbox/modules/shared-meal-plans` | `space/plan`, `space/plan/meal` |
-| [Shared Tasks](modules/shared-tasks/README.md) | `@enbox/modules/shared-tasks` | `space/task`, `space/task/checklistItem` |
-
-Use these variants when the user selects a common membership boundary. Standalone
-Groceries, Meal Plans and Tasks keep their independent contextual roles. A fact
-belongs in the selected variant; applications should not write both copies.
-
-### Home and belongings
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Belongings](modules/belongings/README.md) | `@enbox/modules/belongings` | `item` |
-| [Housing](modules/housing/README.md) | `@enbox/modules/housing` | `residence`, `residence/occupancy`, `residence/lease` |
-| [Maintenance](modules/maintenance/README.md) | `@enbox/modules/maintenance` | `item/plan`, `item/service` |
-| [Pet Care](modules/pet-care/README.md) | `@enbox/modules/pet-care` | `pet`, `pet/care`, `pet/vetRecord` |
-| [Plants](modules/plants/README.md) | `@enbox/modules/plants` | `plant`, `plant/care` |
-| [Utilities](modules/utilities/README.md) | `@enbox/modules/utilities` | `account`, `account/meter`, `account/meter/reading` |
-| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/registration`, `item/vehicle/odometer`, `item/vehicle/energy` |
-| [Warranties](modules/warranties/README.md) | `@enbox/modules/warranties` | `item/warranty`, `item/warranty/claim` |
-
-### Money and investing
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Bills](modules/bills/README.md) | `@enbox/modules/bills` | `bill`, `bill/payment` |
-| [Budgets](modules/budgets/README.md) | `@enbox/modules/budgets` | `budget`, `budget/allocation` |
-| [Debts and Loans](modules/debts-loans/README.md) | `@enbox/modules/debts-loans` | `loan`, `loan/repayment` |
-| [Financial Accounts](modules/financial-accounts/README.md) | `@enbox/modules/financial-accounts` | `account` |
-| [Investment Holdings](modules/investment-holdings/README.md) | `@enbox/modules/investment-holdings` | `account/position`, `account/position/lot`, `account/position/trade` |
-| [Receipts](modules/receipts/README.md) | `@enbox/modules/receipts` | `receipt`, `receipt/item`, `receipt/extraction` |
-| [Shared Expenses](modules/shared-expenses/README.md) | `@enbox/modules/shared-expenses` | `group`, `group/expense`, `group/settlement` |
-| [Stock Watchlists](modules/stock-watchlists/README.md) | `@enbox/modules/stock-watchlists` | `watchlist`, `watchlist/instrument`, `watchlist/instrument/note` |
-| [Subscriptions](modules/subscriptions/README.md) | `@enbox/modules/subscriptions` | `subscription`, `subscription/change` |
-| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account/transaction` |
-
-### General personal records
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Bookmarks](modules/bookmarks/README.md) | `@enbox/modules/bookmarks` | `bookmark`, `folder`, `folder/entry` |
-| [Files](modules/files/README.md) | `@enbox/modules/files` | `file`, `file/content` |
-| [Notebook](modules/notebook/README.md) | `@enbox/modules/notebook` | `notebook`, `notebook/page`, `notebook/page/delta`, `notebook/page/attachment` |
-| [Notebook Realtime](modules/notebook-realtime/README.md) | `@enbox/modules/notebook-realtime` | `page/live`, `page/live/session` |
-| [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state` |
-| [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |
-
-### Work and learning
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Career History](modules/career-history/README.md) | `@enbox/modules/career-history` | `work`, `education` |
-
-### Media and learning
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Books](modules/books/README.md) | `@enbox/modules/books` | `book`, `book/reading`, `book/highlight`, `book/review` |
-| [Flashcards](modules/flashcards/README.md) | `@enbox/modules/flashcards` | `card`, `deck`, `deck/entry`, `studySet`, `studySet/cardState`, `studySet/cardState/review` |
-| [Games](modules/games/README.md) | `@enbox/modules/games` | `game`, `game/session`, `game/progress` |
-| [Learning Plans](modules/learning-plans/README.md) | `@enbox/modules/learning-plans` | `goal/plan`, `goal/plan/activity`, `goal/plan/activity/progress` |
-| [Movies and TV](modules/movies-tv/README.md) | `@enbox/modules/movies-tv` | `title`, `title/viewing`, `title/rating` |
-| [Music](modules/music/README.md) | `@enbox/modules/music` | `item`, `item/listening` |
-| [Podcasts](modules/podcasts/README.md) | `@enbox/modules/podcasts` | `show`, `show/episode`, `show/episode/playback` |
-
-### Travel and outdoors
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Cards and Passes](modules/cards-passes/README.md) | `@enbox/modules/cards-passes` | `pass` |
-| [Packing](modules/packing/README.md) | `@enbox/modules/packing` | `list`, `list/bag`, `list/item` |
-| [Places](modules/places/README.md) | `@enbox/modules/places` | `place` |
-| [Reservations](modules/reservations/README.md) | `@enbox/modules/reservations` | `reservation`, `reservation/change` |
-| [Routes](modules/routes/README.md) | `@enbox/modules/routes` | `route`, `route/waypoint`, `route/track` |
-| [Trips](modules/trips/README.md) | `@enbox/modules/trips` | `trip`, `trip/item` |
-
-### Identity and digital life
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Connect](modules/connect/README.md) | `@enbox/modules/connect` | `wallet` |
-| [Credentials](modules/credentials/README.md) | `@enbox/modules/credentials` | `credential`, `credential/artifact`, `credential/verification`, `presentation` |
-| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration` |
-| [Identity Documents](modules/identity-documents/README.md) | `@enbox/modules/identity-documents` | `document`, `document/extraction`, `document/review` |
-| [Insurance](modules/insurance/README.md) | `@enbox/modules/insurance` | `policy`, `policy/subject`, `policy/claim` |
-| [Online Accounts](modules/online-accounts/README.md) | `@enbox/modules/online-accounts` | `account`, `account/identityLink` |
-| [Preferences](modules/preferences/README.md) | `@enbox/modules/preferences` | `theme`, `locale`, `privacy`, `notification`, `accessibility`, `food`, `travel`, `communication` |
-| [Profiles](modules/profile/README.md) | `@enbox/modules/profile` | `profile`, `profile/link`, `profile/avatar`, `profile/hero` |
-
-### People and personal life
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Contacts](modules/contacts/README.md) | `@enbox/modules/contacts` | `contact`, `contact/endpoint`, `contact/interaction`, `group`, `group/entry` |
-| [Conversations](modules/conversations/README.md) | `@enbox/modules/conversations` | `conversation`, `conversation/message`, `conversation/message/reaction`, `state` |
-| [Events](modules/events/README.md) | `@enbox/modules/events` | `event`, `event/exception`, `event/response`, `state` |
-| [Goals](modules/goals/README.md) | `@enbox/modules/goals` | `goal`, `goal/progress` |
-| [Habits](modules/habits/README.md) | `@enbox/modules/habits` | `habit`, `habit/checkIn` |
-| [Personal Projects](modules/personal-projects/README.md) | `@enbox/modules/personal-projects` | `project`, `project/milestone` |
-| [Relationships](modules/relationships/README.md) | `@enbox/modules/relationships` | `follow`, `connection`, `restriction` |
-
-### Health and fitness
-
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Cycle Tracking](modules/cycle-tracking/README.md) | `@enbox/modules/cycle-tracking` | `cycle`, `cycle/observation` |
-| [Health Profile](modules/health-profile/README.md) | `@enbox/modules/health-profile` | `profile`, `profile/condition`, `profile/allergy` |
-| [Measurements](modules/measurements/README.md) | `@enbox/modules/measurements` | `measurement` |
-| [Medical Records](modules/medical-records/README.md) | `@enbox/modules/medical-records` | `document`, `visit`, `immunization` |
-| [Medications](modules/medications/README.md) | `@enbox/modules/medications` | `medication`, `medication/regimen`, `medication/dose` |
-| [Mood](modules/mood/README.md) | `@enbox/modules/mood` | `checkIn` |
-| [Sleep](modules/sleep/README.md) | `@enbox/modules/sleep` | `session` |
-| [Symptoms](modules/symptoms/README.md) | `@enbox/modules/symptoms` | `episode` |
-| [Workouts](modules/workouts/README.md) | `@enbox/modules/workouts` | `routine`, `workout`, `workout/exercise` |
+<!-- module-library:start -->
 
 ### Food and shopping
 
-| Module | Import subpath | Records |
-| --- | --- | --- |
-| [Food Diary](modules/food-diary/README.md) | `@enbox/modules/food-diary` | `entry` |
-| [Gifts](modules/gifts/README.md) | `@enbox/modules/gifts` | `plan`, `plan/idea` |
-| [Groceries](modules/groceries/README.md) | `@enbox/modules/groceries` | `list`, `list/item` |
-| [Meal Plans](modules/meal-plans/README.md) | `@enbox/modules/meal-plans` | `plan`, `plan/meal` |
-| [Pantry](modules/pantry/README.md) | `@enbox/modules/pantry` | `pantry`, `pantry/item`, `pantry/item/change` |
-| [Purchases](modules/purchases/README.md) | `@enbox/modules/purchases` | `purchase`, `purchase/item`, `purchase/return` |
-| [Recipes](modules/recipes/README.md) | `@enbox/modules/recipes` | `recipe`, `recipe/variation` |
-| [Shopping Wishlists](modules/shopping-wishlists/README.md) | `@enbox/modules/shopping-wishlists` | `list`, `list/item` |
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Food Diary](modules/food-diary/README.md) | `@enbox/modules/food-diary` | `entry` |  |
+| [Gifts](modules/gifts/README.md) | `@enbox/modules/gifts` | `plan`, `plan/idea` |  |
+| [Groceries](modules/groceries/README.md) | `@enbox/modules/groceries` | `list`, `list/item`, `space/list`, `space/list/item` | `list/editor`, `list/viewer` |
+| [Meal Plans](modules/meal-plans/README.md) | `@enbox/modules/meal-plans` | `plan`, `plan/meal`, `space/plan`, `space/plan/meal` | `plan/editor`, `plan/viewer` |
+| [Pantry](modules/pantry/README.md) | `@enbox/modules/pantry` | `pantry`, `pantry/item`, `pantry/item/change` | `pantry/editor`, `pantry/viewer` |
+| [Purchases](modules/purchases/README.md) | `@enbox/modules/purchases` | `purchase`, `purchase/item`, `purchase/return` |  |
+| [Recipes](modules/recipes/README.md) | `@enbox/modules/recipes` | `recipe`, `recipe/variation` | `recipe/editor`, `recipe/viewer` |
+| [Shopping Wishlists](modules/shopping-wishlists/README.md) | `@enbox/modules/shopping-wishlists` | `list`, `list/item` | `list/editor`, `list/viewer` |
+
+### General personal records
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Bookmarks](modules/bookmarks/README.md) | `@enbox/modules/bookmarks` | `bookmark`, `folder`, `folder/entry` | `bookmark/editor`, `bookmark/viewer`, `folder/editor`, `folder/viewer` |
+| [Collaboration](modules/collaboration/README.md) | `@enbox/modules/collaboration` | `space` | `space/admin`, `space/editor`, `space/viewer` |
+| [Files](modules/files/README.md) | `@enbox/modules/files` | `file`, `file/content` | `file/editor`, `file/viewer` |
+| [Notebook](modules/notebook/README.md) | `@enbox/modules/notebook` | `notebook`, `notebook/page`, `notebook/page/delta`, `notebook/page/attachment` | `notebook/page/admin`, `notebook/page/editor`, `notebook/page/viewer` |
+| [Notebook Realtime](modules/notebook-realtime/README.md) | `@enbox/modules/notebook-realtime` | `page/live`, `page/live/session` |  |
+| [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state`, `space/task`, `space/task/checklistItem` | `task/editor`, `task/viewer` |
+| [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |  |
+
+### Health and fitness
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Cycle Tracking](modules/cycle-tracking/README.md) | `@enbox/modules/cycle-tracking` | `cycle`, `cycle/observation` |  |
+| [Health Profile](modules/health-profile/README.md) | `@enbox/modules/health-profile` | `profile`, `profile/condition`, `profile/allergy` |  |
+| [Measurements](modules/measurements/README.md) | `@enbox/modules/measurements` | `measurement` |  |
+| [Medical Records](modules/medical-records/README.md) | `@enbox/modules/medical-records` | `document`, `visit`, `immunization` |  |
+| [Medications](modules/medications/README.md) | `@enbox/modules/medications` | `medication`, `medication/regimen`, `medication/dose` |  |
+| [Mood](modules/mood/README.md) | `@enbox/modules/mood` | `checkIn` |  |
+| [Sleep](modules/sleep/README.md) | `@enbox/modules/sleep` | `session` |  |
+| [Symptoms](modules/symptoms/README.md) | `@enbox/modules/symptoms` | `episode` |  |
+| [Workouts](modules/workouts/README.md) | `@enbox/modules/workouts` | `routine`, `workout`, `workout/exercise` |  |
+
+### Home and belongings
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Belongings](modules/belongings/README.md) | `@enbox/modules/belongings` | `item` | `item/editor`, `item/viewer` |
+| [Housing](modules/housing/README.md) | `@enbox/modules/housing` | `residence`, `residence/occupancy`, `residence/lease` |  |
+| [Maintenance](modules/maintenance/README.md) | `@enbox/modules/maintenance` | `item/plan`, `item/service` |  |
+| [Pet Care](modules/pet-care/README.md) | `@enbox/modules/pet-care` | `pet`, `pet/care`, `pet/vetRecord` | `pet/editor`, `pet/viewer` |
+| [Plants](modules/plants/README.md) | `@enbox/modules/plants` | `plant`, `plant/care` | `plant/editor`, `plant/viewer` |
+| [Utilities](modules/utilities/README.md) | `@enbox/modules/utilities` | `account`, `account/meter`, `account/meter/reading` |  |
+| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/registration`, `item/vehicle/odometer`, `item/vehicle/energy` |  |
+| [Warranties](modules/warranties/README.md) | `@enbox/modules/warranties` | `item/warranty`, `item/warranty/claim` |  |
+
+### Identity and digital life
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Connect](modules/connect/README.md) | `@enbox/modules/connect` | `wallet` |  |
+| [Credentials](modules/credentials/README.md) | `@enbox/modules/credentials` | `credential`, `credential/artifact`, `credential/verification`, `presentation` |  |
+| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration` |  |
+| [Identity Documents](modules/identity-documents/README.md) | `@enbox/modules/identity-documents` | `document`, `document/extraction`, `document/review` |  |
+| [Insurance](modules/insurance/README.md) | `@enbox/modules/insurance` | `policy`, `policy/subject`, `policy/claim` |  |
+| [Online Accounts](modules/online-accounts/README.md) | `@enbox/modules/online-accounts` | `account`, `account/identityLink` |  |
+| [Preferences](modules/preferences/README.md) | `@enbox/modules/preferences` | `theme`, `locale`, `privacy`, `notification`, `accessibility`, `food`, `travel`, `communication` |  |
+| [Profiles](modules/profile/README.md) | `@enbox/modules/profile` | `profile`, `profile/link`, `profile/avatar`, `profile/hero` |  |
+
+### Media and learning
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Flashcards](modules/flashcards/README.md) | `@enbox/modules/flashcards` | `card`, `deck`, `deck/entry`, `studySet`, `studySet/cardState`, `studySet/cardState/review` | `card/editor`, `card/viewer`, `deck/editor`, `deck/viewer` |
+| [Learning Plans](modules/learning-plans/README.md) | `@enbox/modules/learning-plans` | `goal/plan`, `goal/plan/activity`, `goal/plan/activity/progress` |  |
+| [Media Library](modules/media-library/README.md) | `@enbox/modules/media-library` | `work`, `work/activity`, `work/annotation`, `series`, `series/episode`, `series/episode/activity`, `series/episode/annotation`, `series/annotation` |  |
+
+### Money and investing
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Bills](modules/bills/README.md) | `@enbox/modules/bills` | `bill`, `bill/payment` |  |
+| [Budgets](modules/budgets/README.md) | `@enbox/modules/budgets` | `budget`, `budget/allocation` | `budget/editor`, `budget/viewer` |
+| [Debts and Loans](modules/debts-loans/README.md) | `@enbox/modules/debts-loans` | `loan`, `loan/repayment` |  |
+| [Financial Accounts](modules/financial-accounts/README.md) | `@enbox/modules/financial-accounts` | `account` |  |
+| [Investment Holdings](modules/investment-holdings/README.md) | `@enbox/modules/investment-holdings` | `account/position`, `account/position/lot`, `account/position/trade` |  |
+| [Receipts](modules/receipts/README.md) | `@enbox/modules/receipts` | `receipt`, `receipt/item`, `receipt/extraction` |  |
+| [Shared Expenses](modules/shared-expenses/README.md) | `@enbox/modules/shared-expenses` | `group`, `group/expense`, `group/settlement` | `group/editor`, `group/viewer` |
+| [Stock Watchlists](modules/stock-watchlists/README.md) | `@enbox/modules/stock-watchlists` | `watchlist`, `watchlist/instrument`, `watchlist/instrument/note` | `watchlist/editor`, `watchlist/viewer` |
+| [Subscriptions](modules/subscriptions/README.md) | `@enbox/modules/subscriptions` | `subscription`, `subscription/change` |  |
+| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account/transaction` |  |
+
+### People and personal life
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Contacts](modules/contacts/README.md) | `@enbox/modules/contacts` | `contact`, `contact/endpoint`, `contact/interaction`, `group`, `group/entry` |  |
+| [Conversations](modules/conversations/README.md) | `@enbox/modules/conversations` | `conversation`, `conversation/message`, `conversation/message/reaction`, `state` | `conversation/editor`, `conversation/viewer` |
+| [Events](modules/events/README.md) | `@enbox/modules/events` | `event`, `event/exception`, `event/response`, `state` | `event/editor`, `event/viewer`, `event/attendee` |
+| [Goals](modules/goals/README.md) | `@enbox/modules/goals` | `goal`, `goal/progress` |  |
+| [Habits](modules/habits/README.md) | `@enbox/modules/habits` | `habit`, `habit/checkIn` |  |
+| [Personal Projects](modules/personal-projects/README.md) | `@enbox/modules/personal-projects` | `project`, `project/milestone` | `project/editor`, `project/viewer` |
+| [Relationships](modules/relationships/README.md) | `@enbox/modules/relationships` | `follow`, `connection`, `restriction` |  |
+
+### Travel and outdoors
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Cards and Passes](modules/cards-passes/README.md) | `@enbox/modules/cards-passes` | `pass` |  |
+| [Packing](modules/packing/README.md) | `@enbox/modules/packing` | `list`, `list/bag`, `list/item` | `list/editor`, `list/viewer` |
+| [Places](modules/places/README.md) | `@enbox/modules/places` | `place` | `place/editor`, `place/viewer` |
+| [Reservations](modules/reservations/README.md) | `@enbox/modules/reservations` | `reservation`, `reservation/change` |  |
+| [Routes](modules/routes/README.md) | `@enbox/modules/routes` | `route`, `route/waypoint`, `route/track` | `route/editor`, `route/viewer` |
+| [Trips](modules/trips/README.md) | `@enbox/modules/trips` | `trip`, `trip/item` | `trip/editor`, `trip/viewer` |
+
+### Work and learning
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Career History](modules/career-history/README.md) | `@enbox/modules/career-history` | `work`, `education` |  |
+
+<!-- module-library:end -->
 
 ## Discovery and raw artifacts
 
@@ -225,7 +233,7 @@ and examples. No aggregate file is the sole source of module definitions.
 
 Warranties, Maintenance, Vehicles, and Devices attach local children to a
 Belongings `item`. Transactions and Investment Holdings attach independently to a Financial Accounts
-`account`. Learning Plans attaches a plan to a Goals `goal`. Notebook Realtime
+`account`. Learning Plans owns plans and activities attached to the selected Goals record. Notebook Realtime
 attaches live collaboration records to a Notebook `notebook/page`.
 
 ```ts
@@ -387,6 +395,11 @@ concrete contracts:
   memberships and private sibling state. Root creation/deletion actions are
   supplied explicitly. Conflicting aliases, unknown roles, dependency cycles,
   and invalid ancestry fail validation.
+- `addModuleAttachment(options)` adds a second location for the same owned
+  payload under a provider context. Groceries, Meal Plans and Tasks each keep
+  independent roots and a `space/...` tree in the same module. The independent
+  root defines its local membership, and the space tree uses Collaboration
+  assignments scoped to the selected space.
 - `realtimeDefinition(options)` binds the owner-managed advertisement and
   writer-owned sessions to an explicit provider, parent path, and ordered role set.
   Notebook Realtime uses it while preserving the notesd wire definition exactly.
@@ -428,9 +441,9 @@ identity used by both Transactions and Investment Holdings.
 ## Development
 
 Author each module in its own `modules/<id>/source/definition.ts` and
-`source/schemas/*.json`, alongside its `catalog.json` and `examples.json`.
+`source/schemas/*.json`, alongside its `catalog.json`, `chat.json` and `examples.json`.
 A source module may export a `schemas` map to reuse another module's source
-schemas, as the shared household variants do. Common value schemas live in
+schemas. Common value schemas live in
 `src/schema-values/` and are exported at `@enbox/modules/schemas/*.json`.
 
 Generation emits the complete `definition.json`, self-contained `schemas/*.json`,

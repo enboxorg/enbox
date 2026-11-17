@@ -1,0 +1,12 @@
+{
+  "type": "string",
+  "enum": [
+    "passport",
+    "national-id",
+    "state-id",
+    "drivers-licence",
+    "other",
+    "unknown"
+  ],
+  "description": "Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind."
+}

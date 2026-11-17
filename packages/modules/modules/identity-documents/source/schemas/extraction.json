@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
   "title": "ExtractionData",
-  "description": "Identity Documents: extraction record.",
+  "description": "One immutable extraction attempt. documentType records the observed classification when available.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -37,133 +37,6 @@
         "partial",
         "failed"
       ]
-    },
-    "fields": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "fullName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "givenNames": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "minItems": 0,
-          "maxItems": 20
-        },
-        "familyName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "documentNumber": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "personalNumber": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "issuingCountry": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 3,
-          "pattern": "^[A-Z]{2,3}$"
-        },
-        "issuingRegion": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "issuingAuthority": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "nationalities": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 3,
-            "pattern": "^[A-Z]{2,3}$"
-          },
-          "minItems": 0,
-          "maxItems": 10
-        },
-        "dateOfBirth": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "issueDate": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "expiryDate": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "address": {
-          "$ref": "#/definitions/extractionAddress"
-        },
-        "licenceCategories": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "category": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
-              },
-              "validFrom": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 10,
-                "format": "date"
-              },
-              "validUntil": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 10,
-                "format": "date"
-              },
-              "restrictions": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512
-                },
-                "minItems": 0,
-                "maxItems": 100
-              }
-            },
-            "required": [
-              "category"
-            ]
-          },
-          "minItems": 0,
-          "maxItems": 100
-        }
-      },
-      "required": [],
-      "minProperties": 1
     },
     "rawText": {
       "type": "string",
@@ -200,14 +73,20 @@
     {
       "sources": [
         {
-          "recordId": "example-record"
+          "recordId": "example-scan"
         }
       ],
       "extractedAt": "2026-01-15T12:00:00Z",
-      "extractor": "manual-import",
+      "extractor": "demo-import",
       "state": "partial",
+      "documentType": "drivers-licence",
       "fields": {
-        "fullName": "Alex Example"
+        "documentNumber": "000DEM0123",
+        "drivingPrivileges": [
+          {
+            "category": "B"
+          }
+        ]
       }
     }
   ],
@@ -223,7 +102,12 @@
       "then": {
         "required": [
           "error"
-        ]
+        ],
+        "not": {
+          "required": [
+            "fields"
+          ]
+        }
       },
       "else": {
         "required": [
@@ -233,9 +117,6 @@
     }
   ],
   "definitions": {
-    "extractionAddress": {
-      "$ref": "https://enbox.id/schemas/common/address/v1"
-    },
     "extractionRecordReference": {
       "$ref": "https://enbox.id/schemas/common/record-reference/v1"
     },

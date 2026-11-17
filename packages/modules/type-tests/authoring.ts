@@ -6,8 +6,8 @@ import {
   CollaborationModule,
   DevicesModule,
   FinancialAccountsModule,
-  SharedGroceriesModule,
-  SharedTasksModule,
+  GroceriesModule,
+  TasksModule,
   TransactionsModule,
 } from '@enbox/modules';
 import { defineModule, recordCodecs } from '@enbox/api';
@@ -32,14 +32,14 @@ enbox.using(FinancialAccountsModule).records.create('account', { data: { name: '
 // @ts-expect-error Transactions does not own the account attachment.
 enbox.using(TransactionsModule).records.create('account', { data: { name: 'Duplicate', kind: 'bank' } });
 enbox
-  .using(SharedGroceriesModule)
+  .using(GroceriesModule)
   .records.create('space/list/item', { parentContextId: 'space/list', data: { name: 'Milk', state: 'needed' } });
-// @ts-expect-error Shared Groceries imports the space; it cannot create another provider record.
-enbox.using(SharedGroceriesModule).records.create('space', { data: { name: 'Wrong owner' } });
+// @ts-expect-error Groceries imports the space; it cannot create another provider record.
+enbox.using(GroceriesModule).records.create('space', { data: { name: 'Wrong owner' } });
 // @ts-expect-error membership is owned by Collaboration, not a copied grocery role.
-enbox.using(SharedGroceriesModule).records.create('space/list/viewer', { parentContextId: 'space/list', data: {} });
+enbox.using(GroceriesModule).records.create('space/list/viewer', { parentContextId: 'space/list', data: {} });
 // @ts-expect-error personal state does not become part of the shared subtree.
-enbox.using(SharedTasksModule).records.create('state', { data: { task: { recordId: 'task' } } });
+enbox.using(TasksModule).records.create('space/state', { parentContextId: 'space', data: { task: { recordId: 'task' } } });
 enbox.using(CollaborationModule).records.create('space/editor', { parentContextId: 'space', recipient: 'did:example:member', data: {} });
 // @ts-expect-error device repairs belong to Maintenance.
 enbox.using(DevicesModule).records.create('item/device/service', { parentContextId: 'item/device', data: {} });

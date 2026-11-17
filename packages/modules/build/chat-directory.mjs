@@ -1,25 +1,23 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
-/** The prompt index includes only the personally asserted facts chosen for chat capture.
- * The bundle projection keeps the full authored definition and URI-keyed payload schemas.
- * The PoC validates capture hints separately and fingerprints them along with those artifacts.
+/** Project the same standard modules into a prompt index and self-contained Briand bundles.
+ * The capturePaths allowlist controls generic writes. An empty list requires the named workflow.
+ * Complete definitions and URI-keyed schemas support interchange and specialized applications.
  */
-export async function chatDirectory(inputs) {
+export function chatDirectory(inputs) {
   const modules = [];
   const bundles = [];
-  const selected = new Set();
-  for (const input of inputs.values()) {
-    const metadata = await readFile(resolve(input.directory, 'chat.json'), 'utf8').catch(error => {
-      if (error.code === 'ENOENT') { return undefined; }
-      throw error;
-    });
-    if (metadata === undefined) { continue; }
-    const { summary, targets, hints, interchange } = JSON.parse(metadata);
-    const { catalog, definition, schemas, id } = input;
-    if (!summary || summary.length > 180 || !targets?.length || !hints?.keywords?.length || typeof hints.sensitive !== 'boolean') {
+  for (const { catalog, definition, schemas, id, chat } of inputs.values()) {
+    const { summary, targets, hints, interchange, workflow } = chat;
+    if (typeof summary !== 'string' || !summary.trim() || summary.length > 180 || !Array.isArray(targets) ||
+        !Array.isArray(hints?.keywords) || !hints.keywords.length || typeof hints.sensitive !== 'boolean') {
       throw new Error(`Invalid chat discovery metadata for ${id}`);
+    }
+    if (workflow !== undefined && (typeof workflow !== 'string' || !workflow.trim())) {
+      throw new Error(`Invalid application workflow for ${id}`);
+    }
+    if (targets.length === 0 && workflow === undefined) {
+      throw new Error(`Module ${id} must name its application workflow when it has no generic capture paths.`);
     }
     if (Object.keys(hints).some(key => !['keywords', 'sensitive', 'sensitiveFields', 'identityFields'].includes(key))) {
       throw new Error(`Unrecognized chat capture hint for ${id}`);
@@ -48,20 +46,16 @@ export async function chatDirectory(inputs) {
     }
     const byUri = Object.fromEntries(Object.values(schemas).map(schema => [schema.$id, schema]));
     const module = definition.module;
-    const bundle = { id, label: catalog.name, description: summary, source: 'catalog', definition, schemas: byUri, capture: hints };
+    const applicationWorkflow = workflow === undefined ? {} : { workflow };
+    const bundle = { id, label: catalog.name, description: summary, source: 'catalog', definition, schemas: byUri,
+      capture: hints, capturePaths: paths.map(target => target.path), ...applicationWorkflow };
     if (Buffer.byteLength(JSON.stringify(bundle)) > 131072) {
       throw new Error(`Chat bundle exceeds the consumer's 128 KiB import limit: ${id}`);
     }
     modules.push({ id, module, label: catalog.name, category: catalog.category, summary,
       keywords: hints.keywords, sensitive: hints.sensitive, identity: catalog.capture.identity,
-      exclude: catalog.capture.exclude, paths, ...(interchange ? { interchange } : {}) });
+      exclude: catalog.capture.exclude, paths, ...applicationWorkflow, ...(interchange ? { interchange } : {}) });
     bundles.push(bundle);
-    selected.add(module);
-  }
-  for (const bundle of bundles) {
-    for (const uri of Object.values(bundle.definition.uses ?? {})) {
-      if (!selected.has(uri)) { throw new Error(`Missing chat bundle dependency: ${uri}`); }
-    }
   }
   return { index: { version: 1, modules }, bundles };
 }

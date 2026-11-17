@@ -7,8 +7,6 @@ import { BillsCatalog } from './bills.js';
 import { BillsModule } from './bills.js';
 import { BookmarksCatalog } from './bookmarks.js';
 import { BookmarksModule } from './bookmarks.js';
-import { BooksCatalog } from './books.js';
-import { BooksModule } from './books.js';
 import { BudgetsCatalog } from './budgets.js';
 import { BudgetsModule } from './budgets.js';
 import { CardsPassesCatalog } from './cards-passes.js';
@@ -41,8 +39,6 @@ import { FlashcardsCatalog } from './flashcards.js';
 import { FlashcardsModule } from './flashcards.js';
 import { FoodDiaryCatalog } from './food-diary.js';
 import { FoodDiaryModule } from './food-diary.js';
-import { GamesCatalog } from './games.js';
-import { GamesModule } from './games.js';
 import { GiftsCatalog } from './gifts.js';
 import { GiftsModule } from './gifts.js';
 import { GoalsCatalog } from './goals.js';
@@ -69,16 +65,14 @@ import { MealPlansCatalog } from './meal-plans.js';
 import { MealPlansModule } from './meal-plans.js';
 import { MeasurementsCatalog } from './measurements.js';
 import { MeasurementsModule } from './measurements.js';
+import { MediaLibraryCatalog } from './media-library.js';
+import { MediaLibraryModule } from './media-library.js';
 import { MedicalRecordsCatalog } from './medical-records.js';
 import { MedicalRecordsModule } from './medical-records.js';
 import { MedicationsCatalog } from './medications.js';
 import { MedicationsModule } from './medications.js';
 import { MoodCatalog } from './mood.js';
 import { MoodModule } from './mood.js';
-import { MoviesTvCatalog } from './movies-tv.js';
-import { MoviesTvModule } from './movies-tv.js';
-import { MusicCatalog } from './music.js';
-import { MusicModule } from './music.js';
 import { NotebookCatalog } from './notebook.js';
 import { NotebookModule } from './notebook.js';
 import { NotebookRealtimeCatalog } from './notebook-realtime.js';
@@ -97,8 +91,6 @@ import { PlacesCatalog } from './places.js';
 import { PlacesModule } from './places.js';
 import { PlantsCatalog } from './plants.js';
 import { PlantsModule } from './plants.js';
-import { PodcastsCatalog } from './podcasts.js';
-import { PodcastsModule } from './podcasts.js';
 import { PreferencesCatalog } from './preferences.js';
 import { PreferencesModule } from './preferences.js';
 import { ProfileCatalog } from './profile.js';
@@ -117,12 +109,6 @@ import { RoutesCatalog } from './routes.js';
 import { RoutesModule } from './routes.js';
 import { SharedExpensesCatalog } from './shared-expenses.js';
 import { SharedExpensesModule } from './shared-expenses.js';
-import { SharedGroceriesCatalog } from './shared-groceries.js';
-import { SharedGroceriesModule } from './shared-groceries.js';
-import { SharedMealPlansCatalog } from './shared-meal-plans.js';
-import { SharedMealPlansModule } from './shared-meal-plans.js';
-import { SharedTasksCatalog } from './shared-tasks.js';
-import { SharedTasksModule } from './shared-tasks.js';
 import { ShoppingWishlistsCatalog } from './shopping-wishlists.js';
 import { ShoppingWishlistsModule } from './shopping-wishlists.js';
 import { SleepCatalog } from './sleep.js';
@@ -154,7 +140,6 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   BelongingsCatalog,
   BillsCatalog,
   BookmarksCatalog,
-  BooksCatalog,
   BudgetsCatalog,
   CardsPassesCatalog,
   CareerHistoryCatalog,
@@ -171,7 +156,6 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   FinancialAccountsCatalog,
   FlashcardsCatalog,
   FoodDiaryCatalog,
-  GamesCatalog,
   GiftsCatalog,
   GoalsCatalog,
   GroceriesCatalog,
@@ -185,11 +169,10 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   MaintenanceCatalog,
   MealPlansCatalog,
   MeasurementsCatalog,
+  MediaLibraryCatalog,
   MedicalRecordsCatalog,
   MedicationsCatalog,
   MoodCatalog,
-  MoviesTvCatalog,
-  MusicCatalog,
   NotebookCatalog,
   NotebookRealtimeCatalog,
   OnlineAccountsCatalog,
@@ -199,7 +182,6 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   PetCareCatalog,
   PlacesCatalog,
   PlantsCatalog,
-  PodcastsCatalog,
   PreferencesCatalog,
   ProfileCatalog,
   PurchasesCatalog,
@@ -209,9 +191,6 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   ReservationsCatalog,
   RoutesCatalog,
   SharedExpensesCatalog,
-  SharedGroceriesCatalog,
-  SharedMealPlansCatalog,
-  SharedTasksCatalog,
   ShoppingWishlistsCatalog,
   SleepCatalog,
   StockWatchlistsCatalog,
@@ -230,7 +209,6 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   BelongingsModule,
   BillsModule,
   BookmarksModule,
-  BooksModule,
   BudgetsModule,
   CardsPassesModule,
   CareerHistoryModule,
@@ -247,7 +225,6 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   FinancialAccountsModule,
   FlashcardsModule,
   FoodDiaryModule,
-  GamesModule,
   GiftsModule,
   GoalsModule,
   GroceriesModule,
@@ -261,11 +238,10 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   MaintenanceModule,
   MealPlansModule,
   MeasurementsModule,
+  MediaLibraryModule,
   MedicalRecordsModule,
   MedicationsModule,
   MoodModule,
-  MoviesTvModule,
-  MusicModule,
   NotebookModule,
   NotebookRealtimeModule,
   OnlineAccountsModule,
@@ -275,7 +251,6 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   PetCareModule,
   PlacesModule,
   PlantsModule,
-  PodcastsModule,
   PreferencesModule,
   ProfileModule,
   PurchasesModule,
@@ -285,9 +260,6 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   ReservationsModule,
   RoutesModule,
   SharedExpensesModule,
-  SharedGroceriesModule,
-  SharedMealPlansModule,
-  SharedTasksModule,
   ShoppingWishlistsModule,
   SleepModule,
   StockWatchlistsModule,

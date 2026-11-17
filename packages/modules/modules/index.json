@@ -7,6 +7,7 @@
       "moduleUri": "https://enbox.id/modules/belongings/v1",
       "definition": "belongings/definition.json",
       "catalog": "belongings/catalog.json",
+      "chat": "belongings/chat.json",
       "examples": "belongings/examples.json"
     },
     {
@@ -16,6 +17,7 @@
       "moduleUri": "https://enbox.id/modules/bills/v1",
       "definition": "bills/definition.json",
       "catalog": "bills/catalog.json",
+      "chat": "bills/chat.json",
       "examples": "bills/examples.json"
     },
     {
@@ -25,16 +27,8 @@
       "moduleUri": "https://enbox.id/modules/bookmarks/v1",
       "definition": "bookmarks/definition.json",
       "catalog": "bookmarks/catalog.json",
+      "chat": "bookmarks/chat.json",
       "examples": "bookmarks/examples.json"
-    },
-    {
-      "id": "books",
-      "name": "Books",
-      "category": "Media and learning",
-      "moduleUri": "https://enbox.id/modules/books/v1",
-      "definition": "books/definition.json",
-      "catalog": "books/catalog.json",
-      "examples": "books/examples.json"
     },
     {
       "id": "budgets",
@@ -43,6 +37,7 @@
       "moduleUri": "https://enbox.id/modules/budgets/v1",
       "definition": "budgets/definition.json",
       "catalog": "budgets/catalog.json",
+      "chat": "budgets/chat.json",
       "examples": "budgets/examples.json"
     },
     {
@@ -52,6 +47,7 @@
       "moduleUri": "https://enbox.id/modules/cards-passes/v1",
       "definition": "cards-passes/definition.json",
       "catalog": "cards-passes/catalog.json",
+      "chat": "cards-passes/chat.json",
       "examples": "cards-passes/examples.json"
     },
     {
@@ -61,6 +57,7 @@
       "moduleUri": "https://enbox.id/modules/career-history/v1",
       "definition": "career-history/definition.json",
       "catalog": "career-history/catalog.json",
+      "chat": "career-history/chat.json",
       "examples": "career-history/examples.json"
     },
     {
@@ -70,6 +67,7 @@
       "moduleUri": "https://enbox.id/modules/collaboration/v1",
       "definition": "collaboration/definition.json",
       "catalog": "collaboration/catalog.json",
+      "chat": "collaboration/chat.json",
       "examples": "collaboration/examples.json"
     },
     {
@@ -79,6 +77,7 @@
       "moduleUri": "https://identity.foundation/modules/connect",
       "definition": "connect/definition.json",
       "catalog": "connect/catalog.json",
+      "chat": "connect/chat.json",
       "examples": "connect/examples.json"
     },
     {
@@ -88,6 +87,7 @@
       "moduleUri": "https://enbox.id/modules/contacts/v1",
       "definition": "contacts/definition.json",
       "catalog": "contacts/catalog.json",
+      "chat": "contacts/chat.json",
       "examples": "contacts/examples.json"
     },
     {
@@ -97,6 +97,7 @@
       "moduleUri": "https://enbox.id/modules/conversations/v1",
       "definition": "conversations/definition.json",
       "catalog": "conversations/catalog.json",
+      "chat": "conversations/chat.json",
       "examples": "conversations/examples.json"
     },
     {
@@ -106,6 +107,7 @@
       "moduleUri": "https://enbox.id/modules/credentials/v1",
       "definition": "credentials/definition.json",
       "catalog": "credentials/catalog.json",
+      "chat": "credentials/chat.json",
       "examples": "credentials/examples.json"
     },
     {
@@ -115,6 +117,7 @@
       "moduleUri": "https://enbox.id/modules/cycle-tracking/v1",
       "definition": "cycle-tracking/definition.json",
       "catalog": "cycle-tracking/catalog.json",
+      "chat": "cycle-tracking/chat.json",
       "examples": "cycle-tracking/examples.json"
     },
     {
@@ -124,6 +127,7 @@
       "moduleUri": "https://enbox.id/modules/debts-loans/v1",
       "definition": "debts-loans/definition.json",
       "catalog": "debts-loans/catalog.json",
+      "chat": "debts-loans/chat.json",
       "examples": "debts-loans/examples.json"
     },
     {
@@ -133,6 +137,7 @@
       "moduleUri": "https://enbox.id/modules/devices/v1",
       "definition": "devices/definition.json",
       "catalog": "devices/catalog.json",
+      "chat": "devices/chat.json",
       "examples": "devices/examples.json"
     },
     {
@@ -142,6 +147,7 @@
       "moduleUri": "https://enbox.id/modules/events/v1",
       "definition": "events/definition.json",
       "catalog": "events/catalog.json",
+      "chat": "events/chat.json",
       "examples": "events/examples.json"
     },
     {
@@ -151,6 +157,7 @@
       "moduleUri": "https://enbox.id/modules/files/v1",
       "definition": "files/definition.json",
       "catalog": "files/catalog.json",
+      "chat": "files/chat.json",
       "examples": "files/examples.json"
     },
     {
@@ -160,6 +167,7 @@
       "moduleUri": "https://enbox.id/modules/financial-accounts/v1",
       "definition": "financial-accounts/definition.json",
       "catalog": "financial-accounts/catalog.json",
+      "chat": "financial-accounts/chat.json",
       "examples": "financial-accounts/examples.json"
     },
     {
@@ -169,6 +177,7 @@
       "moduleUri": "https://enbox.id/modules/flashcards/v1",
       "definition": "flashcards/definition.json",
       "catalog": "flashcards/catalog.json",
+      "chat": "flashcards/chat.json",
       "examples": "flashcards/examples.json"
     },
     {
@@ -178,16 +187,8 @@
       "moduleUri": "https://enbox.id/modules/food-diary/v1",
       "definition": "food-diary/definition.json",
       "catalog": "food-diary/catalog.json",
+      "chat": "food-diary/chat.json",
       "examples": "food-diary/examples.json"
-    },
-    {
-      "id": "games",
-      "name": "Games",
-      "category": "Media and learning",
-      "moduleUri": "https://enbox.id/modules/games/v1",
-      "definition": "games/definition.json",
-      "catalog": "games/catalog.json",
-      "examples": "games/examples.json"
     },
     {
       "id": "gifts",
@@ -196,6 +197,7 @@
       "moduleUri": "https://enbox.id/modules/gifts/v1",
       "definition": "gifts/definition.json",
       "catalog": "gifts/catalog.json",
+      "chat": "gifts/chat.json",
       "examples": "gifts/examples.json"
     },
     {
@@ -205,6 +207,7 @@
       "moduleUri": "https://enbox.id/modules/goals/v1",
       "definition": "goals/definition.json",
       "catalog": "goals/catalog.json",
+      "chat": "goals/chat.json",
       "examples": "goals/examples.json"
     },
     {
@@ -214,6 +217,7 @@
       "moduleUri": "https://enbox.id/modules/groceries/v1",
       "definition": "groceries/definition.json",
       "catalog": "groceries/catalog.json",
+      "chat": "groceries/chat.json",
       "examples": "groceries/examples.json"
     },
     {
@@ -223,6 +227,7 @@
       "moduleUri": "https://enbox.id/modules/habits/v1",
       "definition": "habits/definition.json",
       "catalog": "habits/catalog.json",
+      "chat": "habits/chat.json",
       "examples": "habits/examples.json"
     },
     {
@@ -232,6 +237,7 @@
       "moduleUri": "https://enbox.id/modules/health-profile/v1",
       "definition": "health-profile/definition.json",
       "catalog": "health-profile/catalog.json",
+      "chat": "health-profile/chat.json",
       "examples": "health-profile/examples.json"
     },
     {
@@ -241,6 +247,7 @@
       "moduleUri": "https://enbox.id/modules/housing/v1",
       "definition": "housing/definition.json",
       "catalog": "housing/catalog.json",
+      "chat": "housing/chat.json",
       "examples": "housing/examples.json"
     },
     {
@@ -250,6 +257,7 @@
       "moduleUri": "https://enbox.id/modules/identity-documents/v1",
       "definition": "identity-documents/definition.json",
       "catalog": "identity-documents/catalog.json",
+      "chat": "identity-documents/chat.json",
       "examples": "identity-documents/examples.json"
     },
     {
@@ -259,6 +267,7 @@
       "moduleUri": "https://enbox.id/modules/insurance/v1",
       "definition": "insurance/definition.json",
       "catalog": "insurance/catalog.json",
+      "chat": "insurance/chat.json",
       "examples": "insurance/examples.json"
     },
     {
@@ -268,6 +277,7 @@
       "moduleUri": "https://enbox.id/modules/investment-holdings/v1",
       "definition": "investment-holdings/definition.json",
       "catalog": "investment-holdings/catalog.json",
+      "chat": "investment-holdings/chat.json",
       "examples": "investment-holdings/examples.json"
     },
     {
@@ -277,6 +287,7 @@
       "moduleUri": "https://enbox.id/modules/learning-plans/v1",
       "definition": "learning-plans/definition.json",
       "catalog": "learning-plans/catalog.json",
+      "chat": "learning-plans/chat.json",
       "examples": "learning-plans/examples.json"
     },
     {
@@ -286,6 +297,7 @@
       "moduleUri": "https://enbox.id/modules/maintenance/v1",
       "definition": "maintenance/definition.json",
       "catalog": "maintenance/catalog.json",
+      "chat": "maintenance/chat.json",
       "examples": "maintenance/examples.json"
     },
     {
@@ -295,6 +307,7 @@
       "moduleUri": "https://enbox.id/modules/meal-plans/v1",
       "definition": "meal-plans/definition.json",
       "catalog": "meal-plans/catalog.json",
+      "chat": "meal-plans/chat.json",
       "examples": "meal-plans/examples.json"
     },
     {
@@ -304,7 +317,18 @@
       "moduleUri": "https://enbox.id/modules/measurements/v1",
       "definition": "measurements/definition.json",
       "catalog": "measurements/catalog.json",
+      "chat": "measurements/chat.json",
       "examples": "measurements/examples.json"
+    },
+    {
+      "id": "media-library",
+      "name": "Media Library",
+      "category": "Media and learning",
+      "moduleUri": "https://enbox.id/modules/media-library/v1",
+      "definition": "media-library/definition.json",
+      "catalog": "media-library/catalog.json",
+      "chat": "media-library/chat.json",
+      "examples": "media-library/examples.json"
     },
     {
       "id": "medical-records",
@@ -313,6 +337,7 @@
       "moduleUri": "https://enbox.id/modules/medical-records/v1",
       "definition": "medical-records/definition.json",
       "catalog": "medical-records/catalog.json",
+      "chat": "medical-records/chat.json",
       "examples": "medical-records/examples.json"
     },
     {
@@ -322,6 +347,7 @@
       "moduleUri": "https://enbox.id/modules/medications/v1",
       "definition": "medications/definition.json",
       "catalog": "medications/catalog.json",
+      "chat": "medications/chat.json",
       "examples": "medications/examples.json"
     },
     {
@@ -331,25 +357,8 @@
       "moduleUri": "https://enbox.id/modules/mood/v1",
       "definition": "mood/definition.json",
       "catalog": "mood/catalog.json",
+      "chat": "mood/chat.json",
       "examples": "mood/examples.json"
-    },
-    {
-      "id": "movies-tv",
-      "name": "Movies and TV",
-      "category": "Media and learning",
-      "moduleUri": "https://enbox.id/modules/movies-tv/v1",
-      "definition": "movies-tv/definition.json",
-      "catalog": "movies-tv/catalog.json",
-      "examples": "movies-tv/examples.json"
-    },
-    {
-      "id": "music",
-      "name": "Music",
-      "category": "Media and learning",
-      "moduleUri": "https://enbox.id/modules/music/v1",
-      "definition": "music/definition.json",
-      "catalog": "music/catalog.json",
-      "examples": "music/examples.json"
     },
     {
       "id": "notebook",
@@ -358,6 +367,7 @@
       "moduleUri": "https://enbox.id/modules/notebook/v1",
       "definition": "notebook/definition.json",
       "catalog": "notebook/catalog.json",
+      "chat": "notebook/chat.json",
       "examples": "notebook/examples.json"
     },
     {
@@ -367,6 +377,7 @@
       "moduleUri": "https://enbox.id/modules/notebook-realtime/v1",
       "definition": "notebook-realtime/definition.json",
       "catalog": "notebook-realtime/catalog.json",
+      "chat": "notebook-realtime/chat.json",
       "examples": "notebook-realtime/examples.json"
     },
     {
@@ -376,6 +387,7 @@
       "moduleUri": "https://enbox.id/modules/online-accounts/v1",
       "definition": "online-accounts/definition.json",
       "catalog": "online-accounts/catalog.json",
+      "chat": "online-accounts/chat.json",
       "examples": "online-accounts/examples.json"
     },
     {
@@ -385,6 +397,7 @@
       "moduleUri": "https://enbox.id/modules/packing/v1",
       "definition": "packing/definition.json",
       "catalog": "packing/catalog.json",
+      "chat": "packing/chat.json",
       "examples": "packing/examples.json"
     },
     {
@@ -394,6 +407,7 @@
       "moduleUri": "https://enbox.id/modules/pantry/v1",
       "definition": "pantry/definition.json",
       "catalog": "pantry/catalog.json",
+      "chat": "pantry/chat.json",
       "examples": "pantry/examples.json"
     },
     {
@@ -403,6 +417,7 @@
       "moduleUri": "https://enbox.id/modules/personal-projects/v1",
       "definition": "personal-projects/definition.json",
       "catalog": "personal-projects/catalog.json",
+      "chat": "personal-projects/chat.json",
       "examples": "personal-projects/examples.json"
     },
     {
@@ -412,6 +427,7 @@
       "moduleUri": "https://enbox.id/modules/pet-care/v1",
       "definition": "pet-care/definition.json",
       "catalog": "pet-care/catalog.json",
+      "chat": "pet-care/chat.json",
       "examples": "pet-care/examples.json"
     },
     {
@@ -421,6 +437,7 @@
       "moduleUri": "https://enbox.id/modules/places/v1",
       "definition": "places/definition.json",
       "catalog": "places/catalog.json",
+      "chat": "places/chat.json",
       "examples": "places/examples.json"
     },
     {
@@ -430,16 +447,8 @@
       "moduleUri": "https://enbox.id/modules/plants/v1",
       "definition": "plants/definition.json",
       "catalog": "plants/catalog.json",
+      "chat": "plants/chat.json",
       "examples": "plants/examples.json"
-    },
-    {
-      "id": "podcasts",
-      "name": "Podcasts",
-      "category": "Media and learning",
-      "moduleUri": "https://enbox.id/modules/podcasts/v1",
-      "definition": "podcasts/definition.json",
-      "catalog": "podcasts/catalog.json",
-      "examples": "podcasts/examples.json"
     },
     {
       "id": "preferences",
@@ -448,6 +457,7 @@
       "moduleUri": "https://identity.foundation/modules/preferences",
       "definition": "preferences/definition.json",
       "catalog": "preferences/catalog.json",
+      "chat": "preferences/chat.json",
       "examples": "preferences/examples.json"
     },
     {
@@ -457,6 +467,7 @@
       "moduleUri": "https://identity.foundation/modules/profile",
       "definition": "profile/definition.json",
       "catalog": "profile/catalog.json",
+      "chat": "profile/chat.json",
       "examples": "profile/examples.json"
     },
     {
@@ -466,6 +477,7 @@
       "moduleUri": "https://enbox.id/modules/purchases/v1",
       "definition": "purchases/definition.json",
       "catalog": "purchases/catalog.json",
+      "chat": "purchases/chat.json",
       "examples": "purchases/examples.json"
     },
     {
@@ -475,6 +487,7 @@
       "moduleUri": "https://enbox.id/modules/receipts/v1",
       "definition": "receipts/definition.json",
       "catalog": "receipts/catalog.json",
+      "chat": "receipts/chat.json",
       "examples": "receipts/examples.json"
     },
     {
@@ -484,6 +497,7 @@
       "moduleUri": "https://enbox.id/modules/recipes/v1",
       "definition": "recipes/definition.json",
       "catalog": "recipes/catalog.json",
+      "chat": "recipes/chat.json",
       "examples": "recipes/examples.json"
     },
     {
@@ -493,6 +507,7 @@
       "moduleUri": "https://enbox.id/modules/relationships/v1",
       "definition": "relationships/definition.json",
       "catalog": "relationships/catalog.json",
+      "chat": "relationships/chat.json",
       "examples": "relationships/examples.json"
     },
     {
@@ -502,6 +517,7 @@
       "moduleUri": "https://enbox.id/modules/reservations/v1",
       "definition": "reservations/definition.json",
       "catalog": "reservations/catalog.json",
+      "chat": "reservations/chat.json",
       "examples": "reservations/examples.json"
     },
     {
@@ -511,6 +527,7 @@
       "moduleUri": "https://enbox.id/modules/routes/v1",
       "definition": "routes/definition.json",
       "catalog": "routes/catalog.json",
+      "chat": "routes/chat.json",
       "examples": "routes/examples.json"
     },
     {
@@ -520,34 +537,8 @@
       "moduleUri": "https://enbox.id/modules/shared-expenses/v1",
       "definition": "shared-expenses/definition.json",
       "catalog": "shared-expenses/catalog.json",
+      "chat": "shared-expenses/chat.json",
       "examples": "shared-expenses/examples.json"
-    },
-    {
-      "id": "shared-groceries",
-      "name": "Shared Groceries",
-      "category": "Food and shopping",
-      "moduleUri": "https://enbox.id/modules/shared-groceries/v1",
-      "definition": "shared-groceries/definition.json",
-      "catalog": "shared-groceries/catalog.json",
-      "examples": "shared-groceries/examples.json"
-    },
-    {
-      "id": "shared-meal-plans",
-      "name": "Shared Meal Plans",
-      "category": "Food and shopping",
-      "moduleUri": "https://enbox.id/modules/shared-meal-plans/v1",
-      "definition": "shared-meal-plans/definition.json",
-      "catalog": "shared-meal-plans/catalog.json",
-      "examples": "shared-meal-plans/examples.json"
-    },
-    {
-      "id": "shared-tasks",
-      "name": "Shared Tasks",
-      "category": "General personal records",
-      "moduleUri": "https://enbox.id/modules/shared-tasks/v1",
-      "definition": "shared-tasks/definition.json",
-      "catalog": "shared-tasks/catalog.json",
-      "examples": "shared-tasks/examples.json"
     },
     {
       "id": "shopping-wishlists",
@@ -556,6 +547,7 @@
       "moduleUri": "https://enbox.id/modules/shopping-wishlists/v1",
       "definition": "shopping-wishlists/definition.json",
       "catalog": "shopping-wishlists/catalog.json",
+      "chat": "shopping-wishlists/chat.json",
       "examples": "shopping-wishlists/examples.json"
     },
     {
@@ -565,6 +557,7 @@
       "moduleUri": "https://enbox.id/modules/sleep/v1",
       "definition": "sleep/definition.json",
       "catalog": "sleep/catalog.json",
+      "chat": "sleep/chat.json",
       "examples": "sleep/examples.json"
     },
     {
@@ -574,6 +567,7 @@
       "moduleUri": "https://enbox.id/modules/stock-watchlists/v1",
       "definition": "stock-watchlists/definition.json",
       "catalog": "stock-watchlists/catalog.json",
+      "chat": "stock-watchlists/chat.json",
       "examples": "stock-watchlists/examples.json"
     },
     {
@@ -583,6 +577,7 @@
       "moduleUri": "https://enbox.id/modules/subscriptions/v1",
       "definition": "subscriptions/definition.json",
       "catalog": "subscriptions/catalog.json",
+      "chat": "subscriptions/chat.json",
       "examples": "subscriptions/examples.json"
     },
     {
@@ -592,6 +587,7 @@
       "moduleUri": "https://enbox.id/modules/symptoms/v1",
       "definition": "symptoms/definition.json",
       "catalog": "symptoms/catalog.json",
+      "chat": "symptoms/chat.json",
       "examples": "symptoms/examples.json"
     },
     {
@@ -601,6 +597,7 @@
       "moduleUri": "https://enbox.id/modules/tasks/v1",
       "definition": "tasks/definition.json",
       "catalog": "tasks/catalog.json",
+      "chat": "tasks/chat.json",
       "examples": "tasks/examples.json"
     },
     {
@@ -610,6 +607,7 @@
       "moduleUri": "https://enbox.id/modules/time-entries/v1",
       "definition": "time-entries/definition.json",
       "catalog": "time-entries/catalog.json",
+      "chat": "time-entries/chat.json",
       "examples": "time-entries/examples.json"
     },
     {
@@ -619,6 +617,7 @@
       "moduleUri": "https://enbox.id/modules/transactions/v1",
       "definition": "transactions/definition.json",
       "catalog": "transactions/catalog.json",
+      "chat": "transactions/chat.json",
       "examples": "transactions/examples.json"
     },
     {
@@ -628,6 +627,7 @@
       "moduleUri": "https://enbox.id/modules/trips/v1",
       "definition": "trips/definition.json",
       "catalog": "trips/catalog.json",
+      "chat": "trips/chat.json",
       "examples": "trips/examples.json"
     },
     {
@@ -637,6 +637,7 @@
       "moduleUri": "https://enbox.id/modules/utilities/v1",
       "definition": "utilities/definition.json",
       "catalog": "utilities/catalog.json",
+      "chat": "utilities/chat.json",
       "examples": "utilities/examples.json"
     },
     {
@@ -646,6 +647,7 @@
       "moduleUri": "https://enbox.id/modules/vehicles/v1",
       "definition": "vehicles/definition.json",
       "catalog": "vehicles/catalog.json",
+      "chat": "vehicles/chat.json",
       "examples": "vehicles/examples.json"
     },
     {
@@ -655,6 +657,7 @@
       "moduleUri": "https://enbox.id/modules/warranties/v1",
       "definition": "warranties/definition.json",
       "catalog": "warranties/catalog.json",
+      "chat": "warranties/chat.json",
       "examples": "warranties/examples.json"
     },
     {
@@ -664,6 +667,7 @@
       "moduleUri": "https://enbox.id/modules/workouts/v1",
       "definition": "workouts/definition.json",
       "catalog": "workouts/catalog.json",
+      "chat": "workouts/chat.json",
       "examples": "workouts/examples.json"
     }
   ]

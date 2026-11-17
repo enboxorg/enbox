@@ -2,7 +2,9 @@ import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 
 import { roleDefinition } from '../../../src/authoring/roles.js';
 
-export const definition = {
+import { withCollaborationSpace } from '../../with-collaboration-space.js';
+
+const independent = {
   module    : 'https://enbox.id/modules/meal-plans/v1',
   published : true,
   types     : {
@@ -62,3 +64,5 @@ export const definition = {
     },
   },
 } as const satisfies ModuleDefinition;
+
+export const definition = withCollaborationSpace(independent, 'plan');

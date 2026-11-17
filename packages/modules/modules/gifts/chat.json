@@ -1,0 +1,23 @@
+{
+  "summary": "Private gift plans, named recipients, occasions and progress from idea to gift given.",
+  "targets": [
+    {
+      "path": "plan",
+      "utterance": "Start planning a birthday present for Sam.",
+      "distinguish": "Use the private recipient and occasion to resolve the gift plan. A generally desired product belongs in Shopping Wishlists."
+    },
+    {
+      "path": "plan/idea",
+      "utterance": "For Sam’s birthday, shortlist the cookbook already on their wishlist.",
+      "distinguish": "Link the existing wishlist item to the private plan. Its product description stays on the wishlist."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "gift plan",
+      "birthday present",
+      "gift for"
+    ],
+    "sensitive": true
+  }
+}

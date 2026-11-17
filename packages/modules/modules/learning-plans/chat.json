@@ -1,0 +1,23 @@
+{
+  "summary": "Study plans, learning activities and their progress attached to a selected outcome.",
+  "targets": [
+    {
+      "path": "goal/plan",
+      "utterance": "Build a study plan for my goal of passing the French exam.",
+      "distinguish": "Choose the existing goal. Completed education periods belong to Career History."
+    },
+    {
+      "path": "goal/plan/activity",
+      "utterance": "Add speaking practice to the French exam study plan.",
+      "distinguish": "Select the plan. An independently actionable errand belongs in Tasks."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "learning plan",
+      "study plan",
+      "learning activity"
+    ],
+    "sensitive": true
+  }
+}

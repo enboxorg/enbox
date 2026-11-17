@@ -1,0 +1,23 @@
+{
+  "summary": "An individual plant and its observed care history.",
+  "targets": [
+    {
+      "path": "plant",
+      "utterance": "Track the new monstera on my windowsill.",
+      "distinguish": "Match the individual plant and location; the species alone is ambiguous."
+    },
+    {
+      "path": "plant/care",
+      "utterance": "I repotted the windowsill monstera today.",
+      "distinguish": "A care log records work performed. A future reminder belongs to Tasks."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "houseplant",
+      "watering log",
+      "repotted"
+    ],
+    "sensitive": false
+  }
+}

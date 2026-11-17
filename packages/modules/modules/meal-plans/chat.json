@@ -5,6 +5,16 @@
       "path": "plan/meal",
       "utterance": "Put mushroom risotto on Tuesday’s dinner plan.",
       "distinguish": "Select the meal plan and confirm the intended date. Actual consumption goes to Food Diary."
+    },
+    {
+      "path": "space/plan",
+      "utterance": "Create a meal plan in our shared household.",
+      "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match."
+    },
+    {
+      "path": "space/plan/meal",
+      "utterance": "Put lentil soup on our household dinner plan.",
+      "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match."
     }
   ],
   "hints": {

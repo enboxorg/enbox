@@ -3,14 +3,33 @@
     "path": "document",
     "encoding": "json",
     "data": {
-      "label": "Personal passport",
-      "documentType": "passport",
-      "reviewState": "unreviewed",
+      "label": "Driving licence",
+      "documentType": "drivers-licence",
+      "reviewState": "reviewed",
       "fields": {
-        "fullName": "Alex Example",
-        "documentNumber": "EXAMPLE123",
-        "issuingCountry": "GBR"
-      }
+        "holder": {
+          "fullName": "Alex Example"
+        },
+        "issuer": {
+          "name": "Example licensing authority",
+          "region": "Example region"
+        },
+        "documentNumber": "000DEMO123",
+        "expiryDate": "2031-04-15",
+        "drivingPrivileges": [
+          {
+            "category": "B",
+            "restrictions": [
+              "Corrective lenses"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ]
     }
   },
   {
@@ -19,14 +38,20 @@
     "data": {
       "sources": [
         {
-          "recordId": "example-record"
+          "recordId": "example-scan"
         }
       ],
       "extractedAt": "2026-01-15T12:00:00Z",
-      "extractor": "manual-import",
+      "extractor": "demo-import",
       "state": "partial",
+      "documentType": "drivers-licence",
       "fields": {
-        "fullName": "Alex Example"
+        "documentNumber": "000DEM0123",
+        "drivingPrivileges": [
+          {
+            "category": "B"
+          }
+        ]
       }
     }
   },
@@ -34,8 +59,15 @@
     "path": "document/review",
     "encoding": "json",
     "data": {
-      "reviewedAt": "2026-01-15T12:00:00Z",
-      "decision": "accepted"
+      "reviewedAt": "2026-01-15T12:05:00Z",
+      "extraction": {
+        "recordId": "example-extraction"
+      },
+      "decision": "corrected",
+      "corrections": {
+        "documentNumber": "000DEMO123"
+      },
+      "reason": "Compared the document number with the scan."
     }
   }
 ]

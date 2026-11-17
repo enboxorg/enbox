@@ -2,6 +2,7 @@ import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordValidator } from '@enbox/api';
 import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';
 
+import { CollaborationModule as moduleDependency0 } from './collaboration.js';
 import { defineModule, recordCodecs } from '@enbox/api';
 
 /**
@@ -145,7 +146,10 @@ export type ViewerData = Record<string, never>;
 export const MealPlansDefinition = {
   published : true,
   module    : 'https://enbox.id/modules/meal-plans/v1',
-  types     : {
+  uses      : {
+    collaboration: 'https://enbox.id/modules/collaboration/v1',
+  },
+  types: {
     plan: {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
@@ -234,6 +238,47 @@ export const MealPlansDefinition = {
         ],
       },
     },
+    space: {
+      $ref : 'collaboration:space',
+      plan : {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'collaboration:space/admin',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'collaboration:space/editor',
+            can  : ['create', 'read', 'co-update', 'delete'],
+          },
+          {
+            role : 'collaboration:space/viewer',
+            can  : ['read'],
+          },
+        ],
+        meal: {
+          $size: {
+            max: 1048576,
+          },
+          $actions: [
+            {
+              role : 'collaboration:space/admin',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/editor',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/viewer',
+              can  : ['read'],
+            },
+          ],
+        },
+      },
+    },
   },
 } as const satisfies ModuleDefinition;
 
@@ -258,8 +303,11 @@ export const MealPlansCodecs = {
 // ---------------------------------------------------------------------------
 
 export const MealPlansModule = defineModule({
-  definition : MealPlansDefinition,
-  codecs     : MealPlansCodecs,
+  definition   : MealPlansDefinition,
+  codecs       : MealPlansCodecs,
+  dependencies : {
+    collaboration: moduleDependency0,
+  },
 });
 
 export const MealPlansSchemas: Readonly<Record<string, PayloadSchema>> = {
@@ -654,8 +702,12 @@ export const MealPlansCatalog: ModuleCatalogEntry = {
       exclude  : ['An eating observation or pantry stock change.'],
       workflow : 'Plan meals and link recipes; record consumption in Food Diary and shopping intent in Groceries.',
     },
-    notes        : [],
-    dependencies : {},
+    notes: [
+      'The same module and payload schemas support two ownership choices. Use plan for an independent record or space/plan when the user selects an existing Collaboration space. The selected space supplies its membership.',
+    ],
+    dependencies: {
+      collaboration: 'https://enbox.id/modules/collaboration/v1',
+    },
   },
   definition : MealPlansDefinition,
   records    : [
@@ -735,6 +787,46 @@ export const MealPlansCatalog: ModuleCatalogEntry = {
       },
       schema: MealPlansSchemas['viewer'],
     },
+    {
+      ...{
+        path               : 'space/plan',
+        type               : 'plan',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/meal-plans/v1/schemas/plan',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: MealPlansSchemas['plan'],
+    },
+    {
+      ...{
+        path               : 'space/plan/meal',
+        type               : 'meal',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/meal-plans/v1/schemas/meal',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: MealPlansSchemas['meal'],
+    },
   ],
   examples: [
     {
@@ -763,6 +855,23 @@ export const MealPlansCatalog: ModuleCatalogEntry = {
       path     : 'plan/viewer',
       encoding : 'json',
       data     : {},
+    },
+    {
+      path     : 'space/plan',
+      encoding : 'json',
+      data     : {
+        name: 'This week',
+      },
+    },
+    {
+      path     : 'space/plan/meal',
+      encoding : 'json',
+      data     : {
+        name     : 'Lentil soup',
+        date     : '2026-01-15',
+        slot     : 'dinner',
+        servings : 2,
+      },
     },
   ],
 };

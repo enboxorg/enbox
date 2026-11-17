@@ -5,9 +5,8 @@ import { ModuleTestWorld } from './utils/module-test-world.js';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { CollaborationCodecs, CollaborationDefinition } from '../src/collaboration.js';
 import { DataStream, RecordsDelete, RecordsRead, RecordsWrite } from '@enbox/dwn-sdk-js';
-import { SharedGroceriesCodecs, SharedGroceriesDefinition } from '../src/shared-groceries.js';
-import { SharedMealPlansCodecs, SharedMealPlansDefinition } from '../src/shared-meal-plans.js';
-import { SharedTasksCodecs, SharedTasksDefinition } from '../src/shared-tasks.js';
+import { GroceriesCodecs, GroceriesDefinition } from '../src/groceries.js';
+import { MealPlansCodecs, MealPlansDefinition } from '../src/meal-plans.js';
 import { TasksCodecs, TasksDefinition } from '../src/tasks.js';
 
 describe('shared household membership', () => {
@@ -36,9 +35,8 @@ describe('shared household membership', () => {
   beforeAll(async () => {
     world = await ModuleTestWorld.create([
       CollaborationDefinition,
-      SharedGroceriesDefinition,
-      SharedMealPlansDefinition,
-      SharedTasksDefinition,
+      GroceriesDefinition,
+      MealPlansDefinition,
       TasksDefinition,
     ]);
     [owner, admin, editor, viewer] = world.actors;
@@ -61,27 +59,27 @@ describe('shared household membership', () => {
     viewerRole = await world.assign(CollaborationDefinition, 'space/viewer', space.contextId!, viewer);
     const shopping = await world.write({
       actor           : owner,
-      definition      : SharedGroceriesDefinition,
+      definition      : GroceriesDefinition,
       path            : 'space/list',
       parentContextId : space.contextId,
-      data            : (await SharedGroceriesCodecs.list.encode({ name: 'Groceries' })).data,
+      data            : (await GroceriesCodecs.list.encode({ name: 'Groceries' })).data,
     });
     list = shopping.message!;
     const meals = await world.write({
       actor           : owner,
-      definition      : SharedMealPlansDefinition,
+      definition      : MealPlansDefinition,
       path            : 'space/plan',
       parentContextId : space.contextId,
-      data            : (await SharedMealPlansCodecs.plan.encode({ name: 'This week' })).data,
+      data            : (await MealPlansCodecs.plan.encode({ name: 'This week' })).data,
     });
     mealPlan = meals.message!;
     for (const parent of [space, sibling]) {
       const created = await world.write({
         actor           : owner,
-        definition      : SharedTasksDefinition,
+        definition      : TasksDefinition,
         path            : 'space/task',
         parentContextId : parent.contextId,
-        data            : (await SharedTasksCodecs.task.encode({ title: 'Water plants', state: 'todo' })).data,
+        data            : (await TasksCodecs.task.encode({ title: 'Water plants', state: 'todo' })).data,
       });
       expect(created.reply.status.code, created.reply.status.detail).toBe(202);
       if (parent === space) {
@@ -104,14 +102,26 @@ describe('shared household membership', () => {
     expect(await remove(viewer, task, 'collaboration:space/viewer')).toBe(401);
   });
 
+  it('keeps a space membership scoped away from independently owned tasks in the same module', async () => {
+    const independent = await world.write({
+      actor      : owner, definition : TasksDefinition, path       : 'task',
+      data       : (await TasksCodecs.task.encode({ title: 'Private task', state: 'todo' })).data,
+    });
+    expect(independent.reply.status.code).toBe(202);
+    expect(await read(viewer, independent.message!, 'collaboration:space/viewer')).toBe(401);
+    await world.assign(TasksDefinition, 'task/viewer', independent.message!.contextId!, viewer);
+    expect(await read(viewer, independent.message!, 'task/viewer')).toBe(200);
+    expect(await read(viewer, task, 'task/viewer')).toBe(401);
+  });
+
   it('encrypts member-authored shopping items through the shared provider and decrypts them for another member', async () => {
     const result = await world.write({
       actor           : editor,
-      definition      : SharedGroceriesDefinition,
+      definition      : GroceriesDefinition,
       path            : 'space/list/item',
       parentContextId : list.contextId,
       moduleRole      : 'collaboration:space/editor',
-      data            : (await SharedGroceriesCodecs.item.encode({ name: 'Milk', state: 'needed' })).data,
+      data            : (await GroceriesCodecs.item.encode({ name: 'Milk', state: 'needed' })).data,
     });
     expect(result.reply.status.code, result.reply.status.detail).toBe(202);
     const request = await RecordsRead.create({
@@ -154,11 +164,11 @@ describe('shared household membership', () => {
   it('distinguishes author deletion, content moderation and owner-only pruning', async () => {
     const created = await world.write({
       actor           : editor,
-      definition      : SharedTasksDefinition,
+      definition      : TasksDefinition,
       path            : 'space/task',
       parentContextId : space.contextId,
       moduleRole      : 'collaboration:space/editor',
-      data            : (await SharedTasksCodecs.task.encode({ title: 'My task', state: 'todo' })).data,
+      data            : (await TasksCodecs.task.encode({ title: 'My task', state: 'todo' })).data,
     });
     expect(created.reply.status.code).toBe(202);
     expect(await remove(editor, task, 'collaboration:space/editor')).toBe(401);
@@ -173,12 +183,12 @@ describe('shared household membership', () => {
       actor      : owner,
       definition : TasksDefinition,
       path       : 'state',
-      data       : (await TasksCodecs.state.encode({ task: { recordId: task.recordId, moduleUri: SharedTasksDefinition.module }, pinned: true }))
+      data       : (await TasksCodecs.state.encode({ task: { recordId: task.recordId, moduleUri: TasksDefinition.module }, pinned: true }))
         .data,
     });
     expect(state.reply.status.code).toBe(202);
     expect(await read(viewer, state.message!)).toBe(401);
-    expect(SharedTasksDefinition.types).not.toHaveProperty('state');
+    expect(TasksDefinition.structure.space).not.toHaveProperty('state');
   });
 
   it('lets recipients leave and lets owner pruning follow the physical subtree across modules', async () => {

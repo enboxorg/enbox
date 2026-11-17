@@ -11,7 +11,9 @@
   "captureExamples": [
     "We need milk, oats, and two lemons."
   ],
-  "dependencies": {},
+  "dependencies": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
   "records": [
     {
       "path": "list",
@@ -64,6 +66,32 @@
       "role": true,
       "immutable": true,
       "singleton": false
+    },
+    {
+      "path": "space/list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "space/list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
     }
   ],
   "capture": {
@@ -72,5 +100,8 @@
       "Existing pantry inventory or an aspirational gift wishlist."
     ],
     "workflow": "Record shopping intent, then update purchase state when known; link purchases and pantry items instead of copying their histories."
-  }
+  },
+  "notes": [
+    "The same module and payload schemas support two ownership choices. Use list for an independent record or space/list when the user selects an existing Collaboration space. The selected space supplies its membership."
+  ]
 }

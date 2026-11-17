@@ -1,0 +1,13 @@
+{
+  "summary": "Self-published identity profile, images and external links.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "publish profile",
+      "update public bio",
+      "public avatar"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Open profile editing and confirm what will be public. An address-book entry for another person belongs in Contacts."
+}

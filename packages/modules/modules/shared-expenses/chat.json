@@ -1,0 +1,29 @@
+{
+  "summary": "Participant shares, payer claims and settlements for a particular group.",
+  "targets": [
+    {
+      "path": "group",
+      "utterance": "Set up a shared expenses group for our trip.",
+      "distinguish": "Confirm the participant roster. A trip itinerary does not imply permission to share financial records."
+    },
+    {
+      "path": "group/expense",
+      "utterance": "Split this dinner bill with my travel group.",
+      "distinguish": "Resolve the group, payer, currency and intended shares. Link the receipt separately."
+    },
+    {
+      "path": "group/settlement",
+      "utterance": "Record that Sam paid me their share today.",
+      "distinguish": "Select group and parties. A proposed transfer is not evidence of a completed settlement."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "split dinner",
+      "group expense",
+      "settle up",
+      "split the bill"
+    ],
+    "sensitive": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "summary": "Editable pages, collaborative text updates and attachments compatible with notesd.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "save a note",
+      "notebook",
+      "journal entry",
+      "page"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Open or create the selected notebook page and encode its body as a CRDT update. Use the page attachment envelope for page-owned files."
+}

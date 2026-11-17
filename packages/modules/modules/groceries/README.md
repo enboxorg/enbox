@@ -19,10 +19,14 @@ Import `GroceriesModule`, `GroceriesDefinition`, `GroceriesCodecs`, and `Groceri
 | `list/item` | [JSON Schema](schemas/item.json) | Encrypted | Mutable |
 | `list/editor` | [JSON Schema](schemas/editor.json) | Plaintext | Membership |
 | `list/viewer` | [JSON Schema](schemas/viewer.json) | Plaintext | Membership |
+| `space/list` | [JSON Schema](schemas/list.json) | Encrypted | Mutable |
+| `space/list/item` | [JSON Schema](schemas/item.json) | Encrypted | Mutable |
 
 ## Dependencies and ownership
 
-This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
+- `collaboration`: [Collaboration](../collaboration/README.md) — `https://enbox.id/modules/collaboration/v1`
+
+Only concrete local child paths are writable through this module; attachment aliases remain owned by their providers.
 
 The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
 
@@ -36,8 +40,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `list/item` | role list/editor: create, read, co-update, co-delete<br>role list/viewer: read |
 | `list/editor` | recipient of list/editor: read<br>recipient of this record: co-delete |
 | `list/viewer` | recipient of list/viewer: read<br>recipient of this record: co-delete |
+| `space/list` | role collaboration:space/admin: create, read, co-update, co-delete<br>role collaboration:space/editor: create, read, co-update, delete<br>role collaboration:space/viewer: read |
+| `space/list/item` | role collaboration:space/admin: create, read, co-update, co-delete<br>role collaboration:space/editor: create, read, co-update, co-delete<br>role collaboration:space/viewer: read |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- The same module and payload schemas support two ownership choices. Use list for an independent record or space/list when the user selects an existing Collaboration space. The selected space supplies its membership.
 
 ## Capture contract
 

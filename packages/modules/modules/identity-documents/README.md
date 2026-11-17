@@ -1,6 +1,6 @@
 # Identity Documents
 
-Structured ID/passport/licence fields, scan references, extraction provenance, and reviewed corrections.
+Identity documents issued to a person, including driving licences, passports, national IDs and state IDs. One record per issuance holds normalized fields and links to scans, extraction attempts and reviews.
 
 Module URI: `https://enbox.id/modules/identity-documents/v1`
 
@@ -37,13 +37,20 @@ The owner retains tenant authority. These rules describe additional authority. `
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
 
+## Contract notes
+
+- Use document for every government ID held by a person. documentType distinguishes passports, driving licences, national IDs and state IDs. fields.documentNumber is the printed identifier. fields.holder and fields.issuer describe the person and issuing body. Keep identifiers as strings.
+- Only a driving licence may carry fields.drivingPrivileges, with the category, dates and restrictions as issued. Only a passport may carry fields.passportTypeCode. Country-specific details stay optional, enabling partial capture from chat.
+- The holder, issuer, document number and dates can be mapped from the corresponding claims and document_details in the [OpenID Identity Assurance Schema Definition](https://openid.net/specs/openid-ida-verified-claims-1_0.html). This field mapping conveys no verification or trust-framework result.
+- An extraction stores the original input references, time, extractor and observed fields. A review records the user’s decision and corrections. Apply approved changes to the document separately. Keep each attempt and decision so other apps can explain where a field came from.
+
 ## Capture contract
 
-**Identity:** Match document type, issuing authority and reviewed document identifier.
+**Identity:** Match a selected issuance using kind, issuer and the reviewed document number. A renewal can have a new number or validity period. Ask before replacing a prior issuance when the match is ambiguous.
 
 **Workflow:** Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed.
 
-**Exclude:** Treating extracted fields as verified credentials.
+**Exclude:** Vehicle plate and registration details describe the vehicle. Signed credentials and presentations belong in Credentials. A photo alone supplies evidence. Record user review separately from issuer verification.
 
 ## Use
 
@@ -55,14 +62,33 @@ import { IdentityDocumentsModule } from '@enbox/modules/identity-documents';
 const records = enbox.using(IdentityDocumentsModule).records;
 await records.create('document', {
   data: {
-  "label": "Personal passport",
-  "documentType": "passport",
-  "reviewState": "unreviewed",
+  "label": "Driving licence",
+  "documentType": "drivers-licence",
+  "reviewState": "reviewed",
   "fields": {
-    "fullName": "Alex Example",
-    "documentNumber": "EXAMPLE123",
-    "issuingCountry": "GBR"
-  }
+    "holder": {
+      "fullName": "Alex Example"
+    },
+    "issuer": {
+      "name": "Example licensing authority",
+      "region": "Example region"
+    },
+    "documentNumber": "000DEMO123",
+    "expiryDate": "2031-04-15",
+    "drivingPrivileges": [
+      {
+        "category": "B",
+        "restrictions": [
+          "Corrective lenses"
+        ]
+      }
+    ]
+  },
+  "sources": [
+    {
+      "recordId": "example-scan"
+    }
+  ]
 },
 });
 ```

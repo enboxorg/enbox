@@ -20,10 +20,14 @@ Import `TasksModule`, `TasksDefinition`, `TasksCodecs`, and `TasksSchemas` from 
 | `state` | [JSON Schema](schemas/state.json) | Encrypted | Mutable |
 | `task/editor` | [JSON Schema](schemas/editor.json) | Plaintext | Membership |
 | `task/viewer` | [JSON Schema](schemas/viewer.json) | Plaintext | Membership |
+| `space/task` | [JSON Schema](schemas/task.json) | Encrypted | Mutable |
+| `space/task/checklistItem` | [JSON Schema](schemas/checklist-item.json) | Encrypted | Mutable |
 
 ## Dependencies and ownership
 
-This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
+- `collaboration`: [Collaboration](../collaboration/README.md) — `https://enbox.id/modules/collaboration/v1`
+
+Only concrete local child paths are writable through this module; attachment aliases remain owned by their providers.
 
 The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
 
@@ -38,8 +42,14 @@ The owner retains tenant authority. These rules describe additional authority. `
 | `state` | Owner only |
 | `task/editor` | recipient of task/editor: read<br>recipient of this record: co-delete |
 | `task/viewer` | recipient of task/viewer: read<br>recipient of this record: co-delete |
+| `space/task` | role collaboration:space/admin: create, read, co-update, co-delete<br>role collaboration:space/editor: create, read, co-update, delete<br>role collaboration:space/viewer: read |
+| `space/task/checklistItem` | role collaboration:space/admin: create, read, co-update, co-delete<br>role collaboration:space/editor: create, read, co-update, co-delete<br>role collaboration:space/viewer: read |
 
 Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Contract notes
+
+- The same module and payload schemas support two ownership choices. Use task for an independent record or space/task when the user selects an existing Collaboration space. The selected space supplies its membership.
 
 ## Capture contract
 

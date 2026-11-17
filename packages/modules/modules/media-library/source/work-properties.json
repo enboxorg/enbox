@@ -1,0 +1,138 @@
+{
+  "name": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 512
+  },
+  "url": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 8192,
+    "format": "uri"
+  },
+  "description": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 16384
+  },
+  "creator": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "minItems": 1,
+    "maxItems": 100
+  },
+  "publisher": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192,
+        "format": "uri"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "genre": {
+    "type": "array",
+    "items": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "minItems": 1,
+    "maxItems": 100
+  },
+  "identifier": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "propertyID": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "propertyID",
+        "value"
+      ]
+    },
+    "minItems": 1,
+    "maxItems": 30
+  },
+  "datePublished": {
+    "type": "string",
+    "anyOf": [
+      {
+        "format": "date"
+      },
+      {
+        "format": "date-time"
+      },
+      {
+        "pattern": "^[0-9]{4}$"
+      }
+    ]
+  },
+  "intent": {
+    "type": "string",
+    "enum": [
+      "saved",
+      "queued",
+      "archived"
+    ]
+  },
+  "favorite": {
+    "type": "boolean"
+  },
+  "file": {
+    "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+  },
+  "purchase": {
+    "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+  },
+  "source": {
+    "$ref": "https://enbox.id/schemas/common/provenance/v1"
+  },
+  "notes": {
+    "$ref": "https://enbox.id/schemas/common/note-text/v1"
+  },
+  "labels": {
+    "$ref": "https://enbox.id/schemas/common/labels/v1"
+  }
+}

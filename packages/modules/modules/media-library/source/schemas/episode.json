@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/media-library/v1/schemas/episode",
+  "title": "EpisodeData",
+  "description": "One episode under its actual series context. Use the parent to interpret a feed GUID, season or episode number.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "@type": {
+      "type": "string",
+      "enum": [
+        "TVEpisode",
+        "PodcastEpisode"
+      ]
+    },
+    "episodeNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "seasonNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Publisher-supplied opaque identifier, scoped to the podcast feed."
+    },
+    "contentUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "durationSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 315360000
+    }
+  },
+  "required": [
+    "@type",
+    "name"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "PodcastEpisode"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "guid"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

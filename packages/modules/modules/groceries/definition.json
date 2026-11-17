@@ -1,6 +1,9 @@
 {
   "module": "https://enbox.id/modules/groceries/v1",
   "published": true,
+  "uses": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
   "types": {
     "list": {
       "dataFormats": [
@@ -116,6 +119,71 @@
             ]
           }
         ]
+      }
+    },
+    "space": {
+      "$ref": "collaboration:space",
+      "list": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "collaboration:space/admin",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "collaboration:space/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "delete"
+            ]
+          },
+          {
+            "role": "collaboration:space/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "item": {
+          "$size": {
+            "max": 1048576
+          },
+          "$actions": [
+            {
+              "role": "collaboration:space/admin",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "collaboration:space/editor",
+              "can": [
+                "create",
+                "read",
+                "co-update",
+                "co-delete"
+              ]
+            },
+            {
+              "role": "collaboration:space/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
       }
     }
   }

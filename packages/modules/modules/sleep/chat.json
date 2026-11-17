@@ -1,0 +1,19 @@
+{
+  "summary": "Reported or measured sleep intervals, duration and quality.",
+  "targets": [
+    {
+      "path": "session",
+      "utterance": "Log last night’s sleep from 11 PM to 7 AM.",
+      "distinguish": "Resolve dates across midnight. A bedtime goal or alarm is distinct from an observed interval."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "sleep log",
+      "fell asleep",
+      "woke up",
+      "slept from"
+    ],
+    "sensitive": true
+  }
+}

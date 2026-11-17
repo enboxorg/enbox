@@ -259,8 +259,8 @@
     "decision": "propose",
     "targets": [
       {
-        "id": "books",
-        "path": "book"
+        "id": "media-library",
+        "path": "work"
       }
     ],
     "because": "A specific book and reading intent. A web resource to revisit belongs in Bookmarks."
@@ -275,5 +275,217 @@
       }
     ],
     "because": "Resolve the existing appointment and record an owner-local alert referencing it. The client schedules delivery."
+  },
+  {
+    "text": "Queue episode 14 of Field Notes.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "media-library",
+        "path": "series/episode"
+      }
+    ],
+    "because": "Resolve the selected show. Queue membership is a user choice and does not establish playback."
+  },
+  {
+    "text": "I stopped at 7:05 in that episode of Field Notes.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "media-library",
+        "path": "series/episode/activity"
+      }
+    ],
+    "because": "Resolve the current episode and record a playback position in seconds at the observed time."
+  },
+  {
+    "text": "My passport was renewed. Save this new one and its new expiry date.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "identity-documents",
+        "path": "document"
+      }
+    ],
+    "because": "A passport renewal is a distinct issuance. Ask for its identifying details and preserve the earlier document."
+  },
+  {
+    "text": "Please record the corrective-lenses restriction on my driving licence.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "identity-documents",
+        "path": "document"
+      }
+    ],
+    "because": "Resolve the existing licence issuance, preserve the recorded category and restriction wording, and confirm the correction."
+  },
+  {
+    "text": "My library card expires in December. Save its number.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "cards-passes",
+        "path": "pass"
+      }
+    ],
+    "because": "A library membership has an issuer and validity period. It is distinct from a personal government ID."
+  },
+  {
+    "text": "Add batteries to the shopping list in our household space.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "groceries",
+        "path": "space/list/item"
+      }
+    ],
+    "because": "Select the shared list in that space. The standalone list and space-bound list share one module URI."
+  },
+  {
+    "text": "Set a budget of USD 250 for January groceries.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "budgets",
+        "path": "budget/allocation"
+      }
+    ],
+    "because": "Choose the January budget. The amount limits spending and leaves the stock and shopping records untouched."
+  },
+  {
+    "text": "I lent Sam 200 euros. He agreed to repay the loan by April.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "debts-loans",
+        "path": "loan"
+      }
+    ],
+    "because": "A loan describes an agreement. A split group expense requires evidence about participants and shares."
+  },
+  {
+    "text": "I bought a cinema ticket. The barcode is on the attached ticket.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "cards-passes",
+        "path": "pass"
+      }
+    ],
+    "because": "Capture the issued admission pass when asked to keep the ticket. Use the purchase receipt only for an explicitly requested independent purchase fact."
+  },
+  {
+    "text": "I slept from 23:30 to 06:00 last night.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "sleep",
+        "path": "session"
+      }
+    ],
+    "because": "Resolve the interval across midnight and the timezone. A bedtime goal is a different fact."
+  },
+  {
+    "text": "Log a reminder to water the monstera on Friday.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "tasks",
+        "path": "task"
+      }
+    ],
+    "because": "A reminder is an intended action. Do not append performed plant care."
+  },
+  {
+    "text": "I watered my windowsill monstera this morning.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "plants",
+        "path": "plant/care"
+      }
+    ],
+    "because": "Choose the individual plant and record the observed care."
+  },
+  {
+    "text": "Add a gift idea for Sam that links to the cookbook on my wishlist.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "gifts",
+        "path": "plan/idea"
+      }
+    ],
+    "because": "Choose the private gift plan. Preserve the existing product record and its audience."
+  },
+  {
+    "text": "My odometer is 64,000 km. Do I need an oil change?",
+    "decision": "clarify",
+    "targets": [],
+    "because": "Answer the maintenance question. Ask before logging an odometer observation if the user has not opted to track it."
+  },
+  {
+    "text": "Present my signed membership credential to this verifier.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "Open the wallet with the user-selected credential, verifier and intended disclosure.",
+    "module": "credentials"
+  },
+  {
+    "text": "Please upload this PDF to my files.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "The file workflow needs actual content and validates the selected file metadata.",
+    "module": "files"
+  },
+  {
+    "text": "Publish the new photo as my public avatar.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "Open the profile publication workflow and confirm the audience.",
+    "module": "profile"
+  },
+  {
+    "text": "Set up my wallet discovery endpoint.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "The wallet manages discovery endpoints.",
+    "module": "connect"
+  },
+  {
+    "text": "Invite Erin to our household as a viewer.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "The owner-controlled membership workflow validates the selected recipient, role, and sharing context.",
+    "module": "collaboration"
+  },
+  {
+    "text": "Save these thoughts as a page in my research notebook.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "The writer resolves the notebook and encodes its body with the established CRDT codec.",
+    "module": "notebook"
+  },
+  {
+    "text": "Start live editing with me on my research page.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "Resolve the shared notebook page and use the managed live session.",
+    "module": "notebook-realtime"
+  },
+  {
+    "text": "Block this peer DID in my social relationships.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "Explicitly select the peer and intended restriction; ordinary contact information confers no permissions.",
+    "module": "relationships"
+  },
+  {
+    "text": "Import this thread into my conversation archive.",
+    "decision": "workflow",
+    "targets": [],
+    "because": "Choose the source and authorized archive destination. Briand keeps its own active chat history.",
+    "module": "conversations"
   }
 ]

@@ -52,8 +52,8 @@ for each module's record structure, examples, access policy, and dependencies.
 ## Composed modules
 
 Warranties, Maintenance, Vehicles, and Devices attach records to a Belongings
-item. Transactions and Investment Holdings extend Financial Accounts, and Learning Plans
-extends a Goals record. Notebook Realtime attaches to an existing Notebook page
+item. Transactions and Investment Holdings extend Financial Accounts. Learning Plans owns plans
+and activities attached to a Goals record. Notebook Realtime attaches to an existing Notebook page
 and reuses its contextual roles. Their typed artifacts carry the required provider
 definitions and codecs.
 
@@ -79,9 +79,10 @@ declares its own access rules; installing a dependency does not grant data acces
 schema-bundling helpers. They generate complete concrete definitions; runtime
 records retain one owning module and explicit action rules.
 
-Use Collaboration with Shared Groceries, Shared Meal Plans, and Shared Tasks
-when those features should share a single contextual roster. Standalone modules
-retain their independent memberships. Register the existing `@enbox/contexts`
+Groceries, Meal Plans and Tasks each support independent records and records
+in a selected Collaboration space. For example, Groceries owns both `list/item`
+and `space/list/item`. Each path uses the same item payload. The space location
+uses the existing household roster, and independent lists retain their own roles. Register the existing `@enbox/contexts`
 companion for invitations and follow journals. A role name never implies
 unlisted permissions, and space membership does not grant access to a sibling space.
 
@@ -91,12 +92,20 @@ contracts explain record matching, excluded neighboring facts, and write workflo
 
 ## Chat and MCP discovery
 
-Use `@enbox/modules/chat-directory` for the curated conversation menu and
-`@enbox/modules/directory/briand.json` for complete bundles with URI-keyed
-schemas and capture hints. `chatTargetsFor(moduleUri)` returns eligible roots.
-Supply a selected parent’s module URI and path to discover its child targets.
-The full library also contains managed sharing, file, and realtime contracts
-for applications that support those workflows.
+Applications, chat clients and MCP connectors discover the same standard module
+URIs. Use `@enbox/modules/chat-directory` for compact module descriptions and
+routing guidance. Use `@enbox/modules/directory/briand.json` for the corresponding
+complete bundles with URI-keyed schemas. A bundle's `capturePaths` lists the
+paths eligible for generic writes. A `workflow` describes operations that need
+an application or wallet. `chatTargetsFor(moduleUri)` returns eligible roots.
+Pass the selected parent's owning module and path for eligible child records.
+
+Identity Documents handles driver’s licences, passports and national IDs through
+one document hierarchy. Media Library handles owned or tracked titles across
+media formats. Gifts keeps private plans and can reference a shared wishlist item.
+Learning Plans adds activities to an existing goal. In Briand, workspace history
+stays in the workspace service. Select Conversations explicitly to manage an
+authorized conversation archive and Relationships to record social intent.
 
 The `@enbox/modules/interchange` entry point supports scoped jCard, jCal,
 Schema.org Recipe, GeoJSON Point and JSON Resume conversions.
@@ -131,8 +140,8 @@ exact additional actions.
 
 Notebook uses notesd's notebook/page hierarchy, immutable `@enbox/crdt` yjs1
 updates, and encrypted `notesd` file envelopes. Its optional realtime extension
-stores an encrypted owner-managed advertisement and plaintext public peer-key
-sessions. Page roles remain scoped to their original page.
+stores an encrypted owner-managed advertisement and plaintext sessions containing
+public peer keys. Page roles remain scoped to their original page.
 
 JSON Schema references such as `#/definitions/fileRecordReference` resolve inside
 the bundled schema; the schema `$id` and DWN type schema identities are full URIs.

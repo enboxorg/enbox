@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/media-library/v1/schemas/work",
+  "title": "WorkData",
+  "description": "One identifiable book edition, movie, album, recording or game release. The selected Schema.org type controls specialized metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "@type": {
+      "type": "string",
+      "enum": [
+        "Book",
+        "Movie",
+        "MusicRecording",
+        "MusicAlbum",
+        "VideoGame"
+      ]
+    },
+    "isbn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Printed ISBN, including separators when supplied. A checksum-aware importer may normalize it for edition matching."
+    },
+    "bookEdition": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "numberOfPages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "bookFormat": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "gamePlatform": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minItems": 1,
+      "maxItems": 30
+    },
+    "album": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "durationSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 315360000
+    }
+  },
+  "required": [
+    "@type",
+    "name"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "Book"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "isbn"
+              ]
+            },
+            {
+              "required": [
+                "bookEdition"
+              ]
+            },
+            {
+              "required": [
+                "numberOfPages"
+              ]
+            },
+            {
+              "required": [
+                "bookFormat"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "MusicRecording"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "album"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "VideoGame"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "gamePlatform"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "Book",
+                "Movie",
+                "MusicRecording",
+                "MusicAlbum"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "durationSeconds"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

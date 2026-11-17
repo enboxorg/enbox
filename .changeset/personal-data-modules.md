@@ -2,8 +2,8 @@
 "@enbox/modules": patch
 ---
 
-Add complete personal data modules with individual definitions, strict payload schemas, typed validating codecs, discovery metadata, and examples. Include explicit composition for owned-item extensions, investment holdings, learning plans, and notesd-compatible notebook realtime. Preserve notebook CRDT/file-envelope contracts, scope membership self-removal to its recipient, keep viewers read-only, and protect authored contributions. Retain the Profile, Preferences, and Connect entrypoints while adding schema validation and per-module package imports.
+Publish one personal data catalogue for Enbox applications, conversational discovery and Briand bundles. Each module includes an authored definition, payload schemas, validating codecs, examples, and an explicit capture or application workflow.
 
-Provide shared role, attachment, realtime and schema authoring helpers, complete generated per-module artifacts, and semantic capture contracts. Add optional Collaboration and shared household modules, extract Financial Accounts for ledger/portfolio reuse, and consolidate asset identity and maintenance history.
+Represent government identity document issuances in Identity Documents and media editions, series, and episodes in Media Library. Groceries, Tasks, and Meal Plans each support independent records and Collaboration spaces under one URI. Preserve the notesd notebook and realtime wire contracts.
 
-Publish a curated conversation directory and Briand-compatible bundles, with scoped JSON interchange for contacts, calendar events, recipes, places and career history.
+Add schema, role and composition authoring helpers and scoped JSON interchange for contacts, calendar events, recipes, places and career history.

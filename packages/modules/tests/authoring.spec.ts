@@ -3,7 +3,7 @@ import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { PayloadSchema } from '../src/catalog-types.js';
 
 import { resolveModuleGraph } from '@enbox/dwn-sdk-js';
-import { attachModuleDefinition, realtimeDefinition, validateAuthoredGraph } from '../src/authoring.js';
+import { addModuleAttachment, attachModuleDefinition, realtimeDefinition, validateAuthoredGraph } from '../src/authoring.js';
 import { bundleSchema, roleDefinition, sharedSchemas } from '../src/authoring.js';
 import { describe, expect, it } from 'bun:test';
 
@@ -182,6 +182,23 @@ describe('shared schema bundling', () => {
 });
 
 describe('attached feature authoring', () => {
+  it('keeps the original URI, discovery policy, independent roster and private state when adding a second location', () => {
+    const options = {
+      source       : { ...source, published: false }, root         : 'list', provider, parentPath   : 'space', alias        : 'family',
+      attachment   : 'space', roleBindings : { 'list/editor': ['space/editor'], 'list/viewer': ['space/viewer'] },
+      rootActions  : [{ role: 'family:space/viewer', can: ['read'] }],
+    };
+    const result = addModuleAttachment(options);
+    expect(result.module).toBe(source.module);
+    expect(result.published).toBe(false);
+    expect(result.structure.list).toEqual(source.structure.list);
+    expect(result.structure.state).toEqual(source.structure.state);
+    expect(result.types).toEqual(source.types);
+    expect(result.structure.space).not.toHaveProperty('state');
+    expect(result.structure.space.list).not.toHaveProperty('viewer');
+    expect(() => addModuleAttachment({ ...options, attachment: 'list' })).toThrow('conflicts with an existing root');
+  });
+
   it('rebinds roles and actors, excludes memberships and private sibling state, and preserves explicit root authority', () => {
     const original = structuredClone(source);
     const definition = attachment();

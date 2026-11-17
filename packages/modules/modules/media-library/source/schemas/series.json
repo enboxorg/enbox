@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/media-library/v1/schemas/series",
+  "title": "SeriesData",
+  "description": "The stable show identity. A podcast feed URL belongs to this show.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "@type": {
+      "type": "string",
+      "enum": [
+        "TVSeries",
+        "PodcastSeries"
+      ]
+    },
+    "feedUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "following": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "@type",
+    "name"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "PodcastSeries"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "feedUrl"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

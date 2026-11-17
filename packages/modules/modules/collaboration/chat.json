@@ -1,0 +1,13 @@
+{
+  "summary": "User-selected shared contexts with a single membership roster.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "share space",
+      "invite",
+      "member"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Open managed sharing for the selected space. Confirm the recipient and role through the owner’s membership or invitation workflow."
+}

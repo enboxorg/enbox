@@ -42,6 +42,7 @@ for (const id of directories) {
   const authored = await import(pathToFileURL(join(directory, 'source/definition.ts')).href);
   const definition = authored.definition;
   const catalog = await json(join(directory, 'catalog.json'));
+  const chat = await json(join(directory, 'chat.json'));
   const examples = await json(join(directory, 'examples.json'));
   if (catalog.id !== id || catalog.moduleUri !== definition.module || !/^[A-Z][A-Za-z0-9]*Module$/.test(catalog.exportName)) {
     throw new Error(`Module metadata does not identify its definition: ${id}`);
@@ -59,7 +60,7 @@ for (const id of directories) {
     throw new Error(`Duplicate module URI: ${definition.module}`);
   }
   expected.set(join(directory, 'definition.json'), JSON.stringify(definition, null, 2) + '\n');
-  inputs.set(definition.module, { id, directory, definition, catalog, examples, schemaSources: authored.schemas,
+  inputs.set(definition.module, { id, directory, definition, catalog, chat, examples, schemaSources: authored.schemas,
     name: catalog.exportName.slice(0, -'Module'.length) });
 }
 
@@ -267,7 +268,7 @@ for (const input of inputs.values()) {
     rootExports.push(`export type { ${typeNames.map(type => `${type} as ${name}${type}`).join(', ')} } from './${id}.js';`);
   }
   index.push({ id, name: catalog.name, category: catalog.category, moduleUri: definition.module,
-    definition: `${id}/definition.json`, catalog: `${id}/catalog.json`, examples: `${id}/examples.json` });
+    definition: `${id}/definition.json`, catalog: `${id}/catalog.json`, chat: `${id}/chat.json`, examples: `${id}/examples.json` });
 
   const rows = catalog.records.map(record => `| \`${record.path}\` | ${record.schemaFile ? `[JSON Schema](${record.schemaFile})` : record.codec?.kind ?? record.dataFormats.join(', ')} | ${record.encryptionRequired ? 'Encrypted' : 'Plaintext'} | ${record.role ? 'Membership' : record.immutable ? 'Immutable' : 'Mutable'} |`);
   const actionRows = records.map(record => `| \`${record.path}\` | ${record.actions.length === 0 ? 'Owner only' : record.actions.map(actionDescription).join('<br>')} |`);
@@ -318,9 +319,23 @@ const rootSource = `/** Complete standard DWN modules. Prefer subpath imports wh
 expected.set(join(packageRoot, 'src/index.ts'), await typescript(rootSource, join(packageRoot, 'src/index.ts')));
 expected.set(join(sourceRoot, 'index.json'), JSON.stringify({ modules: index }, null, 2) + '\n');
 
-const chat = await chatDirectory(inputs);
+const chat = chatDirectory(inputs);
 expected.set(join(generatedRoot, 'chat-index.json'), JSON.stringify(chat.index, null, 2) + '\n');
 expected.set(join(packageRoot, 'directory/briand.json'), JSON.stringify(chat.bundles, null, 2) + '\n');
+
+const readmePath = join(packageRoot, 'README.md');
+const guide = await readFile(readmePath, 'utf8');
+const catalogueSection = /<!-- module-library:start -->[\s\S]*?<!-- module-library:end -->/;
+if (!catalogueSection.test(guide)) { throw new Error('Missing module-library markers in package README.'); }
+const sections = new Map();
+for (const { id, catalog } of inputs.values()) {
+  if (!sections.has(catalog.category)) { sections.set(catalog.category, []); }
+  const paths = role => catalog.records.filter(record => record.role === role).map(record => `\`${record.path}\``).join(', ');
+  sections.get(catalog.category).push(`| [${catalog.name}](modules/${id}/README.md) | \`@enbox/modules/${id}\` | ${paths(false)} | ${paths(true)} |`);
+}
+const tables = [...sections.keys()].sort().map(category =>
+  `### ${category}\n\n| Module | Import subpath | Records | Roles |\n| --- | --- | --- | --- |\n${sections.get(category).join('\n')}`);
+expected.set(readmePath, guide.replace(catalogueSection, `<!-- module-library:start -->\n\n${tables.join('\n\n')}\n\n<!-- module-library:end -->`));
 
 const stale = [];
 for (const [path, content] of expected) {

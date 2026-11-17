@@ -1,66 +1,72 @@
-# Conversation capture directory
+# One module catalogue for Enbox and Briand
 
-A chat client can recommend 36 modules covering 59 specific kinds of record. The directory is a selection from the full application library. Its entries describe what the user meant, which path owns that fact, what evidence distinguishes a neighboring intent, and which parent an application must resolve. A user can keep independent records for a grocery item they intend to buy, an ingredient already in their pantry, and a meal they ate.
+The typed registry, [raw module index](modules/index.json), [conversation index](src/generated/chat-index.json) and [Briand bundles](directory/briand.json) publish the same modules. A user's intended operation determines the record path or application workflow. The package [module library](README.md#module-library) lists every record and role, including private roots and paths attached to an existing parent.
 
-| Conversation | Modules to suggest |
+Each bundle ships its full DWN definition, all of its JSON payload schemas keyed by URI, its capture hints, and an explicit `capturePaths` list. A module with an empty allowlist supplies a `workflow` describing the required application operation. Such a module remains discoverable and installable. For example, a wallet can present a credential, a notebook editor can materialize a CRDT page, and an authorized user can publish a Profile.
+
+## Choosing a destination
+
+| What the user means | Destination and record structure |
 | --- | --- |
-| People, settings and plans | Contacts, Preferences, Events, Tasks, Personal Projects, Goals, Habits |
-| Things to revisit and experiences to remember | Bookmarks, Books, Places, Career History |
-| Cooking and shopping | Groceries, Pantry, Recipes, Meal Plans, Food Diary, Shopping Wishlists |
-| Orders and money | Purchases, Receipts, Bills, Subscriptions, Financial Accounts, Transactions, Stock Watchlists, Investment Holdings |
-| Home, paperwork and travel | Belongings, Maintenance, Vehicles, Identity Documents, Trips, Reservations |
-| Personal health and activity | Health Profile, Medical Records, Medications, Measurements, Workouts |
+| “Extract the expiry from my driver's licence.” | Identity Documents. Select the issued document, retain document-type-specific fields, attach extraction evidence, and record reviews against the same document. The same workflow applies to passports and national IDs. |
+| “Save my vehicle registration.” | Vehicles. Resolve the Belongings item and vehicle. Each registration issuance records its jurisdiction and identifiers beneath that vehicle. A scan can live in Files. |
+| “Watch XYZ.” / “I own ten shares of XYZ.” | Stock Watchlists holds research interest under a selected watchlist. Investment Holdings requires the selected financial account, instrument and observation time. |
+| “Get milk.” / “I have milk.” / “I drank milk.” | Groceries records shopping intent, Pantry records stock, and Food Diary records consumption. Ask which fact the user is asserting when the wording is ambiguous. |
+| “Add milk to our household list.” | Use Groceries at `space/list/item` when the selected list is inside a Collaboration space, or `list/item` for an independent list. The same module and payload schema serve both. Meal Plans and Tasks also support independent and shared-space roots. |
+| “I want these headphones.” / “Keep a birthday gift idea for Sam.” | Shopping Wishlists owns the desired product. Gifts owns the private recipient, occasion and gifting state and can link the wishlist item. Each audience sees the records it is authorized to read. |
+| “Remind me to book the dentist.” / “My appointment is Tuesday.” / “I visited the clinic.” | Tasks owns an action, Events owns a scheduled occurrence, and Medical Records owns a reported completed visit. Private alerts refer to the selected task or event. |
+| “I want to speak Italian.” / “Build a study plan for that goal.” | Goals owns the desired outcome. Learning Plans attaches the learning plan, activities and progress to the selected goal. Actual past education can be recorded in Career History. |
+| “Save this link.” / “I want to watch this film.” | Bookmarks owns a saved URL or DID-relative record link. Media Library owns an identified work and its tracking or progress records, across books, films, games, music and podcasts. |
+| “File my receipt.” / “Track my order.” / “Record this posted debit.” | Receipts preserves merchant evidence. Purchases tracks fulfillment and returns. Transactions records actual movements on a Financial Accounts record. Link the records when the user supplies evidence for each. |
+| “I follow this person.” / “Give this person access to our space.” | Relationships holds an explicit social relationship. Membership management uses Collaboration, the selected context, and the owner's authority. |
+| “Archive this conversation.” | Use the selected Conversations workflow for the authorized conversation. Existing assistant transcripts remain in Briand's managed workspace history. |
 
-The [routing examples](directory/routing-examples.json) are labeled inputs for evaluating an extractor. They include multi-intent requests, clarifications, quoted speech, hypotheticals, and questions that should produce zero records. Extractor accuracy requires evaluating the actual model against these cases.
+The [routing cases](directory/routing-examples.json) include multi-intent utterances, ambiguous requests, quoted speech, hypotheticals and questions. They provide labeled examples for evaluating an extractor.
 
 ## Consumer contract
 
-1. Give the selector the small [directory index](src/generated/chat-index.json). Present the summaries first. When it selects an entry, use its target paths, utterances, identity guidance and exclusions. A ticker, name, book title, or product reference on its own can occur in many conversations.
-2. Load the selected complete bundle from [the Briand projection](directory/briand.json). The schema map uses the exact DWN schema URI as its key. Check availability of every module named in `definition.uses` before installation. Metadata and examples are public, while install and write decisions belong to the user's application.
-3. For extraction without a selected parent, provide only the paths from `chatTargetsFor(uri)`. For a selected parent, pass its verified **owning** module URI and path. A child write also needs the parent record's actual `contextId`, the correct tenant, and appropriate grants. If the intended path needs a parent, ask the user to select one or explicitly create it. An empty set means there is no matching destination at that parent.
-4. Validate the proposed fields with the path's exact codec or bundled JSON Schema, then apply the user's capture and review policy. Preserve source evidence and date precision. Use external UIDs supplied by the original contact or calendar record for repeat imports. Common names, titles, tickers and institution names can identify multiple records.
+1. Load summaries from the conversation index. Use the candidate's examples, identity guidance and exclusions to select the user's intended module and operation. A question or a mention can yield zero proposals.
+2. Load the module bundle. Resolve its `definition.uses` dependencies and verify the install and write authority. For generic capture, check `capturePaths` when presenting choices **and** when validating the selected candidate. For operations with a named application workflow, route the user to that workflow.
+3. For root capture, provide the paths returned by `chatTargetsFor(moduleUri)`. For a child, pass its selected parent's verified owning module URI and path. A write requires the actual parent record's `contextId` and tenant. If several records match, let the user choose. An independent shopping list and a list in a shared space can have the same display name.
+4. Validate against the exact schema or codec and apply the user's review policy. Preserve evidence and source date precision. Contact and calendar UIDs can match repeat imports. Names, tickers and last-four digits can match several records.
 
 ```ts
 import { chatDirectory, chatTargetsFor } from '@enbox/modules/chat-directory';
 import bundles from '@enbox/modules/directory/briand.json' with { type: 'json' };
 
-const suggestions = chatDirectory.map(({ module, label, summary }) => ({ module, label, summary }));
-const holdings = chatDirectory.find(entry => entry.id === 'investment-holdings')!;
-const destinations = chatTargetsFor(holdings.module, {
+const uri = 'https://enbox.id/modules/investment-holdings/v1';
+const entry = chatDirectory.find(module => module.module === uri)!;
+const bundle = bundles.find(module => module.definition.module === uri)!;
+const targets = chatTargetsFor(entry.module, {
   module: 'https://enbox.id/modules/financial-accounts/v1',
   path: 'account',
 });
-const portfolioBundle = bundles.find(bundle => bundle.id === holdings.id)!;
-// Each destination.schemaUri is a key in portfolioBundle.schemas.
+// The bundle's schemas are keyed by each target.schemaUri.
 ```
 
-The package publishes these artifacts at versioned npm package subpaths. A static directory service can serve the same JSON. The full library and its per-module artifacts are available through [the application catalogue](README.md#module-library). A client with an explicit shared household can use Shared Groceries, Shared Meal Plans and Shared Tasks from that library with its selected space. Keeping these shared variants outside the initial menu gives each intent one suggestion before a sharing context is chosen.
+The index and bundle array are versioned npm package exports. A publishing service can serve the same JSON. Person-specific values belong in authorized records. The directory contains public definitions, examples and capture hints. `sensitive` and `sensitiveFields` signal review. Authorize installation, access, and automatic saving separately.
 
-## Moving from Briand's starter directory
+## Replacing the proof-of-concept catalogue
 
-Use the curated entries as the discovery list for new capture. Keep legacy URIs resolvable for reading prior records. Appending the curated entries to the PoC's eight starter packs and five broker schemas would retain overlapping suggestions under different URIs. Replacing the list requires handling the following decisions in the consumer.
+Use the package directory as the single source for new module discovery in site and MCP flows. Keep a separate legacy lookup for reading existing records when needed. A previously installed broker-envelope record requires an explicit schema and payload mapping before it can be imported as a native record.
 
-| Existing PoC entry | Destination in a conversation |
+| Earlier PoC choice | Canonical destination |
 | --- | --- |
-| Identity Profile | Public profile editor when the user explicitly requests publication. Personal contacts use Contacts. |
-| Preferences & Locale | Preferences for the curated encrypted personal settings. Locale and theme remain in the settings UI. Review the actual schemas for the shared URI during adoption. |
-| Stock Watchlist & Holdings | “Watch NVDA” → Stock Watchlists, under a selected watchlist. “I own ten shares” → Investment Holdings, under the selected financial account, with the observation time. |
-| Watchlist Market Briefings | Generated worker output belongs to the briefing workflow. A user-authored research note can reference a watchlist entry in the specialist application. |
-| Tasks & Action Items | Tasks for a requested action, Events for a booked time. |
-| Bookmarks & Reading List | Bookmarks for a link or DID-relative record, Books for an identified publication and its reading progress. |
-| Project Briefs | Personal Projects for the undertaking, Tasks for independently actionable work. |
-| Government ID & Passport and Driver’s License | Identity Documents owns a single reviewed document record and its extraction/review history. Signed credential bytes belong to the Credentials wallet workflow. |
-| Contact | Contacts for one person. Imported email/phone endpoints live beneath the same contact. |
-| Purchase Receipt | Receipts for the merchant's evidence. An order and a posted payment have distinct identities in Purchases and Transactions. |
-| Vehicle Registration | Vehicles owns a registration issuance beneath the selected vehicle. Identity Documents covers driver identity. A separate scan can be linked from Files. |
-| Appointment | Events for the scheduled occurrence. Medical Records captures an actual reported visit. |
+| Identity Profile | Profile publication through its explicit workflow. Contacts for the user's private address book. |
+| Preferences & Locale | Preferences. Use its allowed encrypted settings paths for capture and the settings UI for locale/theme. |
+| Stock Watchlist & Holdings | Stock Watchlists for research interest and Investment Holdings for confirmed positions. Map the old stock shortcut to the selected watchlist and instrument payload. |
+| Watchlist Market Briefings | Briand's generated briefing workflow. Save an actual user-authored research note only on explicit request. |
+| Tasks & Action Items | Tasks. Attach to a selected Collaboration space for household tasks. |
+| Bookmarks & Reading List | Bookmarks for resource links and Media Library for tracking an identified work. |
+| Project Briefs | Personal Projects for the undertaking and Tasks for independently actionable work. |
+| Government ID & Passport, Driver's License | One Identity Documents module. A wallet's issuer-secured artifacts use Credentials. |
+| Contact | Contacts. Store endpoint children under the chosen person. |
+| Purchase Receipt | Receipts. Link actual orders and transactions when available. |
+| Vehicle Registration | Vehicles with a registration child of the selected vehicle. |
+| Appointment | Events for a scheduled occurrence and Medical Records for a reported visit. |
 
-Briand's current background extractor offers only encrypted JSON roots, and its explicit-save route accepts a selected parent context. Four curated modules have only contextual targets: Investment Holdings, Maintenance, Transactions and Vehicles. The 59 selected paths include 36 roots and 23 children. Consumers should use this allowlist rather than feeding every structurally writable path to the model. In particular, the stock fast path in Briand's PoC still emits its legacy `holding` record. It must supply the selected watchlist and the new instrument payload before targeting the published directory.
+## Import and export
 
-Each bundle includes the sidecar shape understood by the PoC. `sensitive` and `sensitiveFields` are review signals. `identityFields` is supplied only for stable interchange identities. The current projection does not authorize external lookup of personal information. Apps should retain version/fingerprint-scoped consent and review ambiguous matches. An earlier broker-envelope record needs an explicit import and mapping before a client can write its native DWN successor.
+Scoped converters preserve contact and calendar UIDs across DWN storage. JSON Resume maps work and education arrays to individual records. GeoJSON maps a named Point Feature in longitude/latitude order. Recipe imports preserve quoted ingredient lines and ordered instructions. [Supported interchange profiles](INTERCHANGE.md)
 
-## Data model and interchange
-
-The contact and event modules retain external UIDs in the record. Career History follows the JSON Resume work and education arrays. A named place maps to a GeoJSON Point Feature with longitude first. Recipe imports preserve the author's ingredient text and ordered instructions. See [supported mappings and round trips](INTERCHANGE.md) for supported values, exported metadata and handling of fields outside each profile. The [field crosswalks](directory/crosswalks.json) document 17 additional mappings across 16 modules. They identify source fields, target fields, required context, units and precision for each mapping.
-
-The directory keeps other specialist and infrastructure modules available through explicit workflows. A notebook page needs its CRDT codec, a signed credential needs its issuer-secured artifact, and a file needs its binary upload. Chat history, permissions, membership, key delivery, public profile publication, invitations and realtime sessions use their respective application APIs. The complete library remains the place for specialist tracking, including packing, warranties, gardening, pets, media playback, private gift plans and household sharing.
+The [field crosswalks](directory/crosswalks.json) document additional mappings with their source fields, target fields, units, and required context.

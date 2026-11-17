@@ -8,7 +8,7 @@ import { createYjs1Doc } from '@enbox/crdt/yjs1';
 import { defineApplicationManifest } from '@enbox/api';
 import { Enbox } from '@enbox/api';
 import { FinancialAccountsModule } from '../src/financial-accounts.js';
-import { GroceriesSchemas } from '../src/groceries.js';
+import { GroceriesModule } from '../src/groceries.js';
 import { InvestmentHoldingsModule } from '../src/investment-holdings.js';
 import { MaintenanceModule } from '../src/maintenance.js';
 import { NotebookModule } from '../src/notebook.js';
@@ -21,7 +21,6 @@ import { DevicesCodecs, DevicesModule } from '../src/devices.js';
 import { GiftsCodecs, GiftsModule } from '../src/gifts.js';
 import { listHouseholdShopping, managedHouseholdApplication } from '../examples/household-contexts.js';
 import { resolveModuleContextRoles, resolveModuleGraph } from '@enbox/dwn-sdk-js';
-import { SharedGroceriesModule, SharedGroceriesSchemas } from '../src/shared-groceries.js';
 
 async function usingApplication(
   application: Parameters<typeof createEnboxTestContext>[0]['application'],
@@ -62,13 +61,12 @@ describe('functional module applications', () => {
       expect(await listHouseholdShopping(enbox, created.contextId)).toEqual([created.listId]);
       const otherClient = Enbox.fromSession(session);
       try {
-        const item = await otherClient.using(SharedGroceriesModule).records.read('space/list/item', created.itemId);
+        const item = await otherClient.using(GroceriesModule).records.read('space/list/item', created.itemId);
         expect((await item!.value()).name).toBe('Oat milk');
         await item!.update({ data: { name: 'Oat milk', state: 'purchased' } });
-        expect((await (await enbox.using(SharedGroceriesModule).records.read('space/list/item', created.itemId))!.value()).state).toBe(
+        expect((await (await enbox.using(GroceriesModule).records.read('space/list/item', created.itemId))!.value()).state).toBe(
           'purchased',
         );
-        expect(SharedGroceriesSchemas.item).toEqual(GroceriesSchemas.item);
         const graph = resolveModuleGraph(CollaborationDefinition, (): undefined => undefined, { requireKeyAgreement: false });
         expect(resolveModuleContextRoles(graph, 'space')).toEqual(['space/admin', 'space/editor', 'space/viewer']);
       } finally {

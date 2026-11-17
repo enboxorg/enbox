@@ -2,6 +2,7 @@ import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordValidator } from '@enbox/api';
 import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';
 
+import { CollaborationModule as moduleDependency0 } from './collaboration.js';
 import { defineModule, recordCodecs } from '@enbox/api';
 
 /**
@@ -613,7 +614,10 @@ export type ViewerData = Record<string, never>;
 export const TasksDefinition = {
   published : true,
   module    : 'https://enbox.id/modules/tasks/v1',
-  types     : {
+  uses      : {
+    collaboration: 'https://enbox.id/modules/collaboration/v1',
+  },
+  types: {
     task: {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
@@ -712,6 +716,47 @@ export const TasksDefinition = {
         max: 1048576,
       },
     },
+    space: {
+      $ref : 'collaboration:space',
+      task : {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'collaboration:space/admin',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'collaboration:space/editor',
+            can  : ['create', 'read', 'co-update', 'delete'],
+          },
+          {
+            role : 'collaboration:space/viewer',
+            can  : ['read'],
+          },
+        ],
+        checklistItem: {
+          $size: {
+            max: 1048576,
+          },
+          $actions: [
+            {
+              role : 'collaboration:space/admin',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/editor',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/viewer',
+              can  : ['read'],
+            },
+          ],
+        },
+      },
+    },
   },
 } as const satisfies ModuleDefinition;
 
@@ -737,8 +782,11 @@ export const TasksCodecs = {
 // ---------------------------------------------------------------------------
 
 export const TasksModule = defineModule({
-  definition : TasksDefinition,
-  codecs     : TasksCodecs,
+  definition   : TasksDefinition,
+  codecs       : TasksCodecs,
+  dependencies : {
+    collaboration: moduleDependency0,
+  },
 });
 
 export const TasksSchemas: Readonly<Record<string, PayloadSchema>> = {
@@ -1437,8 +1485,12 @@ export const TasksCatalog: ModuleCatalogEntry = {
       exclude  : ['A calendar appointment or habit check-in as the same task fact.'],
       workflow : 'Maintain actionable state and shared checklists; keep private reminders and pinning in owner-local state.',
     },
-    notes        : [],
-    dependencies : {},
+    notes: [
+      'The same module and payload schemas support two ownership choices. Use task for an independent record or space/task when the user selects an existing Collaboration space. The selected space supplies its membership.',
+    ],
+    dependencies: {
+      collaboration: 'https://enbox.id/modules/collaboration/v1',
+    },
   },
   definition : TasksDefinition,
   records    : [
@@ -1534,6 +1586,46 @@ export const TasksCatalog: ModuleCatalogEntry = {
       },
       schema: TasksSchemas['viewer'],
     },
+    {
+      ...{
+        path               : 'space/task',
+        type               : 'task',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/tasks/v1/schemas/task',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: TasksSchemas['task'],
+    },
+    {
+      ...{
+        path               : 'space/task/checklistItem',
+        type               : 'checklistItem',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/tasks/v1/schemas/checklist-item',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: TasksSchemas['checklistItem'],
+    },
   ],
   examples: [
     {
@@ -1578,6 +1670,23 @@ export const TasksCatalog: ModuleCatalogEntry = {
       path     : 'task/viewer',
       encoding : 'json',
       data     : {},
+    },
+    {
+      path     : 'space/task',
+      encoding : 'json',
+      data     : {
+        title : 'Call the dentist',
+        state : 'todo',
+        dueOn : '2026-01-15',
+      },
+    },
+    {
+      path     : 'space/task/checklistItem',
+      encoding : 'json',
+      data     : {
+        text      : 'Find the phone number',
+        completed : false,
+      },
     },
   ],
 };

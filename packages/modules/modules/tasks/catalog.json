@@ -11,7 +11,9 @@
   "captureExamples": [
     "I need to call the dentist tomorrow."
   ],
-  "dependencies": {},
+  "dependencies": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
   "records": [
     {
       "path": "task",
@@ -77,6 +79,32 @@
       "role": true,
       "immutable": true,
       "singleton": false
+    },
+    {
+      "path": "space/task",
+      "type": "task",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/tasks/v1/schemas/task",
+      "schemaFile": "schemas/task.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "space/task/checklistItem",
+      "type": "checklistItem",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/tasks/v1/schemas/checklist-item",
+      "schemaFile": "schemas/checklist-item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
     }
   ],
   "capture": {
@@ -85,5 +113,8 @@
       "A calendar appointment or habit check-in as the same task fact."
     ],
     "workflow": "Maintain actionable state and shared checklists; keep private reminders and pinning in owner-local state."
-  }
+  },
+  "notes": [
+    "The same module and payload schemas support two ownership choices. Use task for an independent record or space/task when the user selects an existing Collaboration space. The selected space supplies its membership."
+  ]
 }

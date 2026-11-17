@@ -1,0 +1,18 @@
+{
+  "summary": "Time actually spent on an activity, optionally linked to an existing project or task.",
+  "targets": [
+    {
+      "path": "entry",
+      "utterance": "I spent 45 minutes working on the bathroom renovation today.",
+      "distinguish": "Store the observed time and link the project. A planned duration or a calendar slot alone is not elapsed work."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "time log",
+      "hours worked",
+      "track time"
+    ],
+    "sensitive": true
+  }
+}

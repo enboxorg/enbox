@@ -139,22 +139,22 @@
       "limits": "The itinerary mapping assumes an ordered ItemList of ListItems containing Places. Preserve the source order. A local day requires a known timezone and date; a time of day alone cannot populate it. The trip state comes from explicit travel intent. Local dates and destination names cannot reconstruct the source times and places."
     },
     {
-      "module": "books",
-      "path": "book",
+      "module": "media-library",
+      "path": "work",
       "externalType": "Schema.org Book",
       "sources": [
         "https://schema.org/Book"
       ],
       "fields": {
-        "name": "title",
-        "author[].name": "authors[]",
+        "name": "name",
+        "author[].name": "creator[].name",
         "isbn": "isbn",
-        "bookEdition": "edition",
-        "publisher.name": "publisher",
-        "numberOfPages": "pageCount",
-        "datePublished": "publishedYear"
+        "bookEdition": "bookEdition",
+        "publisher.name": "publisher.name",
+        "numberOfPages": "numberOfPages",
+        "datePublished": "datePublished"
       },
-      "limits": "Match the particular edition. Normalize one or more authors to an ordered array of display names, and parse supported page counts as integers. Year-only storage loses the month/day of a publication date. Supply the reader’s state separately. Metadata alone establishes no reading session."
+      "limits": "Select @type Book and match a particular edition. Preserve qualified publication dates and the supplied name/URL for each supported creator. A title or ISBN identifies bibliographic metadata; personal queue intent, reading sessions and annotations come from the user."
     },
     {
       "module": "tasks",

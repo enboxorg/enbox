@@ -15,13 +15,6 @@ export type {
   EditorData as BookmarksEditorData,
   ViewerData as BookmarksViewerData,
 } from './bookmarks.js';
-export { BooksModule, BooksDefinition, BooksCodecs, BooksSchemas, BooksCatalog } from './books.js';
-export type {
-  BookData as BooksBookData,
-  ReadingData as BooksReadingData,
-  HighlightData as BooksHighlightData,
-  ReviewData as BooksReviewData,
-} from './books.js';
 export { BudgetsModule, BudgetsDefinition, BudgetsCodecs, BudgetsSchemas, BudgetsCatalog } from './budgets.js';
 export type {
   BudgetData as BudgetsBudgetData,
@@ -133,8 +126,6 @@ export type {
 } from './flashcards.js';
 export { FoodDiaryModule, FoodDiaryDefinition, FoodDiaryCodecs, FoodDiarySchemas, FoodDiaryCatalog } from './food-diary.js';
 export type { EntryData as FoodDiaryEntryData } from './food-diary.js';
-export { GamesModule, GamesDefinition, GamesCodecs, GamesSchemas, GamesCatalog } from './games.js';
-export type { GameData as GamesGameData, SessionData as GamesSessionData, ProgressData as GamesProgressData } from './games.js';
 export { GiftsModule, GiftsDefinition, GiftsCodecs, GiftsSchemas, GiftsCatalog } from './gifts.js';
 export type { PlanData as GiftsPlanData, IdeaData as GiftsIdeaData } from './gifts.js';
 export { GoalsModule, GoalsDefinition, GoalsCodecs, GoalsSchemas, GoalsCatalog } from './goals.js';
@@ -226,6 +217,20 @@ export {
 } from './measurements.js';
 export type { MeasurementData as MeasurementsMeasurementData } from './measurements.js';
 export {
+  MediaLibraryModule,
+  MediaLibraryDefinition,
+  MediaLibraryCodecs,
+  MediaLibrarySchemas,
+  MediaLibraryCatalog,
+} from './media-library.js';
+export type {
+  WorkData as MediaLibraryWorkData,
+  SeriesData as MediaLibrarySeriesData,
+  EpisodeData as MediaLibraryEpisodeData,
+  ActivityData as MediaLibraryActivityData,
+  AnnotationData as MediaLibraryAnnotationData,
+} from './media-library.js';
+export {
   MedicalRecordsModule,
   MedicalRecordsDefinition,
   MedicalRecordsCodecs,
@@ -245,10 +250,6 @@ export type {
 } from './medications.js';
 export { MoodModule, MoodDefinition, MoodCodecs, MoodSchemas, MoodCatalog } from './mood.js';
 export type { CheckInData as MoodCheckInData } from './mood.js';
-export { MoviesTvModule, MoviesTvDefinition, MoviesTvCodecs, MoviesTvSchemas, MoviesTvCatalog } from './movies-tv.js';
-export type { TitleData as MoviesTvTitleData, ViewingData as MoviesTvViewingData, RatingData as MoviesTvRatingData } from './movies-tv.js';
-export { MusicModule, MusicDefinition, MusicCodecs, MusicSchemas, MusicCatalog } from './music.js';
-export type { ItemData as MusicItemData, ListeningData as MusicListeningData } from './music.js';
 export { NotebookModule, NotebookDefinition, NotebookCodecs, NotebookSchemas, NotebookCatalog } from './notebook.js';
 export type {
   NotebookData as NotebookNotebookData,
@@ -321,8 +322,6 @@ export type {
   EditorData as PlantsEditorData,
   ViewerData as PlantsViewerData,
 } from './plants.js';
-export { PodcastsModule, PodcastsDefinition, PodcastsCodecs, PodcastsSchemas, PodcastsCatalog } from './podcasts.js';
-export type { ShowData as PodcastsShowData, EpisodeData as PodcastsEpisodeData, PlaybackData as PodcastsPlaybackData } from './podcasts.js';
 export * from './preferences.js';
 export * from './profile.js';
 export { PurchasesModule, PurchasesDefinition, PurchasesCodecs, PurchasesSchemas, PurchasesCatalog } from './purchases.js';
@@ -386,24 +385,6 @@ export type {
   EditorData as SharedExpensesEditorData,
   ViewerData as SharedExpensesViewerData,
 } from './shared-expenses.js';
-export {
-  SharedGroceriesModule,
-  SharedGroceriesDefinition,
-  SharedGroceriesCodecs,
-  SharedGroceriesSchemas,
-  SharedGroceriesCatalog,
-} from './shared-groceries.js';
-export type { ItemData as SharedGroceriesItemData, ListData as SharedGroceriesListData } from './shared-groceries.js';
-export {
-  SharedMealPlansModule,
-  SharedMealPlansDefinition,
-  SharedMealPlansCodecs,
-  SharedMealPlansSchemas,
-  SharedMealPlansCatalog,
-} from './shared-meal-plans.js';
-export type { MealData as SharedMealPlansMealData, PlanData as SharedMealPlansPlanData } from './shared-meal-plans.js';
-export { SharedTasksModule, SharedTasksDefinition, SharedTasksCodecs, SharedTasksSchemas, SharedTasksCatalog } from './shared-tasks.js';
-export type { ChecklistItemData as SharedTasksChecklistItemData, TaskData as SharedTasksTaskData } from './shared-tasks.js';
 export {
   ShoppingWishlistsModule,
   ShoppingWishlistsDefinition,

@@ -1,0 +1,23 @@
+{
+  "summary": "Policies, covered subjects, renewal dates and claims filed under a policy.",
+  "targets": [
+    {
+      "path": "policy",
+      "utterance": "Save my new home insurance policy.",
+      "distinguish": "Use insurer, policy identifier and coverage period to resolve the contract. Product warranty terms belong in Warranties."
+    },
+    {
+      "path": "policy/claim",
+      "utterance": "Log the claim I submitted to my home insurer.",
+      "distinguish": "Select the policy and preserve supplied evidence; a quote or intention to file does not establish a claim."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "insurance policy",
+      "insurance claim",
+      "deductible"
+    ],
+    "sensitive": true
+  }
+}

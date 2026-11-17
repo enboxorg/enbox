@@ -2,6 +2,7 @@ import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
 import type { RecordValidator } from '@enbox/api';
 import type { ModuleCatalogEntry, PayloadSchema } from '../catalog-types.js';
 
+import { CollaborationModule as moduleDependency0 } from './collaboration.js';
 import { defineModule, recordCodecs } from '@enbox/api';
 
 /**
@@ -265,7 +266,10 @@ export type ViewerData = Record<string, never>;
 export const GroceriesDefinition = {
   published : true,
   module    : 'https://enbox.id/modules/groceries/v1',
-  types     : {
+  uses      : {
+    collaboration: 'https://enbox.id/modules/collaboration/v1',
+  },
+  types: {
     list: {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
@@ -354,6 +358,47 @@ export const GroceriesDefinition = {
         ],
       },
     },
+    space: {
+      $ref : 'collaboration:space',
+      list : {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'collaboration:space/admin',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'collaboration:space/editor',
+            can  : ['create', 'read', 'co-update', 'delete'],
+          },
+          {
+            role : 'collaboration:space/viewer',
+            can  : ['read'],
+          },
+        ],
+        item: {
+          $size: {
+            max: 1048576,
+          },
+          $actions: [
+            {
+              role : 'collaboration:space/admin',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/editor',
+              can  : ['create', 'read', 'co-update', 'co-delete'],
+            },
+            {
+              role : 'collaboration:space/viewer',
+              can  : ['read'],
+            },
+          ],
+        },
+      },
+    },
   },
 } as const satisfies ModuleDefinition;
 
@@ -378,8 +423,11 @@ export const GroceriesCodecs = {
 // ---------------------------------------------------------------------------
 
 export const GroceriesModule = defineModule({
-  definition : GroceriesDefinition,
-  codecs     : GroceriesCodecs,
+  definition   : GroceriesDefinition,
+  codecs       : GroceriesCodecs,
+  dependencies : {
+    collaboration: moduleDependency0,
+  },
 });
 
 export const GroceriesSchemas: Readonly<Record<string, PayloadSchema>> = {
@@ -833,8 +881,12 @@ export const GroceriesCatalog: ModuleCatalogEntry = {
       workflow:
         'Record shopping intent, then update purchase state when known; link purchases and pantry items instead of copying their histories.',
     },
-    notes        : [],
-    dependencies : {},
+    notes: [
+      'The same module and payload schemas support two ownership choices. Use list for an independent record or space/list when the user selects an existing Collaboration space. The selected space supplies its membership.',
+    ],
+    dependencies: {
+      collaboration: 'https://enbox.id/modules/collaboration/v1',
+    },
   },
   definition : GroceriesDefinition,
   records    : [
@@ -914,6 +966,46 @@ export const GroceriesCatalog: ModuleCatalogEntry = {
       },
       schema: GroceriesSchemas['viewer'],
     },
+    {
+      ...{
+        path               : 'space/list',
+        type               : 'list',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/groceries/v1/schemas/list',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: GroceriesSchemas['list'],
+    },
+    {
+      ...{
+        path               : 'space/list/item',
+        type               : 'item',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+        role               : false,
+        immutable          : false,
+        singleton          : false,
+        schemaUri          : 'https://enbox.id/modules/groceries/v1/schemas/item',
+        squashable         : false,
+        maxBytes           : 1048576,
+        actions            : [
+          { role: 'collaboration:space/admin', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/editor', can: ['create', 'read', 'co-update', 'co-delete'] },
+          { role: 'collaboration:space/viewer', can: ['read'] },
+        ],
+      },
+      schema: GroceriesSchemas['item'],
+    },
   ],
   examples: [
     {
@@ -944,6 +1036,25 @@ export const GroceriesCatalog: ModuleCatalogEntry = {
       path     : 'list/viewer',
       encoding : 'json',
       data     : {},
+    },
+    {
+      path     : 'space/list',
+      encoding : 'json',
+      data     : {
+        name: 'Weekly groceries',
+      },
+    },
+    {
+      path     : 'space/list/item',
+      encoding : 'json',
+      data     : {
+        name     : 'Lemons',
+        quantity : {
+          value : '2',
+          unit  : 'piece',
+        },
+        state: 'needed',
+      },
     },
   ],
 };

@@ -1,0 +1,12 @@
+{
+  "summary": "Wallet discovery information published by a wallet owner.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "wallet discovery",
+      "connect wallet"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Use wallet setup and discovery. A connection request confers no generic profile or record-writing authority."
+}

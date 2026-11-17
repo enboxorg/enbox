@@ -1,0 +1,24 @@
+{
+  "summary": "Household service accounts, physical meters and actual meter readings.",
+  "targets": [
+    {
+      "path": "account",
+      "utterance": "Record my water service account for the new apartment.",
+      "distinguish": "Resolve the service and residence. Financial Accounts holds banking or brokerage account identities."
+    },
+    {
+      "path": "account/meter/reading",
+      "utterance": "My water meter read 18,402 litres today.",
+      "distinguish": "Select the meter. The amount billed goes in Bills only from separate billing evidence."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "meter reading",
+      "electric meter",
+      "utility service",
+      "water meter"
+    ],
+    "sensitive": true
+  }
+}

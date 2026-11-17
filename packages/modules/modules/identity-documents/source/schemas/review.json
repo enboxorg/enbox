@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://enbox.id/modules/identity-documents/v1/schemas/review",
   "title": "ReviewData",
-  "description": "Identity Documents: review record.",
+  "description": "Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -22,133 +22,6 @@
     },
     "extraction": {
       "$ref": "#/definitions/reviewRecordReference"
-    },
-    "corrections": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "fullName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "givenNames": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "minItems": 0,
-          "maxItems": 20
-        },
-        "familyName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "documentNumber": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "personalNumber": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "issuingCountry": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 3,
-          "pattern": "^[A-Z]{2,3}$"
-        },
-        "issuingRegion": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "issuingAuthority": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "nationalities": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 3,
-            "pattern": "^[A-Z]{2,3}$"
-          },
-          "minItems": 0,
-          "maxItems": 10
-        },
-        "dateOfBirth": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "issueDate": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "expiryDate": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 10,
-          "format": "date"
-        },
-        "address": {
-          "$ref": "#/definitions/reviewAddress"
-        },
-        "licenceCategories": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "category": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
-              },
-              "validFrom": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 10,
-                "format": "date"
-              },
-              "validUntil": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 10,
-                "format": "date"
-              },
-              "restrictions": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512
-                },
-                "minItems": 0,
-                "maxItems": 100
-              }
-            },
-            "required": [
-              "category"
-            ]
-          },
-          "minItems": 0,
-          "maxItems": 100
-        }
-      },
-      "required": [],
-      "minProperties": 1
     },
     "reason": {
       "type": "string",
@@ -171,8 +44,15 @@
   ],
   "examples": [
     {
-      "reviewedAt": "2026-01-15T12:00:00Z",
-      "decision": "accepted"
+      "reviewedAt": "2026-01-15T12:05:00Z",
+      "extraction": {
+        "recordId": "example-extraction"
+      },
+      "decision": "corrected",
+      "corrections": {
+        "documentNumber": "000DEMO123"
+      },
+      "reason": "Compared the document number with the scan."
     }
   ],
   "allOf": [
@@ -185,16 +65,38 @@
         }
       },
       "then": {
-        "required": [
-          "corrections"
+        "anyOf": [
+          {
+            "required": [
+              "corrections"
+            ]
+          },
+          {
+            "required": [
+              "documentType"
+            ]
+          }
         ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "corrections"
+              ]
+            },
+            {
+              "required": [
+                "documentType"
+              ]
+            }
+          ]
+        }
       }
     }
   ],
   "definitions": {
-    "reviewAddress": {
-      "$ref": "https://enbox.id/schemas/common/address/v1"
-    },
     "reviewRecordReference": {
       "$ref": "https://enbox.id/schemas/common/record-reference/v1"
     },

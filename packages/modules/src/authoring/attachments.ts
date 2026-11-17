@@ -27,6 +27,21 @@ export type AttachModuleDefinitionOptions = {
  * Run codegen on the result for literal-preserving typed application exports.
  */
 export function attachModuleDefinition(options: AttachModuleDefinitionOptions): ModuleDefinition {
+  if (options.module === options.source.module) {
+    throw new TypeError('attachModuleDefinition: an extension must have its own module URI.');
+  }
+  return buildAttachment(options, false);
+}
+
+/** Add another structural location for an existing record tree while keeping its module and payload identities. */
+export function addModuleAttachment(options: Omit<AttachModuleDefinitionOptions, 'module'>): ModuleDefinition {
+  if (Object.hasOwn(options.source.structure, options.attachment)) {
+    throw new TypeError(`addModuleAttachment: '${options.attachment}' conflicts with an existing root.`);
+  }
+  return buildAttachment({ ...options, module: options.source.module }, true);
+}
+
+function buildAttachment(options: AttachModuleDefinitionOptions, includeSource: boolean): ModuleDefinition {
   const { source, provider, root, alias, attachment, parentPath } = options;
   assertModulePath(root);
   assertModulePath(attachment);
@@ -34,7 +49,7 @@ export function attachModuleDefinition(options: AttachModuleDefinitionOptions): 
   if (root.includes('/') || attachment.includes('/') || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(alias)) {
     throw new TypeError('attachModuleDefinition: root, attachment, and alias must be single names.');
   }
-  if (options.module === source.module || options.module === provider.module) {
+  if (options.module === provider.module) {
     throw new TypeError('attachModuleDefinition: an extension must have its own module URI.');
   }
   const sourceRoot = source.structure[root];
@@ -109,10 +124,10 @@ export function attachModuleDefinition(options: AttachModuleDefinitionOptions): 
   }
   const definition: ModuleDefinition = {
     module    : options.module,
-    published : true,
+    published : includeSource ? source.published : true,
     uses,
-    types,
-    structure : { [attachment]: { $ref: `${alias}:${parentPath}`, [root]: subtree } },
+    types     : includeSource ? structuredClone(source.types) : types,
+    structure : { ...(includeSource ? structuredClone(source.structure) : {}), [attachment]: { $ref: `${alias}:${parentPath}`, [root]: subtree } },
   };
   validateAuthoredGraph(definition, [provider, ...(options.dependencies ?? [])]);
   return definition;

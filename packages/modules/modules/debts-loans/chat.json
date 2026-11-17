@@ -1,0 +1,24 @@
+{
+  "summary": "Individual borrowing and lending agreements, repayment terms and actual repayments.",
+  "targets": [
+    {
+      "path": "loan",
+      "utterance": "I lent my brother 100 dollars, repayable in March.",
+      "distinguish": "The agreement describes who owes whom. A ledger movement requires independent account details."
+    },
+    {
+      "path": "loan/repayment",
+      "utterance": "Record the 25 dollars he repaid on that loan.",
+      "distinguish": "Select the loan; link a known transaction when appropriate. Distinguish money received from an instalment that is only due."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "loan agreement",
+      "borrowed",
+      "lent money",
+      "repayment"
+    ],
+    "sensitive": true
+  }
+}

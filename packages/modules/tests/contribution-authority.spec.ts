@@ -1,6 +1,7 @@
 import type { ModuleTestActor } from './utils/module-test-world.js';
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
+import { CollaborationDefinition } from '../src/collaboration.js';
 import { ModuleTestWorld } from './utils/module-test-world.js';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { ConversationsCodecs, ConversationsDefinition } from '../src/conversations.js';
@@ -31,7 +32,9 @@ describe('collaborative state and authored contributions', () => {
   }
 
   beforeAll(async () => {
-    world = await ModuleTestWorld.create([EventsDefinition, SharedExpensesDefinition, GroceriesDefinition, ConversationsDefinition]);
+    world = await ModuleTestWorld.create([
+      CollaborationDefinition, EventsDefinition, SharedExpensesDefinition, GroceriesDefinition, ConversationsDefinition,
+    ]);
     [owner, editor, viewer, attendee] = world.actors;
     const eventResult = await world.write({
       actor      : owner,

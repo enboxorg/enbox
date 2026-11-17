@@ -1,0 +1,23 @@
+{
+  "summary": "Non-secret account and identity-link details for websites and services.",
+  "targets": [
+    {
+      "path": "account",
+      "utterance": "Remember the username I use at the library website.",
+      "distinguish": "Store the non-secret login identifier. Financial account identities and credentials have separate owners."
+    },
+    {
+      "path": "account/identityLink",
+      "utterance": "Record that I linked my DID to my selected service account.",
+      "distinguish": "Keep passwords, private keys and recovery secrets out of this record."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "service account",
+      "username",
+      "account handle"
+    ],
+    "sensitive": true
+  }
+}

@@ -13,356 +13,11 @@ import { defineModule, recordCodecs } from '@enbox/api';
 // Data types
 // ---------------------------------------------------------------------------
 
-export type DocumentAlert = {
-  id: string;
-  at?: string;
-  offsetSeconds?: number;
-  anchor?: 'start' | 'end' | 'due';
-  channel?: 'app' | 'push' | 'email';
-  enabled?: boolean;
-  snoozedUntil?: string;
-  dismissedAt?: string;
-} & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1 & {
-    id: string;
-    at?: string;
-    offsetSeconds?: number;
-    anchor?: 'start' | 'end' | 'due';
-    channel?: 'app' | 'push' | 'email';
-    enabled?: boolean;
-    snoozedUntil?: string;
-    dismissedAt?: string;
-  } & DocumentAlert1;
-export type DocumentAlert1 =
-  | {
-      [k: string]: unknown;
-    }
-  | {
-      [k: string]: unknown;
-    };
-export type DocumentNoteText = string;
 /**
- * @maxItems 64
- */
-export type DocumentLabels = string[];
-
-/**
- * Identity Documents: document record.
- */
-/**
- * Identity Documents: document record.
+ * One identity document issuance. Keep common holder and issuer details with the document number and validity period.
  */
 export type DocumentData = {
   label: string;
-  documentType: 'passport' | 'national-id' | 'state-id' | 'drivers-licence' | 'other' | 'unknown';
-  fields?: {
-    fullName?: string;
-    /**
-     * @minItems 0
-     * @maxItems 20
-     */
-    givenNames?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ];
-    familyName?: string;
-    documentNumber?: string;
-    personalNumber?: string;
-    issuingCountry?: string;
-    issuingRegion?: string;
-    issuingAuthority?: string;
-    /**
-     * @minItems 0
-     * @maxItems 10
-     */
-    nationalities?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string];
-    dateOfBirth?: string;
-    issueDate?: string;
-    expiryDate?: string;
-    address?: DocumentAddress;
-    /**
-     * @minItems 0
-     * @maxItems 100
-     */
-    licenceCategories?: {
-      category: string;
-      validFrom?: string;
-      validUntil?: string;
-      /**
-       * @minItems 0
-       * @maxItems 100
-       */
-      restrictions?: string[];
-    }[];
-  };
   /**
    * @minItems 0
    * @maxItems 50
@@ -584,15 +239,381 @@ export type DocumentData = {
   notes?: DocumentNoteText;
   source?: DocumentSource;
   labels?: DocumentLabels;
+  /**
+   * Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.
+   */
+  documentType: 'passport' | 'national-id' | 'state-id' | 'drivers-licence' | 'other' | 'unknown';
+  fields?: {
+    holder?: {
+      fullName?: string;
+      /**
+       * @minItems 1
+       * @maxItems 20
+       */
+      givenNames?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
+      familyName?: string;
+      /**
+       * Identifier of the holder as printed. Preserve leading zeros.
+       */
+      personalNumber?: string;
+      dateOfBirth?: string;
+      /**
+       * @minItems 1
+       * @maxItems 10
+       */
+      nationalities?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string];
+      address?: DocumentAddress;
+    };
+    issuer?: {
+      name?: string;
+      /**
+       * Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.
+       */
+      country?: string;
+      region?: string;
+    };
+    /**
+     * Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.
+     */
+    documentNumber?: string;
+    issueDate?: string;
+    expiryDate?: string;
+    /**
+     * One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.
+     *
+     * @minItems 1
+     * @maxItems 100
+     */
+    drivingPrivileges?: [
+      {
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      },
+      ...{
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      }[],
+    ];
+    /**
+     * Document type code as printed on the passport. Omit when absent.
+     */
+    passportTypeCode?: string;
+  };
 };
-export type DocumentAddress = {
-  formatted?: string;
-  street?: string;
-  locality?: string;
-  region?: string;
-  postalCode?: string;
-  countryCode?: string;
-};
+export type DocumentAlert = {
+  id: string;
+  at?: string;
+  offsetSeconds?: number;
+  anchor?: 'start' | 'end' | 'due';
+  channel?: 'app' | 'push' | 'email';
+  enabled?: boolean;
+  snoozedUntil?: string;
+  dismissedAt?: string;
+} & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1 & {
+    id: string;
+    at?: string;
+    offsetSeconds?: number;
+    anchor?: 'start' | 'end' | 'due';
+    channel?: 'app' | 'push' | 'email';
+    enabled?: boolean;
+    snoozedUntil?: string;
+    dismissedAt?: string;
+  } & DocumentAlert1;
+export type DocumentAlert1 =
+  | {
+      [k: string]: unknown;
+    }
+  | {
+      [k: string]: unknown;
+    };
+export type DocumentNoteText = string;
+/**
+ * @maxItems 64
+ */
+export type DocumentLabels = string[];
+
 /**
  * A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.
  */
@@ -620,9 +641,17 @@ export type DocumentSource = {
   reviewedAt?: string;
   reviewerDid?: string;
 };
+export type DocumentAddress = {
+  formatted?: string;
+  street?: string;
+  locality?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+};
 
 /**
- * Identity Documents: extraction record.
+ * One immutable extraction attempt. documentType records the observed classification when available.
  */
 export type ExtractionData = {
   /**
@@ -634,159 +663,192 @@ export type ExtractionData = {
   extractor: string;
   extractorVersion?: string;
   state: 'complete' | 'partial' | 'failed';
-  fields?: {
-    fullName?: string;
-    /**
-     * @minItems 0
-     * @maxItems 20
-     */
-    givenNames?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ];
-    familyName?: string;
-    documentNumber?: string;
-    personalNumber?: string;
-    issuingCountry?: string;
-    issuingRegion?: string;
-    issuingAuthority?: string;
-    /**
-     * @minItems 0
-     * @maxItems 10
-     */
-    nationalities?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string];
-    dateOfBirth?: string;
-    issueDate?: string;
-    expiryDate?: string;
-    address?: ExtractionAddress;
-    /**
-     * @minItems 0
-     * @maxItems 100
-     */
-    licenceCategories?: {
-      category: string;
-      validFrom?: string;
-      validUntil?: string;
-      /**
-       * @minItems 0
-       * @maxItems 100
-       */
-      restrictions?: string[];
-    }[];
-  };
   rawText?: string;
   confidence?: number;
   error?: string;
   notes?: ExtractionNoteText;
   source?: ExtractionSource;
   labels?: ExtractionLabels;
+  /**
+   * Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.
+   */
+  documentType?: 'passport' | 'national-id' | 'state-id' | 'drivers-licence' | 'other' | 'unknown';
+  fields?: {
+    holder?: {
+      fullName?: string;
+      /**
+       * @minItems 1
+       * @maxItems 20
+       */
+      givenNames?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
+      familyName?: string;
+      /**
+       * Identifier of the holder as printed. Preserve leading zeros.
+       */
+      personalNumber?: string;
+      dateOfBirth?: string;
+      /**
+       * @minItems 1
+       * @maxItems 10
+       */
+      nationalities?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string];
+      address?: ExtractionAddress;
+    };
+    issuer?: {
+      name?: string;
+      /**
+       * Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.
+       */
+      country?: string;
+      region?: string;
+    };
+    /**
+     * Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.
+     */
+    documentNumber?: string;
+    issueDate?: string;
+    expiryDate?: string;
+    /**
+     * One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.
+     *
+     * @minItems 1
+     * @maxItems 100
+     */
+    drivingPrivileges?: [
+      {
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      },
+      ...{
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      }[],
+    ];
+    /**
+     * Document type code as printed on the passport. Omit when absent.
+     */
+    passportTypeCode?: string;
+  };
 };
 export type ExtractionNoteText = string;
 /**
@@ -808,14 +870,6 @@ export type ExtractionRecordReference = {
   contextId?: string;
   messageCid?: string;
 };
-export type ExtractionAddress = {
-  formatted?: string;
-  street?: string;
-  locality?: string;
-  region?: string;
-  postalCode?: string;
-  countryCode?: string;
-};
 export type ExtractionSource = {
   kind: 'user-statement' | 'document-extraction' | 'import' | 'measurement' | 'derived';
   uri?: string;
@@ -829,165 +883,206 @@ export type ExtractionSource = {
   reviewedAt?: string;
   reviewerDid?: string;
 };
+export type ExtractionAddress = {
+  formatted?: string;
+  street?: string;
+  locality?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
+};
 
 /**
- * Identity Documents: review record.
+ * Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.
  */
 export type ReviewData = {
   reviewedAt: string;
   decision: 'accepted' | 'corrected' | 'rejected';
   extraction?: ReviewRecordReference;
-  corrections?: {
-    fullName?: string;
-    /**
-     * @minItems 0
-     * @maxItems 20
-     */
-    givenNames?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ];
-    familyName?: string;
-    documentNumber?: string;
-    personalNumber?: string;
-    issuingCountry?: string;
-    issuingRegion?: string;
-    issuingAuthority?: string;
-    /**
-     * @minItems 0
-     * @maxItems 10
-     */
-    nationalities?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string];
-    dateOfBirth?: string;
-    issueDate?: string;
-    expiryDate?: string;
-    address?: ReviewAddress;
-    /**
-     * @minItems 0
-     * @maxItems 100
-     */
-    licenceCategories?: {
-      category: string;
-      validFrom?: string;
-      validUntil?: string;
-      /**
-       * @minItems 0
-       * @maxItems 100
-       */
-      restrictions?: string[];
-    }[];
-  };
   reason?: string;
   notes?: ReviewNoteText;
   source?: ReviewSource;
   labels?: ReviewLabels;
+  /**
+   * Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.
+   */
+  documentType?: 'passport' | 'national-id' | 'state-id' | 'drivers-licence' | 'other' | 'unknown';
+  corrections?: {
+    holder?: {
+      fullName?: string;
+      /**
+       * @minItems 1
+       * @maxItems 20
+       */
+      givenNames?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
+      familyName?: string;
+      /**
+       * Identifier of the holder as printed. Preserve leading zeros.
+       */
+      personalNumber?: string;
+      dateOfBirth?: string;
+      /**
+       * @minItems 1
+       * @maxItems 10
+       */
+      nationalities?:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string];
+      address?: ReviewAddress;
+    };
+    issuer?: {
+      name?: string;
+      /**
+       * Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.
+       */
+      country?: string;
+      region?: string;
+    };
+    /**
+     * Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.
+     */
+    documentNumber?: string;
+    issueDate?: string;
+    expiryDate?: string;
+    /**
+     * One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.
+     *
+     * @minItems 1
+     * @maxItems 100
+     */
+    drivingPrivileges?: [
+      {
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      },
+      ...{
+        category: string;
+        validFrom?: string;
+        validUntil?: string;
+        /**
+         * @minItems 0
+         * @maxItems 100
+         */
+        restrictions?: string[];
+      }[],
+    ];
+    /**
+     * Document type code as printed on the passport. Omit when absent.
+     */
+    passportTypeCode?: string;
+  };
 };
 export type ReviewNoteText = string;
 /**
@@ -1009,14 +1104,6 @@ export type ReviewRecordReference = {
   contextId?: string;
   messageCid?: string;
 };
-export type ReviewAddress = {
-  formatted?: string;
-  street?: string;
-  locality?: string;
-  region?: string;
-  postalCode?: string;
-  countryCode?: string;
-};
 export type ReviewSource = {
   kind: 'user-statement' | 'document-extraction' | 'import' | 'measurement' | 'derived';
   uri?: string;
@@ -1029,6 +1116,14 @@ export type ReviewSource = {
   extractorVersion?: string;
   reviewedAt?: string;
   reviewerDid?: string;
+};
+export type ReviewAddress = {
+  formatted?: string;
+  street?: string;
+  locality?: string;
+  region?: string;
+  postalCode?: string;
+  countryCode?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -1079,7 +1174,7 @@ export const IdentityDocumentsDefinition = {
 /* eslint-disable */
 // prettier-ignore
 // @ts-expect-error -- Ajv emits minified JavaScript; the explicit type below is the generated contract.
-const moduleValidators: {readonly validateDocumentData: RecordValidator;readonly validateExtractionData: RecordValidator;readonly validateReviewData: RecordValidator} = (()=>{var le=Object.defineProperty;var ze=Object.getOwnPropertyDescriptor;var Ue=Object.getOwnPropertyNames;var Ve=Object.prototype.hasOwnProperty;var Pe=(a,r)=>()=>{try{return r||a((r={exports:{}}).exports,r),r.exports}catch(q){throw r=0,q}},Fe=(a,r)=>{for(var q in r)le(a,q,{get:r[q],enumerable:!0})},Se=(a,r,q,$)=>{if(r&&typeof r=="object"||typeof r=="function")for(let V of Ue(r))!Ve.call(a,V)&&V!==q&&le(a,V,{get:()=>r[V],enumerable:!($=ze(r,V))||$.enumerable});return a};var Ze=a=>Se(le({},"__esModule",{value:!0}),a);var be=Pe(he=>{"use strict";Object.defineProperty(he,"__esModule",{value:!0});function ke(a){let r=a.length,q=0,$=0,V;for(;$<r;)q++,V=a.charCodeAt($++),V>=55296&&V<=56319&&$<r&&(V=a.charCodeAt($),(V&64512)===56320&&$++);return q}he.default=ke;ke.code='require("ajv/dist/runtime/ucs2length").default'});var fe=Pe(ie=>{"use strict";Object.defineProperty(ie,"__esModule",{value:!0});ie.formatNames=ie.fastFormats=ie.fullFormats=void 0;function ae(a,r){return{validate:a,compare:r}}ie.fullFormats={date:ae(Ae,ve),time:ae(ue(!0),we),"date-time":ae(Ne(!0),Ie),"iso-time":ae(ue(),Re),"iso-date-time":ae(Ne(),Ce),duration:/^P(?!$)((\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?|(\d+W)?)$/,uri:Ye,"uri-reference":/^(?:[a-z][a-z0-9+\-.]*:)?(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'"()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?(?:\?(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i,"uri-template":/^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$/i,url:/^(?:https?|ftp):\/\/(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)(?:\.(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)*(?:\.(?:[a-z\u{00a1}-\u{ffff}]{2,})))(?::\d{2,5})?(?:\/[^\s]*)?$/iu,email:/^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i,hostname:/^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-0-9a-z]{0,61}[0-9a-z])?)*\.?$/i,ipv4:/^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/,ipv6:/^((([0-9a-f]{1,4}:){7}([0-9a-f]{1,4}|:))|(([0-9a-f]{1,4}:){6}(:[0-9a-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9a-f]{1,4}:){5}(((:[0-9a-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9a-f]{1,4}:){4}(((:[0-9a-f]{1,4}){1,3})|((:[0-9a-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){3}(((:[0-9a-f]{1,4}){1,4})|((:[0-9a-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){2}(((:[0-9a-f]{1,4}){1,5})|((:[0-9a-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){1}(((:[0-9a-f]{1,4}){1,6})|((:[0-9a-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9a-f]{1,4}){1,7})|((:[0-9a-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))$/i,regex:rr,uuid:/^(?:urn:uuid:)?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i,"json-pointer":/^(?:\/(?:[^~/]|~0|~1)*)*$/,"json-pointer-uri-fragment":/^#(?:\/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$/i,"relative-json-pointer":/^(?:0|[1-9][0-9]*)(?:#|(?:\/(?:[^~/]|~0|~1)*)*)$/,byte:Ge,int32:{type:"number",validate:Je},int64:{type:"number",validate:Qe},float:{type:"number",validate:Te},double:{type:"number",validate:Te},password:!0,binary:!0};ie.fastFormats={...ie.fullFormats,date:ae(/^\d\d\d\d-[0-1]\d-[0-3]\d$/,ve),time:ae(/^(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)$/i,we),"date-time":ae(/^\d\d\d\d-[0-1]\d-[0-3]\dt(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)$/i,Ie),"iso-time":ae(/^(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)?$/i,Re),"iso-date-time":ae(/^\d\d\d\d-[0-1]\d-[0-3]\d[t\s](?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)?$/i,Ce),uri:/^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/)?[^\s]*$/i,"uri-reference":/^(?:(?:[a-z][a-z0-9+\-.]*:)?\/?\/)?(?:[^\\\s#][^\s#]*)?(?:#[^\\\s]*)?$/i,email:/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i};ie.formatNames=Object.keys(ie.fullFormats);function Be(a){return a%4===0&&(a%100!==0||a%400===0)}var Ee=/^(\d\d\d\d)-(\d\d)-(\d\d)$/,Me=[0,31,28,31,30,31,30,31,31,30,31,30,31];function Ae(a){let r=Ee.exec(a);if(!r)return!1;let q=+r[1],$=+r[2],V=+r[3];return $>=1&&$<=12&&V>=1&&V<=($===2&&Be(q)?29:Me[$])}function ve(a,r){if(a&&r)return a>r?1:a<r?-1:0}var ge=/^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;function ue(a){return function(q){let $=ge.exec(q);if(!$)return!1;let V=+$[1],L=+$[2],e=+$[3],u=$[4],N=$[5]==="-"?-1:1,W=+($[6]||0),H=+($[7]||0);if(W>23||H>59||a&&!u)return!1;if(V<=23&&L<=59&&e<60)return!0;let i=L-H*N,n=V-W*N-(i<0?1:0);return(n===23||n===-1)&&(i===59||i===-1)&&e<61}}function we(a,r){if(!(a&&r))return;let q=new Date("2020-01-01T"+a).valueOf(),$=new Date("2020-01-01T"+r).valueOf();if(q&&$)return q-$}function Re(a,r){if(!(a&&r))return;let q=ge.exec(a),$=ge.exec(r);if(q&&$)return a=q[1]+q[2]+q[3],r=$[1]+$[2]+$[3],a>r?1:a<r?-1:0}var ye=/t|\s/i;function Ne(a){let r=ue(a);return function($){let V=$.split(ye);return V.length===2&&Ae(V[0])&&r(V[1])}}function Ie(a,r){if(!(a&&r))return;let q=new Date(a).valueOf(),$=new Date(r).valueOf();if(q&&$)return q-$}function Ce(a,r){if(!(a&&r))return;let[q,$]=a.split(ye),[V,L]=r.split(ye),e=ve(q,V);if(e!==void 0)return e||we($,L)}var We=/\/|:/,He=/^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;function Ye(a){return We.test(a)&&He.test(a)}var Oe=/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;function Ge(a){return Oe.lastIndex=0,Oe.test(a)}var Ke=-(2**31),Xe=2**31-1;function Je(a){return Number.isInteger(a)&&a<=Xe&&a>=Ke}function Qe(a){return Number.isInteger(a)}function Te(){return!0}var er=/[^\\]\\Z/;function rr(a){if(er.test(a))return!1;try{return new RegExp(a),!0}catch{return!1}}});var ir={};Fe(ir,{validateDocumentData:()=>tr,validateExtractionData:()=>sr,validateReviewData:()=>ar});var tr=d,ce={$id:"https://enbox.id/modules/identity-documents/v1/schemas/document",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,definitions:{documentAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},documentAlert:{additionalProperties:!1,oneOf:[{not:{anyOf:[{required:["offsetSeconds"]},{required:["anchor"]}]},required:["at"]},{not:{required:["at"]},required:["offsetSeconds","anchor"]}],properties:{anchor:{enum:["start","end","due"],type:"string"},at:{format:"date-time",maxLength:64,minLength:1,type:"string"},channel:{enum:["app","push","email"],type:"string"},dismissedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},enabled:{type:"boolean"},id:{maxLength:128,minLength:1,type:"string"},offsetSeconds:{maximum:31536e4,minimum:-31536e4,type:"integer"},snoozedUntil:{format:"date-time",maxLength:64,minLength:1,type:"string"}},required:["id"],type:"object"},documentLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},documentNoteText:{maxLength:32768,minLength:0,type:"string"},documentRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},documentSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/documentRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"Identity Documents: document record.",examples:[{documentType:"passport",fields:{documentNumber:"EXAMPLE123",fullName:"Alex Example",issuingCountry:"GBR"},label:"Personal passport",reviewState:"unreviewed"}],properties:{alerts:{items:{$ref:"#/definitions/documentAlert"},maxItems:20,minItems:0,type:"array"},documentType:{enum:["passport","national-id","state-id","drivers-licence","other","unknown"],type:"string"},fields:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/documentAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},documentNumber:{maxLength:256,minLength:1,type:"string"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:0,type:"array"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuingAuthority:{maxLength:512,minLength:1,type:"string"},issuingCountry:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},issuingRegion:{maxLength:256,minLength:1,type:"string"},licenceCategories:{items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:0,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:0,type:"array"},personalNumber:{maxLength:256,minLength:1,type:"string"}},required:[],type:"object"},label:{maxLength:256,minLength:1,type:"string"},labels:{$ref:"#/definitions/documentLabels"},notes:{$ref:"#/definitions/documentNoteText"},reviewState:{enum:["unreviewed","reviewed","corrected","rejected"],type:"string"},source:{$ref:"#/definitions/documentSource"},sources:{items:{$ref:"#/definitions/documentRecordReference"},maxItems:50,minItems:0,type:"array"}},required:["label","documentType","reviewState"],title:"DocumentData",type:"object"},_e={additionalProperties:!1,oneOf:[{not:{anyOf:[{required:["offsetSeconds"]},{required:["anchor"]}]},required:["at"]},{not:{required:["at"]},required:["offsetSeconds","anchor"]}],properties:{anchor:{enum:["start","end","due"],type:"string"},at:{format:"date-time",maxLength:64,minLength:1,type:"string"},channel:{enum:["app","push","email"],type:"string"},dismissedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},enabled:{type:"boolean"},id:{maxLength:128,minLength:1,type:"string"},offsetSeconds:{maximum:31536e4,minimum:-31536e4,type:"integer"},snoozedUntil:{format:"date-time",maxLength:64,minLength:1,type:"string"}},required:["id"],type:"object"};var oe=Object.prototype.hasOwnProperty,s=be().default,te=fe().fullFormats["date-time"],K=fe().fullFormats.date,ne=fe().fullFormats.uri,xe=new RegExp("^[A-Z]{2}$","u"),pe=new RegExp("^[A-Z]{2,3}$","u"),re=new RegExp("^did:[a-z0-9]+:[^\\s]+$","u"),De={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/documentRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function O(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0;if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let W;if(a.kind===void 0&&(W="kind"))return O.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:W},message:"must have required property '"+W+"'"}],!1;{let H=e;for(let i in a)if(!oe.call(De.properties,i)){return O.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:i},message:"must NOT have additional properties"}],!1;break}if(H===e){if(a.actorDid!==void 0){let i=a.actorDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return O.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return O.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return O.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.conversationId!==void 0){let i=a.conversationId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return O.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractor!==void 0){let i=a.extractor,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return O.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractorVersion!==void 0){let i=a.extractorVersion,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return O.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.kind!==void 0){let i=a.kind,n=e;if(typeof i!="string")return O.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(i==="user-statement"||i==="document-extraction"||i==="import"||i==="measurement"||i==="derived"))return O.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:De.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var u=n===e}else var u=!0;if(u){if(a.messageId!==void 0){let i=a.messageId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return O.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.observedAt!==void 0){let i=a.observedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return O.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return O.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return O.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.record!==void 0){let i=a.record,n=e;if(e===e)if(i&&typeof i=="object"&&!Array.isArray(i)){let b;if(i.recordId===void 0&&(b="recordId"))return O.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/required",keyword:"required",params:{missingProperty:b},message:"must have required property '"+b+"'"}],!1;{let X=e;for(let g in i)if(!(g==="contextId"||g==="messageCid"||g==="modulePath"||g==="moduleUri"||g==="recordId"||g==="tenantDid")){return O.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:g},message:"must NOT have additional properties"}],!1;break}if(X===e){if(i.contextId!==void 0){let g=i.contextId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>2048)return O.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.messageCid!==void 0){let g=i.messageCid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return O.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.modulePath!==void 0){let g=i.modulePath,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return O.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.moduleUri!==void 0){let g=i.moduleUri,w=e;if(e===w&&e===w)if(typeof g=="string"){if(s(g)>8192)return O.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(g))return O.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return O.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.recordId!==void 0){let g=i.recordId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return O.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return O.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N)if(i.tenantDid!==void 0){let g=i.tenantDid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>4096)return O.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(g)<1)return O.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(g))return O.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return O.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0}}}}}}}else return O.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewedAt!==void 0){let i=a.reviewedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return O.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return O.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return O.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewerDid!==void 0){let i=a.reviewerDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return O.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return O.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return O.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u)if(a.uri!==void 0){let i=a.uri,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>8192)return O.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(i)<1)return O.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(i))return O.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return O.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0}}}}}}}}}}}}else return O.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return O.errors=L,e===0}function d(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0;if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let S;if(a.label===void 0&&(S="label")||a.documentType===void 0&&(S="documentType")||a.reviewState===void 0&&(S="reviewState"))return d.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:S},message:"must have required property '"+S+"'"}],!1;{let y=e;for(let m in a)if(!oe.call(ce.properties,m)){return d.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:m},message:"must NOT have additional properties"}],!1;break}if(y===e){if(a.alerts!==void 0){let m=a.alerts,k=e;if(e===k)if(Array.isArray(m)){if(m.length>20)return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(m.length<0)return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var u=!0;let Z=m.length;for(let o=0;o<Z;o++){let t=m[o],c=e,j=e,v=e,l=!1,R=null,P=e,x=e,F=e,z=e,C=!1,G=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let U;if(t.offsetSeconds===void 0&&(U="offsetSeconds")){let J={};L===null?L=[J]:L.push(J),e++}}var N=G===e;if(C=C||N,!C){let U=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let _;if(t.anchor===void 0&&(_="anchor")){let B={};L===null?L=[B]:L.push(B),e++}}var N=U===e;C=C||N}if(C)e=z,L!==null&&(z?L.length=z:L=null);else{let U={};L===null?L=[U]:L.push(U),e++}var W=F===e;if(W){let U={instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/oneOf/0/not",keyword:"not",params:{},message:"must NOT be valid"};L===null?L=[U]:L.push(U),e++}else e=x,L!==null&&(x?L.length=x:L=null);if(e===P&&t&&typeof t=="object"&&!Array.isArray(t)){let U;if(t.at===void 0&&(U="at")){let J={instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/oneOf/0/required",keyword:"required",params:{missingProperty:U},message:"must have required property '"+U+"'"};L===null?L=[J]:L.push(J),e++}}var i=P===e;i&&(l=!0,R=0);let me=e,Q=e,ee=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let U;if(t.at===void 0&&(U="at")){let J={};L===null?L=[J]:L.push(J),e++}}var H=ee===e;if(H){let U={instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/oneOf/1/not",keyword:"not",params:{},message:"must NOT be valid"};L===null?L=[U]:L.push(U),e++}else e=Q,L!==null&&(Q?L.length=Q:L=null);if(e===me&&t&&typeof t=="object"&&!Array.isArray(t)){let U;if(t.offsetSeconds===void 0&&(U="offsetSeconds")||t.anchor===void 0&&(U="anchor")){let J={instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/oneOf/1/required",keyword:"required",params:{missingProperty:U},message:"must have required property '"+U+"'"};L===null?L=[J]:L.push(J),e++}}var i=me===e;if(i&&l?(l=!1,R=[R,1]):i&&(l=!0,R=1),l)e=v,L!==null&&(v?L.length=v:L=null);else{let U={instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/oneOf",keyword:"oneOf",params:{passingSchemas:R},message:"must match exactly one schema in oneOf"};return L===null?L=[U]:L.push(U),e++,d.errors=L,!1}if(e===j)if(t&&typeof t=="object"&&!Array.isArray(t)){let U;if(t.id===void 0&&(U="id"))return d.errors=[{instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/required",keyword:"required",params:{missingProperty:U},message:"must have required property '"+U+"'"}],!1;{let J=e;for(let _ in t)if(!(_==="anchor"||_==="at"||_==="channel"||_==="dismissedAt"||_==="enabled"||_==="id"||_==="offsetSeconds"||_==="snoozedUntil")){return d.errors=[{instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:_},message:"must NOT have additional properties"}],!1;break}if(J===e){if(t.anchor!==void 0){let _=t.anchor,B=e;if(typeof _!="string")return d.errors=[{instancePath:r+"/alerts/"+o+"/anchor",schemaPath:"#/definitions/documentAlert/properties/anchor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(_==="start"||_==="end"||_==="due"))return d.errors=[{instancePath:r+"/alerts/"+o+"/anchor",schemaPath:"#/definitions/documentAlert/properties/anchor/enum",keyword:"enum",params:{allowedValues:_e.properties.anchor.enum},message:"must be equal to one of the allowed values"}],!1;var n=B===e}else var n=!0;if(n){if(t.at!==void 0){let _=t.at,B=e;if(e===B&&e===B)if(typeof _=="string"){if(s(_)>64)return d.errors=[{instancePath:r+"/alerts/"+o+"/at",schemaPath:"#/definitions/documentAlert/properties/at/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(_)<1)return d.errors=[{instancePath:r+"/alerts/"+o+"/at",schemaPath:"#/definitions/documentAlert/properties/at/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(_))return d.errors=[{instancePath:r+"/alerts/"+o+"/at",schemaPath:"#/definitions/documentAlert/properties/at/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+o+"/at",schemaPath:"#/definitions/documentAlert/properties/at/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=B===e}else var n=!0;if(n){if(t.channel!==void 0){let _=t.channel,B=e;if(typeof _!="string")return d.errors=[{instancePath:r+"/alerts/"+o+"/channel",schemaPath:"#/definitions/documentAlert/properties/channel/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(_==="app"||_==="push"||_==="email"))return d.errors=[{instancePath:r+"/alerts/"+o+"/channel",schemaPath:"#/definitions/documentAlert/properties/channel/enum",keyword:"enum",params:{allowedValues:_e.properties.channel.enum},message:"must be equal to one of the allowed values"}],!1;var n=B===e}else var n=!0;if(n){if(t.dismissedAt!==void 0){let _=t.dismissedAt,B=e;if(e===B&&e===B)if(typeof _=="string"){if(s(_)>64)return d.errors=[{instancePath:r+"/alerts/"+o+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(_)<1)return d.errors=[{instancePath:r+"/alerts/"+o+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(_))return d.errors=[{instancePath:r+"/alerts/"+o+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+o+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=B===e}else var n=!0;if(n){if(t.enabled!==void 0){let _=e;if(typeof t.enabled!="boolean")return d.errors=[{instancePath:r+"/alerts/"+o+"/enabled",schemaPath:"#/definitions/documentAlert/properties/enabled/type",keyword:"type",params:{type:"boolean"},message:"must be boolean"}],!1;var n=_===e}else var n=!0;if(n){if(t.id!==void 0){let _=t.id,B=e;if(e===B)if(typeof _=="string"){if(s(_)>128)return d.errors=[{instancePath:r+"/alerts/"+o+"/id",schemaPath:"#/definitions/documentAlert/properties/id/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(_)<1)return d.errors=[{instancePath:r+"/alerts/"+o+"/id",schemaPath:"#/definitions/documentAlert/properties/id/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/alerts/"+o+"/id",schemaPath:"#/definitions/documentAlert/properties/id/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=B===e}else var n=!0;if(n){if(t.offsetSeconds!==void 0){let _=t.offsetSeconds,B=e;if(!(typeof _=="number"&&!(_%1)&&!isNaN(_)&&isFinite(_)))return d.errors=[{instancePath:r+"/alerts/"+o+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/type",keyword:"type",params:{type:"integer"},message:"must be integer"}],!1;if(e===B&&typeof _=="number"&&isFinite(_)){if(_>31536e4||isNaN(_))return d.errors=[{instancePath:r+"/alerts/"+o+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/maximum",keyword:"maximum",params:{comparison:"<=",limit:31536e4},message:"must be <= 315360000"}],!1;if(_<-31536e4||isNaN(_))return d.errors=[{instancePath:r+"/alerts/"+o+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/minimum",keyword:"minimum",params:{comparison:">=",limit:-31536e4},message:"must be >= -315360000"}],!1}var n=B===e}else var n=!0;if(n)if(t.snoozedUntil!==void 0){let _=t.snoozedUntil,B=e;if(e===B&&e===B)if(typeof _=="string"){if(s(_)>64)return d.errors=[{instancePath:r+"/alerts/"+o+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(_)<1)return d.errors=[{instancePath:r+"/alerts/"+o+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(_))return d.errors=[{instancePath:r+"/alerts/"+o+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+o+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=B===e}else var n=!0}}}}}}}}}else return d.errors=[{instancePath:r+"/alerts/"+o,schemaPath:"#/definitions/documentAlert/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var u=c===e;if(!u)break}}}else return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var D=k===e}else var D=!0;if(D){if(a.documentType!==void 0){let m=a.documentType,k=e;if(typeof m!="string")return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(m==="passport"||m==="national-id"||m==="state-id"||m==="drivers-licence"||m==="other"||m==="unknown"))return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/enum",keyword:"enum",params:{allowedValues:ce.properties.documentType.enum},message:"must be equal to one of the allowed values"}],!1;var D=k===e}else var D=!0;if(D){if(a.fields!==void 0){let m=a.fields,k=e;if(e===k)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let o=e;for(let t in m)if(!oe.call(ce.properties.fields.properties,t)){return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:t},message:"must NOT have additional properties"}],!1;break}if(o===e){if(m.address!==void 0){let t=m.address,c=e;if(e===e)if(t&&typeof t=="object"&&!Array.isArray(t)){if(Object.keys(t).length<1)return d.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/documentAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let v=e;for(let l in t)if(!(l==="countryCode"||l==="formatted"||l==="locality"||l==="postalCode"||l==="region"||l==="street")){return d.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/documentAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:l},message:"must NOT have additional properties"}],!1;break}if(v===e){if(t.countryCode!==void 0){let l=t.countryCode,R=e;if(e===R)if(typeof l=="string"){if(s(l)>2)return d.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!xe.test(l))return d.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0;if(I){if(t.formatted!==void 0){let l=t.formatted,R=e;if(e===R)if(typeof l=="string"){if(s(l)>2048)return d.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0;if(I){if(t.locality!==void 0){let l=t.locality,R=e;if(e===R)if(typeof l=="string"){if(s(l)>256)return d.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0;if(I){if(t.postalCode!==void 0){let l=t.postalCode,R=e;if(e===R)if(typeof l=="string"){if(s(l)>32)return d.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0;if(I){if(t.region!==void 0){let l=t.region,R=e;if(e===R)if(typeof l=="string"){if(s(l)>256)return d.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/documentAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/documentAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/documentAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0;if(I)if(t.street!==void 0){let l=t.street,R=e;if(e===R)if(typeof l=="string"){if(s(l)>512)return d.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/documentAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(l)<1)return d.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/documentAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/documentAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=R===e}else var I=!0}}}}}}}else return d.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/documentAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var b=c===e}else var b=!0;if(b){if(m.dateOfBirth!==void 0){let t=m.dateOfBirth,c=e;if(e===c&&e===c)if(typeof t=="string"){if(s(t)>10)return d.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(t))return d.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.documentNumber!==void 0){let t=m.documentNumber,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.expiryDate!==void 0){let t=m.expiryDate,c=e;if(e===c&&e===c)if(typeof t=="string"){if(s(t)>10)return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(t))return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.familyName!==void 0){let t=m.familyName,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return d.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.fullName!==void 0){let t=m.fullName,c=e;if(e===c)if(typeof t=="string"){if(s(t)>512)return d.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.givenNames!==void 0){let t=m.givenNames,c=e;if(e===c)if(Array.isArray(t)){if(t.length>20)return d.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(t.length<0)return d.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var X=!0;let v=t.length;for(let l=0;l<v;l++){let R=t[l],P=e;if(e===P)if(typeof R=="string"){if(s(R)>128)return d.errors=[{instancePath:r+"/fields/givenNames/"+l,schemaPath:"#/properties/fields/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(R)<1)return d.errors=[{instancePath:r+"/fields/givenNames/"+l,schemaPath:"#/properties/fields/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/givenNames/"+l,schemaPath:"#/properties/fields/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=P===e;if(!X)break}}}else return d.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var b=c===e}else var b=!0;if(b){if(m.issueDate!==void 0){let t=m.issueDate,c=e;if(e===c&&e===c)if(typeof t=="string"){if(s(t)>10)return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(t))return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.issuingAuthority!==void 0){let t=m.issuingAuthority,c=e;if(e===c)if(typeof t=="string"){if(s(t)>512)return d.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.issuingCountry!==void 0){let t=m.issuingCountry,c=e;if(e===c)if(typeof t=="string"){if(s(t)>3)return d.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(t))return d.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.issuingRegion!==void 0){let t=m.issuingRegion,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return d.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0;if(b){if(m.licenceCategories!==void 0){let t=m.licenceCategories,c=e;if(e===c)if(Array.isArray(t)){if(t.length>100)return d.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(t.length<0)return d.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var g=!0;let v=t.length;for(let l=0;l<v;l++){let R=t[l],P=e;if(e===P)if(R&&typeof R=="object"&&!Array.isArray(R)){let F;if(R.category===void 0&&(F="category"))return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l,schemaPath:"#/properties/fields/properties/licenceCategories/items/required",keyword:"required",params:{missingProperty:F},message:"must have required property '"+F+"'"}],!1;{let z=e;for(let C in R)if(!(C==="category"||C==="restrictions"||C==="validFrom"||C==="validUntil")){return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l,schemaPath:"#/properties/fields/properties/licenceCategories/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:C},message:"must NOT have additional properties"}],!1;break}if(z===e){if(R.category!==void 0){let C=R.category,G=e;if(e===G)if(typeof C=="string"){if(s(C)>64)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(C)<1)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=G===e}else var w=!0;if(w){if(R.restrictions!==void 0){let C=R.restrictions,G=e;if(e===G)if(Array.isArray(C)){if(C.length>100)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(C.length<0)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var E=!0;let Q=C.length;for(let ee=0;ee<Q;ee++){let de=C[ee],U=e;if(e===U)if(typeof de=="string"){if(s(de)>512)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions/"+ee,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(de)<1)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions/"+ee,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions/"+ee,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=U===e;if(!E)break}}}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var w=G===e}else var w=!0;if(w){if(R.validFrom!==void 0){let C=R.validFrom,G=e;if(e===G&&e===G)if(typeof C=="string"){if(s(C)>10)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(C)<1)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(C))return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=G===e}else var w=!0;if(w)if(R.validUntil!==void 0){let C=R.validUntil,G=e;if(e===G&&e===G)if(typeof C=="string"){if(s(C)>10)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(C)<1)return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(C))return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=G===e}else var w=!0}}}}}else return d.errors=[{instancePath:r+"/fields/licenceCategories/"+l,schemaPath:"#/properties/fields/properties/licenceCategories/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var g=P===e;if(!g)break}}}else return d.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var b=c===e}else var b=!0;if(b){if(m.nationalities!==void 0){let t=m.nationalities,c=e;if(e===c)if(Array.isArray(t)){if(t.length>10)return d.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(t.length<0)return d.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var se=!0;let v=t.length;for(let l=0;l<v;l++){let R=t[l],P=e;if(e===P)if(typeof R=="string"){if(s(R)>3)return d.errors=[{instancePath:r+"/fields/nationalities/"+l,schemaPath:"#/properties/fields/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(R)<1)return d.errors=[{instancePath:r+"/fields/nationalities/"+l,schemaPath:"#/properties/fields/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(R))return d.errors=[{instancePath:r+"/fields/nationalities/"+l,schemaPath:"#/properties/fields/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/nationalities/"+l,schemaPath:"#/properties/fields/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var se=P===e;if(!se)break}}}else return d.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var b=c===e}else var b=!0;if(b)if(m.personalNumber!==void 0){let t=m.personalNumber,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return d.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return d.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=c===e}else var b=!0}}}}}}}}}}}}}}}else return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var D=k===e}else var D=!0;if(D){if(a.label!==void 0){let m=a.label,k=e;if(e===k)if(typeof m=="string"){if(s(m)>256)return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(m)<1)return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=k===e}else var D=!0;if(D){if(a.labels!==void 0){let m=a.labels,k=e;if(e===e)if(Array.isArray(m)){if(m.length>64)return d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var Y=!0;let t=m.length;for(let c=0;c<t;c++){let j=m[c],v=e;if(e===v)if(typeof j=="string"){if(s(j)>80)return d.errors=[{instancePath:r+"/labels/"+c,schemaPath:"#/definitions/documentLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(s(j)<1)return d.errors=[{instancePath:r+"/labels/"+c,schemaPath:"#/definitions/documentLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/labels/"+c,schemaPath:"#/definitions/documentLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Y=v===e;if(!Y)break}if(Y){let c=m.length,j;if(c>1){let v={};for(;c--;){let l=m[c];if(typeof l=="string"){if(typeof v[l]=="number"){return j=v[l],d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/uniqueItems",keyword:"uniqueItems",params:{i:c,j},message:"must NOT have duplicate items (items ## "+j+" and "+c+" are identical)"}],!1;break}v[l]=c}}}}}}else return d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var D=k===e}else var D=!0;if(D){if(a.notes!==void 0){let m=a.notes,k=e;if(e===e)if(typeof m=="string"){if(s(m)>32768)return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(s(m)<0)return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=k===e}else var D=!0;if(D){if(a.reviewState!==void 0){let m=a.reviewState,k=e;if(typeof m!="string")return d.errors=[{instancePath:r+"/reviewState",schemaPath:"#/properties/reviewState/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(m==="unreviewed"||m==="reviewed"||m==="corrected"||m==="rejected"))return d.errors=[{instancePath:r+"/reviewState",schemaPath:"#/properties/reviewState/enum",keyword:"enum",params:{allowedValues:ce.properties.reviewState.enum},message:"must be equal to one of the allowed values"}],!1;var D=k===e}else var D=!0;if(D){if(a.source!==void 0){let m=e;O(a.source,{instancePath:r+"/source",parentData:a,parentDataProperty:"source",rootData:V})||(L=L===null?O.errors:L.concat(O.errors),e=L.length);var D=m===e}else var D=!0;if(D)if(a.sources!==void 0){let m=a.sources,k=e;if(e===k)if(Array.isArray(m)){if(m.length>50)return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/maxItems",keyword:"maxItems",params:{limit:50},message:"must NOT have more than 50 items"}],!1;if(m.length<0)return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var M=!0;let o=m.length;for(let t=0;t<o;t++){let c=m[t],j=e;if(e===e)if(c&&typeof c=="object"&&!Array.isArray(c)){let R;if(c.recordId===void 0&&(R="recordId"))return d.errors=[{instancePath:r+"/sources/"+t,schemaPath:"#/definitions/documentRecordReference/required",keyword:"required",params:{missingProperty:R},message:"must have required property '"+R+"'"}],!1;{let P=e;for(let x in c)if(!(x==="contextId"||x==="messageCid"||x==="modulePath"||x==="moduleUri"||x==="recordId"||x==="tenantDid")){return d.errors=[{instancePath:r+"/sources/"+t,schemaPath:"#/definitions/documentRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:x},message:"must NOT have additional properties"}],!1;break}if(P===e){if(c.contextId!==void 0){let x=c.contextId,F=e;if(e===F)if(typeof x=="string"){if(s(x)>2048)return d.errors=[{instancePath:r+"/sources/"+t+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0;if(h){if(c.messageCid!==void 0){let x=c.messageCid,F=e;if(e===F)if(typeof x=="string"){if(s(x)>512)return d.errors=[{instancePath:r+"/sources/"+t+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0;if(h){if(c.modulePath!==void 0){let x=c.modulePath,F=e;if(e===F)if(typeof x=="string"){if(s(x)>512)return d.errors=[{instancePath:r+"/sources/"+t+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0;if(h){if(c.moduleUri!==void 0){let x=c.moduleUri,F=e;if(e===F&&e===F)if(typeof x=="string"){if(s(x)>8192)return d.errors=[{instancePath:r+"/sources/"+t+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(x))return d.errors=[{instancePath:r+"/sources/"+t+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0;if(h){if(c.recordId!==void 0){let x=c.recordId,F=e;if(e===F)if(typeof x=="string"){if(s(x)>512)return d.errors=[{instancePath:r+"/sources/"+t+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0;if(h)if(c.tenantDid!==void 0){let x=c.tenantDid,F=e;if(e===F)if(typeof x=="string"){if(s(x)>4096)return d.errors=[{instancePath:r+"/sources/"+t+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(x)<1)return d.errors=[{instancePath:r+"/sources/"+t+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(x))return d.errors=[{instancePath:r+"/sources/"+t+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return d.errors=[{instancePath:r+"/sources/"+t+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var h=F===e}else var h=!0}}}}}}}else return d.errors=[{instancePath:r+"/sources/"+t,schemaPath:"#/definitions/documentRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var M=j===e;if(!M)break}}}else return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var D=k===e}else var D=!0}}}}}}}}}}else return d.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return d.errors=L,e===0}var sr=p,Le={$id:"https://enbox.id/modules/identity-documents/v1/schemas/extraction",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,allOf:[{else:{required:["fields"]},if:{properties:{state:{const:"failed"}}},then:{required:["error"]}}],definitions:{extractionAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},extractionLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},extractionNoteText:{maxLength:32768,minLength:0,type:"string"},extractionRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},extractionSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/extractionRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"Identity Documents: extraction record.",examples:[{extractedAt:"2026-01-15T12:00:00Z",extractor:"manual-import",fields:{fullName:"Alex Example"},sources:[{recordId:"example-record"}],state:"partial"}],properties:{confidence:{maximum:1,minimum:0,type:"number"},error:{maxLength:8192,minLength:1,type:"string"},extractedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},fields:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/extractionAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},documentNumber:{maxLength:256,minLength:1,type:"string"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:0,type:"array"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuingAuthority:{maxLength:512,minLength:1,type:"string"},issuingCountry:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},issuingRegion:{maxLength:256,minLength:1,type:"string"},licenceCategories:{items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:0,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:0,type:"array"},personalNumber:{maxLength:256,minLength:1,type:"string"}},required:[],type:"object"},labels:{$ref:"#/definitions/extractionLabels"},notes:{$ref:"#/definitions/extractionNoteText"},rawText:{maxLength:1e6,minLength:0,type:"string"},source:{$ref:"#/definitions/extractionSource"},sources:{items:{$ref:"#/definitions/extractionRecordReference"},maxItems:50,minItems:1,type:"array"},state:{enum:["complete","partial","failed"],type:"string"}},required:["sources","extractedAt","extractor","state"],title:"ExtractionData",type:"object"};var $e={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/extractionRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function T(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0;if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let W;if(a.kind===void 0&&(W="kind"))return T.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:W},message:"must have required property '"+W+"'"}],!1;{let H=e;for(let i in a)if(!oe.call($e.properties,i)){return T.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:i},message:"must NOT have additional properties"}],!1;break}if(H===e){if(a.actorDid!==void 0){let i=a.actorDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return T.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return T.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return T.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.conversationId!==void 0){let i=a.conversationId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return T.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractor!==void 0){let i=a.extractor,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return T.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractorVersion!==void 0){let i=a.extractorVersion,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return T.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.kind!==void 0){let i=a.kind,n=e;if(typeof i!="string")return T.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(i==="user-statement"||i==="document-extraction"||i==="import"||i==="measurement"||i==="derived"))return T.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:$e.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var u=n===e}else var u=!0;if(u){if(a.messageId!==void 0){let i=a.messageId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return T.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.observedAt!==void 0){let i=a.observedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return T.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return T.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return T.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.record!==void 0){let i=a.record,n=e;if(e===e)if(i&&typeof i=="object"&&!Array.isArray(i)){let b;if(i.recordId===void 0&&(b="recordId"))return T.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/required",keyword:"required",params:{missingProperty:b},message:"must have required property '"+b+"'"}],!1;{let X=e;for(let g in i)if(!(g==="contextId"||g==="messageCid"||g==="modulePath"||g==="moduleUri"||g==="recordId"||g==="tenantDid")){return T.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:g},message:"must NOT have additional properties"}],!1;break}if(X===e){if(i.contextId!==void 0){let g=i.contextId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>2048)return T.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.messageCid!==void 0){let g=i.messageCid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return T.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.modulePath!==void 0){let g=i.modulePath,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return T.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.moduleUri!==void 0){let g=i.moduleUri,w=e;if(e===w&&e===w)if(typeof g=="string"){if(s(g)>8192)return T.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(g))return T.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return T.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.recordId!==void 0){let g=i.recordId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return T.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return T.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N)if(i.tenantDid!==void 0){let g=i.tenantDid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>4096)return T.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(g)<1)return T.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(g))return T.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return T.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0}}}}}}}else return T.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewedAt!==void 0){let i=a.reviewedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return T.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return T.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return T.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewerDid!==void 0){let i=a.reviewerDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return T.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return T.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return T.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u)if(a.uri!==void 0){let i=a.uri,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>8192)return T.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(i)<1)return T.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(i))return T.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return T.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0}}}}}}}}}}}}else return T.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return T.errors=L,e===0}function p(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0,u=e,N=!0,W=e;if(a&&typeof a=="object"&&!Array.isArray(a)&&a.state!==void 0&&a.state!=="failed"){let h={};L===null?L=[h]:L.push(h),e++}var H=W===e;e=u,L!==null&&(u?L.length=u:L=null);let i;if(H){let h=e;if(a&&typeof a=="object"&&!Array.isArray(a)){let y;if(a.error===void 0&&(y="error"))return p.errors=[{instancePath:r,schemaPath:"#/allOf/0/then/required",keyword:"required",params:{missingProperty:y},message:"must have required property '"+y+"'"}],!1}var H=h===e;N=H,i="then"}else{let h=e;if(a&&typeof a=="object"&&!Array.isArray(a)){let y;if(a.fields===void 0&&(y="fields"))return p.errors=[{instancePath:r,schemaPath:"#/allOf/0/else/required",keyword:"required",params:{missingProperty:y},message:"must have required property '"+y+"'"}],!1}var H=h===e;N=H,i="else"}if(!N){let h={instancePath:r,schemaPath:"#/allOf/0/if",keyword:"if",params:{failingKeyword:i},message:'must match "'+i+'" schema'};return L===null?L=[h]:L.push(h),e++,p.errors=L,!1}if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let h;if(a.sources===void 0&&(h="sources")||a.extractedAt===void 0&&(h="extractedAt")||a.extractor===void 0&&(h="extractor")||a.state===void 0&&(h="state"))return p.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:h},message:"must have required property '"+h+"'"}],!1;{let S=e;for(let y in a)if(!oe.call(Le.properties,y)){return p.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:y},message:"must NOT have additional properties"}],!1;break}if(S===e){if(a.confidence!==void 0){let y=a.confidence,m=e;if(e===m)if(typeof y=="number"&&isFinite(y)){if(y>1||isNaN(y))return p.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/maximum",keyword:"maximum",params:{comparison:"<=",limit:1},message:"must be <= 1"}],!1;if(y<0||isNaN(y))return p.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/minimum",keyword:"minimum",params:{comparison:">=",limit:0},message:"must be >= 0"}],!1}else return p.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/type",keyword:"type",params:{type:"number"},message:"must be number"}],!1;var n=m===e}else var n=!0;if(n){if(a.error!==void 0){let y=a.error,m=e;if(e===m)if(typeof y=="string"){if(s(y)>8192)return p.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(y)<1)return p.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.extractedAt!==void 0){let y=a.extractedAt,m=e;if(e===m&&e===m)if(typeof y=="string"){if(s(y)>64)return p.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(y)<1)return p.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(y))return p.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return p.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.extractor!==void 0){let y=a.extractor,m=e;if(e===m)if(typeof y=="string"){if(s(y)>128)return p.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(y)<1)return p.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.extractorVersion!==void 0){let y=a.extractorVersion,m=e;if(e===m)if(typeof y=="string"){if(s(y)>128)return p.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(y)<1)return p.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.fields!==void 0){let y=a.fields,m=e;if(e===m)if(y&&typeof y=="object"&&!Array.isArray(y)){if(Object.keys(y).length<1)return p.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let Z=e;for(let o in y)if(!oe.call(Le.properties.fields.properties,o)){return p.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:o},message:"must NOT have additional properties"}],!1;break}if(Z===e){if(y.address!==void 0){let o=y.address,t=e;if(e===e)if(o&&typeof o=="object"&&!Array.isArray(o)){if(Object.keys(o).length<1)return p.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/extractionAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let j=e;for(let v in o)if(!(v==="countryCode"||v==="formatted"||v==="locality"||v==="postalCode"||v==="region"||v==="street")){return p.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/extractionAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:v},message:"must NOT have additional properties"}],!1;break}if(j===e){if(o.countryCode!==void 0){let v=o.countryCode,l=e;if(e===l)if(typeof v=="string"){if(s(v)>2)return p.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!xe.test(v))return p.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return p.errors=[{instancePath:r+"/fields/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0;if(D){if(o.formatted!==void 0){let v=o.formatted,l=e;if(e===l)if(typeof v=="string"){if(s(v)>2048)return p.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0;if(D){if(o.locality!==void 0){let v=o.locality,l=e;if(e===l)if(typeof v=="string"){if(s(v)>256)return p.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0;if(D){if(o.postalCode!==void 0){let v=o.postalCode,l=e;if(e===l)if(typeof v=="string"){if(s(v)>32)return p.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0;if(D){if(o.region!==void 0){let v=o.region,l=e;if(e===l)if(typeof v=="string"){if(s(v)>256)return p.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0;if(D)if(o.street!==void 0){let v=o.street,l=e;if(e===l)if(typeof v=="string"){if(s(v)>512)return p.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(v)<1)return p.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=l===e}else var D=!0}}}}}}}else return p.errors=[{instancePath:r+"/fields/address",schemaPath:"#/definitions/extractionAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var I=t===e}else var I=!0;if(I){if(y.dateOfBirth!==void 0){let o=y.dateOfBirth,t=e;if(e===t&&e===t)if(typeof o=="string"){if(s(o)>10)return p.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(o))return p.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return p.errors=[{instancePath:r+"/fields/dateOfBirth",schemaPath:"#/properties/fields/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.documentNumber!==void 0){let o=y.documentNumber,t=e;if(e===t)if(typeof o=="string"){if(s(o)>256)return p.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.expiryDate!==void 0){let o=y.expiryDate,t=e;if(e===t&&e===t)if(typeof o=="string"){if(s(o)>10)return p.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(o))return p.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return p.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.familyName!==void 0){let o=y.familyName,t=e;if(e===t)if(typeof o=="string"){if(s(o)>256)return p.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/familyName",schemaPath:"#/properties/fields/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.fullName!==void 0){let o=y.fullName,t=e;if(e===t)if(typeof o=="string"){if(s(o)>512)return p.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/fullName",schemaPath:"#/properties/fields/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.givenNames!==void 0){let o=y.givenNames,t=e;if(e===t)if(Array.isArray(o)){if(o.length>20)return p.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(o.length<0)return p.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var b=!0;let j=o.length;for(let v=0;v<j;v++){let l=o[v],R=e;if(e===R)if(typeof l=="string"){if(s(l)>128)return p.errors=[{instancePath:r+"/fields/givenNames/"+v,schemaPath:"#/properties/fields/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(l)<1)return p.errors=[{instancePath:r+"/fields/givenNames/"+v,schemaPath:"#/properties/fields/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/givenNames/"+v,schemaPath:"#/properties/fields/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=R===e;if(!b)break}}}else return p.errors=[{instancePath:r+"/fields/givenNames",schemaPath:"#/properties/fields/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var I=t===e}else var I=!0;if(I){if(y.issueDate!==void 0){let o=y.issueDate,t=e;if(e===t&&e===t)if(typeof o=="string"){if(s(o)>10)return p.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(o))return p.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return p.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.issuingAuthority!==void 0){let o=y.issuingAuthority,t=e;if(e===t)if(typeof o=="string"){if(s(o)>512)return p.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/issuingAuthority",schemaPath:"#/properties/fields/properties/issuingAuthority/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.issuingCountry!==void 0){let o=y.issuingCountry,t=e;if(e===t)if(typeof o=="string"){if(s(o)>3)return p.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(o))return p.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return p.errors=[{instancePath:r+"/fields/issuingCountry",schemaPath:"#/properties/fields/properties/issuingCountry/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.issuingRegion!==void 0){let o=y.issuingRegion,t=e;if(e===t)if(typeof o=="string"){if(s(o)>256)return p.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/issuingRegion",schemaPath:"#/properties/fields/properties/issuingRegion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0;if(I){if(y.licenceCategories!==void 0){let o=y.licenceCategories,t=e;if(e===t)if(Array.isArray(o)){if(o.length>100)return p.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(o.length<0)return p.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var X=!0;let j=o.length;for(let v=0;v<j;v++){let l=o[v],R=e;if(e===R)if(l&&typeof l=="object"&&!Array.isArray(l)){let x;if(l.category===void 0&&(x="category"))return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v,schemaPath:"#/properties/fields/properties/licenceCategories/items/required",keyword:"required",params:{missingProperty:x},message:"must have required property '"+x+"'"}],!1;{let F=e;for(let z in l)if(!(z==="category"||z==="restrictions"||z==="validFrom"||z==="validUntil")){return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v,schemaPath:"#/properties/fields/properties/licenceCategories/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:z},message:"must NOT have additional properties"}],!1;break}if(F===e){if(l.category!==void 0){let z=l.category,C=e;if(e===C)if(typeof z=="string"){if(s(z)>64)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(z)<1)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/category",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var g=C===e}else var g=!0;if(g){if(l.restrictions!==void 0){let z=l.restrictions,C=e;if(e===C)if(Array.isArray(z)){if(z.length>100)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(z.length<0)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var w=!0;let me=z.length;for(let Q=0;Q<me;Q++){let ee=z[Q],de=e;if(e===de)if(typeof ee=="string"){if(s(ee)>512)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions/"+Q,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(ee)<1)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions/"+Q,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions/"+Q,schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=de===e;if(!w)break}}}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/restrictions",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var g=C===e}else var g=!0;if(g){if(l.validFrom!==void 0){let z=l.validFrom,C=e;if(e===C&&e===C)if(typeof z=="string"){if(s(z)>10)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(z)<1)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(z))return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validFrom",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var g=C===e}else var g=!0;if(g)if(l.validUntil!==void 0){let z=l.validUntil,C=e;if(e===C&&e===C)if(typeof z=="string"){if(s(z)>10)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(z)<1)return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(z))return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v+"/validUntil",schemaPath:"#/properties/fields/properties/licenceCategories/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var g=C===e}else var g=!0}}}}}else return p.errors=[{instancePath:r+"/fields/licenceCategories/"+v,schemaPath:"#/properties/fields/properties/licenceCategories/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var X=R===e;if(!X)break}}}else return p.errors=[{instancePath:r+"/fields/licenceCategories",schemaPath:"#/properties/fields/properties/licenceCategories/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var I=t===e}else var I=!0;if(I){if(y.nationalities!==void 0){let o=y.nationalities,t=e;if(e===t)if(Array.isArray(o)){if(o.length>10)return p.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(o.length<0)return p.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var E=!0;let j=o.length;for(let v=0;v<j;v++){let l=o[v],R=e;if(e===R)if(typeof l=="string"){if(s(l)>3)return p.errors=[{instancePath:r+"/fields/nationalities/"+v,schemaPath:"#/properties/fields/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(l)<1)return p.errors=[{instancePath:r+"/fields/nationalities/"+v,schemaPath:"#/properties/fields/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(l))return p.errors=[{instancePath:r+"/fields/nationalities/"+v,schemaPath:"#/properties/fields/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return p.errors=[{instancePath:r+"/fields/nationalities/"+v,schemaPath:"#/properties/fields/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=R===e;if(!E)break}}}else return p.errors=[{instancePath:r+"/fields/nationalities",schemaPath:"#/properties/fields/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var I=t===e}else var I=!0;if(I)if(y.personalNumber!==void 0){let o=y.personalNumber,t=e;if(e===t)if(typeof o=="string"){if(s(o)>256)return p.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(o)<1)return p.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/fields/personalNumber",schemaPath:"#/properties/fields/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var I=t===e}else var I=!0}}}}}}}}}}}}}}}else return p.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var n=m===e}else var n=!0;if(n){if(a.labels!==void 0){let y=a.labels,m=e;if(e===e)if(Array.isArray(y)){if(y.length>64)return p.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var se=!0;let o=y.length;for(let t=0;t<o;t++){let c=y[t],j=e;if(e===j)if(typeof c=="string"){if(s(c)>80)return p.errors=[{instancePath:r+"/labels/"+t,schemaPath:"#/definitions/extractionLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(s(c)<1)return p.errors=[{instancePath:r+"/labels/"+t,schemaPath:"#/definitions/extractionLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/labels/"+t,schemaPath:"#/definitions/extractionLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var se=j===e;if(!se)break}if(se){let t=y.length,c;if(t>1){let j={};for(;t--;){let v=y[t];if(typeof v=="string"){if(typeof j[v]=="number"){return c=j[v],p.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/uniqueItems",keyword:"uniqueItems",params:{i:t,j:c},message:"must NOT have duplicate items (items ## "+c+" and "+t+" are identical)"}],!1;break}j[v]=t}}}}}}else return p.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var n=m===e}else var n=!0;if(n){if(a.notes!==void 0){let y=a.notes,m=e;if(e===e)if(typeof y=="string"){if(s(y)>32768)return p.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(s(y)<0)return p.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return p.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.rawText!==void 0){let y=a.rawText,m=e;if(e===m)if(typeof y=="string"){if(s(y)>1e6)return p.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/maxLength",keyword:"maxLength",params:{limit:1e6},message:"must NOT have more than 1000000 characters"}],!1;if(s(y)<0)return p.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return p.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=m===e}else var n=!0;if(n){if(a.source!==void 0){let y=e;T(a.source,{instancePath:r+"/source",parentData:a,parentDataProperty:"source",rootData:V})||(L=L===null?T.errors:L.concat(T.errors),e=L.length);var n=y===e}else var n=!0;if(n){if(a.sources!==void 0){let y=a.sources,m=e;if(e===m)if(Array.isArray(y)){if(y.length>50)return p.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/maxItems",keyword:"maxItems",params:{limit:50},message:"must NOT have more than 50 items"}],!1;if(y.length<1)return p.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var Y=!0;let Z=y.length;for(let o=0;o<Z;o++){let t=y[o],c=e;if(e===e)if(t&&typeof t=="object"&&!Array.isArray(t)){let l;if(t.recordId===void 0&&(l="recordId"))return p.errors=[{instancePath:r+"/sources/"+o,schemaPath:"#/definitions/extractionRecordReference/required",keyword:"required",params:{missingProperty:l},message:"must have required property '"+l+"'"}],!1;{let R=e;for(let P in t)if(!(P==="contextId"||P==="messageCid"||P==="modulePath"||P==="moduleUri"||P==="recordId"||P==="tenantDid")){return p.errors=[{instancePath:r+"/sources/"+o,schemaPath:"#/definitions/extractionRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:P},message:"must NOT have additional properties"}],!1;break}if(R===e){if(t.contextId!==void 0){let P=t.contextId,x=e;if(e===x)if(typeof P=="string"){if(s(P)>2048)return p.errors=[{instancePath:r+"/sources/"+o+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0;if(M){if(t.messageCid!==void 0){let P=t.messageCid,x=e;if(e===x)if(typeof P=="string"){if(s(P)>512)return p.errors=[{instancePath:r+"/sources/"+o+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0;if(M){if(t.modulePath!==void 0){let P=t.modulePath,x=e;if(e===x)if(typeof P=="string"){if(s(P)>512)return p.errors=[{instancePath:r+"/sources/"+o+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0;if(M){if(t.moduleUri!==void 0){let P=t.moduleUri,x=e;if(e===x&&e===x)if(typeof P=="string"){if(s(P)>8192)return p.errors=[{instancePath:r+"/sources/"+o+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(P))return p.errors=[{instancePath:r+"/sources/"+o+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0;if(M){if(t.recordId!==void 0){let P=t.recordId,x=e;if(e===x)if(typeof P=="string"){if(s(P)>512)return p.errors=[{instancePath:r+"/sources/"+o+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0;if(M)if(t.tenantDid!==void 0){let P=t.tenantDid,x=e;if(e===x)if(typeof P=="string"){if(s(P)>4096)return p.errors=[{instancePath:r+"/sources/"+o+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(P)<1)return p.errors=[{instancePath:r+"/sources/"+o+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(P))return p.errors=[{instancePath:r+"/sources/"+o+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return p.errors=[{instancePath:r+"/sources/"+o+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=x===e}else var M=!0}}}}}}}else return p.errors=[{instancePath:r+"/sources/"+o,schemaPath:"#/definitions/extractionRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var Y=c===e;if(!Y)break}}}else return p.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var n=m===e}else var n=!0;if(n)if(a.state!==void 0){let y=a.state,m=e;if(typeof y!="string")return p.errors=[{instancePath:r+"/state",schemaPath:"#/properties/state/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(y==="complete"||y==="partial"||y==="failed"))return p.errors=[{instancePath:r+"/state",schemaPath:"#/properties/state/enum",keyword:"enum",params:{allowedValues:Le.properties.state.enum},message:"must be equal to one of the allowed values"}],!1;var n=m===e}else var n=!0}}}}}}}}}}}}}else return p.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return p.errors=L,e===0}var ar=f,je={$id:"https://enbox.id/modules/identity-documents/v1/schemas/review",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,allOf:[{if:{properties:{decision:{const:"corrected"}}},then:{required:["corrections"]}}],definitions:{reviewAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},reviewLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},reviewNoteText:{maxLength:32768,minLength:0,type:"string"},reviewRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},reviewSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/reviewRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"Identity Documents: review record.",examples:[{decision:"accepted",reviewedAt:"2026-01-15T12:00:00Z"}],properties:{corrections:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/reviewAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},documentNumber:{maxLength:256,minLength:1,type:"string"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:0,type:"array"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuingAuthority:{maxLength:512,minLength:1,type:"string"},issuingCountry:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},issuingRegion:{maxLength:256,minLength:1,type:"string"},licenceCategories:{items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:0,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:0,type:"array"},personalNumber:{maxLength:256,minLength:1,type:"string"}},required:[],type:"object"},decision:{enum:["accepted","corrected","rejected"],type:"string"},extraction:{$ref:"#/definitions/reviewRecordReference"},labels:{$ref:"#/definitions/reviewLabels"},notes:{$ref:"#/definitions/reviewNoteText"},reason:{maxLength:8192,minLength:1,type:"string"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},source:{$ref:"#/definitions/reviewSource"}},required:["reviewedAt","decision"],title:"ReviewData",type:"object"};var qe={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/reviewRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function A(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0;if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let W;if(a.kind===void 0&&(W="kind"))return A.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:W},message:"must have required property '"+W+"'"}],!1;{let H=e;for(let i in a)if(!oe.call(qe.properties,i)){return A.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:i},message:"must NOT have additional properties"}],!1;break}if(H===e){if(a.actorDid!==void 0){let i=a.actorDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.conversationId!==void 0){let i=a.conversationId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractor!==void 0){let i=a.extractor,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.extractorVersion!==void 0){let i=a.extractorVersion,n=e;if(e===n)if(typeof i=="string"){if(s(i)>128)return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.kind!==void 0){let i=a.kind,n=e;if(typeof i!="string")return A.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(i==="user-statement"||i==="document-extraction"||i==="import"||i==="measurement"||i==="derived"))return A.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:qe.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var u=n===e}else var u=!0;if(u){if(a.messageId!==void 0){let i=a.messageId,n=e;if(e===n)if(typeof i=="string"){if(s(i)>512)return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.observedAt!==void 0){let i=a.observedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.record!==void 0){let i=a.record,n=e;if(e===e)if(i&&typeof i=="object"&&!Array.isArray(i)){let b;if(i.recordId===void 0&&(b="recordId"))return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/required",keyword:"required",params:{missingProperty:b},message:"must have required property '"+b+"'"}],!1;{let X=e;for(let g in i)if(!(g==="contextId"||g==="messageCid"||g==="modulePath"||g==="moduleUri"||g==="recordId"||g==="tenantDid")){return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:g},message:"must NOT have additional properties"}],!1;break}if(X===e){if(i.contextId!==void 0){let g=i.contextId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>2048)return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.messageCid!==void 0){let g=i.messageCid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.modulePath!==void 0){let g=i.modulePath,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.moduleUri!==void 0){let g=i.moduleUri,w=e;if(e===w&&e===w)if(typeof g=="string"){if(s(g)>8192)return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(g))return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(i.recordId!==void 0){let g=i.recordId,w=e;if(e===w)if(typeof g=="string"){if(s(g)>512)return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N)if(i.tenantDid!==void 0){let g=i.tenantDid,w=e;if(e===w)if(typeof g=="string"){if(s(g)>4096)return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(g)<1)return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(g))return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0}}}}}}}else return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewedAt!==void 0){let i=a.reviewedAt,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>64)return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(i))return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u){if(a.reviewerDid!==void 0){let i=a.reviewerDid,n=e;if(e===n)if(typeof i=="string"){if(s(i)>4096)return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(i))return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0;if(u)if(a.uri!==void 0){let i=a.uri,n=e;if(e===n&&e===n)if(typeof i=="string"){if(s(i)>8192)return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(i)<1)return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(i))return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var u=n===e}else var u=!0}}}}}}}}}}}}else return A.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return A.errors=L,e===0}function f(a,{instancePath:r="",parentData:q,parentDataProperty:$,rootData:V=a}={}){let L=null,e=0,u=e,N=!0,W=e;if(a&&typeof a=="object"&&!Array.isArray(a)&&a.decision!==void 0&&a.decision!=="corrected"){let Y={};L===null?L=[Y]:L.push(Y),e++}var H=W===e;if(e=u,L!==null&&(u?L.length=u:L=null),H){let Y=e;if(a&&typeof a=="object"&&!Array.isArray(a)){let h;if(a.corrections===void 0&&(h="corrections"))return f.errors=[{instancePath:r,schemaPath:"#/allOf/0/then/required",keyword:"required",params:{missingProperty:h},message:"must have required property '"+h+"'"}],!1}var H=Y===e;N=H}if(!N){let Y={instancePath:r,schemaPath:"#/allOf/0/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return L===null?L=[Y]:L.push(Y),e++,f.errors=L,!1}if(e===0)if(a&&typeof a=="object"&&!Array.isArray(a)){let Y;if(a.reviewedAt===void 0&&(Y="reviewedAt")||a.decision===void 0&&(Y="decision"))return f.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:Y},message:"must have required property '"+Y+"'"}],!1;{let M=e;for(let h in a)if(!(h==="corrections"||h==="decision"||h==="extraction"||h==="labels"||h==="notes"||h==="reason"||h==="reviewedAt"||h==="source")){return f.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:h},message:"must NOT have additional properties"}],!1;break}if(M===e){if(a.corrections!==void 0){let h=a.corrections,S=e;if(e===S)if(h&&typeof h=="object"&&!Array.isArray(h)){if(Object.keys(h).length<1)return f.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let y=e;for(let m in h)if(!oe.call(je.properties.corrections.properties,m)){return f.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:m},message:"must NOT have additional properties"}],!1;break}if(y===e){if(h.address!==void 0){let m=h.address,k=e;if(e===e)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return f.errors=[{instancePath:r+"/corrections/address",schemaPath:"#/definitions/reviewAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let o=e;for(let t in m)if(!(t==="countryCode"||t==="formatted"||t==="locality"||t==="postalCode"||t==="region"||t==="street")){return f.errors=[{instancePath:r+"/corrections/address",schemaPath:"#/definitions/reviewAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:t},message:"must NOT have additional properties"}],!1;break}if(o===e){if(m.countryCode!==void 0){let t=m.countryCode,c=e;if(e===c)if(typeof t=="string"){if(s(t)>2)return f.errors=[{instancePath:r+"/corrections/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!xe.test(t))return f.errors=[{instancePath:r+"/corrections/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return f.errors=[{instancePath:r+"/corrections/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0;if(i){if(m.formatted!==void 0){let t=m.formatted,c=e;if(e===c)if(typeof t=="string"){if(s(t)>2048)return f.errors=[{instancePath:r+"/corrections/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0;if(i){if(m.locality!==void 0){let t=m.locality,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return f.errors=[{instancePath:r+"/corrections/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0;if(i){if(m.postalCode!==void 0){let t=m.postalCode,c=e;if(e===c)if(typeof t=="string"){if(s(t)>32)return f.errors=[{instancePath:r+"/corrections/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0;if(i){if(m.region!==void 0){let t=m.region,c=e;if(e===c)if(typeof t=="string"){if(s(t)>256)return f.errors=[{instancePath:r+"/corrections/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0;if(i)if(m.street!==void 0){let t=m.street,c=e;if(e===c)if(typeof t=="string"){if(s(t)>512)return f.errors=[{instancePath:r+"/corrections/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(t)<1)return f.errors=[{instancePath:r+"/corrections/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var i=c===e}else var i=!0}}}}}}}else return f.errors=[{instancePath:r+"/corrections/address",schemaPath:"#/definitions/reviewAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var n=k===e}else var n=!0;if(n){if(h.dateOfBirth!==void 0){let m=h.dateOfBirth,k=e;if(e===k&&e===k)if(typeof m=="string"){if(s(m)>10)return f.errors=[{instancePath:r+"/corrections/dateOfBirth",schemaPath:"#/properties/corrections/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/dateOfBirth",schemaPath:"#/properties/corrections/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(m))return f.errors=[{instancePath:r+"/corrections/dateOfBirth",schemaPath:"#/properties/corrections/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return f.errors=[{instancePath:r+"/corrections/dateOfBirth",schemaPath:"#/properties/corrections/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.documentNumber!==void 0){let m=h.documentNumber,k=e;if(e===k)if(typeof m=="string"){if(s(m)>256)return f.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.expiryDate!==void 0){let m=h.expiryDate,k=e;if(e===k&&e===k)if(typeof m=="string"){if(s(m)>10)return f.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(m))return f.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return f.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.familyName!==void 0){let m=h.familyName,k=e;if(e===k)if(typeof m=="string"){if(s(m)>256)return f.errors=[{instancePath:r+"/corrections/familyName",schemaPath:"#/properties/corrections/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/familyName",schemaPath:"#/properties/corrections/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/familyName",schemaPath:"#/properties/corrections/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.fullName!==void 0){let m=h.fullName,k=e;if(e===k)if(typeof m=="string"){if(s(m)>512)return f.errors=[{instancePath:r+"/corrections/fullName",schemaPath:"#/properties/corrections/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/fullName",schemaPath:"#/properties/corrections/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/fullName",schemaPath:"#/properties/corrections/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.givenNames!==void 0){let m=h.givenNames,k=e;if(e===k)if(Array.isArray(m)){if(m.length>20)return f.errors=[{instancePath:r+"/corrections/givenNames",schemaPath:"#/properties/corrections/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(m.length<0)return f.errors=[{instancePath:r+"/corrections/givenNames",schemaPath:"#/properties/corrections/properties/givenNames/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var D=!0;let o=m.length;for(let t=0;t<o;t++){let c=m[t],j=e;if(e===j)if(typeof c=="string"){if(s(c)>128)return f.errors=[{instancePath:r+"/corrections/givenNames/"+t,schemaPath:"#/properties/corrections/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(s(c)<1)return f.errors=[{instancePath:r+"/corrections/givenNames/"+t,schemaPath:"#/properties/corrections/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/givenNames/"+t,schemaPath:"#/properties/corrections/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var D=j===e;if(!D)break}}}else return f.errors=[{instancePath:r+"/corrections/givenNames",schemaPath:"#/properties/corrections/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var n=k===e}else var n=!0;if(n){if(h.issueDate!==void 0){let m=h.issueDate,k=e;if(e===k&&e===k)if(typeof m=="string"){if(s(m)>10)return f.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(m))return f.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return f.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.issuingAuthority!==void 0){let m=h.issuingAuthority,k=e;if(e===k)if(typeof m=="string"){if(s(m)>512)return f.errors=[{instancePath:r+"/corrections/issuingAuthority",schemaPath:"#/properties/corrections/properties/issuingAuthority/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/issuingAuthority",schemaPath:"#/properties/corrections/properties/issuingAuthority/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/issuingAuthority",schemaPath:"#/properties/corrections/properties/issuingAuthority/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.issuingCountry!==void 0){let m=h.issuingCountry,k=e;if(e===k)if(typeof m=="string"){if(s(m)>3)return f.errors=[{instancePath:r+"/corrections/issuingCountry",schemaPath:"#/properties/corrections/properties/issuingCountry/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/issuingCountry",schemaPath:"#/properties/corrections/properties/issuingCountry/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(m))return f.errors=[{instancePath:r+"/corrections/issuingCountry",schemaPath:"#/properties/corrections/properties/issuingCountry/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return f.errors=[{instancePath:r+"/corrections/issuingCountry",schemaPath:"#/properties/corrections/properties/issuingCountry/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.issuingRegion!==void 0){let m=h.issuingRegion,k=e;if(e===k)if(typeof m=="string"){if(s(m)>256)return f.errors=[{instancePath:r+"/corrections/issuingRegion",schemaPath:"#/properties/corrections/properties/issuingRegion/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/issuingRegion",schemaPath:"#/properties/corrections/properties/issuingRegion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/issuingRegion",schemaPath:"#/properties/corrections/properties/issuingRegion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0;if(n){if(h.licenceCategories!==void 0){let m=h.licenceCategories,k=e;if(e===k)if(Array.isArray(m)){if(m.length>100)return f.errors=[{instancePath:r+"/corrections/licenceCategories",schemaPath:"#/properties/corrections/properties/licenceCategories/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(m.length<0)return f.errors=[{instancePath:r+"/corrections/licenceCategories",schemaPath:"#/properties/corrections/properties/licenceCategories/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var I=!0;let o=m.length;for(let t=0;t<o;t++){let c=m[t],j=e;if(e===j)if(c&&typeof c=="object"&&!Array.isArray(c)){let l;if(c.category===void 0&&(l="category"))return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t,schemaPath:"#/properties/corrections/properties/licenceCategories/items/required",keyword:"required",params:{missingProperty:l},message:"must have required property '"+l+"'"}],!1;{let R=e;for(let P in c)if(!(P==="category"||P==="restrictions"||P==="validFrom"||P==="validUntil")){return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t,schemaPath:"#/properties/corrections/properties/licenceCategories/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:P},message:"must NOT have additional properties"}],!1;break}if(R===e){if(c.category!==void 0){let P=c.category,x=e;if(e===x)if(typeof P=="string"){if(s(P)>64)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/category",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(P)<1)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/category",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/category",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=x===e}else var b=!0;if(b){if(c.restrictions!==void 0){let P=c.restrictions,x=e;if(e===x)if(Array.isArray(P)){if(P.length>100)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(P.length<0)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var X=!0;let z=P.length;for(let C=0;C<z;C++){let G=P[C],me=e;if(e===me)if(typeof G=="string"){if(s(G)>512)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions/"+C,schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(G)<1)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions/"+C,schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions/"+C,schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=me===e;if(!X)break}}}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/restrictions",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var b=x===e}else var b=!0;if(b){if(c.validFrom!==void 0){let P=c.validFrom,x=e;if(e===x&&e===x)if(typeof P=="string"){if(s(P)>10)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validFrom",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(P)<1)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validFrom",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(P))return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validFrom",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validFrom",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=x===e}else var b=!0;if(b)if(c.validUntil!==void 0){let P=c.validUntil,x=e;if(e===x&&e===x)if(typeof P=="string"){if(s(P)>10)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validUntil",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(s(P)<1)return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validUntil",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!K.validate(P))return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validUntil",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t+"/validUntil",schemaPath:"#/properties/corrections/properties/licenceCategories/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var b=x===e}else var b=!0}}}}}else return f.errors=[{instancePath:r+"/corrections/licenceCategories/"+t,schemaPath:"#/properties/corrections/properties/licenceCategories/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var I=j===e;if(!I)break}}}else return f.errors=[{instancePath:r+"/corrections/licenceCategories",schemaPath:"#/properties/corrections/properties/licenceCategories/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var n=k===e}else var n=!0;if(n){if(h.nationalities!==void 0){let m=h.nationalities,k=e;if(e===k)if(Array.isArray(m)){if(m.length>10)return f.errors=[{instancePath:r+"/corrections/nationalities",schemaPath:"#/properties/corrections/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(m.length<0)return f.errors=[{instancePath:r+"/corrections/nationalities",schemaPath:"#/properties/corrections/properties/nationalities/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var g=!0;let o=m.length;for(let t=0;t<o;t++){let c=m[t],j=e;if(e===j)if(typeof c=="string"){if(s(c)>3)return f.errors=[{instancePath:r+"/corrections/nationalities/"+t,schemaPath:"#/properties/corrections/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(s(c)<1)return f.errors=[{instancePath:r+"/corrections/nationalities/"+t,schemaPath:"#/properties/corrections/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!pe.test(c))return f.errors=[{instancePath:r+"/corrections/nationalities/"+t,schemaPath:"#/properties/corrections/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return f.errors=[{instancePath:r+"/corrections/nationalities/"+t,schemaPath:"#/properties/corrections/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var g=j===e;if(!g)break}}}else return f.errors=[{instancePath:r+"/corrections/nationalities",schemaPath:"#/properties/corrections/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var n=k===e}else var n=!0;if(n)if(h.personalNumber!==void 0){let m=h.personalNumber,k=e;if(e===k)if(typeof m=="string"){if(s(m)>256)return f.errors=[{instancePath:r+"/corrections/personalNumber",schemaPath:"#/properties/corrections/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(s(m)<1)return f.errors=[{instancePath:r+"/corrections/personalNumber",schemaPath:"#/properties/corrections/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/corrections/personalNumber",schemaPath:"#/properties/corrections/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var n=k===e}else var n=!0}}}}}}}}}}}}}}}else return f.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var w=S===e}else var w=!0;if(w){if(a.decision!==void 0){let h=a.decision,S=e;if(typeof h!="string")return f.errors=[{instancePath:r+"/decision",schemaPath:"#/properties/decision/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(h==="accepted"||h==="corrected"||h==="rejected"))return f.errors=[{instancePath:r+"/decision",schemaPath:"#/properties/decision/enum",keyword:"enum",params:{allowedValues:je.properties.decision.enum},message:"must be equal to one of the allowed values"}],!1;var w=S===e}else var w=!0;if(w){if(a.extraction!==void 0){let h=a.extraction,S=e;if(e===e)if(h&&typeof h=="object"&&!Array.isArray(h)){let k;if(h.recordId===void 0&&(k="recordId"))return f.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/required",keyword:"required",params:{missingProperty:k},message:"must have required property '"+k+"'"}],!1;{let Z=e;for(let o in h)if(!(o==="contextId"||o==="messageCid"||o==="modulePath"||o==="moduleUri"||o==="recordId"||o==="tenantDid")){return f.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:o},message:"must NOT have additional properties"}],!1;break}if(Z===e){if(h.contextId!==void 0){let o=h.contextId,t=e;if(e===t)if(typeof o=="string"){if(s(o)>2048)return f.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0;if(E){if(h.messageCid!==void 0){let o=h.messageCid,t=e;if(e===t)if(typeof o=="string"){if(s(o)>512)return f.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0;if(E){if(h.modulePath!==void 0){let o=h.modulePath,t=e;if(e===t)if(typeof o=="string"){if(s(o)>512)return f.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0;if(E){if(h.moduleUri!==void 0){let o=h.moduleUri,t=e;if(e===t&&e===t)if(typeof o=="string"){if(s(o)>8192)return f.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ne(o))return f.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return f.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0;if(E){if(h.recordId!==void 0){let o=h.recordId,t=e;if(e===t)if(typeof o=="string"){if(s(o)>512)return f.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0;if(E)if(h.tenantDid!==void 0){let o=h.tenantDid,t=e;if(e===t)if(typeof o=="string"){if(s(o)>4096)return f.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!re.test(o))return f.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return f.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var E=t===e}else var E=!0}}}}}}}else return f.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var w=S===e}else var w=!0;if(w){if(a.labels!==void 0){let h=a.labels,S=e;if(e===e)if(Array.isArray(h)){if(h.length>64)return f.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var se=!0;let k=h.length;for(let Z=0;Z<k;Z++){let o=h[Z],t=e;if(e===t)if(typeof o=="string"){if(s(o)>80)return f.errors=[{instancePath:r+"/labels/"+Z,schemaPath:"#/definitions/reviewLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(s(o)<1)return f.errors=[{instancePath:r+"/labels/"+Z,schemaPath:"#/definitions/reviewLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/labels/"+Z,schemaPath:"#/definitions/reviewLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var se=t===e;if(!se)break}if(se){let Z=h.length,o;if(Z>1){let t={};for(;Z--;){let c=h[Z];if(typeof c=="string"){if(typeof t[c]=="number"){return o=t[c],f.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/uniqueItems",keyword:"uniqueItems",params:{i:Z,j:o},message:"must NOT have duplicate items (items ## "+o+" and "+Z+" are identical)"}],!1;break}t[c]=Z}}}}}}else return f.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var w=S===e}else var w=!0;if(w){if(a.notes!==void 0){let h=a.notes,S=e;if(e===e)if(typeof h=="string"){if(s(h)>32768)return f.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(s(h)<0)return f.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return f.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=S===e}else var w=!0;if(w){if(a.reason!==void 0){let h=a.reason,S=e;if(e===S)if(typeof h=="string"){if(s(h)>8192)return f.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(s(h)<1)return f.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return f.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=S===e}else var w=!0;if(w){if(a.reviewedAt!==void 0){let h=a.reviewedAt,S=e;if(e===S&&e===S)if(typeof h=="string"){if(s(h)>64)return f.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(s(h)<1)return f.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!te.validate(h))return f.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return f.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var w=S===e}else var w=!0;if(w)if(a.source!==void 0){let h=e;A(a.source,{instancePath:r+"/source",parentData:a,parentDataProperty:"source",rootData:V})||(L=L===null?A.errors:L.concat(A.errors),e=L.length);var w=h===e}else var w=!0}}}}}}}}}else return f.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return f.errors=L,e===0}return Ze(ir);})();
+const moduleValidators: {readonly validateDocumentData: RecordValidator;readonly validateExtractionData: RecordValidator;readonly validateReviewData: RecordValidator} = (()=>{var Le=Object.defineProperty;var Ke=Object.getOwnPropertyDescriptor;var We=Object.getOwnPropertyNames;var He=Object.prototype.hasOwnProperty;var De=(t,r)=>()=>{try{return r||t((r={exports:{}}).exports,r),r.exports}catch(F){throw r=0,F}},Ye=(t,r)=>{for(var F in r)Le(t,F,{get:r[F],enumerable:!0})},Ge=(t,r,F,C)=>{if(r&&typeof r=="object"||typeof r=="function")for(let Z of We(r))!He.call(t,Z)&&Z!==F&&Le(t,Z,{get:()=>r[Z],enumerable:!(C=Ke(r,Z))||C.enumerable});return t};var Xe=t=>Ge(Le({},"__esModule",{value:!0}),t);var qe=De(xe=>{"use strict";Object.defineProperty(xe,"__esModule",{value:!0});function je(t){let r=t.length,F=0,C=0,Z;for(;C<r;)F++,Z=t.charCodeAt(C++),Z>=55296&&Z<=56319&&C<r&&(Z=t.charCodeAt(C),(Z&64512)===56320&&C++);return F}xe.default=je;je.code='require("ajv/dist/runtime/ucs2length").default'});var we=De(ce=>{"use strict";Object.defineProperty(ce,"__esModule",{value:!0});ce.formatNames=ce.fastFormats=ce.fullFormats=void 0;function he(t,r){return{validate:t,compare:r}}ce.fullFormats={date:he(ze,Te),time:he(be(!0),Oe),"date-time":he(Ce(!0),Fe),"iso-time":he(be(),Ve),"iso-date-time":he(Ce(),Se),duration:/^P(?!$)((\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?|(\d+W)?)$/,uri:sr,"uri-reference":/^(?:[a-z][a-z0-9+\-.]*:)?(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'"()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?(?:\?(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i,"uri-template":/^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$/i,url:/^(?:https?|ftp):\/\/(?:\S+(?::\S*)?@)?(?:(?!(?:10|127)(?:\.\d{1,3}){3})(?!(?:169\.254|192\.168)(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)(?:\.(?:[a-z0-9\u{00a1}-\u{ffff}]+-)*[a-z0-9\u{00a1}-\u{ffff}]+)*(?:\.(?:[a-z\u{00a1}-\u{ffff}]{2,})))(?::\d{2,5})?(?:\/[^\s]*)?$/iu,email:/^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i,hostname:/^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-0-9a-z]{0,61}[0-9a-z])?)*\.?$/i,ipv4:/^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/,ipv6:/^((([0-9a-f]{1,4}:){7}([0-9a-f]{1,4}|:))|(([0-9a-f]{1,4}:){6}(:[0-9a-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9a-f]{1,4}:){5}(((:[0-9a-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9a-f]{1,4}:){4}(((:[0-9a-f]{1,4}){1,3})|((:[0-9a-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){3}(((:[0-9a-f]{1,4}){1,4})|((:[0-9a-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){2}(((:[0-9a-f]{1,4}){1,5})|((:[0-9a-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9a-f]{1,4}:){1}(((:[0-9a-f]{1,4}){1,6})|((:[0-9a-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9a-f]{1,4}){1,7})|((:[0-9a-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))$/i,regex:pr,uuid:/^(?:urn:uuid:)?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i,"json-pointer":/^(?:\/(?:[^~/]|~0|~1)*)*$/,"json-pointer-uri-fragment":/^#(?:\/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$/i,"relative-json-pointer":/^(?:0|[1-9][0-9]*)(?:#|(?:\/(?:[^~/]|~0|~1)*)*)$/,byte:ir,int32:{type:"number",validate:or},int64:{type:"number",validate:mr},float:{type:"number",validate:Ue},double:{type:"number",validate:Ue},password:!0,binary:!0};ce.fastFormats={...ce.fullFormats,date:he(/^\d\d\d\d-[0-1]\d-[0-3]\d$/,Te),time:he(/^(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)$/i,Oe),"date-time":he(/^\d\d\d\d-[0-1]\d-[0-3]\dt(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)$/i,Fe),"iso-time":he(/^(?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)?$/i,Ve),"iso-date-time":he(/^\d\d\d\d-[0-1]\d-[0-3]\d[t\s](?:[0-2]\d:[0-5]\d:[0-5]\d|23:59:60)(?:\.\d+)?(?:z|[+-]\d\d(?::?\d\d)?)?$/i,Se),uri:/^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/)?[^\s]*$/i,"uri-reference":/^(?:(?:[a-z][a-z0-9+\-.]*:)?\/?\/)?(?:[^\\\s#][^\s#]*)?(?:#[^\\\s]*)?$/i,email:/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i};ce.formatNames=Object.keys(ce.fullFormats);function Je(t){return t%4===0&&(t%100!==0||t%400===0)}var Qe=/^(\d\d\d\d)-(\d\d)-(\d\d)$/,er=[0,31,28,31,30,31,30,31,31,30,31,30,31];function ze(t){let r=Qe.exec(t);if(!r)return!1;let F=+r[1],C=+r[2],Z=+r[3];return C>=1&&C<=12&&Z>=1&&Z<=(C===2&&Je(F)?29:er[C])}function Te(t,r){if(t&&r)return t>r?1:t<r?-1:0}var ke=/^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;function be(t){return function(F){let C=ke.exec(F);if(!C)return!1;let Z=+C[1],o=+C[2],e=+C[3],L=C[4],O=C[5]==="-"?-1:1,G=+(C[6]||0),ie=+(C[7]||0);if(G>23||ie>59||t&&!L)return!1;if(Z<=23&&o<=59&&e<60)return!0;let a=o-ie*O,v=Z-G*O-(a<0?1:0);return(v===23||v===-1)&&(a===59||a===-1)&&e<61}}function Oe(t,r){if(!(t&&r))return;let F=new Date("2020-01-01T"+t).valueOf(),C=new Date("2020-01-01T"+r).valueOf();if(F&&C)return F-C}function Ve(t,r){if(!(t&&r))return;let F=ke.exec(t),C=ke.exec(r);if(F&&C)return t=F[1]+F[2]+F[3],r=C[1]+C[2]+C[3],t>r?1:t<r?-1:0}var Ne=/t|\s/i;function Ce(t){let r=be(t);return function(C){let Z=C.split(Ne);return Z.length===2&&ze(Z[0])&&r(Z[1])}}function Fe(t,r){if(!(t&&r))return;let F=new Date(t).valueOf(),C=new Date(r).valueOf();if(F&&C)return F-C}function Se(t,r){if(!(t&&r))return;let[F,C]=t.split(Ne),[Z,o]=r.split(Ne),e=Te(F,Z);if(e!==void 0)return e||Oe(C,o)}var rr=/\/|:/,tr=/^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;function sr(t){return rr.test(t)&&tr.test(t)}var $e=/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;function ir(t){return $e.lastIndex=0,$e.test(t)}var ar=-(2**31),nr=2**31-1;function or(t){return Number.isInteger(t)&&t<=nr&&t>=ar}function mr(t){return Number.isInteger(t)}function Ue(){return!0}var dr=/[^\\]\\Z/;function pr(t){if(dr.test(t))return!1;try{return new RegExp(t),!0}catch{return!1}}});var cr={};Ye(cr,{validateDocumentData:()=>lr,validateExtractionData:()=>fr,validateReviewData:()=>hr});var lr=d,Ae={$id:"https://enbox.id/modules/identity-documents/v1/schemas/document",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,allOf:[{if:{properties:{fields:{required:["drivingPrivileges"],type:"object"}},required:["fields"]},then:{properties:{documentType:{const:"drivers-licence"}},required:["documentType"]}},{if:{properties:{fields:{required:["passportTypeCode"],type:"object"}},required:["fields"]},then:{properties:{documentType:{const:"passport"}},required:["documentType"]}}],definitions:{documentAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},documentAlert:{additionalProperties:!1,oneOf:[{not:{anyOf:[{required:["offsetSeconds"]},{required:["anchor"]}]},required:["at"]},{not:{required:["at"]},required:["offsetSeconds","anchor"]}],properties:{anchor:{enum:["start","end","due"],type:"string"},at:{format:"date-time",maxLength:64,minLength:1,type:"string"},channel:{enum:["app","push","email"],type:"string"},dismissedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},enabled:{type:"boolean"},id:{maxLength:128,minLength:1,type:"string"},offsetSeconds:{maximum:31536e4,minimum:-31536e4,type:"integer"},snoozedUntil:{format:"date-time",maxLength:64,minLength:1,type:"string"}},required:["id"],type:"object"},documentLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},documentNoteText:{maxLength:32768,minLength:0,type:"string"},documentRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},documentSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/documentRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"One identity document issuance. Keep common holder and issuer details with the document number and validity period.",examples:[{documentType:"drivers-licence",fields:{documentNumber:"000DEMO123",drivingPrivileges:[{category:"B",restrictions:["Corrective lenses"]}],expiryDate:"2031-04-15",holder:{fullName:"Alex Example"},issuer:{name:"Example licensing authority",region:"Example region"}},label:"Driving licence",reviewState:"reviewed",sources:[{recordId:"example-scan"}]}],properties:{alerts:{items:{$ref:"#/definitions/documentAlert"},maxItems:20,minItems:0,type:"array"},documentType:{description:"Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.",enum:["passport","national-id","state-id","drivers-licence","other","unknown"],type:"string"},fields:{additionalProperties:!1,minProperties:1,properties:{documentNumber:{description:"Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.",maxLength:256,minLength:1,type:"string"},drivingPrivileges:{description:"One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.",items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:1,type:"array"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},holder:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/documentAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:1,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:1,type:"array"},personalNumber:{description:"Identifier of the holder as printed. Preserve leading zeros.",maxLength:256,minLength:1,type:"string"}},type:"object"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuer:{additionalProperties:!1,minProperties:1,properties:{country:{description:"Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.",pattern:"^[A-Z]{2,3}$",type:"string"},name:{maxLength:512,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"}},type:"object"},passportTypeCode:{description:"Document type code as printed on the passport. Omit when absent.",maxLength:16,minLength:1,type:"string"}},type:"object"},label:{maxLength:256,minLength:1,type:"string"},labels:{$ref:"#/definitions/documentLabels"},notes:{$ref:"#/definitions/documentNoteText"},reviewState:{enum:["unreviewed","reviewed","corrected","rejected"],type:"string"},source:{$ref:"#/definitions/documentSource"},sources:{items:{$ref:"#/definitions/documentRecordReference"},maxItems:50,minItems:0,type:"array"}},required:["label","documentType","reviewState"],title:"DocumentData",type:"object"},Be={additionalProperties:!1,oneOf:[{not:{anyOf:[{required:["offsetSeconds"]},{required:["anchor"]}]},required:["at"]},{not:{required:["at"]},required:["offsetSeconds","anchor"]}],properties:{anchor:{enum:["start","end","due"],type:"string"},at:{format:"date-time",maxLength:64,minLength:1,type:"string"},channel:{enum:["app","push","email"],type:"string"},dismissedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},enabled:{type:"boolean"},id:{maxLength:128,minLength:1,type:"string"},offsetSeconds:{maximum:31536e4,minimum:-31536e4,type:"integer"},snoozedUntil:{format:"date-time",maxLength:64,minLength:1,type:"string"}},required:["id"],type:"object"};var ve=Object.prototype.hasOwnProperty,i=qe().default,le=we().fullFormats["date-time"],se=we().fullFormats.date,ue=we().fullFormats.uri,Re=new RegExp("^[A-Z]{2}$","u"),ye=new RegExp("^[A-Z]{2,3}$","u"),me=new RegExp("^did:[a-z0-9]+:[^\\s]+$","u"),Ze={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/documentRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function A(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0;if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let G;if(t.kind===void 0&&(G="kind"))return A.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:G},message:"must have required property '"+G+"'"}],!1;{let ie=e;for(let a in t)if(!ve.call(Ze.properties,a)){return A.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:a},message:"must NOT have additional properties"}],!1;break}if(ie===e){if(t.actorDid!==void 0){let a=t.actorDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.conversationId!==void 0){let a=t.conversationId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractor!==void 0){let a=t.extractor,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractorVersion!==void 0){let a=t.extractorVersion,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.kind!==void 0){let a=t.kind,v=e;if(typeof a!="string")return A.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(a==="user-statement"||a==="document-extraction"||a==="import"||a==="measurement"||a==="derived"))return A.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:Ze.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var L=v===e}else var L=!0;if(L){if(t.messageId!==void 0){let a=t.messageId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.observedAt!==void 0){let a=t.observedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return A.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.record!==void 0){let a=t.record,v=e;if(e===e)if(a&&typeof a=="object"&&!Array.isArray(a)){let re;if(a.recordId===void 0&&(re="recordId"))return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/required",keyword:"required",params:{missingProperty:re},message:"must have required property '"+re+"'"}],!1;{let te=e;for(let c in a)if(!(c==="contextId"||c==="messageCid"||c==="modulePath"||c==="moduleUri"||c==="recordId"||c==="tenantDid")){return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:c},message:"must NOT have additional properties"}],!1;break}if(te===e){if(a.contextId!==void 0){let c=a.contextId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>2048)return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.messageCid!==void 0){let c=a.messageCid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.modulePath!==void 0){let c=a.modulePath,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.moduleUri!==void 0){let c=a.moduleUri,N=e;if(e===N&&e===N)if(typeof c=="string"){if(i(c)>8192)return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(c))return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return A.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.recordId!==void 0){let c=a.recordId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return A.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O)if(a.tenantDid!==void 0){let c=a.tenantDid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>4096)return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(c)<1)return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(c))return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0}}}}}}}else return A.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/documentRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewedAt!==void 0){let a=t.reviewedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return A.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewerDid!==void 0){let a=t.reviewerDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return A.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L)if(t.uri!==void 0){let a=t.uri,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>8192)return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(a)<1)return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(a))return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return A.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0}}}}}}}}}}}}else return A.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return A.errors=o,e===0}function d(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0,L=e,O=e,G=!0,ie=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let u;if(t.fields===void 0&&(u="fields")){let D={};o===null?o=[D]:o.push(D),e++}else if(t.fields!==void 0){let D=t.fields;if(e===e)if(D&&typeof D=="object"&&!Array.isArray(D)){let m;if(D.drivingPrivileges===void 0&&(m="drivingPrivileges")){let w={};o===null?o=[w]:o.push(w),e++}}else{let m={};o===null?o=[m]:o.push(m),e++}}}var a=ie===e;if(e=O,o!==null&&(O?o.length=O:o=null),a){let u=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let x;if(t.documentType===void 0&&(x="documentType"))return d.errors=[{instancePath:r,schemaPath:"#/allOf/0/then/required",keyword:"required",params:{missingProperty:x},message:"must have required property '"+x+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="drivers-licence")return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/0/then/properties/documentType/const",keyword:"const",params:{allowedValue:"drivers-licence"},message:"must be equal to constant"}],!1}var a=u===e;G=a}if(!G){let u={instancePath:r,schemaPath:"#/allOf/0/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[u]:o.push(u),e++,d.errors=o,!1}var v=L===e;if(v){let u=e,D=e,x=!0,m=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let b;if(t.fields===void 0&&(b="fields")){let n={};o===null?o=[n]:o.push(n),e++}else if(t.fields!==void 0){let n=t.fields;if(e===e)if(n&&typeof n=="object"&&!Array.isArray(n)){let g;if(n.passportTypeCode===void 0&&(g="passportTypeCode")){let $={};o===null?o=[$]:o.push($),e++}}else{let g={};o===null?o=[g]:o.push(g),e++}}}var oe=m===e;if(e=D,o!==null&&(D?o.length=D:o=null),oe){let b=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let s;if(t.documentType===void 0&&(s="documentType"))return d.errors=[{instancePath:r,schemaPath:"#/allOf/1/then/required",keyword:"required",params:{missingProperty:s},message:"must have required property '"+s+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="passport")return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/1/then/properties/documentType/const",keyword:"const",params:{allowedValue:"passport"},message:"must be equal to constant"}],!1}var oe=b===e;x=oe}if(!x){let b={instancePath:r,schemaPath:"#/allOf/1/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[b]:o.push(b),e++,d.errors=o,!1}var v=u===e}if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let u;if(t.label===void 0&&(u="label")||t.documentType===void 0&&(u="documentType")||t.reviewState===void 0&&(u="reviewState"))return d.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:u},message:"must have required property '"+u+"'"}],!1;{let D=e;for(let x in t)if(!ve.call(Ae.properties,x)){return d.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:x},message:"must NOT have additional properties"}],!1;break}if(D===e){if(t.alerts!==void 0){let x=t.alerts,m=e;if(e===m)if(Array.isArray(x)){if(x.length>20)return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(x.length<0)return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var de=!0;let w=x.length;for(let b=0;b<w;b++){let n=x[b],s=e,g=e,$=e,f=!1,p=null,T=e,P=e,k=e,E=e,U=!1,H=e;if(n&&typeof n=="object"&&!Array.isArray(n)){let B;if(n.offsetSeconds===void 0&&(B="offsetSeconds")){let ne={};o===null?o=[ne]:o.push(ne),e++}}var re=H===e;if(U=U||re,!U){let B=e;if(n&&typeof n=="object"&&!Array.isArray(n)){let R;if(n.anchor===void 0&&(R="anchor")){let J={};o===null?o=[J]:o.push(J),e++}}var re=B===e;U=U||re}if(U)e=E,o!==null&&(E?o.length=E:o=null);else{let B={};o===null?o=[B]:o.push(B),e++}var te=k===e;if(te){let B={instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/oneOf/0/not",keyword:"not",params:{},message:"must NOT be valid"};o===null?o=[B]:o.push(B),e++}else e=P,o!==null&&(P?o.length=P:o=null);if(e===T&&n&&typeof n=="object"&&!Array.isArray(n)){let B;if(n.at===void 0&&(B="at")){let ne={instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/oneOf/0/required",keyword:"required",params:{missingProperty:B},message:"must have required property '"+B+"'"};o===null?o=[ne]:o.push(ne),e++}}var N=T===e;N&&(f=!0,p=0);let fe=e,pe=e,ge=e;if(n&&typeof n=="object"&&!Array.isArray(n)){let B;if(n.at===void 0&&(B="at")){let ne={};o===null?o=[ne]:o.push(ne),e++}}var c=ge===e;if(c){let B={instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/oneOf/1/not",keyword:"not",params:{},message:"must NOT be valid"};o===null?o=[B]:o.push(B),e++}else e=pe,o!==null&&(pe?o.length=pe:o=null);if(e===fe&&n&&typeof n=="object"&&!Array.isArray(n)){let B;if(n.offsetSeconds===void 0&&(B="offsetSeconds")||n.anchor===void 0&&(B="anchor")){let ne={instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/oneOf/1/required",keyword:"required",params:{missingProperty:B},message:"must have required property '"+B+"'"};o===null?o=[ne]:o.push(ne),e++}}var N=fe===e;if(N&&f?(f=!1,p=[p,1]):N&&(f=!0,p=1),f)e=$,o!==null&&($?o.length=$:o=null);else{let B={instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/oneOf",keyword:"oneOf",params:{passingSchemas:p},message:"must match exactly one schema in oneOf"};return o===null?o=[B]:o.push(B),e++,d.errors=o,!1}if(e===g)if(n&&typeof n=="object"&&!Array.isArray(n)){let B;if(n.id===void 0&&(B="id"))return d.errors=[{instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/required",keyword:"required",params:{missingProperty:B},message:"must have required property '"+B+"'"}],!1;{let ne=e;for(let R in n)if(!(R==="anchor"||R==="at"||R==="channel"||R==="dismissedAt"||R==="enabled"||R==="id"||R==="offsetSeconds"||R==="snoozedUntil")){return d.errors=[{instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:R},message:"must NOT have additional properties"}],!1;break}if(ne===e){if(n.anchor!==void 0){let R=n.anchor,J=e;if(typeof R!="string")return d.errors=[{instancePath:r+"/alerts/"+b+"/anchor",schemaPath:"#/definitions/documentAlert/properties/anchor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(R==="start"||R==="end"||R==="due"))return d.errors=[{instancePath:r+"/alerts/"+b+"/anchor",schemaPath:"#/definitions/documentAlert/properties/anchor/enum",keyword:"enum",params:{allowedValues:Be.properties.anchor.enum},message:"must be equal to one of the allowed values"}],!1;var q=J===e}else var q=!0;if(q){if(n.at!==void 0){let R=n.at,J=e;if(e===J&&e===J)if(typeof R=="string"){if(i(R)>64)return d.errors=[{instancePath:r+"/alerts/"+b+"/at",schemaPath:"#/definitions/documentAlert/properties/at/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(R)<1)return d.errors=[{instancePath:r+"/alerts/"+b+"/at",schemaPath:"#/definitions/documentAlert/properties/at/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(R))return d.errors=[{instancePath:r+"/alerts/"+b+"/at",schemaPath:"#/definitions/documentAlert/properties/at/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+b+"/at",schemaPath:"#/definitions/documentAlert/properties/at/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=J===e}else var q=!0;if(q){if(n.channel!==void 0){let R=n.channel,J=e;if(typeof R!="string")return d.errors=[{instancePath:r+"/alerts/"+b+"/channel",schemaPath:"#/definitions/documentAlert/properties/channel/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(R==="app"||R==="push"||R==="email"))return d.errors=[{instancePath:r+"/alerts/"+b+"/channel",schemaPath:"#/definitions/documentAlert/properties/channel/enum",keyword:"enum",params:{allowedValues:Be.properties.channel.enum},message:"must be equal to one of the allowed values"}],!1;var q=J===e}else var q=!0;if(q){if(n.dismissedAt!==void 0){let R=n.dismissedAt,J=e;if(e===J&&e===J)if(typeof R=="string"){if(i(R)>64)return d.errors=[{instancePath:r+"/alerts/"+b+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(R)<1)return d.errors=[{instancePath:r+"/alerts/"+b+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(R))return d.errors=[{instancePath:r+"/alerts/"+b+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+b+"/dismissedAt",schemaPath:"#/definitions/documentAlert/properties/dismissedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=J===e}else var q=!0;if(q){if(n.enabled!==void 0){let R=e;if(typeof n.enabled!="boolean")return d.errors=[{instancePath:r+"/alerts/"+b+"/enabled",schemaPath:"#/definitions/documentAlert/properties/enabled/type",keyword:"type",params:{type:"boolean"},message:"must be boolean"}],!1;var q=R===e}else var q=!0;if(q){if(n.id!==void 0){let R=n.id,J=e;if(e===J)if(typeof R=="string"){if(i(R)>128)return d.errors=[{instancePath:r+"/alerts/"+b+"/id",schemaPath:"#/definitions/documentAlert/properties/id/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(R)<1)return d.errors=[{instancePath:r+"/alerts/"+b+"/id",schemaPath:"#/definitions/documentAlert/properties/id/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/alerts/"+b+"/id",schemaPath:"#/definitions/documentAlert/properties/id/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=J===e}else var q=!0;if(q){if(n.offsetSeconds!==void 0){let R=n.offsetSeconds,J=e;if(!(typeof R=="number"&&!(R%1)&&!isNaN(R)&&isFinite(R)))return d.errors=[{instancePath:r+"/alerts/"+b+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/type",keyword:"type",params:{type:"integer"},message:"must be integer"}],!1;if(e===J&&typeof R=="number"&&isFinite(R)){if(R>31536e4||isNaN(R))return d.errors=[{instancePath:r+"/alerts/"+b+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/maximum",keyword:"maximum",params:{comparison:"<=",limit:31536e4},message:"must be <= 315360000"}],!1;if(R<-31536e4||isNaN(R))return d.errors=[{instancePath:r+"/alerts/"+b+"/offsetSeconds",schemaPath:"#/definitions/documentAlert/properties/offsetSeconds/minimum",keyword:"minimum",params:{comparison:">=",limit:-31536e4},message:"must be >= -315360000"}],!1}var q=J===e}else var q=!0;if(q)if(n.snoozedUntil!==void 0){let R=n.snoozedUntil,J=e;if(e===J&&e===J)if(typeof R=="string"){if(i(R)>64)return d.errors=[{instancePath:r+"/alerts/"+b+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(R)<1)return d.errors=[{instancePath:r+"/alerts/"+b+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(R))return d.errors=[{instancePath:r+"/alerts/"+b+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return d.errors=[{instancePath:r+"/alerts/"+b+"/snoozedUntil",schemaPath:"#/definitions/documentAlert/properties/snoozedUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=J===e}else var q=!0}}}}}}}}}else return d.errors=[{instancePath:r+"/alerts/"+b,schemaPath:"#/definitions/documentAlert/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var de=s===e;if(!de)break}}}else return d.errors=[{instancePath:r+"/alerts",schemaPath:"#/properties/alerts/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var V=m===e}else var V=!0;if(V){if(t.documentType!==void 0){let x=t.documentType,m=e;if(typeof x!="string")return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(x==="passport"||x==="national-id"||x==="state-id"||x==="drivers-licence"||x==="other"||x==="unknown"))return d.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/enum",keyword:"enum",params:{allowedValues:Ae.properties.documentType.enum},message:"must be equal to one of the allowed values"}],!1;var V=m===e}else var V=!0;if(V){if(t.fields!==void 0){let x=t.fields,m=e;if(e===m)if(x&&typeof x=="object"&&!Array.isArray(x)){if(Object.keys(x).length<1)return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let b=e;for(let n in x)if(!(n==="documentNumber"||n==="drivingPrivileges"||n==="expiryDate"||n==="holder"||n==="issueDate"||n==="issuer"||n==="passportTypeCode")){return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:n},message:"must NOT have additional properties"}],!1;break}if(b===e){if(x.documentNumber!==void 0){let n=x.documentNumber,s=e;if(e===s)if(typeof n=="string"){if(i(n)>256)return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(n)<1)return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=s===e}else var S=!0;if(S){if(x.drivingPrivileges!==void 0){let n=x.drivingPrivileges,s=e;if(e===s)if(Array.isArray(n)){if(n.length>100)return d.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(n.length<1)return d.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var Q=!0;let $=n.length;for(let f=0;f<$;f++){let p=n[f],T=e;if(e===T)if(p&&typeof p=="object"&&!Array.isArray(p)){let k;if(p.category===void 0&&(k="category"))return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/required",keyword:"required",params:{missingProperty:k},message:"must have required property '"+k+"'"}],!1;{let E=e;for(let U in p)if(!(U==="category"||U==="restrictions"||U==="validFrom"||U==="validUntil")){return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:U},message:"must NOT have additional properties"}],!1;break}if(E===e){if(p.category!==void 0){let U=p.category,H=e;if(e===H)if(typeof U=="string"){if(i(U)>64)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(U)<1)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=H===e}else var j=!0;if(j){if(p.restrictions!==void 0){let U=p.restrictions,H=e;if(e===H)if(Array.isArray(U)){if(U.length>100)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(U.length<0)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var X=!0;let pe=U.length;for(let ge=0;ge<pe;ge++){let Pe=U[ge],B=e;if(e===B)if(typeof Pe=="string"){if(i(Pe)>512)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions/"+ge,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(Pe)<1)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions/"+ge,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions/"+ge,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=B===e;if(!X)break}}}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var j=H===e}else var j=!0;if(j){if(p.validFrom!==void 0){let U=p.validFrom,H=e;if(e===H&&e===H)if(typeof U=="string"){if(i(U)>10)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(U)<1)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(U))return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=H===e}else var j=!0;if(j)if(p.validUntil!==void 0){let U=p.validUntil,H=e;if(e===H&&e===H)if(typeof U=="string"){if(i(U)>10)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(U)<1)return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(U))return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=H===e}else var j=!0}}}}}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges/"+f,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var Q=T===e;if(!Q)break}}}else return d.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var S=s===e}else var S=!0;if(S){if(x.expiryDate!==void 0){let n=x.expiryDate,s=e;if(e===s&&e===s)if(typeof n=="string"){if(i(n)>10)return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(n)<1)return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(n))return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=s===e}else var S=!0;if(S){if(x.holder!==void 0){let n=x.holder,s=e;if(e===s)if(n&&typeof n=="object"&&!Array.isArray(n)){if(Object.keys(n).length<1)return d.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let $=e;for(let f in n)if(!(f==="address"||f==="dateOfBirth"||f==="familyName"||f==="fullName"||f==="givenNames"||f==="nationalities"||f==="personalNumber")){return d.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:f},message:"must NOT have additional properties"}],!1;break}if($===e){if(n.address!==void 0){let f=n.address,p=e;if(e===e)if(f&&typeof f=="object"&&!Array.isArray(f)){if(Object.keys(f).length<1)return d.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/documentAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let P=e;for(let k in f)if(!(k==="countryCode"||k==="formatted"||k==="locality"||k==="postalCode"||k==="region"||k==="street")){return d.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/documentAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:k},message:"must NOT have additional properties"}],!1;break}if(P===e){if(f.countryCode!==void 0){let k=f.countryCode,E=e;if(e===E)if(typeof k=="string"){if(i(k)>2)return d.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!Re.test(k))return d.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/documentAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0;if(ee){if(f.formatted!==void 0){let k=f.formatted,E=e;if(e===E)if(typeof k=="string"){if(i(k)>2048)return d.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/documentAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0;if(ee){if(f.locality!==void 0){let k=f.locality,E=e;if(e===E)if(typeof k=="string"){if(i(k)>256)return d.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/documentAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0;if(ee){if(f.postalCode!==void 0){let k=f.postalCode,E=e;if(e===E)if(typeof k=="string"){if(i(k)>32)return d.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/documentAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0;if(ee){if(f.region!==void 0){let k=f.region,E=e;if(e===E)if(typeof k=="string"){if(i(k)>256)return d.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/documentAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/documentAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/documentAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0;if(ee)if(f.street!==void 0){let k=f.street,E=e;if(e===E)if(typeof k=="string"){if(i(k)>512)return d.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/documentAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(k)<1)return d.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/documentAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/documentAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=E===e}else var ee=!0}}}}}}}else return d.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/documentAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var K=p===e}else var K=!0;if(K){if(n.dateOfBirth!==void 0){let f=n.dateOfBirth,p=e;if(e===p&&e===p)if(typeof f=="string"){if(i(f)>10)return d.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(f))return d.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=p===e}else var K=!0;if(K){if(n.familyName!==void 0){let f=n.familyName,p=e;if(e===p)if(typeof f=="string"){if(i(f)>256)return d.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=p===e}else var K=!0;if(K){if(n.fullName!==void 0){let f=n.fullName,p=e;if(e===p)if(typeof f=="string"){if(i(f)>512)return d.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=p===e}else var K=!0;if(K){if(n.givenNames!==void 0){let f=n.givenNames,p=e;if(e===p)if(Array.isArray(f)){if(f.length>20)return d.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(f.length<1)return d.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var ae=!0;let P=f.length;for(let k=0;k<P;k++){let E=f[k],U=e;if(e===U)if(typeof E=="string"){if(i(E)>128)return d.errors=[{instancePath:r+"/fields/holder/givenNames/"+k,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(E)<1)return d.errors=[{instancePath:r+"/fields/holder/givenNames/"+k,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/givenNames/"+k,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ae=U===e;if(!ae)break}}}else return d.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var K=p===e}else var K=!0;if(K){if(n.nationalities!==void 0){let f=n.nationalities,p=e;if(e===p)if(Array.isArray(f)){if(f.length>10)return d.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(f.length<1)return d.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var M=!0;let P=f.length;for(let k=0;k<P;k++){let E=f[k],U=e;if(e===U)if(typeof E=="string"){if(i(E)>3)return d.errors=[{instancePath:r+"/fields/holder/nationalities/"+k,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(i(E)<1)return d.errors=[{instancePath:r+"/fields/holder/nationalities/"+k,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ye.test(E))return d.errors=[{instancePath:r+"/fields/holder/nationalities/"+k,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/holder/nationalities/"+k,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=U===e;if(!M)break}}}else return d.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var K=p===e}else var K=!0;if(K)if(n.personalNumber!==void 0){let f=n.personalNumber,p=e;if(e===p)if(typeof f=="string"){if(i(f)>256)return d.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=p===e}else var K=!0}}}}}}}}else return d.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var S=s===e}else var S=!0;if(S){if(x.issueDate!==void 0){let n=x.issueDate,s=e;if(e===s&&e===s)if(typeof n=="string"){if(i(n)>10)return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(n)<1)return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(n))return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return d.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=s===e}else var S=!0;if(S){if(x.issuer!==void 0){let n=x.issuer,s=e;if(e===s)if(n&&typeof n=="object"&&!Array.isArray(n)){if(Object.keys(n).length<1)return d.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let $=e;for(let f in n)if(!(f==="country"||f==="name"||f==="region")){return d.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:f},message:"must NOT have additional properties"}],!1;break}if($===e){if(n.country!==void 0){let f=n.country,p=e;if(e===p)if(typeof f=="string"){if(!ye.test(f))return d.errors=[{instancePath:r+"/fields/issuer/country",schemaPath:"#/properties/fields/properties/issuer/properties/country/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return d.errors=[{instancePath:r+"/fields/issuer/country",schemaPath:"#/properties/fields/properties/issuer/properties/country/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z){if(n.name!==void 0){let f=n.name,p=e;if(e===p)if(typeof f=="string"){if(i(f)>512)return d.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z)if(n.region!==void 0){let f=n.region,p=e;if(e===p)if(typeof f=="string"){if(i(f)>256)return d.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(f)<1)return d.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0}}}}else return d.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var S=s===e}else var S=!0;if(S)if(x.passportTypeCode!==void 0){let n=x.passportTypeCode,s=e;if(e===s)if(typeof n=="string"){if(i(n)>16)return d.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/maxLength",keyword:"maxLength",params:{limit:16},message:"must NOT have more than 16 characters"}],!1;if(i(n)<1)return d.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=s===e}else var S=!0}}}}}}}}else return d.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var V=m===e}else var V=!0;if(V){if(t.label!==void 0){let x=t.label,m=e;if(e===m)if(typeof x=="string"){if(i(x)>256)return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(x)<1)return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/label",schemaPath:"#/properties/label/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var V=m===e}else var V=!0;if(V){if(t.labels!==void 0){let x=t.labels,m=e;if(e===e)if(Array.isArray(x)){if(x.length>64)return d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var Y=!0;let n=x.length;for(let s=0;s<n;s++){let g=x[s],$=e;if(e===$)if(typeof g=="string"){if(i(g)>80)return d.errors=[{instancePath:r+"/labels/"+s,schemaPath:"#/definitions/documentLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(i(g)<1)return d.errors=[{instancePath:r+"/labels/"+s,schemaPath:"#/definitions/documentLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/labels/"+s,schemaPath:"#/definitions/documentLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Y=$===e;if(!Y)break}if(Y){let s=x.length,g;if(s>1){let $={};for(;s--;){let f=x[s];if(typeof f=="string"){if(typeof $[f]=="number"){return g=$[f],d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/uniqueItems",keyword:"uniqueItems",params:{i:s,j:g},message:"must NOT have duplicate items (items ## "+g+" and "+s+" are identical)"}],!1;break}$[f]=s}}}}}}else return d.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/documentLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var V=m===e}else var V=!0;if(V){if(t.notes!==void 0){let x=t.notes,m=e;if(e===e)if(typeof x=="string"){if(i(x)>32768)return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(i(x)<0)return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return d.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/documentNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var V=m===e}else var V=!0;if(V){if(t.reviewState!==void 0){let x=t.reviewState,m=e;if(typeof x!="string")return d.errors=[{instancePath:r+"/reviewState",schemaPath:"#/properties/reviewState/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(x==="unreviewed"||x==="reviewed"||x==="corrected"||x==="rejected"))return d.errors=[{instancePath:r+"/reviewState",schemaPath:"#/properties/reviewState/enum",keyword:"enum",params:{allowedValues:Ae.properties.reviewState.enum},message:"must be equal to one of the allowed values"}],!1;var V=m===e}else var V=!0;if(V){if(t.source!==void 0){let x=e;A(t.source,{instancePath:r+"/source",parentData:t,parentDataProperty:"source",rootData:Z})||(o=o===null?A.errors:o.concat(A.errors),e=o.length);var V=x===e}else var V=!0;if(V)if(t.sources!==void 0){let x=t.sources,m=e;if(e===m)if(Array.isArray(x)){if(x.length>50)return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/maxItems",keyword:"maxItems",params:{limit:50},message:"must NOT have more than 50 items"}],!1;if(x.length<0)return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var W=!0;let b=x.length;for(let n=0;n<b;n++){let s=x[n],g=e;if(e===e)if(s&&typeof s=="object"&&!Array.isArray(s)){let p;if(s.recordId===void 0&&(p="recordId"))return d.errors=[{instancePath:r+"/sources/"+n,schemaPath:"#/definitions/documentRecordReference/required",keyword:"required",params:{missingProperty:p},message:"must have required property '"+p+"'"}],!1;{let T=e;for(let P in s)if(!(P==="contextId"||P==="messageCid"||P==="modulePath"||P==="moduleUri"||P==="recordId"||P==="tenantDid")){return d.errors=[{instancePath:r+"/sources/"+n,schemaPath:"#/definitions/documentRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:P},message:"must NOT have additional properties"}],!1;break}if(T===e){if(s.contextId!==void 0){let P=s.contextId,k=e;if(e===k)if(typeof P=="string"){if(i(P)>2048)return d.errors=[{instancePath:r+"/sources/"+n+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/contextId",schemaPath:"#/definitions/documentRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0;if(y){if(s.messageCid!==void 0){let P=s.messageCid,k=e;if(e===k)if(typeof P=="string"){if(i(P)>512)return d.errors=[{instancePath:r+"/sources/"+n+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/messageCid",schemaPath:"#/definitions/documentRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0;if(y){if(s.modulePath!==void 0){let P=s.modulePath,k=e;if(e===k)if(typeof P=="string"){if(i(P)>512)return d.errors=[{instancePath:r+"/sources/"+n+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/modulePath",schemaPath:"#/definitions/documentRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0;if(y){if(s.moduleUri!==void 0){let P=s.moduleUri,k=e;if(e===k&&e===k)if(typeof P=="string"){if(i(P)>8192)return d.errors=[{instancePath:r+"/sources/"+n+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(P))return d.errors=[{instancePath:r+"/sources/"+n+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/moduleUri",schemaPath:"#/definitions/documentRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0;if(y){if(s.recordId!==void 0){let P=s.recordId,k=e;if(e===k)if(typeof P=="string"){if(i(P)>512)return d.errors=[{instancePath:r+"/sources/"+n+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/recordId",schemaPath:"#/definitions/documentRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0;if(y)if(s.tenantDid!==void 0){let P=s.tenantDid,k=e;if(e===k)if(typeof P=="string"){if(i(P)>4096)return d.errors=[{instancePath:r+"/sources/"+n+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(P)<1)return d.errors=[{instancePath:r+"/sources/"+n+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(P))return d.errors=[{instancePath:r+"/sources/"+n+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return d.errors=[{instancePath:r+"/sources/"+n+"/tenantDid",schemaPath:"#/definitions/documentRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var y=k===e}else var y=!0}}}}}}}else return d.errors=[{instancePath:r+"/sources/"+n,schemaPath:"#/definitions/documentRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var W=g===e;if(!W)break}}}else return d.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var V=m===e}else var V=!0}}}}}}}}}}else return d.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return d.errors=o,e===0}var fr=l,_e={$id:"https://enbox.id/modules/identity-documents/v1/schemas/extraction",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,allOf:[{else:{required:["fields"]},if:{properties:{state:{const:"failed"}}},then:{not:{required:["fields"]},required:["error"]}},{if:{properties:{fields:{required:["drivingPrivileges"],type:"object"}},required:["fields"]},then:{properties:{documentType:{const:"drivers-licence"}},required:["documentType"]}},{if:{properties:{fields:{required:["passportTypeCode"],type:"object"}},required:["fields"]},then:{properties:{documentType:{const:"passport"}},required:["documentType"]}}],definitions:{extractionAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},extractionLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},extractionNoteText:{maxLength:32768,minLength:0,type:"string"},extractionRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},extractionSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/extractionRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"One immutable extraction attempt. documentType records the observed classification when available.",examples:[{documentType:"drivers-licence",extractedAt:"2026-01-15T12:00:00Z",extractor:"demo-import",fields:{documentNumber:"000DEM0123",drivingPrivileges:[{category:"B"}]},sources:[{recordId:"example-scan"}],state:"partial"}],properties:{confidence:{maximum:1,minimum:0,type:"number"},documentType:{description:"Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.",enum:["passport","national-id","state-id","drivers-licence","other","unknown"],type:"string"},error:{maxLength:8192,minLength:1,type:"string"},extractedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},fields:{additionalProperties:!1,minProperties:1,properties:{documentNumber:{description:"Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.",maxLength:256,minLength:1,type:"string"},drivingPrivileges:{description:"One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.",items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:1,type:"array"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},holder:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/extractionAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:1,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:1,type:"array"},personalNumber:{description:"Identifier of the holder as printed. Preserve leading zeros.",maxLength:256,minLength:1,type:"string"}},type:"object"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuer:{additionalProperties:!1,minProperties:1,properties:{country:{description:"Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.",pattern:"^[A-Z]{2,3}$",type:"string"},name:{maxLength:512,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"}},type:"object"},passportTypeCode:{description:"Document type code as printed on the passport. Omit when absent.",maxLength:16,minLength:1,type:"string"}},type:"object"},labels:{$ref:"#/definitions/extractionLabels"},notes:{$ref:"#/definitions/extractionNoteText"},rawText:{maxLength:1e6,minLength:0,type:"string"},source:{$ref:"#/definitions/extractionSource"},sources:{items:{$ref:"#/definitions/extractionRecordReference"},maxItems:50,minItems:1,type:"array"},state:{enum:["complete","partial","failed"],type:"string"}},required:["sources","extractedAt","extractor","state"],title:"ExtractionData",type:"object"};var Ee={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/extractionRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function _(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0;if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let G;if(t.kind===void 0&&(G="kind"))return _.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:G},message:"must have required property '"+G+"'"}],!1;{let ie=e;for(let a in t)if(!ve.call(Ee.properties,a)){return _.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:a},message:"must NOT have additional properties"}],!1;break}if(ie===e){if(t.actorDid!==void 0){let a=t.actorDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return _.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return _.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return _.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.conversationId!==void 0){let a=t.conversationId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return _.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractor!==void 0){let a=t.extractor,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return _.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractorVersion!==void 0){let a=t.extractorVersion,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return _.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.kind!==void 0){let a=t.kind,v=e;if(typeof a!="string")return _.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(a==="user-statement"||a==="document-extraction"||a==="import"||a==="measurement"||a==="derived"))return _.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:Ee.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var L=v===e}else var L=!0;if(L){if(t.messageId!==void 0){let a=t.messageId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return _.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.observedAt!==void 0){let a=t.observedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return _.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return _.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return _.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.record!==void 0){let a=t.record,v=e;if(e===e)if(a&&typeof a=="object"&&!Array.isArray(a)){let re;if(a.recordId===void 0&&(re="recordId"))return _.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/required",keyword:"required",params:{missingProperty:re},message:"must have required property '"+re+"'"}],!1;{let te=e;for(let c in a)if(!(c==="contextId"||c==="messageCid"||c==="modulePath"||c==="moduleUri"||c==="recordId"||c==="tenantDid")){return _.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:c},message:"must NOT have additional properties"}],!1;break}if(te===e){if(a.contextId!==void 0){let c=a.contextId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>2048)return _.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.messageCid!==void 0){let c=a.messageCid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return _.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.modulePath!==void 0){let c=a.modulePath,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return _.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.moduleUri!==void 0){let c=a.moduleUri,N=e;if(e===N&&e===N)if(typeof c=="string"){if(i(c)>8192)return _.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(c))return _.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return _.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.recordId!==void 0){let c=a.recordId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return _.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return _.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O)if(a.tenantDid!==void 0){let c=a.tenantDid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>4096)return _.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(c)<1)return _.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(c))return _.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return _.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0}}}}}}}else return _.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/extractionRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewedAt!==void 0){let a=t.reviewedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return _.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return _.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return _.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewerDid!==void 0){let a=t.reviewerDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return _.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return _.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return _.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L)if(t.uri!==void 0){let a=t.uri,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>8192)return _.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(a)<1)return _.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(a))return _.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return _.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0}}}}}}}}}}}}else return _.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return _.errors=o,e===0}function l(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0,L=e,O=e,G=!0,ie=e;if(t&&typeof t=="object"&&!Array.isArray(t)&&t.state!==void 0&&t.state!=="failed"){let Y={};o===null?o=[Y]:o.push(Y),e++}var a=ie===e;e=O,o!==null&&(O?o.length=O:o=null);let v;if(a){let Y=e,W=e,y=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let D;if(t.fields===void 0&&(D="fields")){let x={};o===null?o=[x]:o.push(x),e++}}var oe=y===e;if(oe)return l.errors=[{instancePath:r,schemaPath:"#/allOf/0/then/not",keyword:"not",params:{},message:"must NOT be valid"}],!1;if(e=W,o!==null&&(W?o.length=W:o=null),e===Y&&t&&typeof t=="object"&&!Array.isArray(t)){let D;if(t.error===void 0&&(D="error"))return l.errors=[{instancePath:r,schemaPath:"#/allOf/0/then/required",keyword:"required",params:{missingProperty:D},message:"must have required property '"+D+"'"}],!1}var a=Y===e;G=a,v="then"}else{let Y=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let y;if(t.fields===void 0&&(y="fields"))return l.errors=[{instancePath:r,schemaPath:"#/allOf/0/else/required",keyword:"required",params:{missingProperty:y},message:"must have required property '"+y+"'"}],!1}var a=Y===e;G=a,v="else"}if(!G){let Y={instancePath:r,schemaPath:"#/allOf/0/if",keyword:"if",params:{failingKeyword:v},message:'must match "'+v+'" schema'};return o===null?o=[Y]:o.push(Y),e++,l.errors=o,!1}var de=L===e;if(de){let Y=e,W=e,y=!0,u=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let x;if(t.fields===void 0&&(x="fields")){let m={};o===null?o=[m]:o.push(m),e++}else if(t.fields!==void 0){let m=t.fields;if(e===e)if(m&&typeof m=="object"&&!Array.isArray(m)){let b;if(m.drivingPrivileges===void 0&&(b="drivingPrivileges")){let n={};o===null?o=[n]:o.push(n),e++}}else{let b={};o===null?o=[b]:o.push(b),e++}}}var re=u===e;if(e=W,o!==null&&(W?o.length=W:o=null),re){let x=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let w;if(t.documentType===void 0&&(w="documentType"))return l.errors=[{instancePath:r,schemaPath:"#/allOf/1/then/required",keyword:"required",params:{missingProperty:w},message:"must have required property '"+w+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="drivers-licence")return l.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/1/then/properties/documentType/const",keyword:"const",params:{allowedValue:"drivers-licence"},message:"must be equal to constant"}],!1}var re=x===e;y=re}if(!y){let x={instancePath:r,schemaPath:"#/allOf/1/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[x]:o.push(x),e++,l.errors=o,!1}var de=Y===e;if(de){let x=e,m=e,w=!0,b=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let s;if(t.fields===void 0&&(s="fields")){let g={};o===null?o=[g]:o.push(g),e++}else if(t.fields!==void 0){let g=t.fields;if(e===e)if(g&&typeof g=="object"&&!Array.isArray(g)){let f;if(g.passportTypeCode===void 0&&(f="passportTypeCode")){let p={};o===null?o=[p]:o.push(p),e++}}else{let f={};o===null?o=[f]:o.push(f),e++}}}var te=b===e;if(e=m,o!==null&&(m?o.length=m:o=null),te){let s=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let $;if(t.documentType===void 0&&($="documentType"))return l.errors=[{instancePath:r,schemaPath:"#/allOf/2/then/required",keyword:"required",params:{missingProperty:$},message:"must have required property '"+$+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="passport")return l.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/2/then/properties/documentType/const",keyword:"const",params:{allowedValue:"passport"},message:"must be equal to constant"}],!1}var te=s===e;w=te}if(!w){let s={instancePath:r,schemaPath:"#/allOf/2/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[s]:o.push(s),e++,l.errors=o,!1}var de=x===e}}if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let Y;if(t.sources===void 0&&(Y="sources")||t.extractedAt===void 0&&(Y="extractedAt")||t.extractor===void 0&&(Y="extractor")||t.state===void 0&&(Y="state"))return l.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:Y},message:"must have required property '"+Y+"'"}],!1;{let W=e;for(let y in t)if(!ve.call(_e.properties,y)){return l.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:y},message:"must NOT have additional properties"}],!1;break}if(W===e){if(t.confidence!==void 0){let y=t.confidence,u=e;if(e===u)if(typeof y=="number"&&isFinite(y)){if(y>1||isNaN(y))return l.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/maximum",keyword:"maximum",params:{comparison:"<=",limit:1},message:"must be <= 1"}],!1;if(y<0||isNaN(y))return l.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/minimum",keyword:"minimum",params:{comparison:">=",limit:0},message:"must be >= 0"}],!1}else return l.errors=[{instancePath:r+"/confidence",schemaPath:"#/properties/confidence/type",keyword:"type",params:{type:"number"},message:"must be number"}],!1;var c=u===e}else var c=!0;if(c){if(t.documentType!==void 0){let y=t.documentType,u=e;if(typeof y!="string")return l.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(y==="passport"||y==="national-id"||y==="state-id"||y==="drivers-licence"||y==="other"||y==="unknown"))return l.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/enum",keyword:"enum",params:{allowedValues:_e.properties.documentType.enum},message:"must be equal to one of the allowed values"}],!1;var c=u===e}else var c=!0;if(c){if(t.error!==void 0){let y=t.error,u=e;if(e===u)if(typeof y=="string"){if(i(y)>8192)return l.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(y)<1)return l.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/error",schemaPath:"#/properties/error/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.extractedAt!==void 0){let y=t.extractedAt,u=e;if(e===u&&e===u)if(typeof y=="string"){if(i(y)>64)return l.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(y)<1)return l.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(y))return l.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return l.errors=[{instancePath:r+"/extractedAt",schemaPath:"#/properties/extractedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.extractor!==void 0){let y=t.extractor,u=e;if(e===u)if(typeof y=="string"){if(i(y)>128)return l.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(y)<1)return l.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.extractorVersion!==void 0){let y=t.extractorVersion,u=e;if(e===u)if(typeof y=="string"){if(i(y)>128)return l.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(y)<1)return l.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.fields!==void 0){let y=t.fields,u=e;if(e===u)if(y&&typeof y=="object"&&!Array.isArray(y)){if(Object.keys(y).length<1)return l.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let x=e;for(let m in y)if(!(m==="documentNumber"||m==="drivingPrivileges"||m==="expiryDate"||m==="holder"||m==="issueDate"||m==="issuer"||m==="passportTypeCode")){return l.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:m},message:"must NOT have additional properties"}],!1;break}if(x===e){if(y.documentNumber!==void 0){let m=y.documentNumber,w=e;if(e===w)if(typeof m=="string"){if(i(m)>256)return l.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(m)<1)return l.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/documentNumber",schemaPath:"#/properties/fields/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(y.drivingPrivileges!==void 0){let m=y.drivingPrivileges,w=e;if(e===w)if(Array.isArray(m)){if(m.length>100)return l.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(m.length<1)return l.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var q=!0;let n=m.length;for(let s=0;s<n;s++){let g=m[s],$=e;if(e===$)if(g&&typeof g=="object"&&!Array.isArray(g)){let p;if(g.category===void 0&&(p="category"))return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/required",keyword:"required",params:{missingProperty:p},message:"must have required property '"+p+"'"}],!1;{let T=e;for(let P in g)if(!(P==="category"||P==="restrictions"||P==="validFrom"||P==="validUntil")){return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:P},message:"must NOT have additional properties"}],!1;break}if(T===e){if(g.category!==void 0){let P=g.category,k=e;if(e===k)if(typeof P=="string"){if(i(P)>64)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(P)<1)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var V=k===e}else var V=!0;if(V){if(g.restrictions!==void 0){let P=g.restrictions,k=e;if(e===k)if(Array.isArray(P)){if(P.length>100)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(P.length<0)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var S=!0;let U=P.length;for(let H=0;H<U;H++){let fe=P[H],pe=e;if(e===pe)if(typeof fe=="string"){if(i(fe)>512)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(fe)<1)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=pe===e;if(!S)break}}}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var V=k===e}else var V=!0;if(V){if(g.validFrom!==void 0){let P=g.validFrom,k=e;if(e===k&&e===k)if(typeof P=="string"){if(i(P)>10)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(P)<1)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(P))return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var V=k===e}else var V=!0;if(V)if(g.validUntil!==void 0){let P=g.validUntil,k=e;if(e===k&&e===k)if(typeof P=="string"){if(i(P)>10)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(P)<1)return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(P))return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/fields/properties/drivingPrivileges/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var V=k===e}else var V=!0}}}}}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges/"+s,schemaPath:"#/properties/fields/properties/drivingPrivileges/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var q=$===e;if(!q)break}}}else return l.errors=[{instancePath:r+"/fields/drivingPrivileges",schemaPath:"#/properties/fields/properties/drivingPrivileges/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var N=w===e}else var N=!0;if(N){if(y.expiryDate!==void 0){let m=y.expiryDate,w=e;if(e===w&&e===w)if(typeof m=="string"){if(i(m)>10)return l.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(m)<1)return l.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(m))return l.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return l.errors=[{instancePath:r+"/fields/expiryDate",schemaPath:"#/properties/fields/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(y.holder!==void 0){let m=y.holder,w=e;if(e===w)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return l.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let n=e;for(let s in m)if(!(s==="address"||s==="dateOfBirth"||s==="familyName"||s==="fullName"||s==="givenNames"||s==="nationalities"||s==="personalNumber")){return l.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:s},message:"must NOT have additional properties"}],!1;break}if(n===e){if(m.address!==void 0){let s=m.address,g=e;if(e===e)if(s&&typeof s=="object"&&!Array.isArray(s)){if(Object.keys(s).length<1)return l.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/extractionAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let f=e;for(let p in s)if(!(p==="countryCode"||p==="formatted"||p==="locality"||p==="postalCode"||p==="region"||p==="street")){return l.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/extractionAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:p},message:"must NOT have additional properties"}],!1;break}if(f===e){if(s.countryCode!==void 0){let p=s.countryCode,T=e;if(e===T)if(typeof p=="string"){if(i(p)>2)return l.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!Re.test(p))return l.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/countryCode",schemaPath:"#/definitions/extractionAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0;if(Q){if(s.formatted!==void 0){let p=s.formatted,T=e;if(e===T)if(typeof p=="string"){if(i(p)>2048)return l.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/formatted",schemaPath:"#/definitions/extractionAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0;if(Q){if(s.locality!==void 0){let p=s.locality,T=e;if(e===T)if(typeof p=="string"){if(i(p)>256)return l.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/locality",schemaPath:"#/definitions/extractionAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0;if(Q){if(s.postalCode!==void 0){let p=s.postalCode,T=e;if(e===T)if(typeof p=="string"){if(i(p)>32)return l.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/postalCode",schemaPath:"#/definitions/extractionAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0;if(Q){if(s.region!==void 0){let p=s.region,T=e;if(e===T)if(typeof p=="string"){if(i(p)>256)return l.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/region",schemaPath:"#/definitions/extractionAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0;if(Q)if(s.street!==void 0){let p=s.street,T=e;if(e===T)if(typeof p=="string"){if(i(p)>512)return l.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(p)<1)return l.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/address/street",schemaPath:"#/definitions/extractionAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=T===e}else var Q=!0}}}}}}}else return l.errors=[{instancePath:r+"/fields/holder/address",schemaPath:"#/definitions/extractionAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var j=g===e}else var j=!0;if(j){if(m.dateOfBirth!==void 0){let s=m.dateOfBirth,g=e;if(e===g&&e===g)if(typeof s=="string"){if(i(s)>10)return l.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(s))return l.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return l.errors=[{instancePath:r+"/fields/holder/dateOfBirth",schemaPath:"#/properties/fields/properties/holder/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=g===e}else var j=!0;if(j){if(m.familyName!==void 0){let s=m.familyName,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return l.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/familyName",schemaPath:"#/properties/fields/properties/holder/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=g===e}else var j=!0;if(j){if(m.fullName!==void 0){let s=m.fullName,g=e;if(e===g)if(typeof s=="string"){if(i(s)>512)return l.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/fullName",schemaPath:"#/properties/fields/properties/holder/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=g===e}else var j=!0;if(j){if(m.givenNames!==void 0){let s=m.givenNames,g=e;if(e===g)if(Array.isArray(s)){if(s.length>20)return l.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(s.length<1)return l.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var X=!0;let f=s.length;for(let p=0;p<f;p++){let T=s[p],P=e;if(e===P)if(typeof T=="string"){if(i(T)>128)return l.errors=[{instancePath:r+"/fields/holder/givenNames/"+p,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(T)<1)return l.errors=[{instancePath:r+"/fields/holder/givenNames/"+p,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/givenNames/"+p,schemaPath:"#/properties/fields/properties/holder/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=P===e;if(!X)break}}}else return l.errors=[{instancePath:r+"/fields/holder/givenNames",schemaPath:"#/properties/fields/properties/holder/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var j=g===e}else var j=!0;if(j){if(m.nationalities!==void 0){let s=m.nationalities,g=e;if(e===g)if(Array.isArray(s)){if(s.length>10)return l.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(s.length<1)return l.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var ee=!0;let f=s.length;for(let p=0;p<f;p++){let T=s[p],P=e;if(e===P)if(typeof T=="string"){if(i(T)>3)return l.errors=[{instancePath:r+"/fields/holder/nationalities/"+p,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(i(T)<1)return l.errors=[{instancePath:r+"/fields/holder/nationalities/"+p,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ye.test(T))return l.errors=[{instancePath:r+"/fields/holder/nationalities/"+p,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return l.errors=[{instancePath:r+"/fields/holder/nationalities/"+p,schemaPath:"#/properties/fields/properties/holder/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=P===e;if(!ee)break}}}else return l.errors=[{instancePath:r+"/fields/holder/nationalities",schemaPath:"#/properties/fields/properties/holder/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var j=g===e}else var j=!0;if(j)if(m.personalNumber!==void 0){let s=m.personalNumber,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return l.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/holder/personalNumber",schemaPath:"#/properties/fields/properties/holder/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=g===e}else var j=!0}}}}}}}}else return l.errors=[{instancePath:r+"/fields/holder",schemaPath:"#/properties/fields/properties/holder/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var N=w===e}else var N=!0;if(N){if(y.issueDate!==void 0){let m=y.issueDate,w=e;if(e===w&&e===w)if(typeof m=="string"){if(i(m)>10)return l.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(m)<1)return l.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(m))return l.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return l.errors=[{instancePath:r+"/fields/issueDate",schemaPath:"#/properties/fields/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0;if(N){if(y.issuer!==void 0){let m=y.issuer,w=e;if(e===w)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return l.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let n=e;for(let s in m)if(!(s==="country"||s==="name"||s==="region")){return l.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:s},message:"must NOT have additional properties"}],!1;break}if(n===e){if(m.country!==void 0){let s=m.country,g=e;if(e===g)if(typeof s=="string"){if(!ye.test(s))return l.errors=[{instancePath:r+"/fields/issuer/country",schemaPath:"#/properties/fields/properties/issuer/properties/country/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return l.errors=[{instancePath:r+"/fields/issuer/country",schemaPath:"#/properties/fields/properties/issuer/properties/country/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=g===e}else var K=!0;if(K){if(m.name!==void 0){let s=m.name,g=e;if(e===g)if(typeof s=="string"){if(i(s)>512)return l.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/issuer/name",schemaPath:"#/properties/fields/properties/issuer/properties/name/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=g===e}else var K=!0;if(K)if(m.region!==void 0){let s=m.region,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return l.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return l.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/issuer/region",schemaPath:"#/properties/fields/properties/issuer/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=g===e}else var K=!0}}}}else return l.errors=[{instancePath:r+"/fields/issuer",schemaPath:"#/properties/fields/properties/issuer/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var N=w===e}else var N=!0;if(N)if(y.passportTypeCode!==void 0){let m=y.passportTypeCode,w=e;if(e===w)if(typeof m=="string"){if(i(m)>16)return l.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/maxLength",keyword:"maxLength",params:{limit:16},message:"must NOT have more than 16 characters"}],!1;if(i(m)<1)return l.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/fields/passportTypeCode",schemaPath:"#/properties/fields/properties/passportTypeCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var N=w===e}else var N=!0}}}}}}}}else return l.errors=[{instancePath:r+"/fields",schemaPath:"#/properties/fields/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var c=u===e}else var c=!0;if(c){if(t.labels!==void 0){let y=t.labels,u=e;if(e===e)if(Array.isArray(y)){if(y.length>64)return l.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var ae=!0;let m=y.length;for(let w=0;w<m;w++){let b=y[w],n=e;if(e===n)if(typeof b=="string"){if(i(b)>80)return l.errors=[{instancePath:r+"/labels/"+w,schemaPath:"#/definitions/extractionLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(i(b)<1)return l.errors=[{instancePath:r+"/labels/"+w,schemaPath:"#/definitions/extractionLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/labels/"+w,schemaPath:"#/definitions/extractionLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ae=n===e;if(!ae)break}if(ae){let w=y.length,b;if(w>1){let n={};for(;w--;){let s=y[w];if(typeof s=="string"){if(typeof n[s]=="number"){return b=n[s],l.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/uniqueItems",keyword:"uniqueItems",params:{i:w,j:b},message:"must NOT have duplicate items (items ## "+b+" and "+w+" are identical)"}],!1;break}n[s]=w}}}}}}else return l.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/extractionLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var c=u===e}else var c=!0;if(c){if(t.notes!==void 0){let y=t.notes,u=e;if(e===e)if(typeof y=="string"){if(i(y)>32768)return l.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(i(y)<0)return l.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return l.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/extractionNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.rawText!==void 0){let y=t.rawText,u=e;if(e===u)if(typeof y=="string"){if(i(y)>1e6)return l.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/maxLength",keyword:"maxLength",params:{limit:1e6},message:"must NOT have more than 1000000 characters"}],!1;if(i(y)<0)return l.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return l.errors=[{instancePath:r+"/rawText",schemaPath:"#/properties/rawText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var c=u===e}else var c=!0;if(c){if(t.source!==void 0){let y=e;_(t.source,{instancePath:r+"/source",parentData:t,parentDataProperty:"source",rootData:Z})||(o=o===null?_.errors:o.concat(_.errors),e=o.length);var c=y===e}else var c=!0;if(c){if(t.sources!==void 0){let y=t.sources,u=e;if(e===u)if(Array.isArray(y)){if(y.length>50)return l.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/maxItems",keyword:"maxItems",params:{limit:50},message:"must NOT have more than 50 items"}],!1;if(y.length<1)return l.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var M=!0;let x=y.length;for(let m=0;m<x;m++){let w=y[m],b=e;if(e===e)if(w&&typeof w=="object"&&!Array.isArray(w)){let g;if(w.recordId===void 0&&(g="recordId"))return l.errors=[{instancePath:r+"/sources/"+m,schemaPath:"#/definitions/extractionRecordReference/required",keyword:"required",params:{missingProperty:g},message:"must have required property '"+g+"'"}],!1;{let $=e;for(let f in w)if(!(f==="contextId"||f==="messageCid"||f==="modulePath"||f==="moduleUri"||f==="recordId"||f==="tenantDid")){return l.errors=[{instancePath:r+"/sources/"+m,schemaPath:"#/definitions/extractionRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:f},message:"must NOT have additional properties"}],!1;break}if($===e){if(w.contextId!==void 0){let f=w.contextId,p=e;if(e===p)if(typeof f=="string"){if(i(f)>2048)return l.errors=[{instancePath:r+"/sources/"+m+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/contextId",schemaPath:"#/definitions/extractionRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z){if(w.messageCid!==void 0){let f=w.messageCid,p=e;if(e===p)if(typeof f=="string"){if(i(f)>512)return l.errors=[{instancePath:r+"/sources/"+m+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/messageCid",schemaPath:"#/definitions/extractionRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z){if(w.modulePath!==void 0){let f=w.modulePath,p=e;if(e===p)if(typeof f=="string"){if(i(f)>512)return l.errors=[{instancePath:r+"/sources/"+m+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/modulePath",schemaPath:"#/definitions/extractionRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z){if(w.moduleUri!==void 0){let f=w.moduleUri,p=e;if(e===p&&e===p)if(typeof f=="string"){if(i(f)>8192)return l.errors=[{instancePath:r+"/sources/"+m+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(f))return l.errors=[{instancePath:r+"/sources/"+m+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/moduleUri",schemaPath:"#/definitions/extractionRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z){if(w.recordId!==void 0){let f=w.recordId,p=e;if(e===p)if(typeof f=="string"){if(i(f)>512)return l.errors=[{instancePath:r+"/sources/"+m+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/recordId",schemaPath:"#/definitions/extractionRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0;if(z)if(w.tenantDid!==void 0){let f=w.tenantDid,p=e;if(e===p)if(typeof f=="string"){if(i(f)>4096)return l.errors=[{instancePath:r+"/sources/"+m+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(f)<1)return l.errors=[{instancePath:r+"/sources/"+m+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(f))return l.errors=[{instancePath:r+"/sources/"+m+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return l.errors=[{instancePath:r+"/sources/"+m+"/tenantDid",schemaPath:"#/definitions/extractionRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=p===e}else var z=!0}}}}}}}else return l.errors=[{instancePath:r+"/sources/"+m,schemaPath:"#/definitions/extractionRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var M=b===e;if(!M)break}}}else return l.errors=[{instancePath:r+"/sources",schemaPath:"#/properties/sources/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var c=u===e}else var c=!0;if(c)if(t.state!==void 0){let y=t.state,u=e;if(typeof y!="string")return l.errors=[{instancePath:r+"/state",schemaPath:"#/properties/state/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(y==="complete"||y==="partial"||y==="failed"))return l.errors=[{instancePath:r+"/state",schemaPath:"#/properties/state/enum",keyword:"enum",params:{allowedValues:_e.properties.state.enum},message:"must be equal to one of the allowed values"}],!1;var c=u===e}else var c=!0}}}}}}}}}}}}}}else return l.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return l.errors=o,e===0}var hr=h,Ie={$id:"https://enbox.id/modules/identity-documents/v1/schemas/review",$schema:"http://json-schema.org/draft-07/schema#",additionalProperties:!1,allOf:[{else:{not:{anyOf:[{required:["corrections"]},{required:["documentType"]}]}},if:{properties:{decision:{const:"corrected"}}},then:{anyOf:[{required:["corrections"]},{required:["documentType"]}]}},{if:{properties:{corrections:{required:["drivingPrivileges"],type:"object"}},required:["corrections"]},then:{properties:{documentType:{const:"drivers-licence"}},required:["documentType"]}},{if:{properties:{corrections:{required:["passportTypeCode"],type:"object"}},required:["corrections"]},then:{properties:{documentType:{const:"passport"}},required:["documentType"]}}],definitions:{reviewAddress:{additionalProperties:!1,minProperties:1,properties:{countryCode:{maxLength:2,minLength:1,pattern:"^[A-Z]{2}$",type:"string"},formatted:{maxLength:2048,minLength:1,type:"string"},locality:{maxLength:256,minLength:1,type:"string"},postalCode:{maxLength:32,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"},street:{maxLength:512,minLength:1,type:"string"}},required:[],type:"object"},reviewLabels:{items:{maxLength:80,minLength:1,type:"string"},maxItems:64,type:"array",uniqueItems:!0},reviewNoteText:{maxLength:32768,minLength:0,type:"string"},reviewRecordReference:{additionalProperties:!1,description:"A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access.",properties:{contextId:{maxLength:2048,minLength:1,type:"string"},messageCid:{maxLength:512,minLength:1,type:"string"},modulePath:{maxLength:512,minLength:1,type:"string"},moduleUri:{format:"uri",maxLength:8192,minLength:1,type:"string"},recordId:{maxLength:512,minLength:1,type:"string"},tenantDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"}},required:["recordId"],type:"object"},reviewSource:{additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/reviewRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"}},description:"Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.",examples:[{corrections:{documentNumber:"000DEMO123"},decision:"corrected",extraction:{recordId:"example-extraction"},reason:"Compared the document number with the scan.",reviewedAt:"2026-01-15T12:05:00Z"}],properties:{corrections:{additionalProperties:!1,minProperties:1,properties:{documentNumber:{description:"Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.",maxLength:256,minLength:1,type:"string"},drivingPrivileges:{description:"One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.",items:{additionalProperties:!1,properties:{category:{maxLength:64,minLength:1,type:"string"},restrictions:{items:{maxLength:512,minLength:1,type:"string"},maxItems:100,minItems:0,type:"array"},validFrom:{format:"date",maxLength:10,minLength:1,type:"string"},validUntil:{format:"date",maxLength:10,minLength:1,type:"string"}},required:["category"],type:"object"},maxItems:100,minItems:1,type:"array"},expiryDate:{format:"date",maxLength:10,minLength:1,type:"string"},holder:{additionalProperties:!1,minProperties:1,properties:{address:{$ref:"#/definitions/reviewAddress"},dateOfBirth:{format:"date",maxLength:10,minLength:1,type:"string"},familyName:{maxLength:256,minLength:1,type:"string"},fullName:{maxLength:512,minLength:1,type:"string"},givenNames:{items:{maxLength:128,minLength:1,type:"string"},maxItems:20,minItems:1,type:"array"},nationalities:{items:{maxLength:3,minLength:1,pattern:"^[A-Z]{2,3}$",type:"string"},maxItems:10,minItems:1,type:"array"},personalNumber:{description:"Identifier of the holder as printed. Preserve leading zeros.",maxLength:256,minLength:1,type:"string"}},type:"object"},issueDate:{format:"date",maxLength:10,minLength:1,type:"string"},issuer:{additionalProperties:!1,minProperties:1,properties:{country:{description:"Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.",pattern:"^[A-Z]{2,3}$",type:"string"},name:{maxLength:512,minLength:1,type:"string"},region:{maxLength:256,minLength:1,type:"string"}},type:"object"},passportTypeCode:{description:"Document type code as printed on the passport. Omit when absent.",maxLength:16,minLength:1,type:"string"}},type:"object"},decision:{enum:["accepted","corrected","rejected"],type:"string"},documentType:{description:"Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.",enum:["passport","national-id","state-id","drivers-licence","other","unknown"],type:"string"},extraction:{$ref:"#/definitions/reviewRecordReference"},labels:{$ref:"#/definitions/reviewLabels"},notes:{$ref:"#/definitions/reviewNoteText"},reason:{maxLength:8192,minLength:1,type:"string"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},source:{$ref:"#/definitions/reviewSource"}},required:["reviewedAt","decision"],title:"ReviewData",type:"object"};var Me={additionalProperties:!1,properties:{actorDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},conversationId:{maxLength:512,minLength:1,type:"string"},extractor:{maxLength:128,minLength:1,type:"string"},extractorVersion:{maxLength:128,minLength:1,type:"string"},kind:{enum:["user-statement","document-extraction","import","measurement","derived"],type:"string"},messageId:{maxLength:512,minLength:1,type:"string"},observedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},record:{$ref:"#/definitions/reviewRecordReference"},reviewedAt:{format:"date-time",maxLength:64,minLength:1,type:"string"},reviewerDid:{maxLength:4096,minLength:1,pattern:"^did:[a-z0-9]+:[^\\s]+$",type:"string"},uri:{format:"uri",maxLength:8192,minLength:1,type:"string"}},required:["kind"],type:"object"};function I(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0;if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let G;if(t.kind===void 0&&(G="kind"))return I.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:G},message:"must have required property '"+G+"'"}],!1;{let ie=e;for(let a in t)if(!ve.call(Me.properties,a)){return I.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:a},message:"must NOT have additional properties"}],!1;break}if(ie===e){if(t.actorDid!==void 0){let a=t.actorDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return I.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return I.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return I.errors=[{instancePath:r+"/actorDid",schemaPath:"#/properties/actorDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.conversationId!==void 0){let a=t.conversationId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return I.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/conversationId",schemaPath:"#/properties/conversationId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractor!==void 0){let a=t.extractor,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return I.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/extractor",schemaPath:"#/properties/extractor/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.extractorVersion!==void 0){let a=t.extractorVersion,v=e;if(e===v)if(typeof a=="string"){if(i(a)>128)return I.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/extractorVersion",schemaPath:"#/properties/extractorVersion/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.kind!==void 0){let a=t.kind,v=e;if(typeof a!="string")return I.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(a==="user-statement"||a==="document-extraction"||a==="import"||a==="measurement"||a==="derived"))return I.errors=[{instancePath:r+"/kind",schemaPath:"#/properties/kind/enum",keyword:"enum",params:{allowedValues:Me.properties.kind.enum},message:"must be equal to one of the allowed values"}],!1;var L=v===e}else var L=!0;if(L){if(t.messageId!==void 0){let a=t.messageId,v=e;if(e===v)if(typeof a=="string"){if(i(a)>512)return I.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/messageId",schemaPath:"#/properties/messageId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.observedAt!==void 0){let a=t.observedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return I.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return I.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return I.errors=[{instancePath:r+"/observedAt",schemaPath:"#/properties/observedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.record!==void 0){let a=t.record,v=e;if(e===e)if(a&&typeof a=="object"&&!Array.isArray(a)){let re;if(a.recordId===void 0&&(re="recordId"))return I.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/required",keyword:"required",params:{missingProperty:re},message:"must have required property '"+re+"'"}],!1;{let te=e;for(let c in a)if(!(c==="contextId"||c==="messageCid"||c==="modulePath"||c==="moduleUri"||c==="recordId"||c==="tenantDid")){return I.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:c},message:"must NOT have additional properties"}],!1;break}if(te===e){if(a.contextId!==void 0){let c=a.contextId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>2048)return I.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/record/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.messageCid!==void 0){let c=a.messageCid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return I.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/record/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.modulePath!==void 0){let c=a.modulePath,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return I.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/record/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.moduleUri!==void 0){let c=a.moduleUri,N=e;if(e===N&&e===N)if(typeof c=="string"){if(i(c)>8192)return I.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(c))return I.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return I.errors=[{instancePath:r+"/record/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O){if(a.recordId!==void 0){let c=a.recordId,N=e;if(e===N)if(typeof c=="string"){if(i(c)>512)return I.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return I.errors=[{instancePath:r+"/record/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0;if(O)if(a.tenantDid!==void 0){let c=a.tenantDid,N=e;if(e===N)if(typeof c=="string"){if(i(c)>4096)return I.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(c)<1)return I.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(c))return I.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return I.errors=[{instancePath:r+"/record/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var O=N===e}else var O=!0}}}}}}}else return I.errors=[{instancePath:r+"/record",schemaPath:"#/definitions/reviewRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewedAt!==void 0){let a=t.reviewedAt,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>64)return I.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(a))return I.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return I.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L){if(t.reviewerDid!==void 0){let a=t.reviewerDid,v=e;if(e===v)if(typeof a=="string"){if(i(a)>4096)return I.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(a))return I.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return I.errors=[{instancePath:r+"/reviewerDid",schemaPath:"#/properties/reviewerDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0;if(L)if(t.uri!==void 0){let a=t.uri,v=e;if(e===v&&e===v)if(typeof a=="string"){if(i(a)>8192)return I.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(a)<1)return I.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(a))return I.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return I.errors=[{instancePath:r+"/uri",schemaPath:"#/properties/uri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var L=v===e}else var L=!0}}}}}}}}}}}}else return I.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return I.errors=o,e===0}function h(t,{instancePath:r="",parentData:F,parentDataProperty:C,rootData:Z=t}={}){let o=null,e=0,L=e,O=e,G=!0,ie=e;if(t&&typeof t=="object"&&!Array.isArray(t)&&t.decision!==void 0&&t.decision!=="corrected"){let W={};o===null?o=[W]:o.push(W),e++}var a=ie===e;e=O,o!==null&&(O?o.length=O:o=null);let v;if(a){let W=e,y=e,u=!1,D=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let m;if(t.corrections===void 0&&(m="corrections")){let w={instancePath:r,schemaPath:"#/allOf/0/then/anyOf/0/required",keyword:"required",params:{missingProperty:m},message:"must have required property '"+m+"'"};o===null?o=[w]:o.push(w),e++}}var oe=D===e;if(u=u||oe,!u){let m=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let b;if(t.documentType===void 0&&(b="documentType")){let n={instancePath:r,schemaPath:"#/allOf/0/then/anyOf/1/required",keyword:"required",params:{missingProperty:b},message:"must have required property '"+b+"'"};o===null?o=[n]:o.push(n),e++}}var oe=m===e;u=u||oe}if(u)e=y,o!==null&&(y?o.length=y:o=null);else{let m={instancePath:r,schemaPath:"#/allOf/0/then/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};return o===null?o=[m]:o.push(m),e++,h.errors=o,!1}var a=W===e;G=a,v="then"}else{let W=e,y=e,u=e,D=e,x=!1,m=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let b;if(t.corrections===void 0&&(b="corrections")){let n={};o===null?o=[n]:o.push(n),e++}}var de=m===e;if(x=x||de,!x){let b=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let s;if(t.documentType===void 0&&(s="documentType")){let g={};o===null?o=[g]:o.push(g),e++}}var de=b===e;x=x||de}if(x)e=D,o!==null&&(D?o.length=D:o=null);else{let b={};o===null?o=[b]:o.push(b),e++}var re=u===e;if(re)return h.errors=[{instancePath:r,schemaPath:"#/allOf/0/else/not",keyword:"not",params:{},message:"must NOT be valid"}],!1;e=y,o!==null&&(y?o.length=y:o=null);var a=W===e;G=a,v="else"}if(!G){let W={instancePath:r,schemaPath:"#/allOf/0/if",keyword:"if",params:{failingKeyword:v},message:'must match "'+v+'" schema'};return o===null?o=[W]:o.push(W),e++,h.errors=o,!1}var te=L===e;if(te){let W=e,y=e,u=!0,D=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let m;if(t.corrections===void 0&&(m="corrections")){let w={};o===null?o=[w]:o.push(w),e++}else if(t.corrections!==void 0){let w=t.corrections;if(e===e)if(w&&typeof w=="object"&&!Array.isArray(w)){let n;if(w.drivingPrivileges===void 0&&(n="drivingPrivileges")){let s={};o===null?o=[s]:o.push(s),e++}}else{let n={};o===null?o=[n]:o.push(n),e++}}}var c=D===e;if(e=y,o!==null&&(y?o.length=y:o=null),c){let m=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let b;if(t.documentType===void 0&&(b="documentType"))return h.errors=[{instancePath:r,schemaPath:"#/allOf/1/then/required",keyword:"required",params:{missingProperty:b},message:"must have required property '"+b+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="drivers-licence")return h.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/1/then/properties/documentType/const",keyword:"const",params:{allowedValue:"drivers-licence"},message:"must be equal to constant"}],!1}var c=m===e;u=c}if(!u){let m={instancePath:r,schemaPath:"#/allOf/1/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[m]:o.push(m),e++,h.errors=o,!1}var te=W===e;if(te){let m=e,w=e,b=!0,n=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let g;if(t.corrections===void 0&&(g="corrections")){let $={};o===null?o=[$]:o.push($),e++}else if(t.corrections!==void 0){let $=t.corrections;if(e===e)if($&&typeof $=="object"&&!Array.isArray($)){let p;if($.passportTypeCode===void 0&&(p="passportTypeCode")){let T={};o===null?o=[T]:o.push(T),e++}}else{let p={};o===null?o=[p]:o.push(p),e++}}}var N=n===e;if(e=w,o!==null&&(w?o.length=w:o=null),N){let g=e;if(t&&typeof t=="object"&&!Array.isArray(t)){let f;if(t.documentType===void 0&&(f="documentType"))return h.errors=[{instancePath:r,schemaPath:"#/allOf/2/then/required",keyword:"required",params:{missingProperty:f},message:"must have required property '"+f+"'"}],!1;if(t.documentType!==void 0&&t.documentType!=="passport")return h.errors=[{instancePath:r+"/documentType",schemaPath:"#/allOf/2/then/properties/documentType/const",keyword:"const",params:{allowedValue:"passport"},message:"must be equal to constant"}],!1}var N=g===e;b=N}if(!b){let g={instancePath:r,schemaPath:"#/allOf/2/if",keyword:"if",params:{failingKeyword:"then"},message:'must match "then" schema'};return o===null?o=[g]:o.push(g),e++,h.errors=o,!1}var te=m===e}}if(e===0)if(t&&typeof t=="object"&&!Array.isArray(t)){let W;if(t.reviewedAt===void 0&&(W="reviewedAt")||t.decision===void 0&&(W="decision"))return h.errors=[{instancePath:r,schemaPath:"#/required",keyword:"required",params:{missingProperty:W},message:"must have required property '"+W+"'"}],!1;{let y=e;for(let u in t)if(!ve.call(Ie.properties,u)){return h.errors=[{instancePath:r,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:u},message:"must NOT have additional properties"}],!1;break}if(y===e){if(t.corrections!==void 0){let u=t.corrections,D=e;if(e===D)if(u&&typeof u=="object"&&!Array.isArray(u)){if(Object.keys(u).length<1)return h.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let x=e;for(let m in u)if(!(m==="documentNumber"||m==="drivingPrivileges"||m==="expiryDate"||m==="holder"||m==="issueDate"||m==="issuer"||m==="passportTypeCode")){return h.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:m},message:"must NOT have additional properties"}],!1;break}if(x===e){if(u.documentNumber!==void 0){let m=u.documentNumber,w=e;if(e===w)if(typeof m=="string"){if(i(m)>256)return h.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(m)<1)return h.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/documentNumber",schemaPath:"#/properties/corrections/properties/documentNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=w===e}else var q=!0;if(q){if(u.drivingPrivileges!==void 0){let m=u.drivingPrivileges,w=e;if(e===w)if(Array.isArray(m)){if(m.length>100)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges",schemaPath:"#/properties/corrections/properties/drivingPrivileges/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(m.length<1)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges",schemaPath:"#/properties/corrections/properties/drivingPrivileges/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var V=!0;let n=m.length;for(let s=0;s<n;s++){let g=m[s],$=e;if(e===$)if(g&&typeof g=="object"&&!Array.isArray(g)){let p;if(g.category===void 0&&(p="category"))return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/required",keyword:"required",params:{missingProperty:p},message:"must have required property '"+p+"'"}],!1;{let T=e;for(let P in g)if(!(P==="category"||P==="restrictions"||P==="validFrom"||P==="validUntil")){return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:P},message:"must NOT have additional properties"}],!1;break}if(T===e){if(g.category!==void 0){let P=g.category,k=e;if(e===k)if(typeof P=="string"){if(i(P)>64)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/category/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(P)<1)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/category/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/category",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/category/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=k===e}else var S=!0;if(S){if(g.restrictions!==void 0){let P=g.restrictions,k=e;if(e===k)if(Array.isArray(P)){if(P.length>100)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/maxItems",keyword:"maxItems",params:{limit:100},message:"must NOT have more than 100 items"}],!1;if(P.length<0)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/minItems",keyword:"minItems",params:{limit:0},message:"must NOT have fewer than 0 items"}],!1;{var Q=!0;let U=P.length;for(let H=0;H<U;H++){let fe=P[H],pe=e;if(e===pe)if(typeof fe=="string"){if(i(fe)>512)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/items/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(fe)<1)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions/"+H,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Q=pe===e;if(!Q)break}}}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/restrictions",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/restrictions/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var S=k===e}else var S=!0;if(S){if(g.validFrom!==void 0){let P=g.validFrom,k=e;if(e===k&&e===k)if(typeof P=="string"){if(i(P)>10)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validFrom/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(P)<1)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validFrom/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(P))return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validFrom/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validFrom",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validFrom/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=k===e}else var S=!0;if(S)if(g.validUntil!==void 0){let P=g.validUntil,k=e;if(e===k&&e===k)if(typeof P=="string"){if(i(P)>10)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validUntil/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(P)<1)return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validUntil/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(P))return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validUntil/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s+"/validUntil",schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/properties/validUntil/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var S=k===e}else var S=!0}}}}}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges/"+s,schemaPath:"#/properties/corrections/properties/drivingPrivileges/items/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var V=$===e;if(!V)break}}}else return h.errors=[{instancePath:r+"/corrections/drivingPrivileges",schemaPath:"#/properties/corrections/properties/drivingPrivileges/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var q=w===e}else var q=!0;if(q){if(u.expiryDate!==void 0){let m=u.expiryDate,w=e;if(e===w&&e===w)if(typeof m=="string"){if(i(m)>10)return h.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(m)<1)return h.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(m))return h.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return h.errors=[{instancePath:r+"/corrections/expiryDate",schemaPath:"#/properties/corrections/properties/expiryDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=w===e}else var q=!0;if(q){if(u.holder!==void 0){let m=u.holder,w=e;if(e===w)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return h.errors=[{instancePath:r+"/corrections/holder",schemaPath:"#/properties/corrections/properties/holder/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let n=e;for(let s in m)if(!(s==="address"||s==="dateOfBirth"||s==="familyName"||s==="fullName"||s==="givenNames"||s==="nationalities"||s==="personalNumber")){return h.errors=[{instancePath:r+"/corrections/holder",schemaPath:"#/properties/corrections/properties/holder/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:s},message:"must NOT have additional properties"}],!1;break}if(n===e){if(m.address!==void 0){let s=m.address,g=e;if(e===e)if(s&&typeof s=="object"&&!Array.isArray(s)){if(Object.keys(s).length<1)return h.errors=[{instancePath:r+"/corrections/holder/address",schemaPath:"#/definitions/reviewAddress/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let f=e;for(let p in s)if(!(p==="countryCode"||p==="formatted"||p==="locality"||p==="postalCode"||p==="region"||p==="street")){return h.errors=[{instancePath:r+"/corrections/holder/address",schemaPath:"#/definitions/reviewAddress/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:p},message:"must NOT have additional properties"}],!1;break}if(f===e){if(s.countryCode!==void 0){let p=s.countryCode,T=e;if(e===T)if(typeof p=="string"){if(i(p)>2)return h.errors=[{instancePath:r+"/corrections/holder/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/maxLength",keyword:"maxLength",params:{limit:2},message:"must NOT have more than 2 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!Re.test(p))return h.errors=[{instancePath:r+"/corrections/holder/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2}$"},message:'must match pattern "^[A-Z]{2}$"'}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/countryCode",schemaPath:"#/definitions/reviewAddress/properties/countryCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0;if(j){if(s.formatted!==void 0){let p=s.formatted,T=e;if(e===T)if(typeof p=="string"){if(i(p)>2048)return h.errors=[{instancePath:r+"/corrections/holder/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/formatted",schemaPath:"#/definitions/reviewAddress/properties/formatted/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0;if(j){if(s.locality!==void 0){let p=s.locality,T=e;if(e===T)if(typeof p=="string"){if(i(p)>256)return h.errors=[{instancePath:r+"/corrections/holder/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/locality",schemaPath:"#/definitions/reviewAddress/properties/locality/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0;if(j){if(s.postalCode!==void 0){let p=s.postalCode,T=e;if(e===T)if(typeof p=="string"){if(i(p)>32)return h.errors=[{instancePath:r+"/corrections/holder/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/maxLength",keyword:"maxLength",params:{limit:32},message:"must NOT have more than 32 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/postalCode",schemaPath:"#/definitions/reviewAddress/properties/postalCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0;if(j){if(s.region!==void 0){let p=s.region,T=e;if(e===T)if(typeof p=="string"){if(i(p)>256)return h.errors=[{instancePath:r+"/corrections/holder/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/region",schemaPath:"#/definitions/reviewAddress/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0;if(j)if(s.street!==void 0){let p=s.street,T=e;if(e===T)if(typeof p=="string"){if(i(p)>512)return h.errors=[{instancePath:r+"/corrections/holder/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(p)<1)return h.errors=[{instancePath:r+"/corrections/holder/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/address/street",schemaPath:"#/definitions/reviewAddress/properties/street/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var j=T===e}else var j=!0}}}}}}}else return h.errors=[{instancePath:r+"/corrections/holder/address",schemaPath:"#/definitions/reviewAddress/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var X=g===e}else var X=!0;if(X){if(m.dateOfBirth!==void 0){let s=m.dateOfBirth,g=e;if(e===g&&e===g)if(typeof s=="string"){if(i(s)>10)return h.errors=[{instancePath:r+"/corrections/holder/dateOfBirth",schemaPath:"#/properties/corrections/properties/holder/properties/dateOfBirth/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/holder/dateOfBirth",schemaPath:"#/properties/corrections/properties/holder/properties/dateOfBirth/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(s))return h.errors=[{instancePath:r+"/corrections/holder/dateOfBirth",schemaPath:"#/properties/corrections/properties/holder/properties/dateOfBirth/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/dateOfBirth",schemaPath:"#/properties/corrections/properties/holder/properties/dateOfBirth/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=g===e}else var X=!0;if(X){if(m.familyName!==void 0){let s=m.familyName,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return h.errors=[{instancePath:r+"/corrections/holder/familyName",schemaPath:"#/properties/corrections/properties/holder/properties/familyName/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/holder/familyName",schemaPath:"#/properties/corrections/properties/holder/properties/familyName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/familyName",schemaPath:"#/properties/corrections/properties/holder/properties/familyName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=g===e}else var X=!0;if(X){if(m.fullName!==void 0){let s=m.fullName,g=e;if(e===g)if(typeof s=="string"){if(i(s)>512)return h.errors=[{instancePath:r+"/corrections/holder/fullName",schemaPath:"#/properties/corrections/properties/holder/properties/fullName/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/holder/fullName",schemaPath:"#/properties/corrections/properties/holder/properties/fullName/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/fullName",schemaPath:"#/properties/corrections/properties/holder/properties/fullName/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=g===e}else var X=!0;if(X){if(m.givenNames!==void 0){let s=m.givenNames,g=e;if(e===g)if(Array.isArray(s)){if(s.length>20)return h.errors=[{instancePath:r+"/corrections/holder/givenNames",schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/maxItems",keyword:"maxItems",params:{limit:20},message:"must NOT have more than 20 items"}],!1;if(s.length<1)return h.errors=[{instancePath:r+"/corrections/holder/givenNames",schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var ee=!0;let f=s.length;for(let p=0;p<f;p++){let T=s[p],P=e;if(e===P)if(typeof T=="string"){if(i(T)>128)return h.errors=[{instancePath:r+"/corrections/holder/givenNames/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/items/maxLength",keyword:"maxLength",params:{limit:128},message:"must NOT have more than 128 characters"}],!1;if(i(T)<1)return h.errors=[{instancePath:r+"/corrections/holder/givenNames/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/givenNames/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ee=P===e;if(!ee)break}}}else return h.errors=[{instancePath:r+"/corrections/holder/givenNames",schemaPath:"#/properties/corrections/properties/holder/properties/givenNames/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var X=g===e}else var X=!0;if(X){if(m.nationalities!==void 0){let s=m.nationalities,g=e;if(e===g)if(Array.isArray(s)){if(s.length>10)return h.errors=[{instancePath:r+"/corrections/holder/nationalities",schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/maxItems",keyword:"maxItems",params:{limit:10},message:"must NOT have more than 10 items"}],!1;if(s.length<1)return h.errors=[{instancePath:r+"/corrections/holder/nationalities",schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/minItems",keyword:"minItems",params:{limit:1},message:"must NOT have fewer than 1 items"}],!1;{var K=!0;let f=s.length;for(let p=0;p<f;p++){let T=s[p],P=e;if(e===P)if(typeof T=="string"){if(i(T)>3)return h.errors=[{instancePath:r+"/corrections/holder/nationalities/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/items/maxLength",keyword:"maxLength",params:{limit:3},message:"must NOT have more than 3 characters"}],!1;if(i(T)<1)return h.errors=[{instancePath:r+"/corrections/holder/nationalities/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ye.test(T))return h.errors=[{instancePath:r+"/corrections/holder/nationalities/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/items/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/nationalities/"+p,schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var K=P===e;if(!K)break}}}else return h.errors=[{instancePath:r+"/corrections/holder/nationalities",schemaPath:"#/properties/corrections/properties/holder/properties/nationalities/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var X=g===e}else var X=!0;if(X)if(m.personalNumber!==void 0){let s=m.personalNumber,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return h.errors=[{instancePath:r+"/corrections/holder/personalNumber",schemaPath:"#/properties/corrections/properties/holder/properties/personalNumber/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/holder/personalNumber",schemaPath:"#/properties/corrections/properties/holder/properties/personalNumber/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/holder/personalNumber",schemaPath:"#/properties/corrections/properties/holder/properties/personalNumber/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var X=g===e}else var X=!0}}}}}}}}else return h.errors=[{instancePath:r+"/corrections/holder",schemaPath:"#/properties/corrections/properties/holder/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var q=w===e}else var q=!0;if(q){if(u.issueDate!==void 0){let m=u.issueDate,w=e;if(e===w&&e===w)if(typeof m=="string"){if(i(m)>10)return h.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/maxLength",keyword:"maxLength",params:{limit:10},message:"must NOT have more than 10 characters"}],!1;if(i(m)<1)return h.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!se.validate(m))return h.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/format",keyword:"format",params:{format:"date"},message:'must match format "date"'}],!1}else return h.errors=[{instancePath:r+"/corrections/issueDate",schemaPath:"#/properties/corrections/properties/issueDate/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=w===e}else var q=!0;if(q){if(u.issuer!==void 0){let m=u.issuer,w=e;if(e===w)if(m&&typeof m=="object"&&!Array.isArray(m)){if(Object.keys(m).length<1)return h.errors=[{instancePath:r+"/corrections/issuer",schemaPath:"#/properties/corrections/properties/issuer/minProperties",keyword:"minProperties",params:{limit:1},message:"must NOT have fewer than 1 properties"}],!1;{let n=e;for(let s in m)if(!(s==="country"||s==="name"||s==="region")){return h.errors=[{instancePath:r+"/corrections/issuer",schemaPath:"#/properties/corrections/properties/issuer/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:s},message:"must NOT have additional properties"}],!1;break}if(n===e){if(m.country!==void 0){let s=m.country,g=e;if(e===g)if(typeof s=="string"){if(!ye.test(s))return h.errors=[{instancePath:r+"/corrections/issuer/country",schemaPath:"#/properties/corrections/properties/issuer/properties/country/pattern",keyword:"pattern",params:{pattern:"^[A-Z]{2,3}$"},message:'must match pattern "^[A-Z]{2,3}$"'}],!1}else return h.errors=[{instancePath:r+"/corrections/issuer/country",schemaPath:"#/properties/corrections/properties/issuer/properties/country/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ae=g===e}else var ae=!0;if(ae){if(m.name!==void 0){let s=m.name,g=e;if(e===g)if(typeof s=="string"){if(i(s)>512)return h.errors=[{instancePath:r+"/corrections/issuer/name",schemaPath:"#/properties/corrections/properties/issuer/properties/name/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/issuer/name",schemaPath:"#/properties/corrections/properties/issuer/properties/name/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/issuer/name",schemaPath:"#/properties/corrections/properties/issuer/properties/name/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ae=g===e}else var ae=!0;if(ae)if(m.region!==void 0){let s=m.region,g=e;if(e===g)if(typeof s=="string"){if(i(s)>256)return h.errors=[{instancePath:r+"/corrections/issuer/region",schemaPath:"#/properties/corrections/properties/issuer/properties/region/maxLength",keyword:"maxLength",params:{limit:256},message:"must NOT have more than 256 characters"}],!1;if(i(s)<1)return h.errors=[{instancePath:r+"/corrections/issuer/region",schemaPath:"#/properties/corrections/properties/issuer/properties/region/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/issuer/region",schemaPath:"#/properties/corrections/properties/issuer/properties/region/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var ae=g===e}else var ae=!0}}}}else return h.errors=[{instancePath:r+"/corrections/issuer",schemaPath:"#/properties/corrections/properties/issuer/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var q=w===e}else var q=!0;if(q)if(u.passportTypeCode!==void 0){let m=u.passportTypeCode,w=e;if(e===w)if(typeof m=="string"){if(i(m)>16)return h.errors=[{instancePath:r+"/corrections/passportTypeCode",schemaPath:"#/properties/corrections/properties/passportTypeCode/maxLength",keyword:"maxLength",params:{limit:16},message:"must NOT have more than 16 characters"}],!1;if(i(m)<1)return h.errors=[{instancePath:r+"/corrections/passportTypeCode",schemaPath:"#/properties/corrections/properties/passportTypeCode/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/corrections/passportTypeCode",schemaPath:"#/properties/corrections/properties/passportTypeCode/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var q=w===e}else var q=!0}}}}}}}}else return h.errors=[{instancePath:r+"/corrections",schemaPath:"#/properties/corrections/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var M=D===e}else var M=!0;if(M){if(t.decision!==void 0){let u=t.decision,D=e;if(typeof u!="string")return h.errors=[{instancePath:r+"/decision",schemaPath:"#/properties/decision/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(u==="accepted"||u==="corrected"||u==="rejected"))return h.errors=[{instancePath:r+"/decision",schemaPath:"#/properties/decision/enum",keyword:"enum",params:{allowedValues:Ie.properties.decision.enum},message:"must be equal to one of the allowed values"}],!1;var M=D===e}else var M=!0;if(M){if(t.documentType!==void 0){let u=t.documentType,D=e;if(typeof u!="string")return h.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;if(!(u==="passport"||u==="national-id"||u==="state-id"||u==="drivers-licence"||u==="other"||u==="unknown"))return h.errors=[{instancePath:r+"/documentType",schemaPath:"#/properties/documentType/enum",keyword:"enum",params:{allowedValues:Ie.properties.documentType.enum},message:"must be equal to one of the allowed values"}],!1;var M=D===e}else var M=!0;if(M){if(t.extraction!==void 0){let u=t.extraction,D=e;if(e===e)if(u&&typeof u=="object"&&!Array.isArray(u)){let w;if(u.recordId===void 0&&(w="recordId"))return h.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/required",keyword:"required",params:{missingProperty:w},message:"must have required property '"+w+"'"}],!1;{let b=e;for(let n in u)if(!(n==="contextId"||n==="messageCid"||n==="modulePath"||n==="moduleUri"||n==="recordId"||n==="tenantDid")){return h.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/additionalProperties",keyword:"additionalProperties",params:{additionalProperty:n},message:"must NOT have additional properties"}],!1;break}if(b===e){if(u.contextId!==void 0){let n=u.contextId,s=e;if(e===s)if(typeof n=="string"){if(i(n)>2048)return h.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/maxLength",keyword:"maxLength",params:{limit:2048},message:"must NOT have more than 2048 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/extraction/contextId",schemaPath:"#/definitions/reviewRecordReference/properties/contextId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0;if(z){if(u.messageCid!==void 0){let n=u.messageCid,s=e;if(e===s)if(typeof n=="string"){if(i(n)>512)return h.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/extraction/messageCid",schemaPath:"#/definitions/reviewRecordReference/properties/messageCid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0;if(z){if(u.modulePath!==void 0){let n=u.modulePath,s=e;if(e===s)if(typeof n=="string"){if(i(n)>512)return h.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/extraction/modulePath",schemaPath:"#/definitions/reviewRecordReference/properties/modulePath/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0;if(z){if(u.moduleUri!==void 0){let n=u.moduleUri,s=e;if(e===s&&e===s)if(typeof n=="string"){if(i(n)>8192)return h.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!ue(n))return h.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/format",keyword:"format",params:{format:"uri"},message:'must match format "uri"'}],!1}else return h.errors=[{instancePath:r+"/extraction/moduleUri",schemaPath:"#/definitions/reviewRecordReference/properties/moduleUri/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0;if(z){if(u.recordId!==void 0){let n=u.recordId,s=e;if(e===s)if(typeof n=="string"){if(i(n)>512)return h.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/maxLength",keyword:"maxLength",params:{limit:512},message:"must NOT have more than 512 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/extraction/recordId",schemaPath:"#/definitions/reviewRecordReference/properties/recordId/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0;if(z)if(u.tenantDid!==void 0){let n=u.tenantDid,s=e;if(e===s)if(typeof n=="string"){if(i(n)>4096)return h.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/maxLength",keyword:"maxLength",params:{limit:4096},message:"must NOT have more than 4096 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!me.test(n))return h.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/pattern",keyword:"pattern",params:{pattern:"^did:[a-z0-9]+:[^\\s]+$"},message:'must match pattern "^did:[a-z0-9]+:[^\\s]+$"'}],!1}else return h.errors=[{instancePath:r+"/extraction/tenantDid",schemaPath:"#/definitions/reviewRecordReference/properties/tenantDid/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var z=s===e}else var z=!0}}}}}}}else return h.errors=[{instancePath:r+"/extraction",schemaPath:"#/definitions/reviewRecordReference/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;var M=D===e}else var M=!0;if(M){if(t.labels!==void 0){let u=t.labels,D=e;if(e===e)if(Array.isArray(u)){if(u.length>64)return h.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/maxItems",keyword:"maxItems",params:{limit:64},message:"must NOT have more than 64 items"}],!1;{var Y=!0;let w=u.length;for(let b=0;b<w;b++){let n=u[b],s=e;if(e===s)if(typeof n=="string"){if(i(n)>80)return h.errors=[{instancePath:r+"/labels/"+b,schemaPath:"#/definitions/reviewLabels/items/maxLength",keyword:"maxLength",params:{limit:80},message:"must NOT have more than 80 characters"}],!1;if(i(n)<1)return h.errors=[{instancePath:r+"/labels/"+b,schemaPath:"#/definitions/reviewLabels/items/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/labels/"+b,schemaPath:"#/definitions/reviewLabels/items/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var Y=s===e;if(!Y)break}if(Y){let b=u.length,n;if(b>1){let s={};for(;b--;){let g=u[b];if(typeof g=="string"){if(typeof s[g]=="number"){return n=s[g],h.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/uniqueItems",keyword:"uniqueItems",params:{i:b,j:n},message:"must NOT have duplicate items (items ## "+n+" and "+b+" are identical)"}],!1;break}s[g]=b}}}}}}else return h.errors=[{instancePath:r+"/labels",schemaPath:"#/definitions/reviewLabels/type",keyword:"type",params:{type:"array"},message:"must be array"}],!1;var M=D===e}else var M=!0;if(M){if(t.notes!==void 0){let u=t.notes,D=e;if(e===e)if(typeof u=="string"){if(i(u)>32768)return h.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/maxLength",keyword:"maxLength",params:{limit:32768},message:"must NOT have more than 32768 characters"}],!1;if(i(u)<0)return h.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/minLength",keyword:"minLength",params:{limit:0},message:"must NOT have fewer than 0 characters"}],!1}else return h.errors=[{instancePath:r+"/notes",schemaPath:"#/definitions/reviewNoteText/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=D===e}else var M=!0;if(M){if(t.reason!==void 0){let u=t.reason,D=e;if(e===D)if(typeof u=="string"){if(i(u)>8192)return h.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/maxLength",keyword:"maxLength",params:{limit:8192},message:"must NOT have more than 8192 characters"}],!1;if(i(u)<1)return h.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1}else return h.errors=[{instancePath:r+"/reason",schemaPath:"#/properties/reason/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=D===e}else var M=!0;if(M){if(t.reviewedAt!==void 0){let u=t.reviewedAt,D=e;if(e===D&&e===D)if(typeof u=="string"){if(i(u)>64)return h.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/maxLength",keyword:"maxLength",params:{limit:64},message:"must NOT have more than 64 characters"}],!1;if(i(u)<1)return h.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/minLength",keyword:"minLength",params:{limit:1},message:"must NOT have fewer than 1 characters"}],!1;if(!le.validate(u))return h.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/format",keyword:"format",params:{format:"date-time"},message:'must match format "date-time"'}],!1}else return h.errors=[{instancePath:r+"/reviewedAt",schemaPath:"#/properties/reviewedAt/type",keyword:"type",params:{type:"string"},message:"must be string"}],!1;var M=D===e}else var M=!0;if(M)if(t.source!==void 0){let u=e;I(t.source,{instancePath:r+"/source",parentData:t,parentDataProperty:"source",rootData:Z})||(o=o===null?I.errors:o.concat(I.errors),e=o.length);var M=u===e}else var M=!0}}}}}}}}}}else return h.errors=[{instancePath:r,schemaPath:"#/type",keyword:"type",params:{type:"object"},message:"must be object"}],!1;return h.errors=o,e===0}return Xe(cr);})();
 /* eslint-enable */
 // ---------------------------------------------------------------------------
 // Runtime codecs
@@ -1105,7 +1200,7 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
     $schema              : 'http://json-schema.org/draft-07/schema#',
     $id                  : 'https://enbox.id/modules/identity-documents/v1/schemas/document',
     title                : 'DocumentData',
-    description          : 'Identity Documents: document record.',
+    description          : 'One identity document issuance. Keep common holder and issuer details with the document number and validity period.',
     type                 : 'object',
     additionalProperties : false,
     properties           : {
@@ -1114,76 +1209,125 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         minLength : 1,
         maxLength : 256,
       },
-      documentType: {
+      sources: {
+        type  : 'array',
+        items : {
+          $ref: '#/definitions/documentRecordReference',
+        },
+        minItems : 0,
+        maxItems : 50,
+      },
+      reviewState: {
         type : 'string',
-        enum : ['passport', 'national-id', 'state-id', 'drivers-licence', 'other', 'unknown'],
+        enum : ['unreviewed', 'reviewed', 'corrected', 'rejected'],
+      },
+      alerts: {
+        type  : 'array',
+        items : {
+          $ref: '#/definitions/documentAlert',
+        },
+        minItems : 0,
+        maxItems : 20,
+      },
+      notes: {
+        $ref: '#/definitions/documentNoteText',
+      },
+      source: {
+        $ref: '#/definitions/documentSource',
+      },
+      labels: {
+        $ref: '#/definitions/documentLabels',
+      },
+      documentType: {
+        type        : 'string',
+        enum        : ['passport', 'national-id', 'state-id', 'drivers-licence', 'other', 'unknown'],
+        description : 'Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.',
       },
       fields: {
         type                 : 'object',
         additionalProperties : false,
+        minProperties        : 1,
         properties           : {
-          fullName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          givenNames: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 128,
+          holder: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              fullName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              givenNames: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 128,
+                },
+                minItems : 1,
+                maxItems : 20,
+              },
+              familyName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+              personalNumber: {
+                type        : 'string',
+                minLength   : 1,
+                maxLength   : 256,
+                description : 'Identifier of the holder as printed. Preserve leading zeros.',
+              },
+              dateOfBirth: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 10,
+                format    : 'date',
+              },
+              nationalities: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 3,
+                  pattern   : '^[A-Z]{2,3}$',
+                },
+                minItems : 1,
+                maxItems : 10,
+              },
+              address: {
+                $ref: '#/definitions/documentAddress',
+              },
             },
-            minItems : 0,
-            maxItems : 20,
           },
-          familyName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
+          issuer: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              name: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              country: {
+                type        : 'string',
+                pattern     : '^[A-Z]{2,3}$',
+                description : 'Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.',
+              },
+              region: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+            },
           },
           documentNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          personalNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingCountry: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 3,
-            pattern   : '^[A-Z]{2,3}$',
-          },
-          issuingRegion: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingAuthority: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          nationalities: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 3,
-              pattern   : '^[A-Z]{2,3}$',
-            },
-            minItems : 0,
-            maxItems : 10,
-          },
-          dateOfBirth: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 256,
+            description : 'Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.',
           },
           issueDate: {
             type      : 'string',
@@ -1197,10 +1341,7 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
             maxLength : 10,
             format    : 'date',
           },
-          address: {
-            $ref: '#/definitions/documentAddress',
-          },
-          licenceCategories: {
+          drivingPrivileges: {
             type  : 'array',
             items : {
               type                 : 'object',
@@ -1236,96 +1377,90 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
               },
               required: ['category'],
             },
-            minItems : 0,
-            maxItems : 100,
+            minItems    : 1,
+            maxItems    : 100,
+            description : 'One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.',
+          },
+          passportTypeCode: {
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 16,
+            description : 'Document type code as printed on the passport. Omit when absent.',
           },
         },
-        required      : [],
-        minProperties : 1,
-      },
-      sources: {
-        type  : 'array',
-        items : {
-          $ref: '#/definitions/documentRecordReference',
-        },
-        minItems : 0,
-        maxItems : 50,
-      },
-      reviewState: {
-        type : 'string',
-        enum : ['unreviewed', 'reviewed', 'corrected', 'rejected'],
-      },
-      alerts: {
-        type  : 'array',
-        items : {
-          $ref: '#/definitions/documentAlert',
-        },
-        minItems : 0,
-        maxItems : 20,
-      },
-      notes: {
-        $ref: '#/definitions/documentNoteText',
-      },
-      source: {
-        $ref: '#/definitions/documentSource',
-      },
-      labels: {
-        $ref: '#/definitions/documentLabels',
       },
     },
     required : ['label', 'documentType', 'reviewState'],
     examples : [
       {
-        label        : 'Personal passport',
-        documentType : 'passport',
-        reviewState  : 'unreviewed',
+        label        : 'Driving licence',
+        documentType : 'drivers-licence',
+        reviewState  : 'reviewed',
         fields       : {
-          fullName       : 'Alex Example',
-          documentNumber : 'EXAMPLE123',
-          issuingCountry : 'GBR',
+          holder: {
+            fullName: 'Alex Example',
+          },
+          issuer: {
+            name   : 'Example licensing authority',
+            region : 'Example region',
+          },
+          documentNumber    : '000DEMO123',
+          expiryDate        : '2031-04-15',
+          drivingPrivileges : [
+            {
+              category     : 'B',
+              restrictions : ['Corrective lenses'],
+            },
+          ],
+        },
+        sources: [
+          {
+            recordId: 'example-scan',
+          },
+        ],
+      },
+    ],
+    allOf: [
+      {
+        if: {
+          required   : ['fields'],
+          properties : {
+            fields: {
+              type     : 'object',
+              required : ['drivingPrivileges'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'drivers-licence',
+            },
+          },
+        },
+      },
+      {
+        if: {
+          required   : ['fields'],
+          properties : {
+            fields: {
+              type     : 'object',
+              required : ['passportTypeCode'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'passport',
+            },
+          },
         },
       },
     ],
     definitions: {
-      documentAddress: {
-        type                 : 'object',
-        additionalProperties : false,
-        properties           : {
-          formatted: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 2048,
-          },
-          street: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          locality: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          region: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          postalCode: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 32,
-          },
-          countryCode: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 2,
-            pattern   : '^[A-Z]{2}$',
-          },
-        },
-        required      : [],
-        minProperties : 1,
-      },
       documentAlert: {
         type                 : 'object',
         additionalProperties : false,
@@ -1512,229 +1647,7 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         uniqueItems : true,
         maxItems    : 64,
       },
-    },
-  },
-  extraction: {
-    $schema              : 'http://json-schema.org/draft-07/schema#',
-    $id                  : 'https://enbox.id/modules/identity-documents/v1/schemas/extraction',
-    title                : 'ExtractionData',
-    description          : 'Identity Documents: extraction record.',
-    type                 : 'object',
-    additionalProperties : false,
-    properties           : {
-      sources: {
-        type  : 'array',
-        items : {
-          $ref: '#/definitions/extractionRecordReference',
-        },
-        minItems : 1,
-        maxItems : 50,
-      },
-      extractedAt: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 64,
-        format    : 'date-time',
-      },
-      extractor: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 128,
-      },
-      extractorVersion: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 128,
-      },
-      state: {
-        type : 'string',
-        enum : ['complete', 'partial', 'failed'],
-      },
-      fields: {
-        type                 : 'object',
-        additionalProperties : false,
-        properties           : {
-          fullName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          givenNames: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 128,
-            },
-            minItems : 0,
-            maxItems : 20,
-          },
-          familyName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          documentNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          personalNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingCountry: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 3,
-            pattern   : '^[A-Z]{2,3}$',
-          },
-          issuingRegion: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingAuthority: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          nationalities: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 3,
-              pattern   : '^[A-Z]{2,3}$',
-            },
-            minItems : 0,
-            maxItems : 10,
-          },
-          dateOfBirth: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          issueDate: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          expiryDate: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          address: {
-            $ref: '#/definitions/extractionAddress',
-          },
-          licenceCategories: {
-            type  : 'array',
-            items : {
-              type                 : 'object',
-              additionalProperties : false,
-              properties           : {
-                category: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 64,
-                },
-                validFrom: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 10,
-                  format    : 'date',
-                },
-                validUntil: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 10,
-                  format    : 'date',
-                },
-                restrictions: {
-                  type  : 'array',
-                  items : {
-                    type      : 'string',
-                    minLength : 1,
-                    maxLength : 512,
-                  },
-                  minItems : 0,
-                  maxItems : 100,
-                },
-              },
-              required: ['category'],
-            },
-            minItems : 0,
-            maxItems : 100,
-          },
-        },
-        required      : [],
-        minProperties : 1,
-      },
-      rawText: {
-        type      : 'string',
-        minLength : 0,
-        maxLength : 1000000,
-      },
-      confidence: {
-        type    : 'number',
-        minimum : 0,
-        maximum : 1,
-      },
-      error: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 8192,
-      },
-      notes: {
-        $ref: '#/definitions/extractionNoteText',
-      },
-      source: {
-        $ref: '#/definitions/extractionSource',
-      },
-      labels: {
-        $ref: '#/definitions/extractionLabels',
-      },
-    },
-    required : ['sources', 'extractedAt', 'extractor', 'state'],
-    examples : [
-      {
-        sources: [
-          {
-            recordId: 'example-record',
-          },
-        ],
-        extractedAt : '2026-01-15T12:00:00Z',
-        extractor   : 'manual-import',
-        state       : 'partial',
-        fields      : {
-          fullName: 'Alex Example',
-        },
-      },
-    ],
-    allOf: [
-      {
-        if: {
-          properties: {
-            state: {
-              const: 'failed',
-            },
-          },
-        },
-        then: {
-          required: ['error'],
-        },
-        else: {
-          required: ['fields'],
-        },
-      },
-    ],
-    definitions: {
-      extractionAddress: {
+      documentAddress: {
         type                 : 'object',
         additionalProperties : false,
         properties           : {
@@ -1773,6 +1686,301 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         required      : [],
         minProperties : 1,
       },
+    },
+  },
+  extraction: {
+    $schema              : 'http://json-schema.org/draft-07/schema#',
+    $id                  : 'https://enbox.id/modules/identity-documents/v1/schemas/extraction',
+    title                : 'ExtractionData',
+    description          : 'One immutable extraction attempt. documentType records the observed classification when available.',
+    type                 : 'object',
+    additionalProperties : false,
+    properties           : {
+      sources: {
+        type  : 'array',
+        items : {
+          $ref: '#/definitions/extractionRecordReference',
+        },
+        minItems : 1,
+        maxItems : 50,
+      },
+      extractedAt: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 64,
+        format    : 'date-time',
+      },
+      extractor: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 128,
+      },
+      extractorVersion: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 128,
+      },
+      state: {
+        type : 'string',
+        enum : ['complete', 'partial', 'failed'],
+      },
+      rawText: {
+        type      : 'string',
+        minLength : 0,
+        maxLength : 1000000,
+      },
+      confidence: {
+        type    : 'number',
+        minimum : 0,
+        maximum : 1,
+      },
+      error: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 8192,
+      },
+      notes: {
+        $ref: '#/definitions/extractionNoteText',
+      },
+      source: {
+        $ref: '#/definitions/extractionSource',
+      },
+      labels: {
+        $ref: '#/definitions/extractionLabels',
+      },
+      documentType: {
+        type        : 'string',
+        enum        : ['passport', 'national-id', 'state-id', 'drivers-licence', 'other', 'unknown'],
+        description : 'Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.',
+      },
+      fields: {
+        type                 : 'object',
+        additionalProperties : false,
+        minProperties        : 1,
+        properties           : {
+          holder: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              fullName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              givenNames: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 128,
+                },
+                minItems : 1,
+                maxItems : 20,
+              },
+              familyName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+              personalNumber: {
+                type        : 'string',
+                minLength   : 1,
+                maxLength   : 256,
+                description : 'Identifier of the holder as printed. Preserve leading zeros.',
+              },
+              dateOfBirth: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 10,
+                format    : 'date',
+              },
+              nationalities: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 3,
+                  pattern   : '^[A-Z]{2,3}$',
+                },
+                minItems : 1,
+                maxItems : 10,
+              },
+              address: {
+                $ref: '#/definitions/extractionAddress',
+              },
+            },
+          },
+          issuer: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              name: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              country: {
+                type        : 'string',
+                pattern     : '^[A-Z]{2,3}$',
+                description : 'Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.',
+              },
+              region: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+            },
+          },
+          documentNumber: {
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 256,
+            description : 'Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.',
+          },
+          issueDate: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 10,
+            format    : 'date',
+          },
+          expiryDate: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 10,
+            format    : 'date',
+          },
+          drivingPrivileges: {
+            type  : 'array',
+            items : {
+              type                 : 'object',
+              additionalProperties : false,
+              properties           : {
+                category: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 64,
+                },
+                validFrom: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 10,
+                  format    : 'date',
+                },
+                validUntil: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 10,
+                  format    : 'date',
+                },
+                restrictions: {
+                  type  : 'array',
+                  items : {
+                    type      : 'string',
+                    minLength : 1,
+                    maxLength : 512,
+                  },
+                  minItems : 0,
+                  maxItems : 100,
+                },
+              },
+              required: ['category'],
+            },
+            minItems    : 1,
+            maxItems    : 100,
+            description : 'One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.',
+          },
+          passportTypeCode: {
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 16,
+            description : 'Document type code as printed on the passport. Omit when absent.',
+          },
+        },
+      },
+    },
+    required : ['sources', 'extractedAt', 'extractor', 'state'],
+    examples : [
+      {
+        sources: [
+          {
+            recordId: 'example-scan',
+          },
+        ],
+        extractedAt  : '2026-01-15T12:00:00Z',
+        extractor    : 'demo-import',
+        state        : 'partial',
+        documentType : 'drivers-licence',
+        fields       : {
+          documentNumber    : '000DEM0123',
+          drivingPrivileges : [
+            {
+              category: 'B',
+            },
+          ],
+        },
+      },
+    ],
+    allOf: [
+      {
+        if: {
+          properties: {
+            state: {
+              const: 'failed',
+            },
+          },
+        },
+        then: {
+          required : ['error'],
+          not      : {
+            required: ['fields'],
+          },
+        },
+        else: {
+          required: ['fields'],
+        },
+      },
+      {
+        if: {
+          required   : ['fields'],
+          properties : {
+            fields: {
+              type     : 'object',
+              required : ['drivingPrivileges'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'drivers-licence',
+            },
+          },
+        },
+      },
+      {
+        if: {
+          required   : ['fields'],
+          properties : {
+            fields: {
+              type     : 'object',
+              required : ['passportTypeCode'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'passport',
+            },
+          },
+        },
+      },
+    ],
+    definitions: {
       extractionRecordReference: {
         type                 : 'object',
         additionalProperties : false,
@@ -1892,192 +2100,7 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         uniqueItems : true,
         maxItems    : 64,
       },
-    },
-  },
-  review: {
-    $schema              : 'http://json-schema.org/draft-07/schema#',
-    $id                  : 'https://enbox.id/modules/identity-documents/v1/schemas/review',
-    title                : 'ReviewData',
-    description          : 'Identity Documents: review record.',
-    type                 : 'object',
-    additionalProperties : false,
-    properties           : {
-      reviewedAt: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 64,
-        format    : 'date-time',
-      },
-      decision: {
-        type : 'string',
-        enum : ['accepted', 'corrected', 'rejected'],
-      },
-      extraction: {
-        $ref: '#/definitions/reviewRecordReference',
-      },
-      corrections: {
-        type                 : 'object',
-        additionalProperties : false,
-        properties           : {
-          fullName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          givenNames: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 128,
-            },
-            minItems : 0,
-            maxItems : 20,
-          },
-          familyName: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          documentNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          personalNumber: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingCountry: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 3,
-            pattern   : '^[A-Z]{2,3}$',
-          },
-          issuingRegion: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 256,
-          },
-          issuingAuthority: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 512,
-          },
-          nationalities: {
-            type  : 'array',
-            items : {
-              type      : 'string',
-              minLength : 1,
-              maxLength : 3,
-              pattern   : '^[A-Z]{2,3}$',
-            },
-            minItems : 0,
-            maxItems : 10,
-          },
-          dateOfBirth: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          issueDate: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          expiryDate: {
-            type      : 'string',
-            minLength : 1,
-            maxLength : 10,
-            format    : 'date',
-          },
-          address: {
-            $ref: '#/definitions/reviewAddress',
-          },
-          licenceCategories: {
-            type  : 'array',
-            items : {
-              type                 : 'object',
-              additionalProperties : false,
-              properties           : {
-                category: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 64,
-                },
-                validFrom: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 10,
-                  format    : 'date',
-                },
-                validUntil: {
-                  type      : 'string',
-                  minLength : 1,
-                  maxLength : 10,
-                  format    : 'date',
-                },
-                restrictions: {
-                  type  : 'array',
-                  items : {
-                    type      : 'string',
-                    minLength : 1,
-                    maxLength : 512,
-                  },
-                  minItems : 0,
-                  maxItems : 100,
-                },
-              },
-              required: ['category'],
-            },
-            minItems : 0,
-            maxItems : 100,
-          },
-        },
-        required      : [],
-        minProperties : 1,
-      },
-      reason: {
-        type      : 'string',
-        minLength : 1,
-        maxLength : 8192,
-      },
-      notes: {
-        $ref: '#/definitions/reviewNoteText',
-      },
-      source: {
-        $ref: '#/definitions/reviewSource',
-      },
-      labels: {
-        $ref: '#/definitions/reviewLabels',
-      },
-    },
-    required : ['reviewedAt', 'decision'],
-    examples : [
-      {
-        reviewedAt : '2026-01-15T12:00:00Z',
-        decision   : 'accepted',
-      },
-    ],
-    allOf: [
-      {
-        if: {
-          properties: {
-            decision: {
-              const: 'corrected',
-            },
-          },
-        },
-        then: {
-          required: ['corrections'],
-        },
-      },
-    ],
-    definitions: {
-      reviewAddress: {
+      extractionAddress: {
         type                 : 'object',
         additionalProperties : false,
         properties           : {
@@ -2116,6 +2139,281 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         required      : [],
         minProperties : 1,
       },
+    },
+  },
+  review: {
+    $schema              : 'http://json-schema.org/draft-07/schema#',
+    $id                  : 'https://enbox.id/modules/identity-documents/v1/schemas/review',
+    title                : 'ReviewData',
+    description          : 'Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.',
+    type                 : 'object',
+    additionalProperties : false,
+    properties           : {
+      reviewedAt: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 64,
+        format    : 'date-time',
+      },
+      decision: {
+        type : 'string',
+        enum : ['accepted', 'corrected', 'rejected'],
+      },
+      extraction: {
+        $ref: '#/definitions/reviewRecordReference',
+      },
+      reason: {
+        type      : 'string',
+        minLength : 1,
+        maxLength : 8192,
+      },
+      notes: {
+        $ref: '#/definitions/reviewNoteText',
+      },
+      source: {
+        $ref: '#/definitions/reviewSource',
+      },
+      labels: {
+        $ref: '#/definitions/reviewLabels',
+      },
+      documentType: {
+        type        : 'string',
+        enum        : ['passport', 'national-id', 'state-id', 'drivers-licence', 'other', 'unknown'],
+        description : 'Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind.',
+      },
+      corrections: {
+        type                 : 'object',
+        additionalProperties : false,
+        minProperties        : 1,
+        properties           : {
+          holder: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              fullName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              givenNames: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 128,
+                },
+                minItems : 1,
+                maxItems : 20,
+              },
+              familyName: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+              personalNumber: {
+                type        : 'string',
+                minLength   : 1,
+                maxLength   : 256,
+                description : 'Identifier of the holder as printed. Preserve leading zeros.',
+              },
+              dateOfBirth: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 10,
+                format    : 'date',
+              },
+              nationalities: {
+                type  : 'array',
+                items : {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 3,
+                  pattern   : '^[A-Z]{2,3}$',
+                },
+                minItems : 1,
+                maxItems : 10,
+              },
+              address: {
+                $ref: '#/definitions/reviewAddress',
+              },
+            },
+          },
+          issuer: {
+            type                 : 'object',
+            additionalProperties : false,
+            minProperties        : 1,
+            properties           : {
+              name: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 512,
+              },
+              country: {
+                type        : 'string',
+                pattern     : '^[A-Z]{2,3}$',
+                description : 'Use the supplied two- or three-letter country code. Preserve the source evidence for other representations.',
+              },
+              region: {
+                type      : 'string',
+                minLength : 1,
+                maxLength : 256,
+              },
+            },
+          },
+          documentNumber: {
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 256,
+            description : 'Identifier of this document issuance. Store passport, ID card and licence numbers here as strings.',
+          },
+          issueDate: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 10,
+            format    : 'date',
+          },
+          expiryDate: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 10,
+            format    : 'date',
+          },
+          drivingPrivileges: {
+            type  : 'array',
+            items : {
+              type                 : 'object',
+              additionalProperties : false,
+              properties           : {
+                category: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 64,
+                },
+                validFrom: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 10,
+                  format    : 'date',
+                },
+                validUntil: {
+                  type      : 'string',
+                  minLength : 1,
+                  maxLength : 10,
+                  format    : 'date',
+                },
+                restrictions: {
+                  type  : 'array',
+                  items : {
+                    type      : 'string',
+                    minLength : 1,
+                    maxLength : 512,
+                  },
+                  minItems : 0,
+                  maxItems : 100,
+                },
+              },
+              required: ['category'],
+            },
+            minItems    : 1,
+            maxItems    : 100,
+            description : 'One item per printed licence class. Preserve jurisdiction-specific designations and restrictions.',
+          },
+          passportTypeCode: {
+            type        : 'string',
+            minLength   : 1,
+            maxLength   : 16,
+            description : 'Document type code as printed on the passport. Omit when absent.',
+          },
+        },
+      },
+    },
+    required : ['reviewedAt', 'decision'],
+    examples : [
+      {
+        reviewedAt : '2026-01-15T12:05:00Z',
+        extraction : {
+          recordId: 'example-extraction',
+        },
+        decision    : 'corrected',
+        corrections : {
+          documentNumber: '000DEMO123',
+        },
+        reason: 'Compared the document number with the scan.',
+      },
+    ],
+    allOf: [
+      {
+        if: {
+          properties: {
+            decision: {
+              const: 'corrected',
+            },
+          },
+        },
+        then: {
+          anyOf: [
+            {
+              required: ['corrections'],
+            },
+            {
+              required: ['documentType'],
+            },
+          ],
+        },
+        else: {
+          not: {
+            anyOf: [
+              {
+                required: ['corrections'],
+              },
+              {
+                required: ['documentType'],
+              },
+            ],
+          },
+        },
+      },
+      {
+        if: {
+          required   : ['corrections'],
+          properties : {
+            corrections: {
+              type     : 'object',
+              required : ['drivingPrivileges'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'drivers-licence',
+            },
+          },
+        },
+      },
+      {
+        if: {
+          required   : ['corrections'],
+          properties : {
+            corrections: {
+              type     : 'object',
+              required : ['passportTypeCode'],
+            },
+          },
+        },
+        then: {
+          required   : ['documentType'],
+          properties : {
+            documentType: {
+              const: 'passport',
+            },
+          },
+        },
+      },
+    ],
+    definitions: {
       reviewRecordReference: {
         type                 : 'object',
         additionalProperties : false,
@@ -2235,26 +2533,79 @@ export const IdentityDocumentsSchemas: Readonly<Record<string, PayloadSchema>> =
         uniqueItems : true,
         maxItems    : 64,
       },
+      reviewAddress: {
+        type                 : 'object',
+        additionalProperties : false,
+        properties           : {
+          formatted: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 2048,
+          },
+          street: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 512,
+          },
+          locality: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 256,
+          },
+          region: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 256,
+          },
+          postalCode: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 32,
+          },
+          countryCode: {
+            type      : 'string',
+            minLength : 1,
+            maxLength : 2,
+            pattern   : '^[A-Z]{2}$',
+          },
+        },
+        required      : [],
+        minProperties : 1,
+      },
     },
   },
 };
 export const IdentityDocumentsCatalog: ModuleCatalogEntry = {
   ...{
-    id              : 'identity-documents',
-    name            : 'Identity Documents',
-    category        : 'Identity and digital life',
-    description     : 'Structured ID/passport/licence fields, scan references, extraction provenance, and reviewed corrections.',
+    id       : 'identity-documents',
+    name     : 'Identity Documents',
+    category : 'Identity and digital life',
+    description:
+      'Identity documents issued to a person, including driving licences, passports, national IDs and state IDs. One record per issuance holds normalized fields and links to scans, extraction attempts and reviews.',
     uri             : 'https://enbox.id/modules/identity-documents/v1',
     exportName      : 'IdentityDocumentsModule',
     status          : 'experimental',
-    captureExamples : ['Extract the fields from this ID card.'],
-    capture         : {
-      identity : 'Match document type, issuing authority and reviewed document identifier.',
-      exclude  : ['Treating extracted fields as verified credentials.'],
-      workflow : 'Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed.',
+    captureExamples : [
+      'Save the expiry date from my driving licence.',
+      'Record my passport number exactly as printed.',
+      'I renewed my national ID. Save the new issuance.',
+    ],
+    capture: {
+      identity:
+        'Match a selected issuance using kind, issuer and the reviewed document number. A renewal can have a new number or validity period. Ask before replacing a prior issuance when the match is ambiguous.',
+      exclude: [
+        'Vehicle plate and registration details describe the vehicle. Signed credentials and presentations belong in Credentials.',
+        'A photo alone supplies evidence. Record user review separately from issuer verification.',
+      ],
+      workflow: 'Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed.',
     },
-    notes        : [],
-    dependencies : {},
+    notes: [
+      'Use document for every government ID held by a person. documentType distinguishes passports, driving licences, national IDs and state IDs. fields.documentNumber is the printed identifier. fields.holder and fields.issuer describe the person and issuing body. Keep identifiers as strings.',
+      'Only a driving licence may carry fields.drivingPrivileges, with the category, dates and restrictions as issued. Only a passport may carry fields.passportTypeCode. Country-specific details stay optional, enabling partial capture from chat.',
+      'The holder, issuer, document number and dates can be mapped from the corresponding claims and document_details in the [OpenID Identity Assurance Schema Definition](https://openid.net/specs/openid-ida-verified-claims-1_0.html). This field mapping conveys no verification or trust-framework result.',
+      'An extraction stores the original input references, time, extractor and observed fields. A review records the user’s decision and corrections. Apply approved changes to the document separately. Keep each attempt and decision so other apps can explain where a field came from.',
+    ],
+    dependencies: {},
   },
   definition : IdentityDocumentsDefinition,
   records    : [
@@ -2312,14 +2663,31 @@ export const IdentityDocumentsCatalog: ModuleCatalogEntry = {
       path     : 'document',
       encoding : 'json',
       data     : {
-        label        : 'Personal passport',
-        documentType : 'passport',
-        reviewState  : 'unreviewed',
+        label        : 'Driving licence',
+        documentType : 'drivers-licence',
+        reviewState  : 'reviewed',
         fields       : {
-          fullName       : 'Alex Example',
-          documentNumber : 'EXAMPLE123',
-          issuingCountry : 'GBR',
+          holder: {
+            fullName: 'Alex Example',
+          },
+          issuer: {
+            name   : 'Example licensing authority',
+            region : 'Example region',
+          },
+          documentNumber    : '000DEMO123',
+          expiryDate        : '2031-04-15',
+          drivingPrivileges : [
+            {
+              category     : 'B',
+              restrictions : ['Corrective lenses'],
+            },
+          ],
         },
+        sources: [
+          {
+            recordId: 'example-scan',
+          },
+        ],
       },
     },
     {
@@ -2328,14 +2696,20 @@ export const IdentityDocumentsCatalog: ModuleCatalogEntry = {
       data     : {
         sources: [
           {
-            recordId: 'example-record',
+            recordId: 'example-scan',
           },
         ],
-        extractedAt : '2026-01-15T12:00:00Z',
-        extractor   : 'manual-import',
-        state       : 'partial',
-        fields      : {
-          fullName: 'Alex Example',
+        extractedAt  : '2026-01-15T12:00:00Z',
+        extractor    : 'demo-import',
+        state        : 'partial',
+        documentType : 'drivers-licence',
+        fields       : {
+          documentNumber    : '000DEM0123',
+          drivingPrivileges : [
+            {
+              category: 'B',
+            },
+          ],
         },
       },
     },
@@ -2343,8 +2717,15 @@ export const IdentityDocumentsCatalog: ModuleCatalogEntry = {
       path     : 'document/review',
       encoding : 'json',
       data     : {
-        reviewedAt : '2026-01-15T12:00:00Z',
-        decision   : 'accepted',
+        reviewedAt : '2026-01-15T12:05:00Z',
+        extraction : {
+          recordId: 'example-extraction',
+        },
+        decision    : 'corrected',
+        corrections : {
+          documentNumber: '000DEMO123',
+        },
+        reason: 'Compared the document number with the scan.',
       },
     },
   ],

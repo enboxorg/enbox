@@ -1,0 +1,23 @@
+{
+  "summary": "Operational properties and dated configurations of an identified device.",
+  "targets": [
+    {
+      "path": "item/device",
+      "utterance": "Record that my existing laptop runs Linux.",
+      "distinguish": "Select the Belongings item. Manufacturer, model, serial and ownership stay there."
+    },
+    {
+      "path": "item/device/configuration",
+      "utterance": "Save the configuration after my laptop upgrade.",
+      "distinguish": "Select the device. A repair or parts replacement belongs in Maintenance."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "operating system",
+      "device setup",
+      "configuration snapshot"
+    ],
+    "sensitive": true
+  }
+}

@@ -22,12 +22,12 @@ existing companion factory. Select feature modules explicitly:
 ```ts
 import { bindContexts } from '@enbox/contexts';
 import { CollaborationModule } from '@enbox/modules/collaboration';
-import { SharedGroceriesModule } from '@enbox/modules/shared-groceries';
+import { GroceriesModule } from '@enbox/modules/groceries';
 import { defineContextModule } from '@enbox/contexts';
 
 const companion = defineContextModule(CollaborationModule);
 const contexts = bindContexts(enbox, companion).withModules({
-  groceries: SharedGroceriesModule,
+  groceries: GroceriesModule,
 });
 const household = await contexts.open('space', spaceContextId);
 await household.members.set(memberDid, { role: 'space/editor', data: {} });

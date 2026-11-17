@@ -9,7 +9,7 @@ export type ChatTarget = {
   readonly parent?: { readonly module: string; readonly path: string };
 };
 
-/** Small metadata projection suitable for model selection before loading any schemas. */
+/** Conversation projection of a standard Enbox module. */
 export type ChatModule = {
   readonly id: string;
   readonly module: string;
@@ -21,13 +21,15 @@ export type ChatModule = {
   readonly keywords: readonly string[];
   readonly sensitive: boolean;
   readonly paths: readonly ChatTarget[];
+  /** Application workflow for operations that need specialized codecs or user actions. */
+  readonly workflow?: string;
   readonly interchange?: { readonly format: string; readonly specification: string; readonly scope: string };
 };
 
 export const chatDirectory: readonly ChatModule[] = index.modules;
 
 /**
- * Narrow the extractor to curated paths writable at the given parent type.
+ * Narrow the extractor to the module's allowed capture paths at the given parent type.
  * Supply the selected parent record's verified module and path. Writing a child
  * also requires its real contextId and the user's authority at that record.
  */

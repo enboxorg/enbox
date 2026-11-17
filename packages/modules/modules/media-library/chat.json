@@ -1,0 +1,72 @@
+{
+  "summary": "Personal books, film, TV, podcasts, music and games; library intent, reading or playback progress, highlights and reviews on the selected edition or episode.",
+  "targets": [
+    {
+      "path": "work",
+      "utterance": "Add The Dispossessed to my reading list.",
+      "distinguish": "Choose the identifiable book edition, film, album, song, or game release. A saved web article belongs to Bookmarks."
+    },
+    {
+      "path": "work/activity",
+      "utterance": "I reached page 80 of The Dispossessed.",
+      "distinguish": "Select the edition. An actual progress observation needs its time and position unit."
+    },
+    {
+      "path": "work/annotation",
+      "utterance": "I rate this film four out of five.",
+      "distinguish": "Apply the stated rating scale to the selected film or edition."
+    },
+    {
+      "path": "series",
+      "utterance": "Follow the Field Notes podcast.",
+      "distinguish": "Resolve the actual podcast feed when several shows have the same name."
+    },
+    {
+      "path": "series/episode",
+      "utterance": "Queue episode fourteen of Field Notes.",
+      "distinguish": "Select the series first; a queued episode establishes no playback."
+    },
+    {
+      "path": "series/episode/activity",
+      "utterance": "I paused this podcast episode at 7 minutes and 5 seconds.",
+      "distinguish": "Record playback progress under the selected episode using seconds."
+    },
+    {
+      "path": "series/episode/annotation",
+      "utterance": "Save this quote from the episode at minute seven.",
+      "distinguish": "Keep the text and optional position under the selected episode."
+    },
+    {
+      "path": "series/annotation",
+      "utterance": "Remember my review of the Field Notes series.",
+      "distinguish": "A series review belongs to the show; an episode-specific review belongs to the selected episode."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "reading list",
+      "isbn",
+      "book edition",
+      "movie",
+      "tv show",
+      "watch later",
+      "podcast",
+      "episode",
+      "album",
+      "music recording",
+      "video game",
+      "playback",
+      "book review",
+      "highlight"
+    ],
+    "sensitive": false,
+    "sensitiveFields": [
+      "body",
+      "quote",
+      "notes",
+      "file",
+      "purchase",
+      "withContacts"
+    ]
+  }
+}
