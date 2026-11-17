@@ -42,7 +42,23 @@ The model is module-first: apps define portable record schemas and access
 rules, users control their DIDs and DWN endpoints, and encrypted data can move
 between apps that understand the same module.
 
-## Quick Start
+## Quick start for browser dapps
+
+Start with [Build a browser dapp](./apps/docs/content/docs/guides/browser-dapp.mdx).
+Use `@enbox/browser` and ship **two browser entry points**, including for small
+static dapps:
+
+- **Service worker** — bundle an app-owned worker that calls `activatePolyfills()`.
+- **Page** — await `prepareBrowser(workerUrl, { registrationOptions: { type: 'module' } })`
+  before initializing the application or mounting its provider. On approval or
+  restoration, bind the UI to the connected session's live records.
+
+Test the first visit in a clean browser profile with a wallet that already owns a
+record. That record should appear after approval, before the first reload.
+
+## Headless vault example
+
+For a CLI or other non-browser runtime:
 
 ```bash
 bun add @enbox/api
@@ -113,8 +129,6 @@ await store.dispose();
 Create one connection store for the application/data path and retain it for the
 application lifetime. Separate stores intentionally do not coordinate.
 
-For browser apps, `@enbox/browser` re-exports the main app APIs and adds
-browser-specific connect helpers and DRL polyfills.
 For terminal tools, `@enbox/cli` provides the same app APIs with a relay/PIN
 connect handler that prints a QR code or opens the wallet approval link.
 

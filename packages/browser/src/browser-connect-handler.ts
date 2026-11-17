@@ -164,14 +164,17 @@ export interface BrowserConnectHandlerOptions {
  *
  * @example
  * ```ts
- * import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
+ * import { AuthManager, BrowserConnectHandler, prepareBrowser } from '@enbox/browser';
  *
+ * // /sw.js is the app's bundled service worker and calls activatePolyfills().
+ * await prepareBrowser('/sw.js', { registrationOptions: { type: 'module' } });
  * const auth = await AuthManager.create({
  *   connectHandler: BrowserConnectHandler({
  *     appName: 'My Dapp',
  *   }),
  * });
  *
+ * // In the Connect button's click handler:
  * const session = await auth.connect({ modules: [NotesModule] });
  * ```
  */

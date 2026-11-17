@@ -2,8 +2,9 @@
 
 > **Research Preview** -- Enbox is under active development. APIs may change without notice.
 
-High-level SDK for app developers. Start here unless you specifically need the
-lower-level agent, auth, or DWN packages.
+High-level SDK for Enbox applications. For a browser dapp, start with
+[`@enbox/browser` and its service-worker setup](https://enbox-docs.pages.dev/docs/guides/browser-dapp).
+The examples below cover the platform-neutral API.
 
 ## Install
 

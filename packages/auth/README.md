@@ -24,8 +24,9 @@ const session = await auth.connectVault({
 });
 ```
 
-Browser apps usually import these APIs from `@enbox/browser`, which also
-provides `BrowserConnectHandler` and a browser-conditioned bundle:
+For browser dapps, follow the [browser startup guide](https://enbox-docs.pages.dev/docs/guides/browser-dapp)
+and await `prepareBrowser()` before creating or restoring a session. The
+browser entry point also provides `BrowserConnectHandler`:
 
 ```ts
 import { AuthManager, BrowserConnectHandler } from '@enbox/browser';

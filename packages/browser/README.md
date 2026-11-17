@@ -19,12 +19,23 @@ bun add @enbox/browser
 
 ## Usage
 
-`@enbox/browser` re-exports the high-level API, browser-safe auth surface,
-wallet connect handler, and DWeb helpers:
+Use the [browser dapp guide][browser-dapp-guide-link] for the worker and
+page build configuration. The following example assumes the worker is bundled
+as an ES module at `/sw.js` and the app is served at the origin root.
 
 ```ts
-import { createApplication } from '@enbox/browser';
+// src/sw.ts — the app's service-worker entry point
+import { activatePolyfills } from '@enbox/browser';
+
+activatePolyfills();
+```
+
+```ts
+// src/main.ts — the page entry point
+import { createApplication, prepareBrowser } from '@enbox/browser';
 import { NotesStore } from './features/notes/store.js';
+
+await prepareBrowser('/sw.js', { registrationOptions: { type: 'module' } });
 
 const application = createApplication({
   stores: { notes: NotesStore },
@@ -32,16 +43,18 @@ const application = createApplication({
   connection: { monitor: { autoRefresh: {} } },
 });
 
+// Both first approval and restoration publish a connected snapshot.
+// Subscribe before initialization so the UI sees either transition.
+application.connection.subscribe(snapshot => {
+  if (snapshot.phase === 'connected') {
+    // Mount or update the Notes view with application.store(NotesStore).
+  }
+});
 await application.initialize();
 
-// Invoke directly from a user action so the wallet popup opens.
-async function connect(): Promise<void> {
-  const snapshot = await application.connection.connect();
-  if (snapshot.phase !== 'connected') {
-    throw snapshot.error ?? new Error('Connection was not established.');
-  }
-  const notes = application.store(NotesStore);
-  // Subscribe to notes' resources or run its domain commands.
+// Bind this action to the Connect button so the wallet popup keeps its user gesture.
+function connect() {
+  return application.connection.connect();
 }
 ```
 
@@ -49,7 +62,9 @@ Keep one application for the browser lifetime. It derives the manifest from
 feature modules and owns the connection, session-scoped resources, commands,
 and cleanup. `application.connection.disconnect()` signs out;
 `application.dispose()` permanently tears down the owner. React binds the same
-runtime through `EnboxProvider application={application}`.
+runtime through `EnboxProvider application={application}`. Mount the connected
+view on both first approval and restore. Subscribe to the active feature's
+records so the first local result and subsequent sync updates render in place.
 
 For a custom host, supply `connectHandler` instead of `wallet`, or supply a
 `connection: manifest => nativeConnection` factory that owns all native

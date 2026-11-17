@@ -12,6 +12,10 @@ Enbox is a **Bun** monorepo for **Decentralized Web Nodes (DWN)**, **DIDs** (`di
 - **Shared module definitions** (`@enbox/modules`) and optional **codegen** (`@enbox/module-codegen`).
 - **`apps/docs`**: the public documentation site (Fumadocs + Next.js); it uses its own linter (Biome), not the ESLint graph used by packages.
 
+## Building a browser dapp
+
+Start from [Build a browser dapp](apps/docs/content/docs/guides/browser-dapp.mdx), including for generated apps and single-page demos. Ship a bundled service worker calling `activatePolyfills()` and await `prepareBrowser()` in the page before initializing Enbox. Start the live record view when the wallet connects or restores. Verify a record from an existing wallet appears on the first approval, before any reload. [Runtime ownership](#application-architecture)
+
 ## Inviolable Rules
 
 ### Never modify production code to satisfy tests
