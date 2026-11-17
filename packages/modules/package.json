@@ -32,7 +32,11 @@
     "dist",
     "modules",
     "src",
-    "examples"
+    "examples",
+    "directory",
+    "INTERCHANGE.md",
+    "RECIPE-INTERCHANGE.md",
+    "CHAT-DIRECTORY.md"
   ],
   "exports": {
     ".": {
@@ -45,7 +49,9 @@
     },
     "./artifacts/*": "./modules/*",
     "./package.json": "./package.json",
-    "./schemas/*": "./src/schema-values/*"
+    "./schemas/*": "./src/schema-values/*",
+    "./directory/*": "./directory/*",
+    "./directory/index.json": "./src/generated/chat-index.json"
   },
   "keywords": [
     "decentralized",

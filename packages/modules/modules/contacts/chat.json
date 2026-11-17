@@ -1,0 +1,34 @@
+{
+  "summary": "People and their contact details, saved at the user’s request.",
+  "targets": [
+    {
+      "path": "contact",
+      "utterance": "Add Alex Rivera to my address book.",
+      "distinguish": "A name in a quotation alone does not establish a contact."
+    },
+    {
+      "path": "contact/endpoint",
+      "utterance": "Save this new email address for my existing contact Alex.",
+      "distinguish": "Select the matching contact before storing an email or phone endpoint."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "address book",
+      "contact details",
+      "phone number",
+      "email address"
+    ],
+    "sensitive": true,
+    "identityFields": {
+      "contact": [
+        "vcardUid"
+      ]
+    }
+  },
+  "interchange": {
+    "format": "jCard",
+    "specification": "https://www.rfc-editor.org/rfc/rfc7095",
+    "scope": "Contact plus its endpoint children form one supported jCard."
+  }
+}

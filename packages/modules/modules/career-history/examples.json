@@ -1,0 +1,32 @@
+[
+  {
+    "path": "work",
+    "encoding": "json",
+    "data": {
+      "name": "Cedar Maps",
+      "position": "Cartographer",
+      "location": "Portland, Oregon",
+      "startDate": "2020-09",
+      "endDate": "2023",
+      "summary": "Maintained walking maps and trail signage.",
+      "highlights": [
+        "Mapped 42 accessible trail entrances."
+      ]
+    }
+  },
+  {
+    "path": "education",
+    "encoding": "json",
+    "data": {
+      "institution": "North Coast College",
+      "area": "Geography",
+      "studyType": "Bachelor of Arts",
+      "startDate": "2016",
+      "endDate": "2020-06-12",
+      "courses": [
+        "Cartography",
+        "Field Methods"
+      ]
+    }
+  }
+]

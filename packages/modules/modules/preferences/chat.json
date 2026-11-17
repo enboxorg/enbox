@@ -1,0 +1,35 @@
+{
+  "summary": "Explicit food, travel, communication and accessibility preferences.",
+  "targets": [
+    {
+      "path": "food",
+      "utterance": "I prefer vegetarian meals.",
+      "distinguish": "An allergy is a health assertion and eating a meal is an observation."
+    },
+    {
+      "path": "travel",
+      "utterance": "I prefer an aisle seat.",
+      "distinguish": "A seat assigned on a particular flight is booking information."
+    },
+    {
+      "path": "communication",
+      "utterance": "I prefer email for updates.",
+      "distinguish": "An email address for reaching someone belongs to Contacts."
+    },
+    {
+      "path": "accessibility",
+      "utterance": "Please remember that I prefer captions.",
+      "distinguish": "Store the stated setting without inferring a medical condition."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "i prefer",
+      "aisle seat",
+      "vegetarian",
+      "quiet hours",
+      "captions"
+    ],
+    "sensitive": true
+  }
+}

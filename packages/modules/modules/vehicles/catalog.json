@@ -2,14 +2,15 @@
   "id": "vehicles",
   "name": "Vehicles",
   "category": "Home and belongings",
-  "description": "Cars/bikes, identifiers, mileage, fuel or charging logs, and document/service references.",
+  "description": "Vehicle details, registrations, odometer readings, fuel and charging logs for an owned item.",
   "moduleUri": "https://enbox.id/modules/vehicles/v1",
   "exportName": "VehiclesModule",
   "status": "experimental",
   "definitionFile": "definition.json",
   "examplesFile": "examples.json",
   "captureExamples": [
-    "The car odometer is at 42,000 miles."
+    "The car odometer is at 42,000 miles.",
+    "My Ontario plate is 00-DEMO. This registration expires January 31, 2027."
   ],
   "dependencies": {
     "belongings": "https://enbox.id/modules/belongings/v1"
@@ -24,6 +25,19 @@
       "encryptionRequired": true,
       "schema": "https://enbox.id/modules/vehicles/v1/schemas/vehicle",
       "schemaFile": "schemas/vehicle.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/vehicle/registration",
+      "type": "registration",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/registration",
+      "schemaFile": "schemas/registration.json",
       "role": false,
       "immutable": false,
       "singleton": false
@@ -56,13 +70,14 @@
     }
   ],
   "notes": [
-    "Manufacturer/make and model belong to the parent Belongings item. Vehicle-specific identifiers, registration, model year, odometer and energy history belong here."
+    "Manufacturer/make and model belong to the parent Belongings item. Vehicle-specific identifiers, registration, model year, odometer and energy history belong here.",
+    "Registration belongs to the vehicle as one encrypted record per issuance. The owner can correct reviewed fields. Vehicle viewer/editor assignments do not grant access to registration details. Link a supporting scan in Files."
   ],
   "capture": {
-    "identity": "Resolve the Belongings item, then vehicle-specific identifiers such as VIN.",
+    "identity": "Resolve the Belongings item and vehicle. Match a registration by issuing jurisdiction, plate or registration number, and issuance period. Plate numbers can recur.",
     "exclude": [
       "Duplicating manufacturer/model/ownership facts or treating a planned trip as odometer history."
     ],
-    "workflow": "Maintain vehicle details and append observed usage/energy records; use shared Maintenance for service history."
+    "workflow": "Record the exact identifiers and validity dates of a registration under the selected vehicle. Append a renewal separately. Link scans as evidence and use Maintenance for repairs."
   }
 }

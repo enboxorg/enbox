@@ -1,0 +1,24 @@
+{
+  "summary": "Food and household consumables the user wants to buy for a shopping trip.",
+  "targets": [
+    {
+      "path": "list/item",
+      "utterance": "Add oat milk and lemons to my grocery list.",
+      "distinguish": "Prepare one item per stated product under the selected list. Already owned quantities belong to Pantry."
+    },
+    {
+      "path": "list",
+      "utterance": "Create a shopping list for the picnic.",
+      "distinguish": "Create a list only for an explicit new list or a confirmed choice of parent."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "grocery list",
+      "shopping list",
+      "pick up milk",
+      "supermarket"
+    ],
+    "sensitive": false
+  }
+}

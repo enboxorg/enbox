@@ -2,3 +2,4 @@ packages/modules/src/generated/** linguist-generated=true
 packages/modules/modules/*/definition.json linguist-generated=true
 packages/modules/modules/*/schemas/*.json linguist-generated=true
 packages/modules/modules/*/README.md linguist-generated=true
+packages/modules/directory/briand.json linguist-generated=true

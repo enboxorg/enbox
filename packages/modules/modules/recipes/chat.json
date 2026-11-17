@@ -1,0 +1,25 @@
+{
+  "summary": "A recipe with supplied ingredients and instructions.",
+  "targets": [
+    {
+      "path": "recipe",
+      "utterance": "Save my porridge recipe: simmer oats and milk for five minutes.",
+      "distinguish": "A request for recipe ideas expresses no personal recipe. Store a URL alone as a bookmark."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "my recipe",
+      "ingredients",
+      "method",
+      "directions",
+      "cook time"
+    ],
+    "sensitive": false
+  },
+  "interchange": {
+    "format": "Schema.org Recipe (JSON-LD)",
+    "specification": "https://schema.org/Recipe",
+    "scope": "Ingredient lines retain text and recipeInstructions map to ordered steps."
+  }
+}

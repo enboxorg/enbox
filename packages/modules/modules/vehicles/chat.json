@@ -1,0 +1,30 @@
+{
+  "summary": "Vehicle-specific identifiers, registration issuances and actual mileage on an existing asset.",
+  "targets": [
+    {
+      "path": "item/vehicle",
+      "utterance": "Record the VIN for my car.",
+      "distinguish": "Use the existing Belongings item for the car’s manufacturer and model."
+    },
+    {
+      "path": "item/vehicle/registration",
+      "utterance": "Save the plate and expiration date from my car registration.",
+      "distinguish": "A vehicle registration identifies a vehicle and its issuing jurisdiction. A driver’s licence identifies a person."
+    },
+    {
+      "path": "item/vehicle/odometer",
+      "utterance": "My odometer read 31,000 km this morning.",
+      "distinguish": "An intended trip distance does not establish an odometer reading."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "vehicle registration",
+      "license plate",
+      "licence plate",
+      "odometer",
+      "vin"
+    ],
+    "sensitive": true
+  }
+}

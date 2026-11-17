@@ -52,10 +52,54 @@
           },
           "optional": {
             "type": "boolean"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Ingredient line as published, including amounts and preparation instructions."
           }
         },
-        "required": [
-          "name"
+        "oneOf": [
+          {
+            "required": [
+              "name"
+            ],
+            "not": {
+              "required": [
+                "text"
+              ]
+            }
+          },
+          {
+            "required": [
+              "text"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "quantity"
+                  ]
+                },
+                {
+                  "required": [
+                    "preparation"
+                  ]
+                },
+                {
+                  "required": [
+                    "optional"
+                  ]
+                }
+              ]
+            }
+          }
         ]
       },
       "minItems": 1,
@@ -122,6 +166,12 @@
     },
     "labels": {
       "$ref": "#/definitions/recipeLabels"
+    },
+    "yieldText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Published yield such as “24 cookies”, when a numeric serving count is unavailable."
     }
   },
   "required": [
@@ -150,6 +200,12 @@
       ]
     }
   ],
+  "not": {
+    "required": [
+      "servings",
+      "yieldText"
+    ]
+  },
   "definitions": {
     "recipeQuantity": {
       "type": "object",

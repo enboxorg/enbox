@@ -1,0 +1,18 @@
+{
+  "summary": "A desired measurable outcome with a horizon or progress measure.",
+  "targets": [
+    {
+      "path": "goal",
+      "utterance": "My goal is to run a 10K this spring.",
+      "distinguish": "An actual run is a workout. A recurring practice is a habit."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "my goal",
+      "target outcome",
+      "goal progress"
+    ],
+    "sensitive": false
+  }
+}

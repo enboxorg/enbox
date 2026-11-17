@@ -1,0 +1,29 @@
+{
+  "summary": "User-directed research interest in named securities or ticker symbols.",
+  "targets": [
+    {
+      "path": "watchlist/instrument",
+      "utterance": "Keep track of XYZ, GOOG, KDP, TGT, NFLX and NVDA for me.",
+      "distinguish": "Use one entry per instrument in the selected watchlist. Never infer shares or cost basis."
+    },
+    {
+      "path": "watchlist",
+      "utterance": "Create a watchlist named Dividend research.",
+      "distinguish": "A new list needs a user-selected identity. A market briefing is generated output."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "watchlist",
+      "track these stocks",
+      "stock ticker",
+      "follow this stock"
+    ],
+    "sensitive": false,
+    "sensitiveFields": [
+      "reason",
+      "targetPrice",
+      "research"
+    ]
+  }
+}

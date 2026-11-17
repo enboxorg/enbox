@@ -1,6 +1,6 @@
 # Vehicles
 
-Cars/bikes, identifiers, mileage, fuel or charging logs, and document/service references.
+Vehicle details, registrations, odometer readings, fuel and charging logs for an owned item.
 
 Module URI: `https://enbox.id/modules/vehicles/v1`
 
@@ -16,6 +16,7 @@ Import `VehiclesModule`, `VehiclesDefinition`, `VehiclesCodecs`, and `VehiclesSc
 | Path | Representation | Data policy | Record policy |
 | --- | --- | --- | --- |
 | `item/vehicle` | [JSON Schema](schemas/vehicle.json) | Encrypted | Mutable |
+| `item/vehicle/registration` | [JSON Schema](schemas/registration.json) | Encrypted | Mutable |
 | `item/vehicle/odometer` | [JSON Schema](schemas/odometer.json) | Encrypted | Immutable |
 | `item/vehicle/energy` | [JSON Schema](schemas/energy.json) | Encrypted | Immutable |
 
@@ -34,6 +35,7 @@ The owner retains tenant authority. These rules describe additional authority. `
 | Path | Additional authority |
 | --- | --- |
 | `item/vehicle` | role belongings:item/editor: create, read, co-update<br>role belongings:item/viewer: read |
+| `item/vehicle/registration` | Owner only |
 | `item/vehicle/odometer` | role belongings:item/editor: create, read, delete<br>role belongings:item/viewer: read |
 | `item/vehicle/energy` | role belongings:item/editor: create, read, delete<br>role belongings:item/viewer: read |
 
@@ -42,12 +44,13 @@ Immutable records reject updates. A singleton uses `$recordLimit` projection sem
 ## Contract notes
 
 - Manufacturer/make and model belong to the parent Belongings item. Vehicle-specific identifiers, registration, model year, odometer and energy history belong here.
+- Registration belongs to the vehicle as one encrypted record per issuance. The owner can correct reviewed fields. Vehicle viewer/editor assignments do not grant access to registration details. Link a supporting scan in Files.
 
 ## Capture contract
 
-**Identity:** Resolve the Belongings item, then vehicle-specific identifiers such as VIN.
+**Identity:** Resolve the Belongings item and vehicle. Match a registration by issuing jurisdiction, plate or registration number, and issuance period. Plate numbers can recur.
 
-**Workflow:** Maintain vehicle details and append observed usage/energy records; use shared Maintenance for service history.
+**Workflow:** Record the exact identifiers and validity dates of a registration under the selected vehicle. Append a renewal separately. Link scans as evidence and use Maintenance for repairs.
 
 **Exclude:** Duplicating manufacturer/model/ownership facts or treating a planned trip as odometer history.
 

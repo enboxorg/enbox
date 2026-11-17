@@ -1,0 +1,24 @@
+{
+  "summary": "Medication names, supplied regimens and doses actually taken.",
+  "targets": [
+    {
+      "path": "medication",
+      "utterance": "Please track the medication my pharmacist dispensed.",
+      "distinguish": "Record the supplied name and state. A question about a drug alone is not a regimen."
+    },
+    {
+      "path": "medication/dose",
+      "utterance": "I took my evening dose at 8 PM.",
+      "distinguish": "Match medication and occurrence. A reminder does not establish a dose."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "my medication",
+      "prescription",
+      "took my dose",
+      "dispensed"
+    ],
+    "sensitive": true
+  }
+}

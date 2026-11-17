@@ -1,0 +1,21 @@
+{
+  "summary": "Reviewed fields and source evidence from a person’s licence, passport or government ID.",
+  "targets": [
+    {
+      "path": "document",
+      "utterance": "Extract the expiry date from this scan of my driver’s licence.",
+      "distinguish": "Treat OCR as unreviewed. No new verifiable credential or vehicle registration follows from scanning an ID."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "passport",
+      "government id",
+      "driver’s licence",
+      "driver license",
+      "drivers license",
+      "identity card"
+    ],
+    "sensitive": true
+  }
+}

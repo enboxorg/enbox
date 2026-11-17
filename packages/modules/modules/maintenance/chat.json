@@ -1,0 +1,24 @@
+{
+  "summary": "Planned maintenance and performed service on an existing belonging.",
+  "targets": [
+    {
+      "path": "item/service",
+      "utterance": "I had the battery replaced in my laptop yesterday.",
+      "distinguish": "Resolve the asset. A future service belongs to a plan and cannot establish a repair."
+    },
+    {
+      "path": "item/plan",
+      "utterance": "Schedule an oil change for my car every six months.",
+      "distinguish": "Use the selected vehicle’s Belongings item as parent."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "maintenance",
+      "oil change",
+      "replaced battery",
+      "repair history"
+    ],
+    "sensitive": true
+  }
+}

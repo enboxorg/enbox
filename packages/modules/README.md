@@ -46,6 +46,14 @@ import { GroceriesModule, type GroceriesItemData } from '@enbox/modules';
 import type { ItemData } from '@enbox/modules/groceries';
 ```
 
+## Choosing records from a conversation
+
+Chat and MCP clients can load the [conversation directory](CHAT-DIRECTORY.md)
+for a curated menu of 36 modules. Its paths distinguish purchase intent from
+orders and receipts, scheduled appointments from completed visits, and watched
+securities from owned positions. Use the [interchange profiles](INTERCHANGE.md)
+for supported JSON imports and exports.
+
 ## Module library
 
 ### Optional shared contexts
@@ -71,7 +79,7 @@ belongs in the selected variant; applications should not write both copies.
 | [Pet Care](modules/pet-care/README.md) | `@enbox/modules/pet-care` | `pet`, `pet/care`, `pet/vetRecord` |
 | [Plants](modules/plants/README.md) | `@enbox/modules/plants` | `plant`, `plant/care` |
 | [Utilities](modules/utilities/README.md) | `@enbox/modules/utilities` | `account`, `account/meter`, `account/meter/reading` |
-| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/odometer`, `item/vehicle/energy` |
+| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/registration`, `item/vehicle/odometer`, `item/vehicle/energy` |
 | [Warranties](modules/warranties/README.md) | `@enbox/modules/warranties` | `item/warranty`, `item/warranty/claim` |
 
 ### Money and investing
@@ -99,6 +107,12 @@ belongs in the selected variant; applications should not write both copies.
 | [Notebook Realtime](modules/notebook-realtime/README.md) | `@enbox/modules/notebook-realtime` | `page/live`, `page/live/session` |
 | [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state` |
 | [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |
+
+### Work and learning
+
+| Module | Import subpath | Records |
+| --- | --- | --- |
+| [Career History](modules/career-history/README.md) | `@enbox/modules/career-history` | `work`, `education` |
 
 ### Media and learning
 

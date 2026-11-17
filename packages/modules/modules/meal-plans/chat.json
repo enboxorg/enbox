@@ -1,0 +1,18 @@
+{
+  "summary": "Meals the user plans to serve on specified dates and meal slots.",
+  "targets": [
+    {
+      "path": "plan/meal",
+      "utterance": "Put mushroom risotto on Tuesday’s dinner plan.",
+      "distinguish": "Select the meal plan and confirm the intended date. Actual consumption goes to Food Diary."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "meal plan",
+      "dinner plan",
+      "on the menu"
+    ],
+    "sensitive": false
+  }
+}

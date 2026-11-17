@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/career-history/v1/schemas/work",
+  "title": "WorkData",
+  "description": "One entry in the JSON Resume v1.0.0 work array.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "position": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "startDate": {
+      "$ref": "#/definitions/workDate"
+    },
+    "endDate": {
+      "$ref": "#/definitions/workDate"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "highlights": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "definitions": {
+    "workDate": {
+      "type": "string",
+      "description": "Preserve the supplied calendar precision as YYYY, YYYY-MM or YYYY-MM-DD.",
+      "pattern": "^[12][0-9]{3}(-((0[1-9])|(1[0-2]))(-[0-9]{2})?)?$",
+      "if": {
+        "minLength": 10
+      },
+      "then": {
+        "format": "date"
+      }
+    }
+  },
+  "examples": [
+    {
+      "name": "Cedar Maps",
+      "position": "Cartographer",
+      "location": "Portland, Oregon",
+      "startDate": "2020-09",
+      "endDate": "2023",
+      "summary": "Maintained walking maps and trail signage.",
+      "highlights": [
+        "Mapped 42 accessible trail entrances."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "summary": "Specific products the user wants to consider purchasing.",
+  "targets": [
+    {
+      "path": "list/item",
+      "utterance": "Put the blue headphones on my birthday wishlist.",
+      "distinguish": "Shopping interest establishes neither ownership nor a completed purchase. Keep private gifting intent in Gifts."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "wishlist",
+      "wish list",
+      "want to buy",
+      "target price"
+    ],
+    "sensitive": false
+  }
+}

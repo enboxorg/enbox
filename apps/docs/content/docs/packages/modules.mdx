@@ -89,6 +89,18 @@ Device identity is stored once in Belongings, repairs in Maintenance, and
 financial-account identity in Financial Accounts. The catalogue's capture
 contracts explain record matching, excluded neighboring facts, and write workflows.
 
+## Chat and MCP discovery
+
+Use `@enbox/modules/chat-directory` for the curated conversation menu and
+`@enbox/modules/directory/briand.json` for complete bundles with URI-keyed
+schemas and capture hints. `chatTargetsFor(moduleUri)` returns eligible roots.
+Supply a selected parent’s module URI and path to discover its child targets.
+The full library also contains managed sharing, file, and realtime contracts
+for applications that support those workflows.
+
+The `@enbox/modules/interchange` entry point supports scoped jCard, jCal,
+Schema.org Recipe, GeoJSON Point and JSON Resume conversions.
+
 ## Discover schemas and artifacts
 
 ```ts

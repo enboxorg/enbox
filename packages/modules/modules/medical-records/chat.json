@@ -1,0 +1,24 @@
+{
+  "summary": "Documented encounters, clinical records and immunizations supplied by the user.",
+  "targets": [
+    {
+      "path": "visit",
+      "utterance": "Log my visit to the clinic on December 8. We discussed my test results.",
+      "distinguish": "A scheduled appointment stays in Events. Preserve findings only as reported."
+    },
+    {
+      "path": "immunization",
+      "utterance": "Record the flu vaccine I received today.",
+      "distinguish": "An appointment to get vaccinated does not establish an administered dose."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "visited the clinic",
+      "clinical visit",
+      "vaccinated",
+      "immunization"
+    ],
+    "sensitive": true
+  }
+}

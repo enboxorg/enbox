@@ -8,6 +8,7 @@ import { ESLint } from 'eslint';
 import { format } from 'prettier';
 import ts from 'typescript';
 import { generateModuleCode } from '../../module-codegen/src/codegen.js';
+import { chatDirectory } from './chat-directory.mjs';
 import { bundleSchema } from '../src/authoring/schema-bundle.js';
 import { sharedSchemas } from '../src/schema-values.js';
 
@@ -232,6 +233,7 @@ for (const input of inputs.values()) {
       expected.set(join(directory, record.schemaFile), JSON.stringify(schema, null, 2) + '\n');
     }
   }
+  input.schemas = schemas;
   const { code } = await codeWithSchemas(input, schemas);
   const records = catalog.records.map(({ schema, schemaFile, ...record }) => {
     const rule = ruleAt(definition, record.path);
@@ -315,6 +317,10 @@ const rootSource = `/** Complete standard DWN modules. Prefer subpath imports wh
   rootExports.join('\n') + `\nexport * from './catalog-types.js';\nexport * from './catalog.js';\nexport * from './profile-reader.js';\n`;
 expected.set(join(packageRoot, 'src/index.ts'), await typescript(rootSource, join(packageRoot, 'src/index.ts')));
 expected.set(join(sourceRoot, 'index.json'), JSON.stringify({ modules: index }, null, 2) + '\n');
+
+const chat = await chatDirectory(inputs);
+expected.set(join(generatedRoot, 'chat-index.json'), JSON.stringify(chat.index, null, 2) + '\n');
+expected.set(join(packageRoot, 'directory/briand.json'), JSON.stringify(chat.bundles, null, 2) + '\n');
 
 const stale = [];
 for (const [path, content] of expected) {

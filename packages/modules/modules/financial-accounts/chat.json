@@ -1,0 +1,18 @@
+{
+  "summary": "A user-selected financial account that anchors statements, activity and positions.",
+  "targets": [
+    {
+      "path": "account",
+      "utterance": "Set up my brokerage account for tracking.",
+      "distinguish": "Resolve an existing account before creating one. Last four digits and provider name alone can collide."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "brokerage account",
+      "bank account",
+      "investment account"
+    ],
+    "sensitive": true
+  }
+}

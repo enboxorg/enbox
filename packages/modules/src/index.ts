@@ -32,6 +32,14 @@ export type {
 export { CardsPassesModule, CardsPassesDefinition, CardsPassesCodecs, CardsPassesSchemas, CardsPassesCatalog } from './cards-passes.js';
 export type { PassData as CardsPassesPassData } from './cards-passes.js';
 export {
+  CareerHistoryModule,
+  CareerHistoryDefinition,
+  CareerHistoryCodecs,
+  CareerHistorySchemas,
+  CareerHistoryCatalog,
+} from './career-history.js';
+export type { WorkData as CareerHistoryWorkData, EducationData as CareerHistoryEducationData } from './career-history.js';
+export {
   CollaborationModule,
   CollaborationDefinition,
   CollaborationCodecs,
@@ -469,6 +477,7 @@ export type {
 export { VehiclesModule, VehiclesDefinition, VehiclesCodecs, VehiclesSchemas, VehiclesCatalog } from './vehicles.js';
 export type {
   VehicleData as VehiclesVehicleData,
+  RegistrationData as VehiclesRegistrationData,
   OdometerData as VehiclesOdometerData,
   EnergyData as VehiclesEnergyData,
 } from './vehicles.js';

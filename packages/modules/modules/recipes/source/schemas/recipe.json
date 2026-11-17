@@ -52,10 +52,54 @@
           },
           "optional": {
             "type": "boolean"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Ingredient line as published, including amounts and preparation instructions."
           }
         },
-        "required": [
-          "name"
+        "oneOf": [
+          {
+            "required": [
+              "name"
+            ],
+            "not": {
+              "required": [
+                "text"
+              ]
+            }
+          },
+          {
+            "required": [
+              "text"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "quantity"
+                  ]
+                },
+                {
+                  "required": [
+                    "preparation"
+                  ]
+                },
+                {
+                  "required": [
+                    "optional"
+                  ]
+                }
+              ]
+            }
+          }
         ]
       },
       "minItems": 1,
@@ -122,6 +166,12 @@
     },
     "labels": {
       "$ref": "https://enbox.id/schemas/common/labels/v1"
+    },
+    "yieldText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Published yield such as \u201c24 cookies\u201d, when a numeric serving count is unavailable."
     }
   },
   "required": [
@@ -160,5 +210,11 @@
     "recipeSource": {
       "$ref": "https://enbox.id/schemas/common/provenance/v1"
     }
+  },
+  "not": {
+    "required": [
+      "servings",
+      "yieldText"
+    ]
   }
 }

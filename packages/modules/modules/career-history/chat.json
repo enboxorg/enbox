@@ -1,0 +1,30 @@
+{
+  "summary": "Employment and education the user states or imports from a résumé.",
+  "targets": [
+    {
+      "path": "work",
+      "utterance": "I worked at Cedar Maps as a cartographer from 2020 to 2023.",
+      "distinguish": "A job application or desired role does not establish employment."
+    },
+    {
+      "path": "education",
+      "utterance": "I studied geography at North Coast College from 2016 to 2020.",
+      "distinguish": "A plan to enroll belongs to Goals. Keep partial dates at their supplied precision."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "resume",
+      "résumé",
+      "worked at",
+      "studied at",
+      "employment history"
+    ],
+    "sensitive": true
+  },
+  "interchange": {
+    "format": "JSON Resume v1.0.0",
+    "specification": "https://github.com/jsonresume/resume-schema/blob/v1.0.0/schema.json",
+    "scope": "One work[] or education[] item per record. Employer or institution is required."
+  }
+}

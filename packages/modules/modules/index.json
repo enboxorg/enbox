@@ -55,6 +55,15 @@
       "examples": "cards-passes/examples.json"
     },
     {
+      "id": "career-history",
+      "name": "Career History",
+      "category": "Work and learning",
+      "moduleUri": "https://enbox.id/modules/career-history/v1",
+      "definition": "career-history/definition.json",
+      "catalog": "career-history/catalog.json",
+      "examples": "career-history/examples.json"
+    },
+    {
       "id": "collaboration",
       "name": "Collaboration",
       "category": "General personal records",

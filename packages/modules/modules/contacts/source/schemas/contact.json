@@ -70,6 +70,13 @@
     },
     "labels": {
       "$ref": "https://enbox.id/schemas/common/labels/v1"
+    },
+    "vcardUid": {
+      "type": "string",
+      "format": "uri",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Stable UID from a vCard 4.0 contact. Match within the import source before updating an existing contact."
     }
   },
   "required": [

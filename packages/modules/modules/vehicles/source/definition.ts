@@ -12,6 +12,11 @@ export const definition = {
       encryptionRequired : true,
       schema             : 'https://enbox.id/modules/vehicles/v1/schemas/vehicle',
     },
+    registration: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/vehicles/v1/schemas/registration',
+    },
     odometer: {
       dataFormats        : ['application/json'],
       encryptionRequired : true,
@@ -40,6 +45,10 @@ export const definition = {
             can  : ['read'],
           },
         ],
+        // Registration documents contain holder and plate identifiers.
+        registration: {
+          $size: { max: 65536 },
+        },
         odometer: {
           $size: {
             max: 1048576,

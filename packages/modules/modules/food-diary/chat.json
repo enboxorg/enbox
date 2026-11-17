@@ -1,0 +1,19 @@
+{
+  "summary": "What the user actually ate or drank at an eating occasion.",
+  "targets": [
+    {
+      "path": "entry",
+      "utterance": "Log the lentil soup I had for lunch today.",
+      "distinguish": "A recipe, shopping request or a future meal belongs in its own workflow."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "i ate",
+      "i had for lunch",
+      "food diary",
+      "i drank"
+    ],
+    "sensitive": true
+  }
+}

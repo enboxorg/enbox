@@ -1,0 +1,24 @@
+{
+  "summary": "Books to read, reading progress and highlights from a particular edition.",
+  "targets": [
+    {
+      "path": "book",
+      "utterance": "Put The Dispossessed on my reading list.",
+      "distinguish": "A saved web article or URL goes to Bookmarks."
+    },
+    {
+      "path": "book/reading",
+      "utterance": "I reached page 80 of The Dispossessed.",
+      "distinguish": "Resolve the selected book or edition before adding progress."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "reading list",
+      "isbn",
+      "page number",
+      "book title"
+    ],
+    "sensitive": false
+  }
+}

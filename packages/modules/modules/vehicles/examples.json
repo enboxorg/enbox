@@ -7,6 +7,19 @@
     }
   },
   {
+    "path": "item/vehicle/registration",
+    "encoding": "json",
+    "data": {
+      "plateNumber": "00-DEMO",
+      "jurisdiction": {
+        "country": "CA",
+        "region": "Ontario"
+      },
+      "issuedOn": "2026-02-01",
+      "expiresOn": "2027-01-31"
+    }
+  },
+  {
     "path": "item/vehicle/odometer",
     "encoding": "json",
     "data": {

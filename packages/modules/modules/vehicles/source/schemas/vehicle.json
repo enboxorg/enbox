@@ -27,11 +27,6 @@
       "minLength": 1,
       "maxLength": 64
     },
-    "registration": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64
-    },
     "fuelType": {
       "type": "string",
       "enum": [

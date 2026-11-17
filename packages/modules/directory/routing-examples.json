@@ -1,0 +1,279 @@
+[
+  {
+    "text": "Keep track of XYZ, GOOG, KDP, TGT, NFLX and NVDA for me.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "stock-watchlists",
+        "path": "watchlist/instrument"
+      }
+    ],
+    "because": "Select a watchlist. Prepare one entry per supplied ticker. Ask if the market or instrument is ambiguous."
+  },
+  {
+    "text": "As of 2026-11-16T12:00:00Z I own 10 NVDA shares in my brokerage account.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "investment-holdings",
+        "path": "account/position"
+      }
+    ],
+    "because": "Resolve the named account before preparing the position."
+  },
+  {
+    "text": "I might buy ten shares of NVDA if the price falls.",
+    "decision": "abstain",
+    "targets": [],
+    "because": "A hypothetical purchase supplies neither ownership nor a tracking request."
+  },
+  {
+    "text": "How should I track these stocks?",
+    "decision": "abstain",
+    "targets": [],
+    "because": "Informational question."
+  },
+  {
+    "text": "The article says “add NVDA to your watchlist.”",
+    "decision": "abstain",
+    "targets": [],
+    "because": "Quoted instructions are source material."
+  },
+  {
+    "text": "Put milk and lentils on the grocery list.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "groceries",
+        "path": "list/item"
+      }
+    ],
+    "because": "Resolve the list and prepare two shopping items."
+  },
+  {
+    "text": "I already have two cans of lentils in the pantry.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "pantry",
+        "path": "pantry/item"
+      }
+    ],
+    "because": "Existing stock is an observation."
+  },
+  {
+    "text": "Put the iPad on my list.",
+    "decision": "clarify",
+    "targets": [],
+    "because": "Ask which list and purpose before preparing a product, task or inventory record."
+  },
+  {
+    "text": "Save this recipe link for later: https://example.org/stew.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "bookmarks",
+        "path": "bookmark"
+      }
+    ],
+    "because": "The requested object is a link. No ingredients or steps are supplied."
+  },
+  {
+    "text": "What can I make with lentils?",
+    "decision": "abstain",
+    "targets": [],
+    "because": "The question establishes no recipe, stock quantity or meal eaten."
+  },
+  {
+    "text": "Plan lentil soup for Tuesday dinner. Also add oat milk to the grocery list.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "meal-plans",
+        "path": "plan/meal"
+      },
+      {
+        "id": "groceries",
+        "path": "list/item"
+      }
+    ],
+    "because": "Two independent explicit requests. Resolve the plan, date, and list before saving."
+  },
+  {
+    "text": "I had lentil soup at noon today.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "food-diary",
+        "path": "entry"
+      }
+    ],
+    "because": "Record actual consumption with user context for the date and time."
+  },
+  {
+    "text": "File this receipt from Elm Books for USD 18.40.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "receipts",
+        "path": "receipt"
+      }
+    ],
+    "because": "Receipt evidence does not identify a posted payment, a new book or owned inventory."
+  },
+  {
+    "text": "My card statement shows a posted USD 18.40 debit from Elm Books yesterday.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "transactions",
+        "path": "account/transaction"
+      }
+    ],
+    "because": "Resolve the ledger account and date."
+  },
+  {
+    "text": "I want to buy headphones for my birthday.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "shopping-wishlists",
+        "path": "list/item"
+      }
+    ],
+    "because": "Purchase interest; no completed order."
+  },
+  {
+    "text": "Remind me to book a dentist appointment.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "tasks",
+        "path": "task"
+      }
+    ],
+    "because": "The appointment has not been scheduled."
+  },
+  {
+    "text": "My dentist booked me for December 8 at 10 AM.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "events",
+        "path": "event"
+      }
+    ],
+    "because": "An upcoming occurrence. Resolve timezone and year."
+  },
+  {
+    "text": "Log my December 8 visit to Sunrise Dental; the dentist replaced my filling.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "medical-records",
+        "path": "visit"
+      }
+    ],
+    "because": "Completed clinical encounter reported by the user."
+  },
+  {
+    "text": "Here is my driver’s licence. Extract the expiry date.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "identity-documents",
+        "path": "document"
+      }
+    ],
+    "because": "Use the reviewed document workflow, retaining scan and extraction provenance."
+  },
+  {
+    "text": "Save my vehicle registration: Oregon plate EXAMPLE, valid until 2027-12-31.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "vehicles",
+        "path": "item/vehicle/registration"
+      }
+    ],
+    "because": "A dated registration for the selected vehicle. Separate holder information and evidence."
+  },
+  {
+    "text": "Can you explain what a verifiable credential is?",
+    "decision": "abstain",
+    "targets": [],
+    "because": "An information request supplies no issuer-secured credential."
+  },
+  {
+    "text": "I prefer vegetarian dinners.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "preferences",
+        "path": "food"
+      }
+    ],
+    "because": "Explicit preference."
+  },
+  {
+    "text": "I have a peanut allergy.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "health-profile",
+        "path": "profile/allergy"
+      }
+    ],
+    "because": "A reported health assertion belongs to the selected person’s private profile."
+  },
+  {
+    "text": "I worked at Cedar Maps as a cartographer from 2020 through 2023.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "career-history",
+        "path": "work"
+      }
+    ],
+    "because": "Use employer, role and stated date precision. Preserve separate roles at one employer."
+  },
+  {
+    "text": "My colleague might apply to Cedar Maps.",
+    "decision": "abstain",
+    "targets": [],
+    "because": "Third-party speculation supplies no user career history."
+  },
+  {
+    "text": "My hotel confirmed the room under reference ELM123.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "reservations",
+        "path": "reservation"
+      }
+    ],
+    "because": "Confirmation is booking evidence. Keep the code private."
+  },
+  {
+    "text": "Add The Dispossessed by Ursula Le Guin to my reading list.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "books",
+        "path": "book"
+      }
+    ],
+    "because": "A specific book and reading intent. A web resource to revisit belongs in Bookmarks."
+  },
+  {
+    "text": "Alert me half an hour before my existing dentist appointment.",
+    "decision": "propose",
+    "targets": [
+      {
+        "id": "events",
+        "path": "state"
+      }
+    ],
+    "because": "Resolve the existing appointment and record an owner-local alert referencing it. The client schedules delivery."
+  }
+]

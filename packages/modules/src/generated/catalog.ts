@@ -13,6 +13,8 @@ import { BudgetsCatalog } from './budgets.js';
 import { BudgetsModule } from './budgets.js';
 import { CardsPassesCatalog } from './cards-passes.js';
 import { CardsPassesModule } from './cards-passes.js';
+import { CareerHistoryCatalog } from './career-history.js';
+import { CareerHistoryModule } from './career-history.js';
 import { CollaborationCatalog } from './collaboration.js';
 import { CollaborationModule } from './collaboration.js';
 import { ConnectCatalog } from './connect.js';
@@ -155,6 +157,7 @@ export const moduleCatalog: readonly ModuleCatalogEntry[] = Object.freeze([
   BooksCatalog,
   BudgetsCatalog,
   CardsPassesCatalog,
+  CareerHistoryCatalog,
   CollaborationCatalog,
   ConnectCatalog,
   ContactsCatalog,
@@ -230,6 +233,7 @@ export const standardModules: readonly TypedModule[] = Object.freeze([
   BooksModule,
   BudgetsModule,
   CardsPassesModule,
+  CareerHistoryModule,
   CollaborationModule,
   ConnectModule,
   ContactsModule,

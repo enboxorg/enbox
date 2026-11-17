@@ -1,0 +1,25 @@
+{
+  "summary": "Stated positions and executed trades for the selected investment account.",
+  "targets": [
+    {
+      "path": "account/position",
+      "utterance": "I own ten shares of NVDA in my brokerage account as of November 1.",
+      "distinguish": "Interest or a hypothetical trade belongs to no position. Obtain the as-of time and account before saving."
+    },
+    {
+      "path": "account/position/trade",
+      "utterance": "Log the trade confirmation for my existing NVDA position.",
+      "distinguish": "Use an executed trade with the selected position and supplied transaction details."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "i own shares",
+      "shares of",
+      "cost basis",
+      "executed trade",
+      "position"
+    ],
+    "sensitive": true
+  }
+}
