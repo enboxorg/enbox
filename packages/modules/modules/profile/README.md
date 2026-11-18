@@ -63,4 +63,4 @@ await records.create('profile', {
 });
 ```
 
-The JSON codecs validate on encode and decode. Examples are illustrative data; imported claims remain subject to their original provenance. See the [package guide](../../README.md) for shared reference, money, source, and access semantics.
+Profile retains the public definition and plain JSON/blob codecs shipped in @enbox/modules@0.2.124. The JSON Schemas describe the released fields; the codecs preserve existing records with extension fields. Examples are illustrative data; imported claims remain subject to their original provenance. See the [package guide](../../README.md) for shared reference, money, source, and access semantics.

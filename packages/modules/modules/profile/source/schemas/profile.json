@@ -33,11 +33,5 @@
   "required": [
     "displayName"
   ],
-  "additionalProperties": false,
-  "examples": [
-    {
-      "displayName": "Alex Example",
-      "bio": "Personal data, owned by people."
-    }
-  ]
+  "additionalProperties": false
 }

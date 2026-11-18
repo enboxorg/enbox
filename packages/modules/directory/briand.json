@@ -30607,14 +30607,12 @@
           "dataFormats": [
             "application/json"
           ],
-          "encryptionRequired": false,
           "schema": "https://identity.foundation/schemas/profile/profile"
         },
         "link": {
           "dataFormats": [
             "application/json"
           ],
-          "encryptionRequired": false,
           "schema": "https://identity.foundation/schemas/profile/link"
         },
         "avatar": {
@@ -30623,8 +30621,7 @@
             "image/jpeg",
             "image/gif",
             "image/webp"
-          ],
-          "encryptionRequired": false
+          ]
         },
         "hero": {
           "dataFormats": [
@@ -30632,8 +30629,7 @@
             "image/jpeg",
             "image/gif",
             "image/webp"
-          ],
-          "encryptionRequired": false
+          ]
         }
       },
       "structure": {
@@ -30653,9 +30649,6 @@
             }
           ],
           "link": {
-            "$size": {
-              "max": 1048576
-            },
             "$actions": [
               {
                 "who": "anyone",
@@ -30736,13 +30729,7 @@
         "required": [
           "displayName"
         ],
-        "additionalProperties": false,
-        "examples": [
-          {
-            "displayName": "Alex Example",
-            "bio": "Personal data, owned by people."
-          }
-        ]
+        "additionalProperties": false
       },
       "https://identity.foundation/schemas/profile/link": {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -30772,13 +30759,7 @@
           "url",
           "title"
         ],
-        "additionalProperties": false,
-        "examples": [
-          {
-            "url": "https://example.com",
-            "title": "Website"
-          }
-        ]
+        "additionalProperties": false
       }
     },
     "capture": {

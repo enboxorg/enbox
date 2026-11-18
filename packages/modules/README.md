@@ -331,7 +331,9 @@ independent. Root sharing contexts remain under owner lifecycle control.
   identities; the local fragment need not become a full URL. These schema
   references are independent of DWN composition references such as
   `notebook:notebook/page`. See [JSON Schema reference resolution](https://json-schema.org/understanding-json-schema/structuring).
-- JSON payload validation runs in the codecs. The DWN enforces descriptor schema
+- Profile retains its wallet-pinned definition and plain JSON/blob codecs from
+  `@enbox/modules@0.2.124`; existing public profiles and links may contain extension fields.
+- For the other modules, JSON payload validation runs in the codecs. The DWN enforces descriptor schema
   identity, formats, size, encryption, lifecycle, and authorization; it cannot
   inspect encrypted JSON to validate payload fields. A record link's syntax does
   not prove that its target exists, has the expected parent/type, or is readable.

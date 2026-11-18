@@ -6,14 +6,12 @@
       "dataFormats": [
         "application/json"
       ],
-      "encryptionRequired": false,
       "schema": "https://identity.foundation/schemas/profile/profile"
     },
     "link": {
       "dataFormats": [
         "application/json"
       ],
-      "encryptionRequired": false,
       "schema": "https://identity.foundation/schemas/profile/link"
     },
     "avatar": {
@@ -22,8 +20,7 @@
         "image/jpeg",
         "image/gif",
         "image/webp"
-      ],
-      "encryptionRequired": false
+      ]
     },
     "hero": {
       "dataFormats": [
@@ -31,8 +28,7 @@
         "image/jpeg",
         "image/gif",
         "image/webp"
-      ],
-      "encryptionRequired": false
+      ]
     }
   },
   "structure": {
@@ -52,9 +48,6 @@
         }
       ],
       "link": {
-        "$size": {
-          "max": 1048576
-        },
         "$actions": [
           {
             "who": "anyone",

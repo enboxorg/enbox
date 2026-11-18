@@ -105,7 +105,7 @@ describe('standard module catalog', () => {
         }
       });
 
-      it('encodes and decodes every supplied record example with validating codecs', async () => {
+      it('encodes and decodes every supplied record example', async () => {
         const codecs: CodecMap = moduleFor(entry).codecs;
         for (const example of entry.examples) {
           const type = example.path.split('/').at(-1)!;
@@ -115,6 +115,22 @@ describe('standard module catalog', () => {
           await expectExample(decoded, value, example);
         }
       });
+
+      if (entry.id === 'profile') {
+        it('round-trips extension fields with the released Profile codecs', async () => {
+          const codecs: CodecMap = moduleFor(entry).codecs;
+          for (const example of entry.examples.filter((item): boolean => item.encoding === 'json')) {
+            const type = example.path.split('/').at(-1)!;
+            const value = { ...example.data as globalThis.Record<string, unknown>, extension: { wallet: 'existing' } };
+            const stored = recordData(new Blob([JSON.stringify(value)], { type: 'application/json' }));
+            const decoded = await codecs[type].decode(stored, 'application/json', { modulePath: example.path });
+            expect(decoded).toEqual(value);
+            const encoded = await codecs[type].encode(decoded, { modulePath: example.path });
+            expect(await encoded.data.json()).toEqual(value);
+          }
+        });
+        return;
+      }
 
       it('rejects missing required fields, invalid shapes, and unknown fields on encode and decode', async () => {
         const codecs: CodecMap = moduleFor(entry).codecs;

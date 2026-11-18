@@ -235,7 +235,17 @@ for (const input of inputs.values()) {
     }
   }
   input.schemas = schemas;
-  const { code } = await codeWithSchemas(input, schemas);
+  // Wallets pin Profile and the released SDK accepts extension fields in its
+  // public records. Keep those codecs while still publishing its exact schemas.
+  const code = id === 'profile'
+    ? `import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+       import { defineModule } from '@enbox/api';
+       import { ProfileCodecs } from '../profile-codecs.js';
+       export { ProfileCodecs };
+       export type { ProfileData, LinkData, AvatarData, HeroData } from '../profile-codecs.js';
+       export const ProfileDefinition = ${JSON.stringify(definition)} as const satisfies ModuleDefinition;
+       export const ProfileModule = defineModule({ definition: ProfileDefinition, codecs: ProfileCodecs });`
+    : (await codeWithSchemas(input, schemas)).code;
   const records = catalog.records.map(({ schema, schemaFile, ...record }) => {
     const rule = ruleAt(definition, record.path);
     return { ...record, ...(schema === undefined ? {} : { schemaUri: schema }),
@@ -304,7 +314,10 @@ for (const input of inputs.values()) {
     `## Use\n\nStart with an authenticated Enbox session and include this module in the application's module manifest. ` +
     `Dependency artifacts are carried by the typed module and installed before consumers.\n${parentNote}\n` +
     '```ts\n' + `import { ${name}Module } from '@enbox/modules/${id}';\n\n${usage}\n` + '```\n\n' +
-    `The JSON codecs validate on encode and decode. Examples are illustrative data; imported claims remain subject to their original provenance. ` +
+    (id === 'profile'
+      ? 'Profile retains the public definition and plain JSON/blob codecs shipped in @enbox/modules@0.2.124. The JSON Schemas describe the released fields; the codecs preserve existing records with extension fields. '
+      : 'The JSON codecs validate on encode and decode. ') +
+    'Examples are illustrative data; imported claims remain subject to their original provenance. ' +
     `See the [package guide](../../README.md) for shared reference, money, source, and access semantics.\n`;
   expected.set(join(directory, 'README.md'), readme);
 }

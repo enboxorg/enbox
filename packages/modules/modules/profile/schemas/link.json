@@ -26,11 +26,5 @@
     "url",
     "title"
   ],
-  "additionalProperties": false,
-  "examples": [
-    {
-      "url": "https://example.com",
-      "title": "Website"
-    }
-  ]
+  "additionalProperties": false
 }
