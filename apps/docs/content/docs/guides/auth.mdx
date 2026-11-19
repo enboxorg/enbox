@@ -21,7 +21,8 @@ bun add @enbox/api
 
 Install `@enbox/auth` only when the application owns `AuthManager` directly.
 Browser wallet connections should use `@enbox/browser`, which includes the
-application API and browser connect handler.
+application API and browser connect handler. Start the page with the
+[app-owned service worker](/docs/guides/browser-dapp) before initializing auth.
 
 ## Basic usage
 
@@ -77,8 +78,10 @@ session bound to the connecting wallet.
 ```ts
 import type { AgentSession } from '@enbox/browser';
 
-import { AuthManager, BrowserConnectHandler } from '@enbox/browser';
+import { AuthManager, BrowserConnectHandler, prepareBrowser } from '@enbox/browser';
 
+// The app bundles its worker (which calls activatePolyfills()) at /sw.js.
+await prepareBrowser('/sw.js', { registrationOptions: { type: 'module' } });
 const walletAuth = await AuthManager.create({
   connectHandler: BrowserConnectHandler({ appName: 'Notes App' }),
 });

@@ -6,7 +6,10 @@ description: Scaffold a wallet-connected, offline-capable Enbox dapp with live r
 This guide is the default starting point for a browser dapp. It produces the
 same application and feature-store structure used by the create-dapp starter
 and Notesd: wallet-owned identity, a local IndexedDB replica, shared observable
-resources, and a service worker for the offline shell and DWeb resources.
+resources, and a service worker for the offline shell and DWeb resources. Every browser
+dapp ships both entry points. The worker calls `activatePolyfills()`. The page
+awaits `prepareBrowser()`, mounts its application, then shows the connected
+feature as soon as wallet approval or session restoration succeeds.
 
 ## Create the project
 
@@ -38,17 +41,20 @@ export type Note = {
 };
 
 export const NotesModule = defineModule({
-  module  : 'https://notes.example/modules/notes/v1',
-  published : false,
-  types     : {
-    note: {
-      schema             : 'https://notes.example/schemas/note/v1',
-      dataFormats        : ['application/json'],
-      encryptionRequired : true,
+  definition: {
+    module    : 'https://notes.example/modules/notes/v1',
+    published : false,
+    types     : {
+      note: {
+        schema             : 'https://notes.example/schemas/note/v1',
+        dataFormats        : ['application/json'],
+        encryptionRequired : true,
+      },
     },
-  },
-  structure: { note: {} },
-} as const, { note: recordCodecs.json<Note>() });
+    structure: { note: {} },
+  } as const,
+  codecs: { note: recordCodecs.json<Note>() },
+});
 ```
 
 Name resources and domain actions once. Input drafts and navigation remain UI
@@ -188,10 +194,12 @@ precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
 
-activatePolyfills({
-  onCacheCheck: () => ({ ttl: 30_000 }),
-});
+activatePolyfills();
 ```
+
+The precache contains built shell assets. Keep the default DRL response caching
+policy for private data. If the app also serves public resources offline, use
+`onCacheCheck` to opt in only those public DRLs.
 
 Register and await the worker before initializing Enbox or rendering the app.
 This prevents the first screen from issuing DRLs before a worker controls the
@@ -358,16 +366,18 @@ these headers at minimum:
 
 ```text
 /*
-  Referrer-Policy: strict-origin-when-cross-origin
+  Referrer-Policy: strict-origin
 
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
 ```
 
-Do not set `Cross-Origin-Opener-Policy: same-origin`; it disconnects the wallet
-popup from `window.opener` and prevents the approval result from returning. If
-the app requires cross-origin isolation, use `same-origin-allow-popups` and test
-the complete wallet ceremony. A Content Security Policy must allow the app's
+Serve the built worker URL as JavaScript and keep it in scope for the page.
+A missing `/sw.js` must not fall through to the SPA's HTML. The desktop wallet
+authenticates its opener using the app origin in `document.referrer`.
+`strict-origin` supplies that origin on direct visits and keeps the path and
+query private. Preserve `window.opener` across the wallet popup; a
+`Cross-Origin-Opener-Policy: same-origin` header severs this connection. A Content Security Policy must allow the app's
 HTTPS and WSS DWN endpoints in `connect-src` and the root worker in
 `worker-src`.
 
@@ -382,10 +392,14 @@ bun run preview
 
 Before calling the dapp complete, verify all of these in a real browser:
 
-- the first visit reaches an activated worker and
-  `navigator.serviceWorker.controller` is non-null;
-- wallet approval connects, a reload restores the session, and the UI can ask
-  for reapproval;
+- open a direct link in a clean browser profile. Before Enbox initializes,
+  verify `navigator.serviceWorker.controller?.scriptURL` identifies the
+  bundled app worker;
+- connect a wallet with an existing record. Verify the record itself appears
+  on that first approval, **without reloading**. Exercise the real desktop
+  popup, including the return to the app;
+- reload separately and verify session restoration and the first record view.
+  Check the UI can request reapproval after revocation;
 - creating or changing a record updates an `observe()` view without a timer or
   refresh button;
 - a change from another connected tab or device arrives through the live path;
@@ -394,7 +408,7 @@ Before calling the dapp complete, verify all of these in a real browser:
   retained member handles;
 - existing records and the application shell render offline, an offline write
   stays visible, and reconnect eventually makes the view current;
-- a real DRL renders and a previously cached DRL remains readable offline;
+- a real DRL renders. If public DRL caching is enabled, a previously cached public resource remains readable offline;
 - sign-out and facade replacement close the old views and subscriptions;
 - the deployed `/sw.js`, referrer, popup, CSP, SPA-fallback, and HTTPS settings
   match the requirements above.

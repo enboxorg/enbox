@@ -27,7 +27,20 @@ end-to-end gate. Non-browser runtimes can install `@enbox/api` directly.
 
 ## Quick start
 
-### 1. Define a module
+### 1. Prepare the browser
+
+Use the [browser dapp scaffold](/docs/guides/browser-dapp) to bundle a service
+worker that calls `activatePolyfills()`. In the page entry point, await
+`prepareBrowser()` for that worker before mounting the UI or initializing
+Enbox. For an ES module worker served at the origin root:
+
+```ts
+import { prepareBrowser } from '@enbox/browser';
+
+await prepareBrowser('/sw.js', { registrationOptions: { type: 'module' } });
+```
+
+### 2. Define a module
 
 A module describes the data your app works with — its schema, structure, and access rules.
 
@@ -53,7 +66,7 @@ const TaskModule = defineModule({ definition: TaskDefinition, codecs: {
 } });
 ```
 
-### 2. Connect and use
+### 3. Connect and use
 
 ```ts
 import {
@@ -72,14 +85,13 @@ const store = createConnectionStore({
 });
 
 await store.initialize();
-
-// After the connection UI reports a connected snapshot:
-const snapshot = store.getSnapshot();
-if (snapshot.phase !== 'connected') {
-  throw new Error('Connect the wallet first.');
+// In the Connect button's click handler, call store.connect().
+// In the connected view, use the current snapshot:
+function getTasks() {
+  const snapshot = store.getSnapshot();
+  if (snapshot.phase !== 'connected') throw new Error('Connect the wallet first.');
+  return snapshot.enbox.using(TaskModule);
 }
-
-const tasks = snapshot.enbox.using(TaskModule);
 ```
 
 The connection store owns session restore, connection, module readiness, and
@@ -90,9 +102,12 @@ lifetime. If no session is restored, render a connect button and call
 browser's user gesture. The browser-dapp guide contains the complete component
 and required service-worker startup.
 
-### 3. CRUD operations
+### 4. CRUD operations
 
 ```ts
+// Inside a connected UI action:
+const tasks = getTasks();
+
 // Create
 const record = await tasks.records.create('task', {
   data: { title: 'Buy milk', done: false },

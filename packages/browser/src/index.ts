@@ -9,16 +9,20 @@
  * ```ts
  * import {
  *   BrowserConnectHandler, createConnectionStore,
- *   defineApplicationManifest,
+ *   defineApplicationManifest, prepareBrowser,
  * } from '@enbox/browser';
  * import { MyModule } from './my-module.js';
  *
+ * // Serve a bundled module worker at /sw.js. Its entry point calls activatePolyfills().
+ * await prepareBrowser('/sw.js', { registrationOptions: { type: 'module' } });
  * const store = createConnectionStore({
  *   application    : defineApplicationManifest({ modules: [MyModule] }),
  *   connectHandler : BrowserConnectHandler({ appName: 'My App' }),
  * });
- * const snapshot = await store.connect();
- * if (snapshot.phase !== 'connected') throw snapshot.error ?? new Error('Connection failed.');
+ * await store.initialize();
+ * // Render from store.getSnapshot() and subscribe to changes.
+ * // Call store.connect() directly from the user's Connect action.
+ * // See https://enbox-docs.pages.dev/docs/guides/browser-dapp for both entry points.
  * ```
  *
  * For non-browser environments (Node.js, CLI, desktop), import from
