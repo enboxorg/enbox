@@ -1410,6 +1410,26 @@ export function testRecordsQueryHandler(): void {
         expect(notOwnerPostReply.entries).toHaveLength(0);
       });
 
+      it('should return nothing to a non-owner whose filter names neither them as author nor as recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
+
+        const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: carol.did, schema: 'post' });
+        const privateWriteReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+        expect(privateWriteReply.status.code).toBe(202);
+
+        // Bob invokes no grant or role, so none of the unpublished records this filter selects are visible to him.
+        const query = await TestDataGenerator.generateRecordsQuery({
+          author : bob,
+          filter : { published: false, author: alice.did, recipient: carol.did },
+        });
+        const reply = await dwn.processMessage(alice.did, query.message);
+        expect(reply.status.code).toBe(200);
+        expect(reply.entries).toEqual([]);
+      });
+
       it('should query unpublished records authorized by permissionGrantId', async () => {
         const alice = await TestDataGenerator.generatePersona();
         const bob = await TestDataGenerator.generatePersona();

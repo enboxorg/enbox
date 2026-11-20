@@ -303,6 +303,27 @@ export function testRecordsCountHandler(): void {
         expect(reply.count).toBe(1);
       });
 
+      it('should count nothing for a non-owner whose filter names neither them as author nor as recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
+
+        const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: carol.did, schema: 'post' });
+        const privateWriteReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+        expect(privateWriteReply.status.code).toBe(202);
+
+        // Bob invokes no grant or role, so none of the unpublished records this filter selects are visible to him.
+        const { message: countMessage } = await TestDataGenerator.generateRecordsCount({
+          author : bob,
+          filter : { published: false, author: alice.did, recipient: carol.did },
+        });
+        const reply = await dwn.processMessage(alice.did, countMessage);
+
+        expect(reply.status.code).toBe(200);
+        expect(reply.count).toBe(0);
+      });
+
       it('should count exact-tuple audience control records without broad enumeration', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();

@@ -119,6 +119,10 @@ export async function queryVisibleRecordsPage(input: {
   const { deps, request, tenant, visibility } = input;
   const { dateSort, filter, messageTimestamp, pagination } = request.message.descriptor;
   const filters = buildRecordsSnapshotFilters(request, visibility);
+  if (filters.length === 0) {
+    return { messages: [] };
+  }
+
   const recordLimit = await resolveRecordLimitOccupancy({
     validationStateReader : deps.validationStateReader,
     tenant,
@@ -187,6 +191,11 @@ export async function queryVisibleRecordsPage(input: {
   return { messages: visibleMessages, cursor: nextCursor };
 }
 
+/**
+ * Builds the OR-ed filters selecting what the requester may see. An empty list means nothing is
+ * visible, while message stores and event logs read an empty filter list as "match everything",
+ * so callers must return no results instead of passing an empty list on.
+ */
 function buildRecordsVisibilityFilters(input: {
   dateSort?: DateSort;
   filter: RecordsFilter;
